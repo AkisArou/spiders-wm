@@ -52,6 +52,15 @@ mod imp {
         pub state: SmithayStateSnapshot,
     }
 
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct SmithayBootstrapSnapshot {
+        pub runtime: SmithayRuntimeSnapshot,
+        pub controller: ControllerReport,
+        pub topology_surface_count: usize,
+        pub topology_output_count: usize,
+        pub topology_seat_count: usize,
+    }
+
     #[derive(Debug)]
     pub struct SmithayBootstrap<L, R> {
         pub controller: crate::CompositorController<L, R>,
@@ -71,8 +80,14 @@ mod imp {
             Ok(())
         }
 
-        pub fn snapshot(&self) -> SmithayRuntimeSnapshot {
-            self.runtime.snapshot()
+        pub fn snapshot(&self) -> SmithayBootstrapSnapshot {
+            SmithayBootstrapSnapshot {
+                runtime: self.runtime.snapshot(),
+                controller: self.controller.report(),
+                topology_surface_count: self.controller.app().topology().surfaces.len(),
+                topology_output_count: self.controller.app().topology().outputs.len(),
+                topology_seat_count: self.controller.app().topology().seats.len(),
+            }
         }
 
         pub fn apply_pending_discovery_events(&mut self) -> Result<usize, SmithayRuntimeError> {
@@ -550,8 +565,9 @@ mod imp {
             };
 
             let snapshot = bootstrap.snapshot();
-            assert_eq!(snapshot, bootstrap.runtime.snapshot());
-            assert_eq!(snapshot.socket_name, "wayland-test-2");
+            assert_eq!(snapshot.runtime, bootstrap.runtime.snapshot());
+            assert_eq!(snapshot.runtime.socket_name, "wayland-test-2");
+            assert_eq!(snapshot.controller, bootstrap.controller.report());
             assert_eq!(bootstrap.report.seat_name, "smithay-test-seat");
             assert_eq!(bootstrap.controller.phase(), ControllerPhase::Pending);
         }
@@ -589,8 +605,9 @@ mod imp {
 
             let snapshot = bootstrap.snapshot();
             assert_eq!(applied, 1);
-            assert_eq!(snapshot.state.pending_discovery_event_count, 0);
-            assert_eq!(snapshot.state.known_surfaces.toplevels.len(), 1);
+            assert_eq!(snapshot.runtime.state.pending_discovery_event_count, 0);
+            assert_eq!(snapshot.runtime.state.known_surfaces.toplevels.len(), 1);
+            assert_eq!(snapshot.topology_surface_count, 1);
             assert_eq!(bootstrap.controller.phase(), ControllerPhase::Running);
             let surface = bootstrap
                 .controller
@@ -630,7 +647,9 @@ mod imp {
             let applied = bootstrap.apply_pending_discovery_events().unwrap();
 
             assert_eq!(applied, 0);
-            assert_eq!(bootstrap.snapshot().state.pending_discovery_event_count, 0);
+            let snapshot = bootstrap.snapshot();
+            assert_eq!(snapshot.runtime.state.pending_discovery_event_count, 0);
+            assert_eq!(snapshot.topology_surface_count, 0);
             assert_eq!(bootstrap.controller.phase(), ControllerPhase::Pending);
         }
     }
@@ -639,7 +658,8 @@ mod imp {
 #[cfg(feature = "smithay-winit")]
 pub use imp::{
     bootstrap_winit, bootstrap_winit_controller, initialize_winit_controller, SmithayBootstrap,
-    SmithayRuntimeError, SmithayRuntimeSnapshot, SmithayStartupReport, SmithayWinitRuntime,
+    SmithayBootstrapSnapshot, SmithayRuntimeError, SmithayRuntimeSnapshot, SmithayStartupReport,
+    SmithayWinitRuntime,
 };
 
 #[cfg(not(feature = "smithay-winit"))]
