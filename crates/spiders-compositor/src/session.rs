@@ -1,7 +1,7 @@
 use spiders_config::model::Config;
 use spiders_config::runtime::LayoutRuntime;
 use spiders_config::service::ConfigRuntimeService;
-use spiders_shared::api::{CompositorEvent, WmAction};
+use spiders_shared::api::{CompositorEvent, FocusDirection, WmAction};
 use spiders_shared::ids::WindowId;
 use spiders_shared::wm::{StateSnapshot, WindowSnapshot};
 
@@ -64,8 +64,15 @@ impl<L: spiders_config::loader::LayoutSourceLoader, R: LayoutRuntime> Compositor
     }
 
     pub fn apply_action(&mut self, action: &WmAction) -> Result<SessionUpdate, ActionError> {
-        let outcome = apply_action(&mut self.runtime, &mut self.wm, action)?;
-        Ok(self.session_update(outcome))
+        match action {
+            WmAction::FocusDirection { direction } => self.focus_direction(*direction),
+            WmAction::ToggleFloating => self.toggle_focused_floating(),
+            WmAction::ToggleFullscreen => self.toggle_focused_fullscreen(),
+            _ => {
+                let outcome = apply_action(&mut self.runtime, &mut self.wm, action)?;
+                Ok(self.session_update(outcome))
+            }
+        }
     }
 
     pub fn map_window(&mut self, window: WindowSnapshot) -> Result<SessionUpdate, ActionError> {
@@ -98,6 +105,73 @@ impl<L: spiders_config::loader::LayoutSourceLoader, R: LayoutRuntime> Compositor
             events,
             recomputed_layout: true,
         }))
+    }
+
+    pub fn toggle_focused_floating(&mut self) -> Result<SessionUpdate, ActionError> {
+        let event = self.wm.toggle_focused_floating()?;
+        self.runtime
+            .update_from_wm_state(self.wm.snapshot().clone());
+        self.runtime.recompute_current_layout()?;
+        Ok(self.session_update(ActionOutcome {
+            events: vec![event],
+            recomputed_layout: true,
+        }))
+    }
+
+    pub fn toggle_focused_fullscreen(&mut self) -> Result<SessionUpdate, ActionError> {
+        let event = self.wm.toggle_focused_fullscreen()?;
+        self.runtime
+            .update_from_wm_state(self.wm.snapshot().clone());
+        self.runtime.recompute_current_layout()?;
+        Ok(self.session_update(ActionOutcome {
+            events: vec![event],
+            recomputed_layout: true,
+        }))
+    }
+
+    pub fn focus_direction(
+        &mut self,
+        direction: FocusDirection,
+    ) -> Result<SessionUpdate, ActionError> {
+        let order = self.focus_ordered_window_ids();
+        let focused = self.wm.focused_window_id()?.clone();
+        let current_index = order
+            .iter()
+            .position(|window_id| window_id == &focused)
+            .unwrap_or(0);
+        let next_index = match direction {
+            FocusDirection::Left | FocusDirection::Up => {
+                (current_index + order.len() - 1) % order.len()
+            }
+            FocusDirection::Right | FocusDirection::Down => (current_index + 1) % order.len(),
+        };
+
+        self.focus_window(&order[next_index])
+    }
+
+    fn focus_ordered_window_ids(&self) -> Vec<WindowId> {
+        let mut ordered = Vec::new();
+
+        if let Some(layout) = self.current_layout() {
+            for node in layout.response.root.window_nodes() {
+                if let Some(window_id) = match node {
+                    spiders_shared::layout::LayoutSnapshotNode::Window { window_id, .. } => {
+                        window_id.clone()
+                    }
+                    _ => None,
+                } {
+                    if !ordered.iter().any(|id| id == &window_id) {
+                        ordered.push(window_id);
+                    }
+                }
+            }
+        }
+
+        if ordered.is_empty() {
+            return self.state().visible_window_ids.clone();
+        }
+
+        ordered
     }
 
     fn session_update(&self, outcome: ActionOutcome) -> SessionUpdate {
@@ -240,7 +314,7 @@ mod tests {
         let _ = fs::create_dir_all(runtime_root.join("layouts"));
         fs::write(
             runtime_root.join("layouts/master-stack.js"),
-            "ctx => ({ type: 'workspace', children: [{ type: 'window', id: 'main' }] })",
+            "ctx => ({ type: 'workspace', children: [{ type: 'window', id: 'priority', match: 'app_id=\"thunar\"' }, { type: 'slot', id: 'rest' }] })",
         )
         .unwrap();
         fs::write(
@@ -417,6 +491,24 @@ mod tests {
             workspace_id: Some(WorkspaceId::from("ws-1")),
             tags: vec!["1".into()],
         });
+        let _ = session.map_window(WindowSnapshot {
+            id: WindowId::from("w4"),
+            shell: ShellKind::XdgToplevel,
+            app_id: Some("foot".into()),
+            title: Some("Foot".into()),
+            class: None,
+            instance: None,
+            role: None,
+            window_type: None,
+            mapped: false,
+            floating: false,
+            fullscreen: false,
+            focused: false,
+            urgent: false,
+            output_id: Some(OutputId::from("out-1")),
+            workspace_id: Some(WorkspaceId::from("ws-1")),
+            tags: vec!["1".into()],
+        });
 
         let update = session
             .apply_action(&WmAction::FocusDirection {
@@ -427,7 +519,45 @@ mod tests {
         assert!(!update.recomputed_layout);
         assert_eq!(
             session.state().focused_window_id,
-            Some(WindowId::from("w3"))
+            Some(WindowId::from("w4"))
         );
+    }
+
+    #[test]
+    fn session_toggle_fullscreen_recomputes_layout_state() {
+        let mut session = session();
+
+        let update = session.toggle_focused_fullscreen().unwrap();
+
+        assert!(update.recomputed_layout);
+        assert!(update.events.iter().any(|event| matches!(
+            event,
+            CompositorEvent::WindowFullscreenChange { window_id, fullscreen }
+                if window_id == &WindowId::from("w1") && *fullscreen
+        )));
+        assert!(session
+            .state()
+            .windows
+            .iter()
+            .any(|window| window.id == WindowId::from("w1") && window.fullscreen));
+    }
+
+    #[test]
+    fn session_toggle_floating_recomputes_layout_state() {
+        let mut session = session();
+
+        let update = session.toggle_focused_floating().unwrap();
+
+        assert!(update.recomputed_layout);
+        assert!(update.events.iter().any(|event| matches!(
+            event,
+            CompositorEvent::WindowFloatingChange { window_id, floating }
+                if window_id == &WindowId::from("w1") && *floating
+        )));
+        assert!(session
+            .state()
+            .windows
+            .iter()
+            .any(|window| window.id == WindowId::from("w1") && window.floating));
     }
 }
