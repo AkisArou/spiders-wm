@@ -41,6 +41,7 @@ pub struct BootstrapReport {
     pub runtime_ready: bool,
     pub authored_config: String,
     pub runtime_config: String,
+    pub controller_phase: spiders_compositor::ControllerPhase,
     pub active_seat: Option<String>,
     pub active_output: Option<String>,
     pub current_workspace: Option<String>,
@@ -63,6 +64,7 @@ pub struct BootstrapFailureReport {
     pub runtime_ready: bool,
     pub authored_config: String,
     pub runtime_config: String,
+    pub controller_phase: spiders_compositor::ControllerPhase,
     pub error: String,
     pub failed_event: Option<spiders_compositor::BootstrapEvent>,
     pub applied_events: usize,
@@ -107,6 +109,7 @@ mod tests {
             runtime_ready: true,
             authored_config: "/tmp/authored.js".into(),
             runtime_config: "/tmp/runtime.json".into(),
+            controller_phase: spiders_compositor::ControllerPhase::Running,
             active_seat: Some("seat-0".into()),
             active_output: Some("out-1".into()),
             current_workspace: Some("ws-1".into()),
@@ -131,6 +134,7 @@ mod tests {
         let json = serde_json::to_value(report).unwrap();
 
         assert_eq!(json["status"], "ok");
+        assert_eq!(json["controller_phase"], "running");
         assert_eq!(json["active_seat"], "seat-0");
         assert_eq!(json["current_workspace"], "ws-1");
         assert_eq!(json["focused_window"], "w1");
@@ -145,6 +149,7 @@ mod tests {
             runtime_ready: true,
             authored_config: "/tmp/authored.js".into(),
             runtime_config: "/tmp/runtime.json".into(),
+            controller_phase: spiders_compositor::ControllerPhase::Degraded,
             error: "boom".into(),
             failed_event: Some(spiders_compositor::BootstrapEvent::RemoveOutput {
                 output_id: spiders_shared::ids::OutputId::from("out-9"),
@@ -156,6 +161,7 @@ mod tests {
         let json = serde_json::to_value(report).unwrap();
 
         assert_eq!(json["status"], "error");
+        assert_eq!(json["controller_phase"], "degraded");
         assert_eq!(json["failed_event"]["remove-output"]["output_id"], "out-9");
     }
 }

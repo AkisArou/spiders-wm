@@ -8,6 +8,7 @@ use crate::runner::{
     BootstrapFailureTrace, BootstrapRunTrace, BootstrapRunner, BootstrapRunnerError,
 };
 use crate::scenario::BootstrapScenario;
+use crate::transcript::BootstrapTranscript;
 use crate::{CompositorApp, LayoutService};
 
 #[derive(Debug)]
@@ -57,6 +58,20 @@ impl<L: spiders_config::loader::LayoutSourceLoader, R: LayoutRuntime> Compositor
         })
     }
 
+    pub fn initialize_with_transcript(
+        runtime_service: ConfigRuntimeService<L, R>,
+        config: Config,
+        state: StateSnapshot,
+        transcript: &BootstrapTranscript,
+    ) -> Result<Self, BootstrapRunnerError> {
+        Self::initialize_with_registration(
+            runtime_service,
+            config,
+            state,
+            transcript.startup.clone(),
+        )
+    }
+
     pub fn apply_bootstrap_event(
         &mut self,
         event: BootstrapEvent,
@@ -76,6 +91,13 @@ impl<L: spiders_config::loader::LayoutSourceLoader, R: LayoutRuntime> Compositor
         scenario: BootstrapScenario,
     ) -> Result<(), BootstrapFailureTrace> {
         self.runner.apply_scenario_with_trace(scenario)
+    }
+
+    pub fn apply_bootstrap_transcript(
+        &mut self,
+        transcript: BootstrapTranscript,
+    ) -> Result<(), BootstrapFailureTrace> {
+        self.runner.apply_scenario_with_trace(transcript.scenario)
     }
 }
 
@@ -210,5 +232,60 @@ mod tests {
         let trace = host.bootstrap_trace();
         assert_eq!(trace.applied_events.len(), 4);
         assert!(trace.diagnostics.seat_names.contains(&"seat-1".to_string()));
+    }
+
+    #[test]
+    fn host_replays_bootstrap_transcript() {
+        let temp_dir = std::env::temp_dir();
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let runtime_root = temp_dir.join(format!("spiders-host-transcript-{unique}"));
+        let _ = fs::create_dir_all(runtime_root.join("layouts"));
+        fs::write(
+            runtime_root.join("layouts/master-stack.js"),
+            "ctx => ({ type: 'workspace', children: [{ type: 'slot', id: 'rest' }] })",
+        )
+        .unwrap();
+
+        let loader =
+            RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
+        let runtime = BoaLayoutRuntime::with_loader(loader.clone());
+        let service = ConfigRuntimeService::new(loader, runtime);
+        let mut snapshot = state();
+        snapshot.outputs.push(OutputSnapshot {
+            id: OutputId::from("out-2"),
+            name: "DP-1".into(),
+            logical_width: 2560,
+            logical_height: 1440,
+            scale: 1,
+            transform: OutputTransform::Normal,
+            enabled: true,
+            current_workspace_id: None,
+        });
+
+        let transcript = BootstrapTranscript::new(
+            StartupRegistration {
+                seats: vec!["seat-0".into(), "seat-1".into()],
+                outputs: vec![OutputId::from("out-1"), OutputId::from("out-2")],
+                active_seat: Some("seat-1".into()),
+                active_output: Some(OutputId::from("out-2")),
+            },
+            BootstrapScenario::new()
+                .register_seat("seat-1", true)
+                .register_window_surface("window-w1", "w1", Some(OutputId::from("out-1")))
+                .register_popup_surface("popup-1", Some(OutputId::from("out-1")), "window-w1")
+                .move_surface_to_output("popup-1", "out-2"),
+        );
+
+        let mut host =
+            CompositorHost::initialize_with_transcript(service, config(), snapshot, &transcript)
+                .unwrap();
+        host.apply_bootstrap_transcript(transcript).unwrap();
+
+        let trace = host.bootstrap_trace();
+        assert_eq!(trace.applied_events.len(), 4);
+        assert!(trace.diagnostics.output_ids.contains(&"out-2".to_string()));
     }
 }

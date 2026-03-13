@@ -46,11 +46,12 @@ fn main() -> std::process::ExitCode {
         OutputMode::Text
     };
     let events_path = arg_value(&args, "--events");
+    let transcript_path = arg_value(&args, "--transcript");
 
     let cli = CliContext::new();
 
     if bootstrap_trace {
-        bootstrap_trace_command(&cli, output_mode, events_path)
+        bootstrap_trace_command(&cli, output_mode, events_path, transcript_path)
     } else if check_config {
         check_config_command(&cli, output_mode)
     } else {
@@ -224,6 +225,7 @@ fn bootstrap_trace_command(
     cli: &CliContext,
     output_mode: OutputMode,
     events_path: Option<&str>,
+    transcript_path: Option<&str>,
 ) -> std::process::ExitCode {
     let bootstrap = match cli.bootstrap() {
         Ok(bootstrap) => bootstrap,
@@ -263,55 +265,12 @@ fn bootstrap_trace_command(
         }
     };
 
-    let state = synthetic_bootstrap_state();
-    let mut runner = match spiders_compositor::BootstrapRunner::initialize(
-        spiders_compositor::LayoutService,
-        bootstrap.service,
-        config,
-        state,
-    ) {
-        Ok(runner) => runner,
-        Err(error) => {
-            emit(
-                output_mode,
-                &ErrorReport {
-                    status: "error",
-                    phase: "bootstrap",
-                    runtime_ready: cli.ready,
-                    runtime_config: Some(bootstrap.paths.runtime_config.display().to_string()),
-                    errors: None,
-                    message: Some(error.to_string()),
-                },
-                || format!("bootstrap trace runner error: {error}"),
-            );
-            return std::process::ExitCode::from(1);
-        }
-    };
+    let authored_config = bootstrap.paths.authored_config.display().to_string();
+    let runtime_config = bootstrap.paths.runtime_config.display().to_string();
 
-    if let Some(events_path) = events_path {
-        let events = match std::fs::read_to_string(events_path) {
-            Ok(contents) => {
-                match serde_json::from_str::<Vec<spiders_compositor::BootstrapEvent>>(&contents) {
-                    Ok(events) => events,
-                    Err(error) => {
-                        emit(
-                            output_mode,
-                            &ErrorReport {
-                                status: "error",
-                                phase: "script",
-                                runtime_ready: cli.ready,
-                                runtime_config: Some(
-                                    bootstrap.paths.runtime_config.display().to_string(),
-                                ),
-                                errors: None,
-                                message: Some(error.to_string()),
-                            },
-                            || format!("bootstrap trace script parse error: {error}"),
-                        );
-                        return std::process::ExitCode::from(1);
-                    }
-                }
-            }
+    if let Some(script_path) = transcript_path.or(events_path) {
+        let contents = match std::fs::read_to_string(script_path) {
+            Ok(contents) => contents,
             Err(error) => {
                 emit(
                     output_mode,
@@ -319,7 +278,7 @@ fn bootstrap_trace_command(
                         status: "error",
                         phase: "script",
                         runtime_ready: cli.ready,
-                        runtime_config: Some(bootstrap.paths.runtime_config.display().to_string()),
+                        runtime_config: Some(runtime_config.clone()),
                         errors: None,
                         message: Some(error.to_string()),
                     },
@@ -329,14 +288,59 @@ fn bootstrap_trace_command(
             }
         };
 
-        if let Err(trace) = runner.apply_events_with_trace(events) {
+        let script = match spiders_compositor::BootstrapScript::from_json_str(&contents) {
+            Ok(script) => script,
+            Err(error) => {
+                emit(
+                    output_mode,
+                    &ErrorReport {
+                        status: "error",
+                        phase: "script",
+                        runtime_ready: cli.ready,
+                        runtime_config: Some(runtime_config.clone()),
+                        errors: None,
+                        message: Some(error.to_string()),
+                    },
+                    || format!("bootstrap trace script parse error: {error}"),
+                );
+                return std::process::ExitCode::from(1);
+            }
+        };
+
+        let state = synthetic_bootstrap_state();
+        let mut controller = match spiders_compositor::CompositorController::initialize_with_script(
+            bootstrap.service,
+            config,
+            state,
+            &script,
+        ) {
+            Ok(controller) => controller,
+            Err(error) => {
+                emit(
+                    output_mode,
+                    &ErrorReport {
+                        status: "error",
+                        phase: "bootstrap",
+                        runtime_ready: cli.ready,
+                        runtime_config: Some(runtime_config.clone()),
+                        errors: None,
+                        message: Some(error.to_string()),
+                    },
+                    || format!("bootstrap trace runner error: {error}"),
+                );
+                return std::process::ExitCode::from(1);
+            }
+        };
+
+        if let Err(trace) = controller.apply_bootstrap_script(script) {
             emit(
                 output_mode,
                 &BootstrapFailureReport {
                     status: "error",
                     runtime_ready: cli.ready,
-                    authored_config: bootstrap.paths.authored_config.display().to_string(),
-                    runtime_config: bootstrap.paths.runtime_config.display().to_string(),
+                    authored_config: authored_config.clone(),
+                    runtime_config: runtime_config.clone(),
+                    controller_phase: controller.phase(),
                     error: trace.error.clone(),
                     failed_event: trace.failed_event,
                     applied_events: trace.applied_events.len(),
@@ -352,42 +356,90 @@ fn bootstrap_trace_command(
             );
             return std::process::ExitCode::from(1);
         }
+
+        return emit_bootstrap_trace(
+            cli,
+            output_mode,
+            authored_config,
+            runtime_config,
+            controller.report(),
+        );
     }
 
-    let trace = runner.trace();
-    let current_workspace = trace.diagnostics.current_workspace.clone();
-    let focused_window = trace.diagnostics.focused_window.clone();
+    let state = synthetic_bootstrap_state();
+    let controller = match spiders_compositor::CompositorController::initialize(
+        bootstrap.service,
+        config,
+        state,
+    ) {
+        Ok(controller) => controller,
+        Err(error) => {
+            emit(
+                output_mode,
+                &ErrorReport {
+                    status: "error",
+                    phase: "bootstrap",
+                    runtime_ready: cli.ready,
+                    runtime_config: Some(runtime_config.clone()),
+                    errors: None,
+                    message: Some(error.to_string()),
+                },
+                || format!("bootstrap trace runner error: {error}"),
+            );
+            return std::process::ExitCode::from(1);
+        }
+    };
+
+    emit_bootstrap_trace(
+        cli,
+        output_mode,
+        authored_config,
+        runtime_config,
+        controller.report(),
+    )
+}
+
+fn emit_bootstrap_trace(
+    cli: &CliContext,
+    output_mode: OutputMode,
+    authored_config: String,
+    runtime_config: String,
+    report: spiders_compositor::ControllerReport,
+) -> std::process::ExitCode {
+    let current_workspace = report.diagnostics.current_workspace.clone();
+    let focused_window = report.diagnostics.focused_window.clone();
     emit(
         output_mode,
         &BootstrapReport {
             status: "ok",
             runtime_ready: cli.ready,
-            authored_config: bootstrap.paths.authored_config.display().to_string(),
-            runtime_config: bootstrap.paths.runtime_config.display().to_string(),
-            active_seat: trace.diagnostics.active_seat,
-            active_output: trace.diagnostics.active_output.map(|id| id.to_string()),
+            authored_config,
+            runtime_config,
+            controller_phase: report.phase,
+            active_seat: report.diagnostics.active_seat,
+            active_output: report.diagnostics.active_output.map(|id| id.to_string()),
             current_workspace: current_workspace.clone(),
             focused_window: focused_window.clone(),
-            seat_names: trace.diagnostics.seat_names,
-            output_ids: trace.diagnostics.output_ids,
-            surface_ids: trace.diagnostics.surface_ids,
-            mapped_surface_ids: trace.diagnostics.mapped_surface_ids,
-            seat_count: trace.diagnostics.seat_count,
-            output_count: trace.diagnostics.output_count,
-            surface_count: trace.diagnostics.surface_count,
-            mapped_surface_count: trace.diagnostics.mapped_surface_count,
-            applied_events: trace.applied_events.len(),
-            startup: trace.startup,
+            seat_names: report.diagnostics.seat_names,
+            output_ids: report.diagnostics.output_ids,
+            surface_ids: report.diagnostics.surface_ids,
+            mapped_surface_ids: report.diagnostics.mapped_surface_ids,
+            seat_count: report.diagnostics.seat_count,
+            output_count: report.diagnostics.output_count,
+            surface_count: report.diagnostics.surface_count,
+            mapped_surface_count: report.diagnostics.mapped_surface_count,
+            applied_events: report.applied_events,
+            startup: report.startup,
         },
         || {
             format!(
                 "bootstrap trace ok (workspace: {}, focused: {}, seats: {}, outputs: {}, surfaces: {}, mapped: {})",
                 current_workspace.as_deref().unwrap_or("none"),
                 focused_window.as_deref().unwrap_or("none"),
-                trace.diagnostics.seat_count,
-                trace.diagnostics.output_count,
-                trace.diagnostics.surface_count,
-                trace.diagnostics.mapped_surface_count
+                report.diagnostics.seat_count,
+                report.diagnostics.output_count,
+                report.diagnostics.surface_count,
+                report.diagnostics.mapped_surface_count
             )
         },
     );

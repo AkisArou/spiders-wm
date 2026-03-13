@@ -121,6 +121,7 @@ fn cli_bootstrap_trace_reports_json_diagnostics() {
     let stdout = String::from_utf8(output.stdout).unwrap();
     let json: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
     assert_eq!(json["status"], "ok");
+    assert_eq!(json["controller_phase"], "pending");
     assert_eq!(json["active_seat"], "seat-0");
     assert_eq!(json["active_output"], "bootstrap-output");
     assert_eq!(json["current_workspace"], "bootstrap-workspace");
@@ -156,6 +157,7 @@ fn cli_bootstrap_trace_reports_script_failure_in_json_mode() {
     let stdout = String::from_utf8(output.stdout).unwrap();
     let json: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
     assert_eq!(json["status"], "error");
+    assert_eq!(json["controller_phase"], "degraded");
     assert_eq!(json["applied_events"], 1);
     assert_eq!(
         json["failed_event"]["remove-output"]["output_id"],
@@ -187,6 +189,7 @@ fn cli_bootstrap_trace_reports_script_success_fixture() {
     let stdout = String::from_utf8(output.stdout).unwrap();
     let json: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
     assert_eq!(json["status"], "ok");
+    assert_eq!(json["controller_phase"], "running");
     assert_eq!(json["applied_events"], 4);
     assert_eq!(json["active_seat"], "seat-1");
     assert_eq!(json["seat_names"][1], "seat-1");
@@ -200,6 +203,70 @@ fn cli_bootstrap_trace_reports_script_success_fixture() {
         .unwrap()
         .iter()
         .any(|value| value == "window-w1"));
+
+    let _ = std::fs::remove_file(runtime_config);
+}
+
+#[test]
+fn cli_bootstrap_trace_reports_transcript_success_fixture() {
+    let (_, authored_config) = runtime_fixture_paths();
+    let runtime_config =
+        write_runtime_config("spiders-cli-bootstrap-trace-transcript-success.json");
+    let transcript_path = bootstrap_fixture("transcript-success.json");
+
+    let output = Command::new(cli_bin())
+        .arg("bootstrap-trace")
+        .arg("--json")
+        .arg("--transcript")
+        .arg(&transcript_path)
+        .env("SPIDERS_WM_AUTHORED_CONFIG", authored_config)
+        .env("SPIDERS_WM_RUNTIME_CONFIG", &runtime_config)
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    assert_eq!(json["status"], "ok");
+    assert_eq!(json["controller_phase"], "running");
+    assert_eq!(json["applied_events"], 3);
+    assert_eq!(json["active_seat"], "seat-1");
+    assert_eq!(json["startup"]["active_seat"], "seat-1");
+    assert!(json["surface_ids"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|value| value == "popup-1"));
+
+    let _ = std::fs::remove_file(runtime_config);
+}
+
+#[test]
+fn cli_bootstrap_trace_accepts_transcript_fixture_via_events_flag() {
+    let (_, authored_config) = runtime_fixture_paths();
+    let runtime_config =
+        write_runtime_config("spiders-cli-bootstrap-trace-transcript-via-events.json");
+    let transcript_path = bootstrap_fixture("transcript-success.json");
+
+    let output = Command::new(cli_bin())
+        .arg("bootstrap-trace")
+        .arg("--json")
+        .arg("--events")
+        .arg(&transcript_path)
+        .env("SPIDERS_WM_AUTHORED_CONFIG", authored_config)
+        .env("SPIDERS_WM_RUNTIME_CONFIG", &runtime_config)
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    assert_eq!(json["status"], "ok");
+    assert_eq!(json["controller_phase"], "running");
+    assert_eq!(json["applied_events"], 3);
+    assert_eq!(json["startup"]["active_seat"], "seat-1");
 
     let _ = std::fs::remove_file(runtime_config);
 }

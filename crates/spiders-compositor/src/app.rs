@@ -66,7 +66,7 @@ pub enum BootstrapEvent {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct StartupRegistration {
     pub seats: Vec<String>,
     pub outputs: Vec<OutputId>,

@@ -1,12 +1,15 @@
 pub mod actions;
 pub mod app;
+pub mod controller;
 pub mod host;
 pub mod runner;
 pub mod runtime;
 pub mod scenario;
+pub mod script;
 pub mod session;
 pub mod startup;
 pub mod topology;
+pub mod transcript;
 pub mod wm;
 
 use spiders_config::model::{Config, LayoutConfigError};
@@ -47,6 +50,7 @@ pub trait LayoutEngine {
 pub struct LayoutService;
 
 pub use app::{BootstrapEvent, CompositorApp, StartupRegistration};
+pub use controller::{CompositorController, ControllerPhase, ControllerReport};
 pub use host::CompositorHost;
 pub use runner::{
     BootstrapDiagnostics, BootstrapFailureTrace, BootstrapRunTrace, BootstrapRunner,
@@ -54,6 +58,7 @@ pub use runner::{
 };
 pub use runtime::{CompositorRuntimeState, WorkspaceLayoutState};
 pub use scenario::BootstrapScenario;
+pub use script::{BootstrapScript, BootstrapScriptKind};
 pub use session::{CompositorSession, SessionUpdate};
 pub use startup::{
     StartupConfig, StartupLayoutState, StartupRuntime, StartupSequence, StartupSession,
@@ -61,6 +66,7 @@ pub use startup::{
 pub use topology::{
     CompositorTopologyState, OutputState, SeatState, SurfaceRole, SurfaceState, TopologyError,
 };
+pub use transcript::BootstrapTranscript;
 pub use wm::{WmState, WmStateError};
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -1,0 +1,32 @@
+{
+  "startup": {
+    "seats": ["seat-0", "seat-1"],
+    "outputs": ["bootstrap-output"],
+    "active_seat": "seat-1",
+    "active_output": "bootstrap-output"
+  },
+  "scenario": {
+    "events": [
+      {
+        "register-seat": {
+          "seat_name": "seat-1",
+          "active": true
+        }
+      },
+      {
+        "register-window-surface": {
+          "surface_id": "window-w1",
+          "window_id": "bootstrap-window",
+          "output_id": "bootstrap-output"
+        }
+      },
+      {
+        "register-popup-surface": {
+          "surface_id": "popup-1",
+          "output_id": "bootstrap-output",
+          "parent_surface_id": "window-w1"
+        }
+      }
+    ]
+  }
+}
