@@ -66,6 +66,10 @@ identifier/path. The config/runtime boundary may carry both:
 - `module`: stable identifier or source path
 - `runtime_source?`: loaded compiled JavaScript source
 
+The preferred runtime architecture is to resolve `module` to loaded source via an
+explicit loader boundary, rather than teaching every runtime consumer how to
+discover or fetch source text.
+
 `WorkspaceSnapshot.effective_layout.name` selects one of these definitions. Rust
 then builds a `LayoutRequest` using the selected definition's stylesheet and the
 workspace/output geometry.

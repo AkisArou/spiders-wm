@@ -8,6 +8,7 @@ use spiders_layout::ast::{
 use spiders_shared::layout::{SlotTake, SourceLayoutNode};
 use spiders_shared::wm::{LayoutEvaluationContext, SelectedLayout};
 
+use crate::loader::{InlineLayoutSourceLoader, LayoutLoadError, LayoutSourceLoader};
 use crate::model::{Config, LayoutConfigError};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -112,10 +113,18 @@ pub enum LayoutRuntimeError {
     NonCallableExport { name: String, export: String },
     #[error("js to layout conversion failed for layout `{name}`: {message}")]
     ValueConversion { name: String, message: String },
+    #[error(transparent)]
+    Load(#[from] LayoutLoadError),
 }
 
 pub trait LayoutRuntime {
     fn selected_layout(
+        &self,
+        config: &Config,
+        workspace: &spiders_shared::wm::WorkspaceSnapshot,
+    ) -> Result<Option<SelectedLayout>, LayoutRuntimeError>;
+
+    fn load_selected_layout(
         &self,
         config: &Config,
         workspace: &spiders_shared::wm::WorkspaceSnapshot,
@@ -296,6 +305,14 @@ impl LayoutRuntime for StubLayoutRuntime {
     fn contract(&self) -> LayoutModuleContract {
         LayoutModuleContract::default()
     }
+
+    fn load_selected_layout(
+        &self,
+        config: &Config,
+        workspace: &spiders_shared::wm::WorkspaceSnapshot,
+    ) -> Result<Option<SelectedLayout>, LayoutRuntimeError> {
+        Ok(config.resolve_selected_layout(workspace)?)
+    }
 }
 
 impl LayoutRuntime for BoaLayoutRuntime {
@@ -332,6 +349,14 @@ impl LayoutRuntime for BoaLayoutRuntime {
 
     fn contract(&self) -> LayoutModuleContract {
         self.contract.clone()
+    }
+
+    fn load_selected_layout(
+        &self,
+        config: &Config,
+        workspace: &spiders_shared::wm::WorkspaceSnapshot,
+    ) -> Result<Option<SelectedLayout>, LayoutRuntimeError> {
+        Ok(InlineLayoutSourceLoader.load_runtime_source(config, workspace)?)
     }
 }
 
@@ -454,9 +479,11 @@ mod tests {
         };
         let workspace = workspace();
         let selected = runtime.selected_layout(&config, &workspace).unwrap();
+        let loaded = runtime.load_selected_layout(&config, &workspace).unwrap();
         let context = runtime.build_context(&state(), &workspace, selected.clone());
 
         assert_eq!(selected.unwrap().module, "layouts/master-stack.js");
+        assert_eq!(loaded.unwrap().module, "layouts/master-stack.js");
         assert_eq!(context.space.width, 1920.0);
         assert_eq!(context.workspace.id, WorkspaceId::from("ws-1"));
     }
@@ -648,5 +675,27 @@ mod tests {
             .unwrap();
 
         assert!(matches!(layout, SourceLayoutNode::Workspace { .. }));
+    }
+
+    #[test]
+    fn boa_runtime_loads_selected_layout_via_loader_boundary() {
+        let runtime = BoaLayoutRuntime::new();
+        let config = Config {
+            layouts: vec![LayoutDefinition {
+                name: "master-stack".into(),
+                module: "layouts/master-stack.js".into(),
+                stylesheet: String::new(),
+                runtime_source: Some("ctx => ({ type: 'workspace', children: [] })".into()),
+            }],
+            ..Config::default()
+        };
+
+        let selected = runtime
+            .load_selected_layout(&config, &workspace())
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(selected.module, "layouts/master-stack.js");
+        assert!(selected.runtime_source.is_some());
     }
 }
