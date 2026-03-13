@@ -65,6 +65,8 @@ Current implementation note:
 - `CompositorSession` owns WM state plus compositor-owned layout/runtime state
 - compositor-owned topology state for outputs, seats, and surfaces now sits beside
   WM/layout runtime state instead of leaking backend handles through the domain
+- a thin compositor bootstrap/app layer can own `CompositorSession` plus startup
+  seat/output registration without needing backend objects in the domain model
 - session operations return a typed `SessionUpdate` containing emitted events,
   relayout status, and the current computed layout snapshot
 - lower-level action helpers are internal support code, not the intended outer
