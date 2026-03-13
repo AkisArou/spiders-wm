@@ -37,7 +37,9 @@ pub trait LayoutEngine {
 #[derive(Debug, Default, Clone, Copy)]
 pub struct LayoutService;
 
-pub use startup::{StartupConfig, StartupLayoutState, StartupRuntime, StartupSequence};
+pub use startup::{
+    StartupConfig, StartupLayoutState, StartupRuntime, StartupSequence, StartupSession,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkspaceLayoutSource<'a> {
@@ -70,6 +72,18 @@ impl LayoutService {
         state: StateSnapshot,
     ) -> Result<StartupConfig<L, R>, CompositorLayoutError> {
         startup::initialize_startup_config(self, service, config, state)
+    }
+
+    pub fn initialize_startup_session<
+        L: spiders_config::loader::LayoutSourceLoader,
+        R: LayoutRuntime,
+    >(
+        &self,
+        service: ConfigRuntimeService<L, R>,
+        config: Config,
+        state: StateSnapshot,
+    ) -> Result<StartupSession<L, R>, CompositorLayoutError> {
+        startup::initialize_startup_session(self, service, config, state)
     }
 
     pub fn bootstrap_runtime<L: spiders_config::loader::LayoutSourceLoader, R: LayoutRuntime>(
@@ -779,6 +793,86 @@ mod tests {
         assert_eq!(
             startup.state.current_workspace_id,
             Some(WorkspaceId::from("ws-1"))
+        );
+
+        let _ = fs::remove_file(module_path);
+    }
+
+    #[test]
+    fn layout_service_initializes_startup_session_object() {
+        let service = LayoutService;
+        let temp_dir = std::env::temp_dir();
+        let runtime_root = temp_dir.join("spiders-startup-session-object-runtime");
+        let _ = fs::create_dir_all(runtime_root.join("layouts"));
+        let module_path = runtime_root.join("layouts/master-stack.js");
+        fs::write(
+            &module_path,
+            "ctx => ({ type: 'workspace', children: [{ type: 'window', id: 'main' }] })",
+        )
+        .unwrap();
+
+        let loader = spiders_config::loader::RuntimeProjectLayoutSourceLoader::new(
+            spiders_config::loader::RuntimePathResolver::new(".", &runtime_root),
+        );
+        let runtime = spiders_config::runtime::BoaLayoutRuntime::with_loader(loader.clone());
+        let runtime_service = spiders_config::service::ConfigRuntimeService::new(loader, runtime);
+        let config = Config {
+            layouts: vec![spiders_config::model::LayoutDefinition {
+                name: "master-stack".into(),
+                module: "layouts/master-stack.js".into(),
+                stylesheet: String::new(),
+            }],
+            ..Config::default()
+        };
+        let state = StateSnapshot {
+            focused_window_id: None,
+            current_output_id: Some(OutputId::from("out-1")),
+            current_workspace_id: Some(WorkspaceId::from("ws-1")),
+            outputs: vec![OutputSnapshot {
+                id: OutputId::from("out-1"),
+                name: "HDMI-A-1".into(),
+                logical_width: 800,
+                logical_height: 600,
+                scale: 1,
+                transform: OutputTransform::Normal,
+                enabled: true,
+                current_workspace_id: Some(WorkspaceId::from("ws-1")),
+            }],
+            workspaces: vec![WorkspaceSnapshot {
+                id: WorkspaceId::from("ws-1"),
+                name: "1".into(),
+                output_id: Some(OutputId::from("out-1")),
+                active_tags: vec!["1".into()],
+                focused: true,
+                visible: true,
+                effective_layout: Some(spiders_shared::wm::LayoutRef {
+                    name: "master-stack".into(),
+                }),
+            }],
+            windows: vec![],
+            visible_window_ids: vec![],
+            tag_names: vec!["1".into()],
+        };
+
+        let session = service
+            .initialize_startup_session(runtime_service, config, state)
+            .unwrap();
+
+        assert_eq!(
+            session.startup_workspace_id(),
+            Some(&WorkspaceId::from("ws-1"))
+        );
+        assert_eq!(
+            session
+                .startup_request()
+                .and_then(|request| request.layout_name.as_deref()),
+            Some("master-stack")
+        );
+        assert_eq!(
+            session
+                .startup_response()
+                .map(|response| response.root.window_nodes().len()),
+            Some(1)
         );
 
         let _ = fs::remove_file(module_path);

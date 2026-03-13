@@ -22,6 +22,12 @@ pub struct StartupConfig<L, R> {
     pub state: StateSnapshot,
 }
 
+#[derive(Debug)]
+pub struct StartupSession<L, R> {
+    pub runtime: StartupRuntime<L, R>,
+    pub state: StateSnapshot,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct StartupLayoutState {
     pub evaluated: spiders_config::service::EvaluatedLayout,
@@ -36,6 +42,33 @@ pub struct StartupSequence<L, R> {
     pub runtime_service: ConfigRuntimeService<L, R>,
     pub config: Config,
     pub state: StateSnapshot,
+}
+
+impl<L, R> StartupConfig<L, R> {
+    pub fn into_session(self) -> StartupSession<L, R> {
+        StartupSession {
+            runtime: self.runtime,
+            state: self.state,
+        }
+    }
+}
+
+impl<L, R> StartupSession<L, R> {
+    pub fn startup_layout(&self) -> Option<&StartupLayoutState> {
+        self.runtime.startup_layout.as_ref()
+    }
+
+    pub fn startup_request(&self) -> Option<&LayoutRequest> {
+        self.startup_layout().map(|layout| &layout.request)
+    }
+
+    pub fn startup_response(&self) -> Option<&LayoutResponse> {
+        self.startup_layout().map(|layout| &layout.response)
+    }
+
+    pub fn startup_workspace_id(&self) -> Option<&WorkspaceId> {
+        self.startup_layout().map(|layout| &layout.workspace_id)
+    }
 }
 
 impl<L: spiders_config::loader::LayoutSourceLoader, R: LayoutRuntime> StartupSequence<L, R> {
@@ -123,6 +156,18 @@ pub(crate) fn initialize_startup_config<
     let runtime = initialize_startup_runtime(service, runtime_service, config, &state)?;
 
     Ok(StartupConfig { runtime, state })
+}
+
+pub(crate) fn initialize_startup_session<
+    L: spiders_config::loader::LayoutSourceLoader,
+    R: LayoutRuntime,
+>(
+    service: &LayoutService,
+    runtime_service: ConfigRuntimeService<L, R>,
+    config: Config,
+    state: StateSnapshot,
+) -> Result<StartupSession<L, R>, CompositorLayoutError> {
+    Ok(initialize_startup_config(service, runtime_service, config, state)?.into_session())
 }
 
 #[cfg(test)]
@@ -223,6 +268,50 @@ mod tests {
                 .window_nodes()
                 .len(),
             1
+        );
+
+        let _ = fs::remove_file(module_path);
+    }
+
+    #[test]
+    fn startup_config_converts_into_session_with_layout_accessors() {
+        let temp_dir = std::env::temp_dir();
+        let runtime_root = temp_dir.join("spiders-startup-session-runtime");
+        let _ = fs::create_dir_all(runtime_root.join("layouts"));
+        let module_path = runtime_root.join("layouts/master-stack.js");
+        fs::write(
+            &module_path,
+            "ctx => ({ type: 'workspace', children: [{ type: 'window', id: 'main' }] })",
+        )
+        .unwrap();
+
+        let loader =
+            RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
+        let runtime = BoaLayoutRuntime::with_loader(loader.clone());
+        let runtime_service = ConfigRuntimeService::new(loader, runtime);
+
+        let session =
+            initialize_startup_session(&LayoutService, runtime_service, config(), state()).unwrap();
+
+        assert_eq!(
+            session.startup_workspace_id(),
+            Some(&WorkspaceId::from("ws-1"))
+        );
+        assert_eq!(
+            session
+                .startup_request()
+                .and_then(|request| request.layout_name.as_deref()),
+            Some("master-stack")
+        );
+        assert_eq!(
+            session
+                .startup_response()
+                .map(|response| response.root.window_nodes().len()),
+            Some(1)
+        );
+        assert_eq!(
+            session.state.current_workspace_id,
+            Some(WorkspaceId::from("ws-1"))
         );
 
         let _ = fs::remove_file(module_path);
