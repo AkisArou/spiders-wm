@@ -6,7 +6,7 @@ use spiders_layout::ast::{
     AuthoredLayoutNode, AuthoredNodeMeta, LayoutValidationError, ValidatedLayoutTree,
 };
 use spiders_shared::layout::{SlotTake, SourceLayoutNode};
-use spiders_shared::wm::{LayoutEvaluationContext, SelectedLayout};
+use spiders_shared::wm::{LayoutEvaluationContext, LoadedLayout, SelectedLayout};
 
 use crate::loader::{InlineLayoutSourceLoader, LayoutLoadError, LayoutSourceLoader};
 use crate::model::{Config, LayoutConfigError};
@@ -128,7 +128,7 @@ pub trait LayoutRuntime {
         &self,
         config: &Config,
         workspace: &spiders_shared::wm::WorkspaceSnapshot,
-    ) -> Result<Option<SelectedLayout>, LayoutRuntimeError>;
+    ) -> Result<Option<LoadedLayout>, LayoutRuntimeError>;
 
     fn build_context(
         &self,
@@ -139,7 +139,7 @@ pub trait LayoutRuntime {
 
     fn evaluate_layout(
         &self,
-        selected_layout: &SelectedLayout,
+        loaded_layout: &LoadedLayout,
         context: &LayoutEvaluationContext,
     ) -> Result<SourceLayoutNode, LayoutRuntimeError>;
 
@@ -149,16 +149,37 @@ pub trait LayoutRuntime {
 #[derive(Debug, Default, Clone, Copy)]
 pub struct StubLayoutRuntime;
 
-#[derive(Debug, Default)]
-pub struct BoaLayoutRuntime {
+#[derive(Debug)]
+pub struct BoaLayoutRuntime<L = InlineLayoutSourceLoader> {
     contract: LayoutModuleContract,
+    loader: L,
 }
 
-impl BoaLayoutRuntime {
+impl Default for BoaLayoutRuntime<InlineLayoutSourceLoader> {
+    fn default() -> Self {
+        Self {
+            contract: LayoutModuleContract::default(),
+            loader: InlineLayoutSourceLoader,
+        }
+    }
+}
+
+impl BoaLayoutRuntime<InlineLayoutSourceLoader> {
     pub fn new() -> Self {
         Self::default()
     }
+}
 
+impl<L> BoaLayoutRuntime<L> {
+    pub fn with_loader(loader: L) -> Self {
+        Self {
+            contract: LayoutModuleContract::default(),
+            loader,
+        }
+    }
+}
+
+impl<L> BoaLayoutRuntime<L> {
     pub fn evaluate_module_source(
         &self,
         selected_layout: &SelectedLayout,
@@ -294,11 +315,11 @@ impl LayoutRuntime for StubLayoutRuntime {
 
     fn evaluate_layout(
         &self,
-        selected_layout: &SelectedLayout,
+        loaded_layout: &LoadedLayout,
         _context: &LayoutEvaluationContext,
     ) -> Result<SourceLayoutNode, LayoutRuntimeError> {
         Err(LayoutRuntimeError::NotImplemented {
-            name: selected_layout.name.clone(),
+            name: loaded_layout.selected.name.clone(),
         })
     }
 
@@ -310,12 +331,17 @@ impl LayoutRuntime for StubLayoutRuntime {
         &self,
         config: &Config,
         workspace: &spiders_shared::wm::WorkspaceSnapshot,
-    ) -> Result<Option<SelectedLayout>, LayoutRuntimeError> {
-        Ok(config.resolve_selected_layout(workspace)?)
+    ) -> Result<Option<LoadedLayout>, LayoutRuntimeError> {
+        Ok(config
+            .resolve_selected_layout(workspace)?
+            .map(|selected| LoadedLayout {
+                selected,
+                runtime_source: String::new(),
+            }))
     }
 }
 
-impl LayoutRuntime for BoaLayoutRuntime {
+impl<L: LayoutSourceLoader> LayoutRuntime for BoaLayoutRuntime<L> {
     fn selected_layout(
         &self,
         config: &Config,
@@ -335,16 +361,14 @@ impl LayoutRuntime for BoaLayoutRuntime {
 
     fn evaluate_layout(
         &self,
-        selected_layout: &SelectedLayout,
+        loaded_layout: &LoadedLayout,
         context: &LayoutEvaluationContext,
     ) -> Result<SourceLayoutNode, LayoutRuntimeError> {
-        let source = selected_layout.runtime_source.as_deref().ok_or_else(|| {
-            LayoutRuntimeError::NotImplemented {
-                name: selected_layout.name.clone(),
-            }
-        })?;
-
-        self.evaluate_module_source(selected_layout, context, source)
+        self.evaluate_module_source(
+            &loaded_layout.selected,
+            context,
+            &loaded_layout.runtime_source,
+        )
     }
 
     fn contract(&self) -> LayoutModuleContract {
@@ -355,8 +379,8 @@ impl LayoutRuntime for BoaLayoutRuntime {
         &self,
         config: &Config,
         workspace: &spiders_shared::wm::WorkspaceSnapshot,
-    ) -> Result<Option<SelectedLayout>, LayoutRuntimeError> {
-        Ok(InlineLayoutSourceLoader.load_runtime_source(config, workspace)?)
+    ) -> Result<Option<LoadedLayout>, LayoutRuntimeError> {
+        Ok(self.loader.load_runtime_source(config, workspace)?)
     }
 }
 
@@ -421,12 +445,15 @@ fn decode_meta(meta: JsAuthoredNodeMeta) -> AuthoredNodeMeta {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use spiders_shared::ids::{OutputId, WorkspaceId};
     use spiders_shared::wm::{
         LayoutRef, OutputSnapshot, OutputTransform, StateSnapshot, WorkspaceSnapshot,
     };
 
     use super::*;
+    use crate::loader::FsLayoutSourceLoader;
     use crate::model::{Config, LayoutDefinition};
 
     fn workspace() -> WorkspaceSnapshot {
@@ -473,7 +500,6 @@ mod tests {
                 name: "master-stack".into(),
                 module: "layouts/master-stack.js".into(),
                 stylesheet: "workspace { display: flex; }".into(),
-                runtime_source: None,
             }],
             ..Config::default()
         };
@@ -483,7 +509,7 @@ mod tests {
         let context = runtime.build_context(&state(), &workspace, selected.clone());
 
         assert_eq!(selected.unwrap().module, "layouts/master-stack.js");
-        assert_eq!(loaded.unwrap().module, "layouts/master-stack.js");
+        assert_eq!(loaded.unwrap().selected.module, "layouts/master-stack.js");
         assert_eq!(context.space.width, 1920.0);
         assert_eq!(context.workspace.id, WorkspaceId::from("ws-1"));
     }
@@ -493,11 +519,13 @@ mod tests {
         let runtime = StubLayoutRuntime;
         let error = runtime
             .evaluate_layout(
-                &SelectedLayout {
-                    name: "master-stack".into(),
-                    module: "layouts/master-stack.js".into(),
-                    stylesheet: "workspace { display: flex; }".into(),
-                    runtime_source: None,
+                &LoadedLayout {
+                    selected: SelectedLayout {
+                        name: "master-stack".into(),
+                        module: "layouts/master-stack.js".into(),
+                        stylesheet: "workspace { display: flex; }".into(),
+                    },
+                    runtime_source: String::new(),
                 },
                 &state().layout_context(&workspace(), None),
             )
@@ -543,7 +571,6 @@ mod tests {
                     name: "master-stack".into(),
                     module: "layouts/master-stack.js".into(),
                     stylesheet: String::new(),
-                    runtime_source: None,
                 },
                 &state().layout_context(&workspace(), None),
                 "undefined",
@@ -568,7 +595,6 @@ mod tests {
                     name: "master-stack".into(),
                     module: "layouts/master-stack.js".into(),
                     stylesheet: String::new(),
-                    runtime_source: None,
                 },
                 &state().layout_context(&workspace(), None),
                 "({ type: 'workspace', children: [] })",
@@ -593,7 +619,6 @@ mod tests {
                     name: "master-stack".into(),
                     module: "layouts/master-stack.js".into(),
                     stylesheet: String::new(),
-                    runtime_source: None,
                 },
                 &state().layout_context(&workspace(), None),
                 "ctx => ({ type: 'workspace', children: [{ type: 'window', match: 'app_id=\"firefox\"' }] })",
@@ -612,7 +637,6 @@ mod tests {
                     name: "master-stack".into(),
                     module: "layouts/master-stack.js".into(),
                     stylesheet: String::new(),
-                    runtime_source: None,
                 },
                 &state().layout_context(&workspace(), None),
                 "ctx => ({ type: 'workspace', children: [{ type: 'slot', id: 'rest', class: ['stack'], data: { role: 'secondary' }, take: 2 }] })",
@@ -642,7 +666,6 @@ mod tests {
                     name: "master-stack".into(),
                     module: "layouts/master-stack.js".into(),
                     stylesheet: String::new(),
-                    runtime_source: None,
                 },
                 &state().layout_context(&workspace(), None),
                 "ctx => ({ children: [] })",
@@ -658,13 +681,14 @@ mod tests {
     #[test]
     fn boa_runtime_uses_runtime_source_not_module_path() {
         let runtime = BoaLayoutRuntime::new();
-        let selected_layout = SelectedLayout {
-            name: "master-stack".into(),
-            module: "layouts/master-stack.js".into(),
-            stylesheet: String::new(),
-            runtime_source: Some(
+        let selected_layout = LoadedLayout {
+            selected: SelectedLayout {
+                name: "master-stack".into(),
+                module: "layouts/master-stack.js".into(),
+                stylesheet: String::new(),
+            },
+            runtime_source:
                 "ctx => ({ type: 'workspace', children: [{ type: 'window', id: 'main' }] })".into(),
-            ),
         };
 
         let layout = runtime
@@ -685,17 +709,51 @@ mod tests {
                 name: "master-stack".into(),
                 module: "layouts/master-stack.js".into(),
                 stylesheet: String::new(),
-                runtime_source: Some("ctx => ({ type: 'workspace', children: [] })".into()),
             }],
             ..Config::default()
         };
 
-        let selected = runtime
+        let error = runtime
+            .load_selected_layout(&config, &workspace())
+            .unwrap_err();
+
+        assert!(matches!(error, LayoutRuntimeError::Load(_)));
+    }
+
+    #[test]
+    fn boa_runtime_service_works_with_filesystem_loader() {
+        let temp_dir = std::env::temp_dir();
+        let module_path = temp_dir.join("spiders-runtime-service-test.js");
+        fs::write(
+            &module_path,
+            "ctx => ({ type: 'workspace', children: [{ type: 'window', id: 'main' }] })",
+        )
+        .unwrap();
+
+        let runtime = BoaLayoutRuntime::with_loader(FsLayoutSourceLoader);
+        let config = Config {
+            layouts: vec![LayoutDefinition {
+                name: "master-stack".into(),
+                module: module_path.to_string_lossy().into_owned(),
+                stylesheet: String::new(),
+            }],
+            ..Config::default()
+        };
+
+        let loaded = runtime
             .load_selected_layout(&config, &workspace())
             .unwrap()
             .unwrap();
+        let layout = runtime
+            .evaluate_layout(
+                &loaded,
+                &state().layout_context(&workspace(), Some(loaded.selected.clone())),
+            )
+            .unwrap();
 
-        assert_eq!(selected.module, "layouts/master-stack.js");
-        assert!(selected.runtime_source.is_some());
+        assert_eq!(loaded.selected.name, "master-stack");
+        assert!(matches!(layout, SourceLayoutNode::Workspace { .. }));
+
+        let _ = fs::remove_file(module_path);
     }
 }

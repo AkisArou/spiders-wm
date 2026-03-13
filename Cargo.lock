@@ -1060,6 +1060,7 @@ dependencies = [
 name = "spiders-config"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "boa_engine",
  "serde",
  "serde_json",

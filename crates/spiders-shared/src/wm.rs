@@ -34,8 +34,12 @@ pub struct SelectedLayout {
     pub name: String,
     pub module: String,
     pub stylesheet: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub runtime_source: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LoadedLayout {
+    pub selected: SelectedLayout,
+    pub runtime_source: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -251,7 +255,6 @@ mod tests {
                 name: "master-stack".into(),
                 module: "layouts/master-stack.js".into(),
                 stylesheet: "workspace { display: flex; }".into(),
-                runtime_source: None,
             }),
         );
 

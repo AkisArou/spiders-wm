@@ -105,8 +105,11 @@ impl LayoutService {
         let Some(selected_layout) = runtime.selected_layout(config, workspace)? else {
             return Ok(None);
         };
+        let Some(loaded_layout) = runtime.load_selected_layout(config, workspace)? else {
+            return Ok(None);
+        };
         let context = runtime.build_context(state, workspace, Some(selected_layout.clone()));
-        let source = runtime.evaluate_layout(&selected_layout, &context)?;
+        let source = runtime.evaluate_layout(&loaded_layout, &context)?;
         let validated = ValidatedLayoutTree::new(source)?;
         let resolved = validated.resolve(windows)?;
         let request = build_request_from_context(context, selected_layout, resolved.root);
@@ -145,6 +148,8 @@ pub fn crate_ready() -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use spiders_shared::ids::WindowId;
     use spiders_shared::ids::{OutputId, WorkspaceId};
     use spiders_shared::layout::{
@@ -278,7 +283,6 @@ mod tests {
                 name: "master-stack".into(),
                 module: "layouts/master-stack.js".into(),
                 stylesheet: "workspace { display: flex; }".into(),
-                runtime_source: None,
             }],
             ..Config::default()
         };
@@ -330,7 +334,6 @@ mod tests {
                 name: "master-stack".into(),
                 module: "layouts/master-stack.js".into(),
                 stylesheet: "workspace { display: flex; }".into(),
-                runtime_source: None,
             }],
             ..Config::default()
         };
@@ -384,13 +387,21 @@ mod tests {
     #[test]
     fn layout_service_evaluates_js_layout_and_computes_geometry() {
         let service = LayoutService;
-        let runtime = spiders_config::runtime::BoaLayoutRuntime::new();
+        let temp_dir = std::env::temp_dir();
+        let module_path = temp_dir.join("spiders-compositor-layout-test.js");
+        fs::write(
+            &module_path,
+            "ctx => ({ type: 'workspace', children: [{ type: 'window', id: 'main', match: 'app_id=\"firefox\"' }, { type: 'slot', id: 'rest', class: ['rest'] }] })",
+        )
+        .unwrap();
+        let runtime = spiders_config::runtime::BoaLayoutRuntime::with_loader(
+            spiders_config::loader::FsLayoutSourceLoader,
+        );
         let config = Config {
             layouts: vec![spiders_config::model::LayoutDefinition {
                 name: "master-stack".into(),
-                module: "layouts/master-stack.js".into(),
+                module: module_path.to_string_lossy().into_owned(),
                 stylesheet: "workspace { display: flex; flex-direction: row; width: 800px; height: 600px; } #main { width: 250px; } .rest { flex-grow: 1; }".into(),
-                runtime_source: Some("ctx => ({ type: 'workspace', children: [{ type: 'window', id: 'main', match: 'app_id=\"firefox\"' }, { type: 'slot', id: 'rest', class: ['rest'] }] })".into()),
             }],
             ..Config::default()
         };
@@ -473,5 +484,7 @@ mod tests {
         assert_eq!(main.rect().width, 250.0);
         assert_eq!(rest.rect().x, 250.0);
         assert_eq!(rest.rect().width, 550.0);
+
+        let _ = fs::remove_file(module_path);
     }
 }

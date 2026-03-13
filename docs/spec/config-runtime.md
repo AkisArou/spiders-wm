@@ -70,6 +70,10 @@ The preferred runtime architecture is to resolve `module` to loaded source via a
 explicit loader boundary, rather than teaching every runtime consumer how to
 discover or fetch source text.
 
+An inline-source loader is acceptable for tests and bootstrap code, but the
+runtime direction should be a filesystem- or artifact-backed loader that reads
+compiled JavaScript from the resolved module path.
+
 `WorkspaceSnapshot.effective_layout.name` selects one of these definitions. Rust
 then builds a `LayoutRequest` using the selected definition's stylesheet and the
 workspace/output geometry.
@@ -79,7 +83,10 @@ The selected runtime payload should be representable as shared data with at leas
 - `name`
 - `module`
 - `stylesheet`
-- `runtime_source?`
+
+Loaded runtime artifacts should be represented separately from static config
+definitions. A config-selected layout identifies what to load; a runtime-loaded
+layout artifact carries the resolved compiled source.
 
 State-driven orchestration should be able to derive the current workspace and
 output from `StateSnapshot`, resolve the selected layout definition, and build a
