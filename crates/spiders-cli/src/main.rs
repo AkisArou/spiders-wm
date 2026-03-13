@@ -2,7 +2,10 @@ mod bootstrap;
 mod report;
 
 use bootstrap::CliBootstrap;
-use report::{emit, BootstrapReport, DiscoveryReport, ErrorReport, OutputMode, SuccessCheckReport};
+use report::{
+    emit, BootstrapFailureReport, BootstrapReport, DiscoveryReport, ErrorReport, OutputMode,
+    SuccessCheckReport,
+};
 
 #[derive(Debug, Clone)]
 struct CliContext {
@@ -42,16 +45,23 @@ fn main() -> std::process::ExitCode {
     } else {
         OutputMode::Text
     };
+    let events_path = arg_value(&args, "--events");
 
     let cli = CliContext::new();
 
     if bootstrap_trace {
-        bootstrap_trace_command(&cli, output_mode)
+        bootstrap_trace_command(&cli, output_mode, events_path)
     } else if check_config {
         check_config_command(&cli, output_mode)
     } else {
         print_discovery(&cli, output_mode)
     }
+}
+
+fn arg_value<'a>(args: &'a [String], flag: &str) -> Option<&'a str> {
+    args.windows(2)
+        .find(|window| window[0] == flag)
+        .map(|window| window[1].as_str())
 }
 
 fn print_discovery(cli: &CliContext, output_mode: OutputMode) -> std::process::ExitCode {
@@ -210,7 +220,11 @@ fn check_config_command(cli: &CliContext, output_mode: OutputMode) -> std::proce
     }
 }
 
-fn bootstrap_trace_command(cli: &CliContext, output_mode: OutputMode) -> std::process::ExitCode {
+fn bootstrap_trace_command(
+    cli: &CliContext,
+    output_mode: OutputMode,
+    events_path: Option<&str>,
+) -> std::process::ExitCode {
     let bootstrap = match cli.bootstrap() {
         Ok(bootstrap) => bootstrap,
         Err(error) => {
@@ -250,7 +264,7 @@ fn bootstrap_trace_command(cli: &CliContext, output_mode: OutputMode) -> std::pr
     };
 
     let state = synthetic_bootstrap_state();
-    let runner = match spiders_compositor::BootstrapRunner::initialize(
+    let mut runner = match spiders_compositor::BootstrapRunner::initialize(
         spiders_compositor::LayoutService,
         bootstrap.service,
         config,
@@ -273,6 +287,72 @@ fn bootstrap_trace_command(cli: &CliContext, output_mode: OutputMode) -> std::pr
             return std::process::ExitCode::from(1);
         }
     };
+
+    if let Some(events_path) = events_path {
+        let events = match std::fs::read_to_string(events_path) {
+            Ok(contents) => {
+                match serde_json::from_str::<Vec<spiders_compositor::BootstrapEvent>>(&contents) {
+                    Ok(events) => events,
+                    Err(error) => {
+                        emit(
+                            output_mode,
+                            &ErrorReport {
+                                status: "error",
+                                phase: "script",
+                                runtime_ready: cli.ready,
+                                runtime_config: Some(
+                                    bootstrap.paths.runtime_config.display().to_string(),
+                                ),
+                                errors: None,
+                                message: Some(error.to_string()),
+                            },
+                            || format!("bootstrap trace script parse error: {error}"),
+                        );
+                        return std::process::ExitCode::from(1);
+                    }
+                }
+            }
+            Err(error) => {
+                emit(
+                    output_mode,
+                    &ErrorReport {
+                        status: "error",
+                        phase: "script",
+                        runtime_ready: cli.ready,
+                        runtime_config: Some(bootstrap.paths.runtime_config.display().to_string()),
+                        errors: None,
+                        message: Some(error.to_string()),
+                    },
+                    || format!("bootstrap trace script read error: {error}"),
+                );
+                return std::process::ExitCode::from(1);
+            }
+        };
+
+        if let Err(trace) = runner.apply_events_with_trace(events) {
+            emit(
+                output_mode,
+                &BootstrapFailureReport {
+                    status: "error",
+                    runtime_ready: cli.ready,
+                    authored_config: bootstrap.paths.authored_config.display().to_string(),
+                    runtime_config: bootstrap.paths.runtime_config.display().to_string(),
+                    error: trace.error.clone(),
+                    failed_event: trace.failed_event,
+                    applied_events: trace.applied_events.len(),
+                    diagnostics: trace.diagnostics,
+                },
+                || {
+                    format!(
+                        "bootstrap trace failed after {} events: {}",
+                        trace.applied_events.len(),
+                        trace.error
+                    )
+                },
+            );
+            return std::process::ExitCode::from(1);
+        }
+    }
 
     let trace = runner.trace();
     let current_workspace = trace.diagnostics.current_workspace.clone();

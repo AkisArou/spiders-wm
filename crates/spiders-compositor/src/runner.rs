@@ -16,13 +16,22 @@ pub enum BootstrapRunnerError {
     Topology(#[from] TopologyError),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct BootstrapFailureTrace {
+    pub startup: StartupRegistration,
+    pub applied_events: Vec<BootstrapEvent>,
+    pub failed_event: Option<BootstrapEvent>,
+    pub diagnostics: Option<BootstrapDiagnostics>,
+    pub error: String,
+}
+
 #[derive(Debug)]
 pub struct BootstrapRunner<L, R> {
     app: CompositorApp<L, R>,
     applied_events: Vec<BootstrapEvent>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct BootstrapDiagnostics {
     pub active_seat: Option<String>,
     pub active_output: Option<OutputId>,
@@ -34,7 +43,7 @@ pub struct BootstrapDiagnostics {
     pub mapped_surface_count: usize,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct BootstrapRunTrace {
     pub startup: StartupRegistration,
     pub applied_events: Vec<BootstrapEvent>,
@@ -90,6 +99,20 @@ impl<L, R> BootstrapRunner<L, R> {
             diagnostics: self.diagnostics(),
         }
     }
+
+    pub fn failure_trace(
+        &self,
+        failed_event: Option<BootstrapEvent>,
+        error: impl ToString,
+    ) -> BootstrapFailureTrace {
+        BootstrapFailureTrace {
+            startup: self.app.startup.clone(),
+            applied_events: self.applied_events.clone(),
+            failed_event,
+            diagnostics: Some(self.diagnostics()),
+            error: error.to_string(),
+        }
+    }
 }
 
 impl<L: spiders_config::loader::LayoutSourceLoader, R: LayoutRuntime> BootstrapRunner<L, R> {
@@ -130,12 +153,30 @@ impl<L: spiders_config::loader::LayoutSourceLoader, R: LayoutRuntime> BootstrapR
         Ok(())
     }
 
+    pub fn apply_event_with_trace(
+        &mut self,
+        event: BootstrapEvent,
+    ) -> Result<(), BootstrapFailureTrace> {
+        self.apply_event(event.clone())
+            .map_err(|error| self.failure_trace(Some(event), error))
+    }
+
     pub fn apply_events<I>(&mut self, events: I) -> Result<(), BootstrapRunnerError>
     where
         I: IntoIterator<Item = BootstrapEvent>,
     {
         for event in events {
             self.apply_event(event)?;
+        }
+        Ok(())
+    }
+
+    pub fn apply_events_with_trace<I>(&mut self, events: I) -> Result<(), BootstrapFailureTrace>
+    where
+        I: IntoIterator<Item = BootstrapEvent>,
+    {
+        for event in events {
+            self.apply_event_with_trace(event)?;
         }
         Ok(())
     }
@@ -363,6 +404,37 @@ mod tests {
         assert_eq!(
             runner.trace().startup.active_seat.as_deref(),
             Some("seat-a")
+        );
+    }
+
+    #[test]
+    fn runner_reports_failure_trace_with_partial_progress() {
+        let mut runner = runner();
+
+        let error = runner
+            .apply_events_with_trace(vec![
+                BootstrapEvent::RegisterSeat {
+                    seat_name: "seat-1".into(),
+                    active: true,
+                },
+                BootstrapEvent::RemoveOutput {
+                    output_id: OutputId::from("missing-output"),
+                },
+            ])
+            .unwrap_err();
+
+        assert_eq!(error.applied_events.len(), 1);
+        assert!(matches!(
+            error.failed_event,
+            Some(BootstrapEvent::RemoveOutput { .. })
+        ));
+        assert!(error.error.contains("output not found"));
+        assert_eq!(
+            error
+                .diagnostics
+                .as_ref()
+                .and_then(|diagnostics| diagnostics.active_seat.as_deref()),
+            Some("seat-1")
         );
     }
 }

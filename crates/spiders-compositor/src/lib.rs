@@ -45,7 +45,10 @@ pub trait LayoutEngine {
 pub struct LayoutService;
 
 pub use app::{BootstrapEvent, CompositorApp, StartupRegistration};
-pub use runner::{BootstrapDiagnostics, BootstrapRunTrace, BootstrapRunner, BootstrapRunnerError};
+pub use runner::{
+    BootstrapDiagnostics, BootstrapFailureTrace, BootstrapRunTrace, BootstrapRunner,
+    BootstrapRunnerError,
+};
 pub use runtime::{CompositorRuntimeState, WorkspaceLayoutState};
 pub use session::{CompositorSession, SessionUpdate};
 pub use startup::{

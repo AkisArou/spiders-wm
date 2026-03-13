@@ -81,6 +81,8 @@ Current implementation note:
   inspect startup state without backend integration
 - those diagnostics can include active seat/output plus stable workspace/window
   ids, keeping bootstrap inspection aligned with snapshot semantics
+- failure traces should preserve partial progress plus the failed typed event so
+  bootstrap debugging stays deterministic and backend-agnostic
 - session operations return a typed `SessionUpdate` containing emitted events,
   relayout status, and the current computed layout snapshot
 - lower-level action helpers are internal support code, not the intended outer

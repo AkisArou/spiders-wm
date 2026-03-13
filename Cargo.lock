@@ -1052,6 +1052,7 @@ dependencies = [
 name = "spiders-compositor"
 version = "0.1.0"
 dependencies = [
+ "serde",
  "spiders-config",
  "spiders-effects",
  "spiders-ipc",

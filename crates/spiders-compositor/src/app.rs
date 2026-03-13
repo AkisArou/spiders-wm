@@ -8,7 +8,8 @@ use crate::session::CompositorSession;
 use crate::topology::{CompositorTopologyState, SurfaceState, TopologyError};
 use crate::{CompositorLayoutError, LayoutService};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum BootstrapEvent {
     RegisterSeat {
         seat_name: String,
@@ -65,7 +66,7 @@ pub enum BootstrapEvent {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct StartupRegistration {
     pub seats: Vec<String>,
     pub outputs: Vec<OutputId>,

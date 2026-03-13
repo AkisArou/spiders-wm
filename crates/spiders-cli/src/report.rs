@@ -52,6 +52,19 @@ pub struct BootstrapReport {
     pub applied_events: usize,
 }
 
+#[derive(Debug, Serialize, PartialEq, Eq)]
+pub struct BootstrapFailureReport {
+    pub status: &'static str,
+    pub runtime_ready: bool,
+    pub authored_config: String,
+    pub runtime_config: String,
+    pub error: String,
+    pub failed_event: Option<spiders_compositor::BootstrapEvent>,
+    pub applied_events: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub diagnostics: Option<spiders_compositor::BootstrapDiagnostics>,
+}
+
 pub fn emit<T: Serialize>(mode: OutputMode, report: &T, text: impl FnOnce() -> String) {
     match mode {
         OutputMode::Text => println!("{}", text()),
@@ -106,5 +119,26 @@ mod tests {
         assert_eq!(json["active_seat"], "seat-0");
         assert_eq!(json["current_workspace"], "ws-1");
         assert_eq!(json["focused_window"], "w1");
+    }
+
+    #[test]
+    fn bootstrap_failure_report_serializes_failed_event() {
+        let report = BootstrapFailureReport {
+            status: "error",
+            runtime_ready: true,
+            authored_config: "/tmp/authored.js".into(),
+            runtime_config: "/tmp/runtime.json".into(),
+            error: "boom".into(),
+            failed_event: Some(spiders_compositor::BootstrapEvent::RemoveOutput {
+                output_id: spiders_shared::ids::OutputId::from("out-9"),
+            }),
+            applied_events: 1,
+            diagnostics: None,
+        };
+
+        let json = serde_json::to_value(report).unwrap();
+
+        assert_eq!(json["status"], "error");
+        assert_eq!(json["failed_event"]["remove-output"]["output_id"], "out-9");
     }
 }
