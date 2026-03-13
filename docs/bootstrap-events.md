@@ -6,6 +6,9 @@ with `--events <path>`.
 This is a backend-agnostic way to simulate startup discovery and teardown before
 any real compositor backend loop exists.
 
+For the broader bootstrap/runtime architecture, see
+`docs/spec/compositor-bootstrap.md`.
+
 ## Example
 
 ```json

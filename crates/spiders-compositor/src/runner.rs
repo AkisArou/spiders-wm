@@ -5,6 +5,7 @@ use spiders_shared::ids::OutputId;
 use spiders_shared::wm::StateSnapshot;
 
 use crate::app::{BootstrapEvent, CompositorApp, StartupRegistration};
+use crate::scenario::BootstrapScenario;
 use crate::topology::TopologyError;
 use crate::{CompositorLayoutError, LayoutService};
 
@@ -212,6 +213,20 @@ impl<L: spiders_config::loader::LayoutSourceLoader, R: LayoutRuntime> BootstrapR
             self.apply_event_with_trace(event)?;
         }
         Ok(())
+    }
+
+    pub fn apply_scenario(
+        &mut self,
+        scenario: BootstrapScenario,
+    ) -> Result<(), BootstrapRunnerError> {
+        self.apply_events(scenario.into_events())
+    }
+
+    pub fn apply_scenario_with_trace(
+        &mut self,
+        scenario: BootstrapScenario,
+    ) -> Result<(), BootstrapFailureTrace> {
+        self.apply_events_with_trace(scenario.into_events())
     }
 }
 
@@ -475,5 +490,44 @@ mod tests {
                 .and_then(|diagnostics| diagnostics.active_seat.as_deref()),
             Some("seat-1")
         );
+    }
+
+    #[test]
+    fn runner_applies_in_memory_scenario() {
+        let mut runner = runner();
+        runner
+            .app_mut()
+            .session
+            .register_output_snapshot(OutputSnapshot {
+                id: OutputId::from("out-2"),
+                name: "DP-1".into(),
+                logical_width: 2560,
+                logical_height: 1440,
+                scale: 1,
+                transform: OutputTransform::Normal,
+                enabled: true,
+                current_workspace_id: None,
+            });
+
+        let scenario = BootstrapScenario::new()
+            .register_seat("seat-1", true)
+            .register_window_surface("window-w1", "w1", Some(OutputId::from("out-1")))
+            .register_popup_surface("popup-1", Some(OutputId::from("out-1")), "window-w1")
+            .move_surface_to_output("popup-1", "out-2")
+            .unmap_surface("popup-1");
+
+        runner.apply_scenario(scenario).unwrap();
+
+        let trace = runner.trace();
+        assert_eq!(trace.applied_events.len(), 5);
+        assert!(trace.diagnostics.seat_names.contains(&"seat-1".to_string()));
+        assert!(trace
+            .diagnostics
+            .surface_ids
+            .contains(&"popup-1".to_string()));
+        assert!(!trace
+            .diagnostics
+            .mapped_surface_ids
+            .contains(&"popup-1".to_string()));
     }
 }

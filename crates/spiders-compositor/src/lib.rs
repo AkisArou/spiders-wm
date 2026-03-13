@@ -2,6 +2,7 @@ pub mod actions;
 pub mod app;
 pub mod runner;
 pub mod runtime;
+pub mod scenario;
 pub mod session;
 pub mod startup;
 pub mod topology;
@@ -50,6 +51,7 @@ pub use runner::{
     BootstrapRunnerError,
 };
 pub use runtime::{CompositorRuntimeState, WorkspaceLayoutState};
+pub use scenario::BootstrapScenario;
 pub use session::{CompositorSession, SessionUpdate};
 pub use startup::{
     StartupConfig, StartupLayoutState, StartupRuntime, StartupSequence, StartupSession,

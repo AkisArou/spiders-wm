@@ -60,6 +60,8 @@ This layer is the source of truth for runtime state exposed to config and IPC.
 
 Current implementation note:
 
+See also: `docs/spec/compositor-bootstrap.md`
+
 - `spiders-compositor` is converging on `CompositorSession` as the primary runtime
   orchestration boundary
 - `CompositorSession` owns WM state plus compositor-owned layout/runtime state
