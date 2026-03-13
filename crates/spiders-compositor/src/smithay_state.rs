@@ -1,6 +1,6 @@
 #[cfg(feature = "smithay-winit")]
 mod imp {
-    use std::collections::HashSet;
+    use std::collections::{HashMap, HashSet};
 
     use crate::backend::{BackendDiscoveryEvent, BackendSurfaceSnapshot};
     use smithay::delegate_compositor;
@@ -54,6 +54,8 @@ mod imp {
         pub seat_state: SeatState<Self>,
         pub seat: Seat<Self>,
         pub seat_name: String,
+        next_window_serial: u64,
+        toplevel_window_ids: HashMap<String, WindowId>,
         tracked_surfaces: HashSet<String>,
         pending_discovery_events: Vec<BackendDiscoveryEvent>,
     }
@@ -81,6 +83,8 @@ mod imp {
                 seat_state,
                 seat,
                 seat_name,
+                next_window_serial: 1,
+                toplevel_window_ids: HashMap::new(),
                 tracked_surfaces: HashSet::new(),
                 pending_discovery_events: Vec::new(),
             })
@@ -119,8 +123,9 @@ mod imp {
 
         fn track_toplevel_surface(&mut self, surface: &WlSurface) {
             let surface_id = smithay_surface_id(surface);
+            let window_id = self.window_id_for_surface(&surface_id);
             self.track_surface_snapshot(BackendSurfaceSnapshot::Window {
-                window_id: WindowId::from(format!("window-{surface_id}")),
+                window_id,
                 surface_id,
                 output_id: None,
             });
@@ -142,11 +147,25 @@ mod imp {
         }
 
         fn track_toplevel_surface_loss(&mut self, surface: &ToplevelSurface) {
-            self.track_surface_loss_by_id(smithay_surface_id(surface.wl_surface()));
+            let surface_id = smithay_surface_id(surface.wl_surface());
+            self.toplevel_window_ids.remove(&surface_id);
+            self.track_surface_loss_by_id(surface_id);
         }
 
         fn track_popup_surface_loss(&mut self, surface: &PopupSurface) {
             self.track_surface_loss_by_id(smithay_surface_id(surface.wl_surface()));
+        }
+
+        fn window_id_for_surface(&mut self, surface_id: &str) -> WindowId {
+            if let Some(window_id) = self.toplevel_window_ids.get(surface_id) {
+                return window_id.clone();
+            }
+
+            let window_id = WindowId::from(format!("smithay-window-{}", self.next_window_serial));
+            self.next_window_serial += 1;
+            self.toplevel_window_ids
+                .insert(surface_id.to_owned(), window_id.clone());
+            window_id
         }
     }
 
@@ -302,12 +321,12 @@ mod imp {
 
             state.track_surface_snapshot(BackendSurfaceSnapshot::Window {
                 surface_id: "wl-surface-11".into(),
-                window_id: WindowId::from("window-wl-surface-11"),
+                window_id: WindowId::from("smithay-window-1"),
                 output_id: None,
             });
             state.track_surface_snapshot(BackendSurfaceSnapshot::Window {
                 surface_id: "wl-surface-11".into(),
-                window_id: WindowId::from("window-wl-surface-11"),
+                window_id: WindowId::from("smithay-window-1"),
                 output_id: None,
             });
             state.track_surface_loss_by_id("wl-surface-11".into());
@@ -324,6 +343,33 @@ mod imp {
                 BackendDiscoveryEvent::SurfaceLost { surface_id }
                     if surface_id == "wl-surface-11"
             ));
+        }
+
+        #[test]
+        fn smithay_state_assigns_stable_window_ids_per_surface() {
+            let display = Display::<SpidersSmithayState>::new().unwrap();
+            let mut state = SpidersSmithayState::new(&display, "test-seat").unwrap();
+
+            let first = state.window_id_for_surface("wl-surface-21");
+            let second = state.window_id_for_surface("wl-surface-21");
+            let third = state.window_id_for_surface("wl-surface-22");
+
+            assert_eq!(first, second);
+            assert_eq!(first, WindowId::from("smithay-window-1"));
+            assert_eq!(third, WindowId::from("smithay-window-2"));
+        }
+
+        #[test]
+        fn smithay_state_releases_window_id_mapping_when_surface_is_lost() {
+            let display = Display::<SpidersSmithayState>::new().unwrap();
+            let mut state = SpidersSmithayState::new(&display, "test-seat").unwrap();
+
+            let first = state.window_id_for_surface("wl-surface-31");
+            state.toplevel_window_ids.remove("wl-surface-31");
+            let second = state.window_id_for_surface("wl-surface-31");
+
+            assert_eq!(first, WindowId::from("smithay-window-1"));
+            assert_eq!(second, WindowId::from("smithay-window-2"));
         }
     }
 }
