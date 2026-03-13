@@ -104,6 +104,22 @@ impl<L, R> CompositorSession<L, R> {
         Ok(())
     }
 
+    pub fn unregister_output(&mut self, output_id: &OutputId) -> Result<(), TopologyError> {
+        self.topology.unregister_output(output_id)
+    }
+
+    pub fn unregister_seat(&mut self, seat_name: &str) -> Result<(), TopologyError> {
+        self.topology.unregister_seat(seat_name)
+    }
+
+    pub fn unregister_surface(&mut self, surface_id: &str) -> Result<(), TopologyError> {
+        self.topology.unregister_surface(surface_id)
+    }
+
+    pub fn unregister_window_surface(&mut self, window_id: &WindowId) -> Result<(), TopologyError> {
+        self.topology.unregister_window_surface(window_id)
+    }
+
     pub fn move_surface_to_output(
         &mut self,
         surface_id: &str,

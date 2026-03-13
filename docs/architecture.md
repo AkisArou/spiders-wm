@@ -73,6 +73,8 @@ Current implementation note:
   app/session boundary as pure topology updates before backend handles exist
 - backend discovery/bootstrap should be able to feed typed seat/output/surface
   events into that boundary without exposing raw backend objects
+- that event boundary should cover both registration and teardown/loss events so
+  backend churn does not leak directly into domain state handling
 - session operations return a typed `SessionUpdate` containing emitted events,
   relayout status, and the current computed layout snapshot
 - lower-level action helpers are internal support code, not the intended outer

@@ -9,6 +9,8 @@ pub enum TopologyError {
     SeatNotFound(String),
     #[error("surface not found: {0}")]
     SurfaceNotFound(String),
+    #[error("window surface not found for window: {0}")]
+    WindowSurfaceNotFound(WindowId),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -133,6 +135,75 @@ impl CompositorTopologyState {
         }
 
         self.seat(&seat_name).expect("seat was just inserted")
+    }
+
+    pub fn unregister_output(&mut self, output_id: &OutputId) -> Result<(), TopologyError> {
+        if !self
+            .outputs
+            .iter()
+            .any(|output| output.snapshot.id == *output_id)
+        {
+            return Err(TopologyError::OutputNotFound(output_id.clone()));
+        }
+
+        self.outputs
+            .retain(|output| output.snapshot.id != *output_id);
+        for surface in &mut self.surfaces {
+            if surface.output_id.as_ref() == Some(output_id) {
+                surface.output_id = None;
+            }
+        }
+        if self.active_output_id.as_ref() == Some(output_id) {
+            self.active_output_id = None;
+        }
+        for seat in &mut self.seats {
+            if seat.focused_output_id.as_ref() == Some(output_id) {
+                seat.focused_output_id = None;
+            }
+        }
+        Ok(())
+    }
+
+    pub fn unregister_seat(&mut self, seat_name: &str) -> Result<(), TopologyError> {
+        if !self.seats.iter().any(|seat| seat.name == seat_name) {
+            return Err(TopologyError::SeatNotFound(seat_name.to_owned()));
+        }
+
+        self.seats.retain(|seat| seat.name != seat_name);
+        if self.active_seat_name.as_deref() == Some(seat_name) {
+            self.active_seat_name = None;
+        }
+        Ok(())
+    }
+
+    pub fn unregister_surface(&mut self, surface_id: &str) -> Result<(), TopologyError> {
+        let surface = self
+            .surface(surface_id)
+            .cloned()
+            .ok_or_else(|| TopologyError::SurfaceNotFound(surface_id.to_owned()))?;
+
+        if let Some(output_id) = surface.output_id.as_ref() {
+            if let Some(output) = self
+                .outputs
+                .iter_mut()
+                .find(|output| output.snapshot.id == *output_id)
+            {
+                output.mapped_surface_ids.retain(|id| id != surface_id);
+            }
+        }
+
+        self.surfaces.retain(|entry| entry.id != surface_id);
+        Ok(())
+    }
+
+    pub fn unregister_window_surface(&mut self, window_id: &WindowId) -> Result<(), TopologyError> {
+        let surface_id = self
+            .surfaces
+            .iter()
+            .find(|surface| surface.window_id.as_ref() == Some(window_id))
+            .map(|surface| surface.id.clone())
+            .ok_or_else(|| TopologyError::WindowSurfaceNotFound(window_id.clone()))?;
+        self.unregister_surface(&surface_id)
     }
 
     pub fn activate_output(&mut self, output_id: &OutputId) -> Result<&OutputState, TopologyError> {
@@ -586,5 +657,92 @@ mod tests {
                 .mapped_surface_ids,
             vec!["layer-1".to_string()]
         );
+    }
+
+    #[test]
+    fn topology_unregisters_output_and_clears_links() {
+        let mut snapshot = state();
+        snapshot.outputs.push(OutputSnapshot {
+            id: OutputId::from("out-2"),
+            name: "DP-1".into(),
+            logical_width: 2560,
+            logical_height: 1440,
+            scale: 1,
+            transform: OutputTransform::Normal,
+            enabled: true,
+            current_workspace_id: None,
+        });
+        let mut topology = CompositorTopologyState::from_snapshot(&snapshot);
+        topology.register_seat("seat-0");
+        topology.activate_output(&OutputId::from("out-2")).unwrap();
+        topology
+            .focus_seat_window(
+                "seat-0",
+                Some(WindowId::from("w1")),
+                Some(OutputId::from("out-2")),
+            )
+            .unwrap();
+        topology
+            .register_surface(
+                "layer-1",
+                SurfaceRole::Layer,
+                Some(OutputId::from("out-2")),
+                None,
+            )
+            .unwrap();
+
+        topology
+            .unregister_output(&OutputId::from("out-2"))
+            .unwrap();
+
+        assert!(topology.output(&OutputId::from("out-2")).is_none());
+        assert_eq!(topology.active_output_id, None);
+        assert_eq!(topology.surface("layer-1").unwrap().output_id, None);
+        assert_eq!(topology.seat("seat-0").unwrap().focused_output_id, None);
+    }
+
+    #[test]
+    fn topology_unregisters_seats_and_surfaces() {
+        let mut topology = CompositorTopologyState::from_snapshot(&state());
+        topology.register_seat("seat-0");
+        topology.activate_seat("seat-0").unwrap();
+        topology
+            .map_window_surface(
+                "window-w1",
+                WindowId::from("w1"),
+                Some(OutputId::from("out-1")),
+            )
+            .unwrap();
+
+        topology.unregister_seat("seat-0").unwrap();
+        topology
+            .unregister_window_surface(&WindowId::from("w1"))
+            .unwrap();
+
+        assert!(topology.seat("seat-0").is_none());
+        assert!(topology.surface("window-w1").is_none());
+        assert_eq!(topology.active_seat_name, None);
+    }
+
+    #[test]
+    fn topology_unregisters_generic_surfaces() {
+        let mut topology = CompositorTopologyState::from_snapshot(&state());
+        topology
+            .register_surface(
+                "popup-1",
+                SurfaceRole::Popup,
+                Some(OutputId::from("out-1")),
+                None,
+            )
+            .unwrap();
+
+        topology.unregister_surface("popup-1").unwrap();
+
+        assert!(topology.surface("popup-1").is_none());
+        assert!(topology
+            .output(&OutputId::from("out-1"))
+            .unwrap()
+            .mapped_surface_ids
+            .is_empty());
     }
 }

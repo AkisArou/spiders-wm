@@ -18,6 +18,18 @@ pub enum BootstrapEvent {
         output_id: OutputId,
         active: bool,
     },
+    ActivateOutput {
+        output_id: OutputId,
+    },
+    EnableOutput {
+        output_id: OutputId,
+    },
+    DisableOutput {
+        output_id: OutputId,
+    },
+    RemoveOutput {
+        output_id: OutputId,
+    },
     RegisterWindowSurface {
         surface_id: String,
         window_id: WindowId,
@@ -35,12 +47,21 @@ pub enum BootstrapEvent {
     RegisterUnmanagedSurface {
         surface_id: String,
     },
+    RemoveSurface {
+        surface_id: String,
+    },
+    RemoveWindowSurface {
+        window_id: WindowId,
+    },
     MoveSurfaceToOutput {
         surface_id: String,
         output_id: OutputId,
     },
     UnmapSurface {
         surface_id: String,
+    },
+    RemoveSeat {
+        seat_name: String,
     },
 }
 
@@ -147,6 +168,22 @@ impl<L, R> CompositorApp<L, R> {
         self.session.enable_output(output_id)
     }
 
+    pub fn remove_output(&mut self, output_id: &OutputId) -> Result<(), TopologyError> {
+        self.session.unregister_output(output_id)
+    }
+
+    pub fn remove_seat(&mut self, seat_name: &str) -> Result<(), TopologyError> {
+        self.session.unregister_seat(seat_name)
+    }
+
+    pub fn remove_surface(&mut self, surface_id: &str) -> Result<(), TopologyError> {
+        self.session.unregister_surface(surface_id)
+    }
+
+    pub fn remove_window_surface(&mut self, window_id: &WindowId) -> Result<(), TopologyError> {
+        self.session.unregister_window_surface(window_id)
+    }
+
     pub fn apply_bootstrap_event(&mut self, event: BootstrapEvent) -> Result<(), TopologyError> {
         match event {
             BootstrapEvent::RegisterSeat { seat_name, active } => {
@@ -160,6 +197,18 @@ impl<L, R> CompositorApp<L, R> {
                 if active {
                     self.activate_output(&output_id)?;
                 }
+            }
+            BootstrapEvent::ActivateOutput { output_id } => {
+                self.activate_output(&output_id)?;
+            }
+            BootstrapEvent::EnableOutput { output_id } => {
+                self.enable_output(&output_id)?;
+            }
+            BootstrapEvent::DisableOutput { output_id } => {
+                self.disable_output(&output_id)?;
+            }
+            BootstrapEvent::RemoveOutput { output_id } => {
+                self.remove_output(&output_id)?;
             }
             BootstrapEvent::RegisterWindowSurface {
                 surface_id,
@@ -186,6 +235,12 @@ impl<L, R> CompositorApp<L, R> {
             BootstrapEvent::RegisterUnmanagedSurface { surface_id } => {
                 let _ = self.register_unmanaged_surface(surface_id)?;
             }
+            BootstrapEvent::RemoveSurface { surface_id } => {
+                self.remove_surface(&surface_id)?;
+            }
+            BootstrapEvent::RemoveWindowSurface { window_id } => {
+                self.remove_window_surface(&window_id)?;
+            }
             BootstrapEvent::MoveSurfaceToOutput {
                 surface_id,
                 output_id,
@@ -194,6 +249,9 @@ impl<L, R> CompositorApp<L, R> {
             }
             BootstrapEvent::UnmapSurface { surface_id } => {
                 self.unmap_surface(&surface_id)?;
+            }
+            BootstrapEvent::RemoveSeat { seat_name } => {
+                self.remove_seat(&seat_name)?;
             }
         }
 
@@ -558,6 +616,10 @@ mod tests {
             active: true,
         })
         .unwrap();
+        app.apply_bootstrap_event(BootstrapEvent::ActivateOutput {
+            output_id: OutputId::from("out-2"),
+        })
+        .unwrap();
         app.apply_bootstrap_event(BootstrapEvent::RegisterWindowSurface {
             surface_id: "window-w1".into(),
             window_id: WindowId::from("w1"),
@@ -584,12 +646,35 @@ mod tests {
             surface_id: "layer-1".into(),
         })
         .unwrap();
+        app.apply_bootstrap_event(BootstrapEvent::RemoveWindowSurface {
+            window_id: WindowId::from("w1"),
+        })
+        .unwrap();
+        app.apply_bootstrap_event(BootstrapEvent::DisableOutput {
+            output_id: OutputId::from("out-2"),
+        })
+        .unwrap();
+        app.apply_bootstrap_event(BootstrapEvent::EnableOutput {
+            output_id: OutputId::from("out-2"),
+        })
+        .unwrap();
+        app.apply_bootstrap_event(BootstrapEvent::RemoveSeat {
+            seat_name: "seat-1".into(),
+        })
+        .unwrap();
+        app.apply_bootstrap_event(BootstrapEvent::RemoveSurface {
+            surface_id: "popup-1".into(),
+        })
+        .unwrap();
+        app.apply_bootstrap_event(BootstrapEvent::RemoveOutput {
+            output_id: OutputId::from("out-2"),
+        })
+        .unwrap();
 
-        assert_eq!(app.topology().active_seat_name.as_deref(), Some("seat-1"));
-        assert_eq!(
-            app.topology().surface("popup-1").unwrap().output_id,
-            Some(OutputId::from("out-2"))
-        );
+        assert!(app.topology().seat("seat-1").is_none());
+        assert!(app.topology().surface("popup-1").is_none());
+        assert!(app.topology().surface("window-w1").is_none());
+        assert!(app.topology().output(&OutputId::from("out-2")).is_none());
         assert!(!app.topology().surface("layer-1").unwrap().mapped);
     }
 }

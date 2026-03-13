@@ -73,6 +73,8 @@ Compositor-domain note:
   seat focus, and surface attachment state
 - that topology layer should still use stable ids and snapshot-derived values,
   not raw backend handles, as its public/domain boundary
+- registration, activation, disable/enable, move, unmap, and removal events
+  should all be representable in typed backend-agnostic domain inputs
 
 ## Workspace Model
 
