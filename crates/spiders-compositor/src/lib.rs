@@ -2,6 +2,7 @@ pub mod actions;
 pub mod runtime;
 pub mod session;
 pub mod startup;
+pub mod topology;
 pub mod wm;
 
 use spiders_config::model::{Config, LayoutConfigError};
@@ -45,6 +46,9 @@ pub use runtime::{CompositorRuntimeState, WorkspaceLayoutState};
 pub use session::{CompositorSession, SessionUpdate};
 pub use startup::{
     StartupConfig, StartupLayoutState, StartupRuntime, StartupSequence, StartupSession,
+};
+pub use topology::{
+    CompositorTopologyState, OutputState, SeatState, SurfaceRole, SurfaceState, TopologyError,
 };
 pub use wm::{WmState, WmStateError};
 

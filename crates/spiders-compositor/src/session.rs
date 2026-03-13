@@ -2,11 +2,12 @@ use spiders_config::model::Config;
 use spiders_config::runtime::LayoutRuntime;
 use spiders_config::service::ConfigRuntimeService;
 use spiders_shared::api::{CompositorEvent, FocusDirection, WmAction};
-use spiders_shared::ids::WindowId;
+use spiders_shared::ids::{OutputId, WindowId};
 use spiders_shared::wm::{StateSnapshot, WindowSnapshot};
 
 use crate::actions::{apply_action, ActionError, ActionOutcome};
 use crate::runtime::{CompositorRuntimeState, WorkspaceLayoutState};
+use crate::topology::{CompositorTopologyState, SurfaceState, TopologyError};
 use crate::wm::WmState;
 use crate::{CompositorLayoutError, LayoutService};
 
@@ -14,6 +15,7 @@ use crate::{CompositorLayoutError, LayoutService};
 pub struct CompositorSession<L, R> {
     runtime: CompositorRuntimeState<L, R>,
     wm: WmState,
+    topology: CompositorTopologyState,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -21,11 +23,20 @@ pub struct SessionUpdate {
     pub events: Vec<CompositorEvent>,
     pub recomputed_layout: bool,
     pub current_layout: Option<WorkspaceLayoutState>,
+    pub topology: CompositorTopologyState,
 }
 
 impl<L, R> CompositorSession<L, R> {
-    pub fn new(runtime: CompositorRuntimeState<L, R>, wm: WmState) -> Self {
-        Self { runtime, wm }
+    pub fn new(
+        runtime: CompositorRuntimeState<L, R>,
+        wm: WmState,
+        topology: CompositorTopologyState,
+    ) -> Self {
+        Self {
+            runtime,
+            wm,
+            topology,
+        }
     }
 
     pub fn runtime(&self) -> &CompositorRuntimeState<L, R> {
@@ -43,6 +54,10 @@ impl<L, R> CompositorSession<L, R> {
     pub fn current_layout(&self) -> Option<&WorkspaceLayoutState> {
         self.runtime.current_layout()
     }
+
+    pub fn topology(&self) -> &CompositorTopologyState {
+        &self.topology
+    }
 }
 
 impl<L: spiders_config::loader::LayoutSourceLoader, R: LayoutRuntime> CompositorSession<L, R> {
@@ -59,8 +74,9 @@ impl<L: spiders_config::loader::LayoutSourceLoader, R: LayoutRuntime> Compositor
             state.clone(),
         )?;
         let wm = WmState::from_snapshot(state);
+        let topology = CompositorTopologyState::from_snapshot(wm.snapshot());
 
-        Ok(Self::new(runtime, wm))
+        Ok(Self::new(runtime, wm, topology))
     }
 
     pub fn apply_action(&mut self, action: &WmAction) -> Result<SessionUpdate, ActionError> {
@@ -76,10 +92,16 @@ impl<L: spiders_config::loader::LayoutSourceLoader, R: LayoutRuntime> Compositor
     }
 
     pub fn map_window(&mut self, window: WindowSnapshot) -> Result<SessionUpdate, ActionError> {
+        let output_id = window.output_id.clone();
+        let window_id = window.id.clone();
         let event = self.wm.map_window(window);
         self.runtime
             .update_from_wm_state(self.wm.snapshot().clone());
         self.runtime.recompute_current_layout()?;
+        let surface_id = format!("window-{window_id}");
+        self.topology
+            .map_window_surface(surface_id, window_id, output_id)
+            .map_err(map_topology_error)?;
         Ok(self.session_update(ActionOutcome {
             events: vec![event],
             recomputed_layout: true,
@@ -90,6 +112,8 @@ impl<L: spiders_config::loader::LayoutSourceLoader, R: LayoutRuntime> Compositor
         let event = self.wm.focus_window(window_id)?;
         self.runtime
             .update_from_wm_state(self.wm.snapshot().clone());
+        self.synchronize_topology_focus()
+            .map_err(map_topology_error)?;
         Ok(self.session_update(ActionOutcome {
             events: vec![event],
             recomputed_layout: false,
@@ -101,6 +125,16 @@ impl<L: spiders_config::loader::LayoutSourceLoader, R: LayoutRuntime> Compositor
         self.runtime
             .update_from_wm_state(self.wm.snapshot().clone());
         self.runtime.recompute_current_layout()?;
+        if let Some(surface) = self
+            .topology
+            .surfaces
+            .iter_mut()
+            .find(|surface| surface.window_id.as_ref() == Some(window_id))
+        {
+            surface.mapped = false;
+        }
+        self.synchronize_topology_focus()
+            .map_err(map_topology_error)?;
         Ok(self.session_update(ActionOutcome {
             events,
             recomputed_layout: true,
@@ -149,6 +183,28 @@ impl<L: spiders_config::loader::LayoutSourceLoader, R: LayoutRuntime> Compositor
         self.focus_window(&order[next_index])
     }
 
+    pub fn register_seat(&mut self, seat_name: impl Into<String>) -> &str {
+        let seat = self.topology.register_seat(seat_name);
+        &seat.name
+    }
+
+    pub fn register_output(&mut self, output_id: OutputId) -> Result<(), TopologyError> {
+        let output = self
+            .state()
+            .output_by_id(&output_id)
+            .cloned()
+            .ok_or_else(|| TopologyError::OutputNotFound(output_id.clone()))?;
+        self.topology.register_output(output);
+        Ok(())
+    }
+
+    pub fn window_surface(&self, window_id: &WindowId) -> Option<&SurfaceState> {
+        self.topology
+            .surfaces
+            .iter()
+            .find(|surface| surface.window_id.as_ref() == Some(window_id))
+    }
+
     fn focus_ordered_window_ids(&self) -> Vec<WindowId> {
         let mut ordered = Vec::new();
 
@@ -179,8 +235,30 @@ impl<L: spiders_config::loader::LayoutSourceLoader, R: LayoutRuntime> Compositor
             events: outcome.events,
             recomputed_layout: outcome.recomputed_layout,
             current_layout: self.runtime.current_layout().cloned(),
+            topology: self.topology.clone(),
         }
     }
+
+    fn synchronize_topology_focus(&mut self) -> Result<(), TopologyError> {
+        if self.topology.seat("seat-0").is_none() {
+            self.topology.register_seat("seat-0");
+        }
+
+        self.topology.focus_seat_window(
+            "seat-0",
+            self.state().focused_window_id.clone(),
+            self.state().current_output_id.clone(),
+        )?;
+        Ok(())
+    }
+}
+
+fn map_topology_error(error: TopologyError) -> ActionError {
+    ActionError::Layout(CompositorLayoutError::Runtime(
+        spiders_config::runtime::LayoutRuntimeError::JavaScript {
+            message: error.to_string(),
+        },
+    ))
 }
 
 #[cfg(test)]
@@ -328,7 +406,10 @@ mod tests {
         let runtime = BoaLayoutRuntime::with_loader(loader.clone());
         let service = ConfigRuntimeService::new(loader, runtime);
 
-        CompositorSession::initialize(LayoutService, service, config(), state()).unwrap()
+        let mut session =
+            CompositorSession::initialize(LayoutService, service, config(), state()).unwrap();
+        session.register_seat("seat-0");
+        session
     }
 
     #[test]
@@ -370,6 +451,7 @@ mod tests {
                 .and_then(|layout| layout.request.layout_name.as_deref()),
             Some("columns")
         );
+        assert!(update.topology.seat("seat-0").is_some());
     }
 
     #[test]
@@ -450,6 +532,10 @@ mod tests {
             .iter()
             .any(|window| window.id == WindowId::from("w3") && window.mapped));
         assert!(update.current_layout.is_some());
+        assert_eq!(
+            session.window_surface(&WindowId::from("w3")).unwrap().id,
+            "window-w3"
+        );
     }
 
     #[test]
@@ -468,6 +554,7 @@ mod tests {
             .windows
             .iter()
             .all(|window| window.id != WindowId::from("w1")));
+        assert!(session.window_surface(&WindowId::from("w1")).is_none());
     }
 
     #[test]
@@ -521,6 +608,10 @@ mod tests {
             session.state().focused_window_id,
             Some(WindowId::from("w4"))
         );
+        assert_eq!(
+            session.topology().seat("seat-0").unwrap().focused_window_id,
+            Some(WindowId::from("w4"))
+        );
     }
 
     #[test]
@@ -559,5 +650,17 @@ mod tests {
             .windows
             .iter()
             .any(|window| window.id == WindowId::from("w1") && window.floating));
+    }
+
+    #[test]
+    fn session_registers_snapshot_outputs_in_topology() {
+        let mut session = session();
+
+        session.register_output(OutputId::from("out-1")).unwrap();
+
+        assert!(session
+            .topology()
+            .output(&OutputId::from("out-1"))
+            .is_some());
     }
 }

@@ -63,6 +63,8 @@ Current implementation note:
 - `spiders-compositor` is converging on `CompositorSession` as the primary runtime
   orchestration boundary
 - `CompositorSession` owns WM state plus compositor-owned layout/runtime state
+- compositor-owned topology state for outputs, seats, and surfaces now sits beside
+  WM/layout runtime state instead of leaking backend handles through the domain
 - session operations return a typed `SessionUpdate` containing emitted events,
   relayout status, and the current computed layout snapshot
 - lower-level action helpers are internal support code, not the intended outer
