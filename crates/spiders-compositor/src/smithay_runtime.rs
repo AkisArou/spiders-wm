@@ -67,17 +67,25 @@ mod imp {
         pub fn run_startup_cycle(&mut self) -> Result<(), SmithayRuntimeError> {
             self.runtime.run_startup_cycle()?;
 
-            for event in self.runtime.take_pending_discovery_events() {
-                self.controller
-                    .apply_command(ControllerCommand::DiscoveryEvent(event))?;
-            }
-
-            self.report.controller = self.controller.report();
+            self.apply_pending_discovery_events()?;
             Ok(())
         }
 
         pub fn snapshot(&self) -> SmithayRuntimeSnapshot {
             self.runtime.snapshot()
+        }
+
+        pub fn apply_pending_discovery_events(&mut self) -> Result<usize, SmithayRuntimeError> {
+            let mut applied = 0;
+
+            for event in self.runtime.take_pending_discovery_events() {
+                self.controller
+                    .apply_command(ControllerCommand::DiscoveryEvent(event))?;
+                applied += 1;
+            }
+
+            self.report.controller = self.controller.report();
+            Ok(applied)
         }
     }
 
@@ -577,15 +585,10 @@ mod imp {
                 report,
             };
 
-            for event in bootstrap.runtime.take_pending_discovery_events() {
-                bootstrap
-                    .controller
-                    .apply_command(ControllerCommand::DiscoveryEvent(event))
-                    .unwrap();
-            }
-            bootstrap.report.controller = bootstrap.controller.report();
+            let applied = bootstrap.apply_pending_discovery_events().unwrap();
 
             let snapshot = bootstrap.snapshot();
+            assert_eq!(applied, 1);
             assert_eq!(snapshot.state.pending_discovery_event_count, 0);
             assert_eq!(snapshot.state.known_surfaces.toplevels.len(), 1);
             assert_eq!(bootstrap.controller.phase(), ControllerPhase::Running);
@@ -601,6 +604,34 @@ mod imp {
                 surface.window_id,
                 Some(spiders_shared::ids::WindowId::from("smithay-window-601"))
             );
+        }
+
+        #[test]
+        fn bootstrap_apply_pending_discovery_events_returns_zero_when_empty() {
+            let runtime_service = test_runtime_service();
+            let config = test_config();
+            let state = test_state_snapshot();
+            let controller =
+                crate::CompositorController::initialize(runtime_service, config, state).unwrap();
+            let runtime = test_runtime("wayland-test-4");
+            let report = SmithayStartupReport {
+                controller: controller.report(),
+                output_name: "smithay-test-output".into(),
+                seat_name: "smithay-test-seat".into(),
+                logical_size: (1280, 720),
+                socket_name: Some("wayland-test-4".into()),
+            };
+            let mut bootstrap = SmithayBootstrap {
+                controller,
+                runtime,
+                report,
+            };
+
+            let applied = bootstrap.apply_pending_discovery_events().unwrap();
+
+            assert_eq!(applied, 0);
+            assert_eq!(bootstrap.snapshot().state.pending_discovery_event_count, 0);
+            assert_eq!(bootstrap.controller.phase(), ControllerPhase::Pending);
         }
     }
 }
