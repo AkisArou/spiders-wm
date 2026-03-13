@@ -51,25 +51,44 @@ base branch.
 - `AGENTS.md` - execution rules and priorities for coding agents
 - `docs/architecture.md` - top-level system design
 - `docs/rewrite-plan.md` - milestone plan and acceptance targets
+- `docs/spec/compositor-bootstrap.md` - bootstrap/controller/runtime boundary and first smithay slices
 - `docs/reference-repos.md` - local upstream and legacy repos worth consulting
 - `docs/spec/config-runtime.md` - config and JS runtime contract
 - `docs/spec/layout-system.md` - layout AST, matching, CSS layout, `taffy` mapping
 - `docs/spec/effects-css.md` - real-window and workspace visual effects model
 - `docs/spec/ipc.md` - IPC and workspace export requirements
 
-## Intended Workspace Shape
+## Current Workspace
 
-The first implementation pass should likely split into crates roughly like:
+The workspace currently includes:
 
 - `spiders-compositor`
 - `spiders-config`
 - `spiders-layout`
 - `spiders-effects`
 - `spiders-ipc`
+- `spiders-runtime`
 - `spiders-shared`
 - `spiders-cli`
 
-These are planning names, not fixed API commitments.
+`spiders-runtime` now owns the backend-agnostic WM/topology/session domain core,
+while `spiders-compositor` owns the smithay-facing integration layer.
+
+## Current Implementation Status
+
+The repository is past the pure planning stage. Implemented slices now include:
+
+- typed WM, topology, bootstrap, and runtime domain models in Rust
+- config/runtime evaluation through `boa_engine`
+- validated layout resolution and CSS-to-`taffy` geometry computation
+- backend-agnostic bootstrap/controller/session boundaries
+- a first feature-gated `smithay-winit` bootstrap/runtime slice with:
+  - winit startup
+  - minimal Wayland display/socket state
+  - seat keyboard/pointer setup
+  - minimal xdg-shell state
+  - typed discovered-surface tracking
+  - typed smithay runtime/bootstrap snapshots for tests
 
 ## Reference Inputs From The Old Repo
 

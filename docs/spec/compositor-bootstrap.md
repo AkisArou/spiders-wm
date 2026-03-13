@@ -144,8 +144,27 @@ client connections. This is enough to prove the runtime ownership boundary
 without committing yet to full input routing, shell protocol setup, or
 rendering-loop structure.
 
+That startup owner now also benefits from a typed inspection boundary:
+
+- `SmithayRuntimeSnapshot` for runtime-owned state
+- `SmithayBootstrapSnapshot` for runtime state plus controller/topology summary
+
+These snapshots should stay backend-light and test-friendly. They are useful for
+asserting bootstrap/discovery flow in tests without needing full rendering or a
+long-running smithay event loop.
+
 The initial seat setup should also include keyboard capability creation so the
 bootstrap state matches the first real runtime owner more closely.
+
+Minimal xdg-shell support is now also part of the current bootstrap slice,
+including:
+
+- xdg-shell global initialization
+- initial toplevel configure handling
+- typed discovery tracking for xdg toplevel and popup surfaces
+- commit-time surface lifecycle tracking for xdg and unmanaged surfaces
+- typed snapshot/export of known smithay surfaces, including explicit popup
+  parent resolution state
 
 That slice is only a startup/discovery proof, not full surface or rendering
 integration.

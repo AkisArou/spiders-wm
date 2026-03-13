@@ -99,6 +99,13 @@ See also: `docs/spec/compositor-bootstrap.md`
 - the first smithay integration slice should bring up a small feature-gated
   runtime scaffold for startup, seat discovery, and output discovery before any
   real surface management or rendering responsibilities expand
+- that smithay scaffold now exists behind `smithay-winit` and includes a minimal
+  runtime owner, xdg-shell state, startup-cycle event pumping, and typed
+  smithay/runtime/bootstrap snapshots for tests and diagnostics
+- current smithay-side discovery state also keeps a typed read model of known
+  surfaces, including stable toplevel window ids and explicit popup parent
+  resolution state, while still translating into backend-agnostic controller
+  commands
 
 ## Config Runtime
 
