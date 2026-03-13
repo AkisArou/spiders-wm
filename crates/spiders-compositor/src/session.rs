@@ -106,6 +106,24 @@ impl<L, R> CompositorSession<L, R> {
     pub fn unmap_surface(&mut self, surface_id: &str) -> Result<(), TopologyError> {
         self.topology.unmap_surface(surface_id)
     }
+
+    pub fn activate_seat(&mut self, seat_name: &str) -> Result<(), TopologyError> {
+        self.topology.activate_seat(seat_name)?;
+        Ok(())
+    }
+
+    pub fn activate_output(&mut self, output_id: &OutputId) -> Result<(), TopologyError> {
+        self.topology.activate_output(output_id)?;
+        Ok(())
+    }
+
+    pub fn disable_output(&mut self, output_id: &OutputId) -> Result<(), TopologyError> {
+        self.topology.disable_output(output_id)
+    }
+
+    pub fn enable_output(&mut self, output_id: &OutputId) -> Result<(), TopologyError> {
+        self.topology.enable_output(output_id)
+    }
 }
 
 impl<L: spiders_config::loader::LayoutSourceLoader, R: LayoutRuntime> CompositorSession<L, R> {
@@ -710,6 +728,49 @@ mod tests {
             .topology()
             .output(&OutputId::from("out-1"))
             .is_some());
+    }
+
+    #[test]
+    fn session_activates_and_toggles_outputs() {
+        let mut session = session();
+        session.register_output_snapshot(spiders_shared::wm::OutputSnapshot {
+            id: OutputId::from("out-2"),
+            name: "DP-1".into(),
+            logical_width: 2560,
+            logical_height: 1440,
+            scale: 1,
+            transform: spiders_shared::wm::OutputTransform::Normal,
+            enabled: true,
+            current_workspace_id: None,
+        });
+
+        session.activate_output(&OutputId::from("out-2")).unwrap();
+        session.disable_output(&OutputId::from("out-2")).unwrap();
+        session.enable_output(&OutputId::from("out-2")).unwrap();
+
+        assert!(session.topology().active_output().is_none());
+        assert!(
+            session
+                .topology()
+                .output(&OutputId::from("out-2"))
+                .unwrap()
+                .snapshot
+                .enabled
+        );
+    }
+
+    #[test]
+    fn session_tracks_active_seat_changes() {
+        let mut session = session();
+        session.register_seat("seat-1");
+
+        session.activate_seat("seat-1").unwrap();
+
+        assert_eq!(
+            session.topology().active_seat_name.as_deref(),
+            Some("seat-1")
+        );
+        assert!(session.topology().seat("seat-1").unwrap().active);
     }
 
     #[test]

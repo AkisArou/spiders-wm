@@ -67,6 +67,13 @@ Each output should track at least:
 - enabled state
 - active workspace/tag view
 
+Compositor-domain note:
+
+- backend-facing code may keep a separate topology layer for output lifecycle,
+  seat focus, and surface attachment state
+- that topology layer should still use stable ids and snapshot-derived values,
+  not raw backend handles, as its public/domain boundary
+
 ## Workspace Model
 
 The old project mixes tag and workspace concepts in user-facing language. The
@@ -107,6 +114,12 @@ That snapshot should include:
 - outputs
 - visible windows
 - tag names
+
+Implementation note:
+
+- compositor bootstrap/session code may own additional topology state for seats,
+  outputs, and surfaces, but query-facing data should still derive from stable
+  snapshot semantics rather than backend object identity
 
 ## Event Model
 

@@ -35,12 +35,14 @@ pub struct SeatState {
     pub name: String,
     pub focused_output_id: Option<OutputId>,
     pub focused_window_id: Option<WindowId>,
+    pub active: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OutputState {
     pub snapshot: OutputSnapshot,
     pub mapped_surface_ids: Vec<String>,
+    pub active: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -48,6 +50,8 @@ pub struct CompositorTopologyState {
     pub outputs: Vec<OutputState>,
     pub seats: Vec<SeatState>,
     pub surfaces: Vec<SurfaceState>,
+    pub active_output_id: Option<OutputId>,
+    pub active_seat_name: Option<String>,
 }
 
 impl CompositorTopologyState {
@@ -60,10 +64,13 @@ impl CompositorTopologyState {
                 .map(|snapshot| OutputState {
                     snapshot,
                     mapped_surface_ids: Vec::new(),
+                    active: false,
                 })
                 .collect(),
             seats: Vec::new(),
             surfaces: Vec::new(),
+            active_output_id: state.current_output_id.clone(),
+            active_seat_name: None,
         }
     }
 
@@ -75,6 +82,18 @@ impl CompositorTopologyState {
 
     pub fn seat(&self, seat_name: &str) -> Option<&SeatState> {
         self.seats.iter().find(|seat| seat.name == seat_name)
+    }
+
+    pub fn active_output(&self) -> Option<&OutputState> {
+        self.active_output_id
+            .as_ref()
+            .and_then(|output_id| self.output(output_id))
+    }
+
+    pub fn active_seat(&self) -> Option<&SeatState> {
+        self.active_seat_name
+            .as_ref()
+            .and_then(|seat_name| self.seat(seat_name))
     }
 
     pub fn surface(&self, surface_id: &str) -> Option<&SurfaceState> {
@@ -90,10 +109,12 @@ impl CompositorTopologyState {
             .find(|existing| existing.snapshot.id == output.id)
         {
             existing.snapshot = output;
+            existing.active = self.active_output_id.as_ref() == Some(&existing.snapshot.id);
             return;
         }
 
         self.outputs.push(OutputState {
+            active: self.active_output_id.as_ref() == Some(&output.id),
             snapshot: output,
             mapped_surface_ids: Vec::new(),
         });
@@ -107,10 +128,73 @@ impl CompositorTopologyState {
                 name: seat_name.clone(),
                 focused_output_id: None,
                 focused_window_id: None,
+                active: self.active_seat_name.as_deref() == Some(seat_name.as_str()),
             });
         }
 
         self.seat(&seat_name).expect("seat was just inserted")
+    }
+
+    pub fn activate_output(&mut self, output_id: &OutputId) -> Result<&OutputState, TopologyError> {
+        let mut found = false;
+        for output in &mut self.outputs {
+            let active = output.snapshot.id == *output_id;
+            output.active = active;
+            if active {
+                found = true;
+            }
+        }
+
+        if !found {
+            return Err(TopologyError::OutputNotFound(output_id.clone()));
+        }
+
+        self.active_output_id = Some(output_id.clone());
+        self.output(output_id)
+            .ok_or_else(|| TopologyError::OutputNotFound(output_id.clone()))
+    }
+
+    pub fn disable_output(&mut self, output_id: &OutputId) -> Result<(), TopologyError> {
+        let output = self
+            .outputs
+            .iter_mut()
+            .find(|output| output.snapshot.id == *output_id)
+            .ok_or_else(|| TopologyError::OutputNotFound(output_id.clone()))?;
+        output.snapshot.enabled = false;
+        output.active = false;
+        if self.active_output_id.as_ref() == Some(output_id) {
+            self.active_output_id = None;
+        }
+        Ok(())
+    }
+
+    pub fn enable_output(&mut self, output_id: &OutputId) -> Result<(), TopologyError> {
+        let output = self
+            .outputs
+            .iter_mut()
+            .find(|output| output.snapshot.id == *output_id)
+            .ok_or_else(|| TopologyError::OutputNotFound(output_id.clone()))?;
+        output.snapshot.enabled = true;
+        Ok(())
+    }
+
+    pub fn activate_seat(&mut self, seat_name: &str) -> Result<&SeatState, TopologyError> {
+        let mut found = false;
+        for seat in &mut self.seats {
+            let active = seat.name == seat_name;
+            seat.active = active;
+            if active {
+                found = true;
+            }
+        }
+
+        if !found {
+            return Err(TopologyError::SeatNotFound(seat_name.to_owned()));
+        }
+
+        self.active_seat_name = Some(seat_name.to_owned());
+        self.seat(seat_name)
+            .ok_or_else(|| TopologyError::SeatNotFound(seat_name.to_owned()))
     }
 
     pub fn map_window_surface(
@@ -273,11 +357,21 @@ impl CompositorTopologyState {
         window_id: Option<WindowId>,
         output_id: Option<OutputId>,
     ) -> Result<&SeatState, TopologyError> {
-        let seat = self
+        let seat_index = self
             .seats
-            .iter_mut()
-            .find(|seat| seat.name == seat_name)
+            .iter()
+            .position(|seat| seat.name == seat_name)
             .ok_or_else(|| TopologyError::SeatNotFound(seat_name.to_owned()))?;
+
+        let should_activate = !self.seats[seat_index].active;
+        if should_activate {
+            self.active_seat_name = Some(seat_name.to_owned());
+            for entry in &mut self.seats {
+                entry.active = entry.name == seat_name;
+            }
+        }
+
+        let seat = &mut self.seats[seat_index];
         seat.focused_window_id = window_id;
         seat.focused_output_id = output_id;
         Ok(seat)
@@ -370,6 +464,49 @@ mod tests {
         let seat = topology.seat("seat-0").unwrap();
         assert_eq!(seat.focused_window_id, Some(WindowId::from("w1")));
         assert_eq!(seat.focused_output_id, Some(OutputId::from("out-1")));
+        assert!(seat.active);
+    }
+
+    #[test]
+    fn topology_activates_and_disables_outputs() {
+        let mut snapshot = state();
+        snapshot.outputs.push(OutputSnapshot {
+            id: OutputId::from("out-2"),
+            name: "DP-1".into(),
+            logical_width: 2560,
+            logical_height: 1440,
+            scale: 1,
+            transform: OutputTransform::Normal,
+            enabled: true,
+            current_workspace_id: None,
+        });
+        let mut topology = CompositorTopologyState::from_snapshot(&snapshot);
+
+        topology.activate_output(&OutputId::from("out-2")).unwrap();
+        topology.disable_output(&OutputId::from("out-2")).unwrap();
+        topology.enable_output(&OutputId::from("out-2")).unwrap();
+
+        assert_eq!(topology.active_output_id, None);
+        assert!(
+            topology
+                .output(&OutputId::from("out-2"))
+                .unwrap()
+                .snapshot
+                .enabled
+        );
+    }
+
+    #[test]
+    fn topology_tracks_active_seat_selection() {
+        let mut topology = CompositorTopologyState::from_snapshot(&state());
+        topology.register_seat("seat-0");
+        topology.register_seat("seat-1");
+
+        topology.activate_seat("seat-1").unwrap();
+
+        assert_eq!(topology.active_seat_name.as_deref(), Some("seat-1"));
+        assert!(topology.seat("seat-1").unwrap().active);
+        assert!(!topology.seat("seat-0").unwrap().active);
     }
 
     #[test]

@@ -74,6 +74,22 @@ impl<L, R> CompositorApp<L, R> {
     pub fn unmap_surface(&mut self, surface_id: &str) -> Result<(), TopologyError> {
         self.session.unmap_surface(surface_id)
     }
+
+    pub fn activate_seat(&mut self, seat_name: &str) -> Result<(), TopologyError> {
+        self.session.activate_seat(seat_name)
+    }
+
+    pub fn activate_output(&mut self, output_id: &OutputId) -> Result<(), TopologyError> {
+        self.session.activate_output(output_id)
+    }
+
+    pub fn disable_output(&mut self, output_id: &OutputId) -> Result<(), TopologyError> {
+        self.session.disable_output(output_id)
+    }
+
+    pub fn enable_output(&mut self, output_id: &OutputId) -> Result<(), TopologyError> {
+        self.session.enable_output(output_id)
+    }
 }
 
 impl<L: spiders_config::loader::LayoutSourceLoader, R: LayoutRuntime> CompositorApp<L, R> {
@@ -272,5 +288,54 @@ mod tests {
             app.topology().surface("overlay-1").unwrap().role,
             crate::SurfaceRole::Unmanaged
         );
+    }
+
+    #[test]
+    fn app_tracks_output_and_seat_lifecycle_changes() {
+        let temp_dir = std::env::temp_dir();
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let runtime_root = temp_dir.join(format!("spiders-app-seat-output-runtime-{unique}"));
+        let _ = fs::create_dir_all(runtime_root.join("layouts"));
+        fs::write(
+            runtime_root.join("layouts/master-stack.js"),
+            "ctx => ({ type: 'workspace', children: [{ type: 'slot', id: 'rest' }] })",
+        )
+        .unwrap();
+
+        let loader =
+            RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
+        let runtime = BoaLayoutRuntime::with_loader(loader.clone());
+        let service = ConfigRuntimeService::new(loader, runtime);
+
+        let mut app = CompositorApp::initialize(LayoutService, service, config(), state()).unwrap();
+        app.session.register_output_snapshot(OutputSnapshot {
+            id: OutputId::from("out-2"),
+            name: "DP-1".into(),
+            logical_width: 2560,
+            logical_height: 1440,
+            scale: 1,
+            transform: OutputTransform::Normal,
+            enabled: true,
+            current_workspace_id: None,
+        });
+        app.session.register_seat("seat-1");
+
+        app.activate_output(&OutputId::from("out-2")).unwrap();
+        app.disable_output(&OutputId::from("out-2")).unwrap();
+        app.enable_output(&OutputId::from("out-2")).unwrap();
+        app.activate_seat("seat-1").unwrap();
+
+        assert!(app.topology().active_output().is_none());
+        assert!(
+            app.topology()
+                .output(&OutputId::from("out-2"))
+                .unwrap()
+                .snapshot
+                .enabled
+        );
+        assert_eq!(app.topology().active_seat_name.as_deref(), Some("seat-1"));
     }
 }
