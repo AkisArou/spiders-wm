@@ -231,6 +231,57 @@ mod tests {
 
     use super::*;
 
+    fn workspace_snapshot() -> WorkspaceSnapshot {
+        WorkspaceSnapshot {
+            id: WorkspaceId::from("ws-1"),
+            name: "1".into(),
+            output_id: Some(OutputId::from("out-1")),
+            active_tags: vec!["1".into()],
+            focused: true,
+            visible: true,
+            effective_layout: Some(spiders_shared::wm::LayoutRef {
+                name: "master-stack".into(),
+            }),
+        }
+    }
+
+    fn output_snapshot(width: u32, height: u32) -> OutputSnapshot {
+        OutputSnapshot {
+            id: OutputId::from("out-1"),
+            name: "HDMI-A-1".into(),
+            logical_width: width,
+            logical_height: height,
+            scale: 1,
+            transform: OutputTransform::Normal,
+            enabled: true,
+            current_workspace_id: Some(WorkspaceId::from("ws-1")),
+        }
+    }
+
+    fn state_snapshot(width: u32, height: u32) -> StateSnapshot {
+        StateSnapshot {
+            focused_window_id: None,
+            current_output_id: Some(OutputId::from("out-1")),
+            current_workspace_id: Some(WorkspaceId::from("ws-1")),
+            outputs: vec![output_snapshot(width, height)],
+            workspaces: vec![workspace_snapshot()],
+            windows: vec![],
+            visible_window_ids: vec![],
+            tag_names: vec!["1".into()],
+        }
+    }
+
+    fn layout_config(stylesheet: &str, module: &str) -> Config {
+        Config {
+            layouts: vec![spiders_config::model::LayoutDefinition {
+                name: "master-stack".into(),
+                module: module.into(),
+                stylesheet: stylesheet.into(),
+            }],
+            ..Config::default()
+        }
+    }
+
     #[test]
     fn layout_service_exposes_shared_snapshot_boundary() {
         let service = LayoutService;
@@ -291,27 +342,8 @@ mod tests {
     #[test]
     fn layout_service_builds_workspace_scoped_request_from_snapshots() {
         let service = LayoutService;
-        let workspace = WorkspaceSnapshot {
-            id: WorkspaceId::from("ws-1"),
-            name: "1".into(),
-            output_id: Some(OutputId::from("out-1")),
-            active_tags: vec!["1".into()],
-            focused: true,
-            visible: true,
-            effective_layout: Some(spiders_shared::wm::LayoutRef {
-                name: "master-stack".into(),
-            }),
-        };
-        let output = OutputSnapshot {
-            id: OutputId::from("out-1"),
-            name: "HDMI-A-1".into(),
-            logical_width: 1920,
-            logical_height: 1080,
-            scale: 1,
-            transform: OutputTransform::Normal,
-            enabled: true,
-            current_workspace_id: Some(WorkspaceId::from("ws-1")),
-        };
+        let workspace = workspace_snapshot();
+        let output = output_snapshot(1920, 1080);
         let root = ResolvedLayoutNode::Workspace {
             meta: LayoutNodeMeta::default(),
             children: vec![],
@@ -346,35 +378,9 @@ mod tests {
     #[test]
     fn layout_service_builds_request_from_config_selection() {
         let service = LayoutService;
-        let config = Config {
-            layouts: vec![spiders_config::model::LayoutDefinition {
-                name: "master-stack".into(),
-                module: "layouts/master-stack.js".into(),
-                stylesheet: "workspace { display: flex; }".into(),
-            }],
-            ..Config::default()
-        };
-        let workspace = WorkspaceSnapshot {
-            id: WorkspaceId::from("ws-1"),
-            name: "1".into(),
-            output_id: Some(OutputId::from("out-1")),
-            active_tags: vec!["1".into()],
-            focused: true,
-            visible: true,
-            effective_layout: Some(spiders_shared::wm::LayoutRef {
-                name: "master-stack".into(),
-            }),
-        };
-        let output = OutputSnapshot {
-            id: OutputId::from("out-1"),
-            name: "HDMI-A-1".into(),
-            logical_width: 1600,
-            logical_height: 900,
-            scale: 1,
-            transform: OutputTransform::Normal,
-            enabled: true,
-            current_workspace_id: Some(WorkspaceId::from("ws-1")),
-        };
+        let config = layout_config("workspace { display: flex; }", "layouts/master-stack.js");
+        let workspace = workspace_snapshot();
+        let output = output_snapshot(1600, 900);
 
         let request = service
             .make_request_from_config(
@@ -397,43 +403,8 @@ mod tests {
     #[test]
     fn layout_service_builds_request_from_state_snapshot() {
         let service = LayoutService;
-        let config = Config {
-            layouts: vec![spiders_config::model::LayoutDefinition {
-                name: "master-stack".into(),
-                module: "layouts/master-stack.js".into(),
-                stylesheet: "workspace { display: flex; }".into(),
-            }],
-            ..Config::default()
-        };
-        let state = StateSnapshot {
-            focused_window_id: None,
-            current_output_id: Some(OutputId::from("out-1")),
-            current_workspace_id: Some(WorkspaceId::from("ws-1")),
-            outputs: vec![OutputSnapshot {
-                id: OutputId::from("out-1"),
-                name: "HDMI-A-1".into(),
-                logical_width: 1280,
-                logical_height: 720,
-                scale: 1,
-                transform: OutputTransform::Normal,
-                enabled: true,
-                current_workspace_id: Some(WorkspaceId::from("ws-1")),
-            }],
-            workspaces: vec![WorkspaceSnapshot {
-                id: WorkspaceId::from("ws-1"),
-                name: "1".into(),
-                output_id: Some(OutputId::from("out-1")),
-                active_tags: vec!["1".into()],
-                focused: true,
-                visible: true,
-                effective_layout: Some(spiders_shared::wm::LayoutRef {
-                    name: "master-stack".into(),
-                }),
-            }],
-            windows: vec![],
-            visible_window_ids: vec![],
-            tag_names: vec!["1".into()],
-        };
+        let config = layout_config("workspace { display: flex; }", "layouts/master-stack.js");
+        let state = state_snapshot(1280, 720);
 
         let request = service
             .make_request_from_state(
@@ -465,43 +436,13 @@ mod tests {
         let runtime = spiders_config::runtime::BoaLayoutRuntime::with_loader(
             spiders_config::loader::FsLayoutSourceLoader,
         );
-        let config = Config {
-            layouts: vec![spiders_config::model::LayoutDefinition {
-                name: "master-stack".into(),
-                module: module_path.to_string_lossy().into_owned(),
-                stylesheet: "workspace { display: flex; flex-direction: row; width: 800px; height: 600px; } #main { width: 250px; } .rest { flex-grow: 1; }".into(),
-            }],
-            ..Config::default()
-        };
-        let state = StateSnapshot {
-            focused_window_id: Some(WindowId::from("w1")),
-            current_output_id: Some(OutputId::from("out-1")),
-            current_workspace_id: Some(WorkspaceId::from("ws-1")),
-            outputs: vec![OutputSnapshot {
-                id: OutputId::from("out-1"),
-                name: "HDMI-A-1".into(),
-                logical_width: 800,
-                logical_height: 600,
-                scale: 1,
-                transform: OutputTransform::Normal,
-                enabled: true,
-                current_workspace_id: Some(WorkspaceId::from("ws-1")),
-            }],
-            workspaces: vec![WorkspaceSnapshot {
-                id: WorkspaceId::from("ws-1"),
-                name: "1".into(),
-                output_id: Some(OutputId::from("out-1")),
-                active_tags: vec!["1".into()],
-                focused: true,
-                visible: true,
-                effective_layout: Some(spiders_shared::wm::LayoutRef {
-                    name: "master-stack".into(),
-                }),
-            }],
-            windows: vec![],
-            visible_window_ids: vec![WindowId::from("w1"), WindowId::from("w2")],
-            tag_names: vec!["1".into()],
-        };
+        let config = layout_config(
+            "workspace { display: flex; flex-direction: row; width: 800px; height: 600px; } #main { width: 250px; } .rest { flex-grow: 1; }",
+            &module_path.to_string_lossy(),
+        );
+        let mut state = state_snapshot(800, 600);
+        state.focused_window_id = Some(WindowId::from("w1"));
+        state.visible_window_ids = vec![WindowId::from("w1"), WindowId::from("w2")];
         let windows = vec![
             WindowSnapshot {
                 id: WindowId::from("w1"),
@@ -575,43 +516,8 @@ mod tests {
         let runtime = spiders_config::runtime::BoaLayoutRuntime::with_loader(loader.clone());
         let mut runtime_service =
             spiders_config::service::ConfigRuntimeService::new(loader, runtime);
-        let config = Config {
-            layouts: vec![spiders_config::model::LayoutDefinition {
-                name: "master-stack".into(),
-                module: "layouts/master-stack.js".into(),
-                stylesheet: String::new(),
-            }],
-            ..Config::default()
-        };
-        let state = StateSnapshot {
-            focused_window_id: None,
-            current_output_id: Some(OutputId::from("out-1")),
-            current_workspace_id: Some(WorkspaceId::from("ws-1")),
-            outputs: vec![OutputSnapshot {
-                id: OutputId::from("out-1"),
-                name: "HDMI-A-1".into(),
-                logical_width: 800,
-                logical_height: 600,
-                scale: 1,
-                transform: OutputTransform::Normal,
-                enabled: true,
-                current_workspace_id: Some(WorkspaceId::from("ws-1")),
-            }],
-            workspaces: vec![WorkspaceSnapshot {
-                id: WorkspaceId::from("ws-1"),
-                name: "1".into(),
-                output_id: Some(OutputId::from("out-1")),
-                active_tags: vec!["1".into()],
-                focused: true,
-                visible: true,
-                effective_layout: Some(spiders_shared::wm::LayoutRef {
-                    name: "master-stack".into(),
-                }),
-            }],
-            windows: vec![],
-            visible_window_ids: vec![],
-            tag_names: vec!["1".into()],
-        };
+        let config = layout_config("", "layouts/master-stack.js");
+        let state = state_snapshot(800, 600);
 
         let evaluated = service
             .bootstrap_runtime(&mut runtime_service, &config, &state)
@@ -651,43 +557,8 @@ mod tests {
         );
         let runtime = spiders_config::runtime::BoaLayoutRuntime::with_loader(loader.clone());
         let runtime_service = spiders_config::service::ConfigRuntimeService::new(loader, runtime);
-        let config = Config {
-            layouts: vec![spiders_config::model::LayoutDefinition {
-                name: "master-stack".into(),
-                module: "layouts/master-stack.js".into(),
-                stylesheet: String::new(),
-            }],
-            ..Config::default()
-        };
-        let state = StateSnapshot {
-            focused_window_id: None,
-            current_output_id: Some(OutputId::from("out-1")),
-            current_workspace_id: Some(WorkspaceId::from("ws-1")),
-            outputs: vec![OutputSnapshot {
-                id: OutputId::from("out-1"),
-                name: "HDMI-A-1".into(),
-                logical_width: 800,
-                logical_height: 600,
-                scale: 1,
-                transform: OutputTransform::Normal,
-                enabled: true,
-                current_workspace_id: Some(WorkspaceId::from("ws-1")),
-            }],
-            workspaces: vec![WorkspaceSnapshot {
-                id: WorkspaceId::from("ws-1"),
-                name: "1".into(),
-                output_id: Some(OutputId::from("out-1")),
-                active_tags: vec!["1".into()],
-                focused: true,
-                visible: true,
-                effective_layout: Some(spiders_shared::wm::LayoutRef {
-                    name: "master-stack".into(),
-                }),
-            }],
-            windows: vec![],
-            visible_window_ids: vec![],
-            tag_names: vec!["1".into()],
-        };
+        let config = layout_config("", "layouts/master-stack.js");
+        let state = state_snapshot(800, 600);
 
         let startup = service
             .initialize_startup_runtime(runtime_service, config, &state)
@@ -738,43 +609,8 @@ mod tests {
         );
         let runtime = spiders_config::runtime::BoaLayoutRuntime::with_loader(loader.clone());
         let runtime_service = spiders_config::service::ConfigRuntimeService::new(loader, runtime);
-        let config = Config {
-            layouts: vec![spiders_config::model::LayoutDefinition {
-                name: "master-stack".into(),
-                module: "layouts/master-stack.js".into(),
-                stylesheet: String::new(),
-            }],
-            ..Config::default()
-        };
-        let state = StateSnapshot {
-            focused_window_id: None,
-            current_output_id: Some(OutputId::from("out-1")),
-            current_workspace_id: Some(WorkspaceId::from("ws-1")),
-            outputs: vec![OutputSnapshot {
-                id: OutputId::from("out-1"),
-                name: "HDMI-A-1".into(),
-                logical_width: 800,
-                logical_height: 600,
-                scale: 1,
-                transform: OutputTransform::Normal,
-                enabled: true,
-                current_workspace_id: Some(WorkspaceId::from("ws-1")),
-            }],
-            workspaces: vec![WorkspaceSnapshot {
-                id: WorkspaceId::from("ws-1"),
-                name: "1".into(),
-                output_id: Some(OutputId::from("out-1")),
-                active_tags: vec!["1".into()],
-                focused: true,
-                visible: true,
-                effective_layout: Some(spiders_shared::wm::LayoutRef {
-                    name: "master-stack".into(),
-                }),
-            }],
-            windows: vec![],
-            visible_window_ids: vec![],
-            tag_names: vec!["1".into()],
-        };
+        let config = layout_config("", "layouts/master-stack.js");
+        let state = state_snapshot(800, 600);
 
         let startup = service
             .initialize_startup_config(runtime_service, config, state)
@@ -830,43 +666,8 @@ mod tests {
         );
         let runtime = spiders_config::runtime::BoaLayoutRuntime::with_loader(loader.clone());
         let runtime_service = spiders_config::service::ConfigRuntimeService::new(loader, runtime);
-        let config = Config {
-            layouts: vec![spiders_config::model::LayoutDefinition {
-                name: "master-stack".into(),
-                module: "layouts/master-stack.js".into(),
-                stylesheet: String::new(),
-            }],
-            ..Config::default()
-        };
-        let state = StateSnapshot {
-            focused_window_id: None,
-            current_output_id: Some(OutputId::from("out-1")),
-            current_workspace_id: Some(WorkspaceId::from("ws-1")),
-            outputs: vec![OutputSnapshot {
-                id: OutputId::from("out-1"),
-                name: "HDMI-A-1".into(),
-                logical_width: 800,
-                logical_height: 600,
-                scale: 1,
-                transform: OutputTransform::Normal,
-                enabled: true,
-                current_workspace_id: Some(WorkspaceId::from("ws-1")),
-            }],
-            workspaces: vec![WorkspaceSnapshot {
-                id: WorkspaceId::from("ws-1"),
-                name: "1".into(),
-                output_id: Some(OutputId::from("out-1")),
-                active_tags: vec!["1".into()],
-                focused: true,
-                visible: true,
-                effective_layout: Some(spiders_shared::wm::LayoutRef {
-                    name: "master-stack".into(),
-                }),
-            }],
-            windows: vec![],
-            visible_window_ids: vec![],
-            tag_names: vec!["1".into()],
-        };
+        let config = layout_config("", "layouts/master-stack.js");
+        let state = state_snapshot(800, 600);
 
         let session = service
             .initialize_startup_session(runtime_service, config, state)
@@ -910,43 +711,8 @@ mod tests {
         );
         let runtime = spiders_config::runtime::BoaLayoutRuntime::with_loader(loader.clone());
         let runtime_service = spiders_config::service::ConfigRuntimeService::new(loader, runtime);
-        let config = Config {
-            layouts: vec![spiders_config::model::LayoutDefinition {
-                name: "master-stack".into(),
-                module: "layouts/master-stack.js".into(),
-                stylesheet: String::new(),
-            }],
-            ..Config::default()
-        };
-        let state = StateSnapshot {
-            focused_window_id: None,
-            current_output_id: Some(OutputId::from("out-1")),
-            current_workspace_id: Some(WorkspaceId::from("ws-1")),
-            outputs: vec![OutputSnapshot {
-                id: OutputId::from("out-1"),
-                name: "HDMI-A-1".into(),
-                logical_width: 800,
-                logical_height: 600,
-                scale: 1,
-                transform: OutputTransform::Normal,
-                enabled: true,
-                current_workspace_id: Some(WorkspaceId::from("ws-1")),
-            }],
-            workspaces: vec![WorkspaceSnapshot {
-                id: WorkspaceId::from("ws-1"),
-                name: "1".into(),
-                output_id: Some(OutputId::from("out-1")),
-                active_tags: vec!["1".into()],
-                focused: true,
-                visible: true,
-                effective_layout: Some(spiders_shared::wm::LayoutRef {
-                    name: "master-stack".into(),
-                }),
-            }],
-            windows: vec![],
-            visible_window_ids: vec![],
-            tag_names: vec!["1".into()],
-        };
+        let config = layout_config("", "layouts/master-stack.js");
+        let state = state_snapshot(800, 600);
 
         let runtime = service
             .initialize_runtime_state(runtime_service, config, state)
