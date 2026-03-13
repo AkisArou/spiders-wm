@@ -85,10 +85,19 @@ mod imp {
 
     #[derive(Debug, Clone, PartialEq, Eq)]
     pub struct SmithayKnownSurfacesSnapshot {
+        pub all: Vec<SmithayKnownSurface>,
         pub toplevels: Vec<SmithayKnownToplevelSurface>,
         pub popups: Vec<SmithayKnownPopupSurface>,
         pub unmanaged: Vec<SmithayKnownUnmanagedSurface>,
         pub layers: Vec<SmithayKnownLayerSurface>,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub enum SmithayKnownSurface {
+        Toplevel(SmithayKnownToplevelSurface),
+        Popup(SmithayKnownPopupSurface),
+        Layer(SmithayKnownLayerSurface),
+        Unmanaged(SmithayKnownUnmanagedSurface),
     }
 
     #[derive(Debug, Clone, PartialEq, Eq)]
@@ -435,12 +444,37 @@ mod imp {
                 .collect::<Vec<_>>();
             layers.sort_by(|left, right| left.surface_id.cmp(&right.surface_id));
 
+            let mut all =
+                Vec::with_capacity(toplevels.len() + popups.len() + unmanaged.len() + layers.len());
+            all.extend(toplevels.iter().cloned().map(SmithayKnownSurface::Toplevel));
+            all.extend(popups.iter().cloned().map(SmithayKnownSurface::Popup));
+            all.extend(layers.iter().cloned().map(SmithayKnownSurface::Layer));
+            all.extend(
+                unmanaged
+                    .iter()
+                    .cloned()
+                    .map(SmithayKnownSurface::Unmanaged),
+            );
+            all.sort_by(|left, right| {
+                known_surface_sort_key(left).cmp(&known_surface_sort_key(right))
+            });
+
             SmithayKnownSurfacesSnapshot {
+                all,
                 toplevels,
                 popups,
                 unmanaged,
                 layers,
             }
+        }
+    }
+
+    fn known_surface_sort_key(surface: &SmithayKnownSurface) -> (&'static str, &str) {
+        match surface {
+            SmithayKnownSurface::Toplevel(surface) => ("toplevel", &surface.surface_id),
+            SmithayKnownSurface::Popup(surface) => ("popup", &surface.surface_id),
+            SmithayKnownSurface::Layer(surface) => ("layer", &surface.surface_id),
+            SmithayKnownSurface::Unmanaged(surface) => ("unmanaged", &surface.surface_id),
         }
     }
 
@@ -735,6 +769,7 @@ mod imp {
             assert_eq!(before.role_counts.popup, 0);
             assert_eq!(before.role_counts.unmanaged, 0);
             assert_eq!(before.role_counts.layer, 0);
+            assert!(before.known_surfaces.all.is_empty());
             assert!(before.known_surfaces.toplevels.is_empty());
             assert!(before.known_surfaces.popups.is_empty());
             assert!(before.known_surfaces.unmanaged.is_empty());
@@ -758,6 +793,7 @@ mod imp {
             assert_eq!(after.role_counts.popup, 0);
             assert_eq!(after.role_counts.unmanaged, 1);
             assert_eq!(after.role_counts.layer, 0);
+            assert_eq!(after.known_surfaces.all.len(), 2);
             assert_eq!(after.known_surfaces.toplevels.len(), 1);
             assert_eq!(after.known_surfaces.unmanaged.len(), 1);
 
@@ -797,6 +833,7 @@ mod imp {
             assert_eq!(snapshot.role_counts.popup, 1);
             assert_eq!(snapshot.role_counts.layer, 1);
             assert_eq!(snapshot.role_counts.unmanaged, 1);
+            assert_eq!(snapshot.known_surfaces.all.len(), 4);
             assert_eq!(snapshot.known_surfaces.toplevels.len(), 1);
             assert_eq!(snapshot.known_surfaces.popups.len(), 1);
             assert_eq!(snapshot.known_surfaces.layers.len(), 1);
@@ -864,12 +901,56 @@ mod imp {
                 SmithayPopupParentSnapshot::Unresolved
             );
         }
+
+        #[test]
+        fn smithay_state_snapshot_reports_unified_known_surface_order() {
+            let display = Display::<SpidersSmithayState>::new().unwrap();
+            let mut state = SpidersSmithayState::new(&display, "test-seat").unwrap();
+
+            let window_id = state.window_id_for_surface("wl-surface-501");
+            state.track_surface_snapshot(BackendSurfaceSnapshot::Unmanaged {
+                surface_id: "wl-surface-504".into(),
+            });
+            state.track_surface_snapshot(BackendSurfaceSnapshot::Popup {
+                surface_id: "wl-surface-502".into(),
+                output_id: None,
+                parent_surface_id: "unresolved-parent-wl-surface-502".into(),
+            });
+            state.track_surface_snapshot(BackendSurfaceSnapshot::Layer {
+                surface_id: "wl-surface-503".into(),
+                output_id: "out-1".into(),
+            });
+            state.track_surface_snapshot(BackendSurfaceSnapshot::Window {
+                surface_id: "wl-surface-501".into(),
+                window_id,
+                output_id: None,
+            });
+
+            let snapshot = state.snapshot();
+            assert_eq!(snapshot.known_surfaces.all.len(), 4);
+            assert!(matches!(
+                &snapshot.known_surfaces.all[0],
+                SmithayKnownSurface::Layer(surface) if surface.surface_id == "wl-surface-503"
+            ));
+            assert!(matches!(
+                &snapshot.known_surfaces.all[1],
+                SmithayKnownSurface::Popup(surface) if surface.surface_id == "wl-surface-502"
+            ));
+            assert!(matches!(
+                &snapshot.known_surfaces.all[2],
+                SmithayKnownSurface::Toplevel(surface) if surface.surface_id == "wl-surface-501"
+            ));
+            assert!(matches!(
+                &snapshot.known_surfaces.all[3],
+                SmithayKnownSurface::Unmanaged(surface) if surface.surface_id == "wl-surface-504"
+            ));
+        }
     }
 }
 
 #[cfg(feature = "smithay-winit")]
 pub use imp::{
-    SmithayClientState, SmithayKnownLayerSurface, SmithayKnownPopupSurface,
+    SmithayClientState, SmithayKnownLayerSurface, SmithayKnownPopupSurface, SmithayKnownSurface,
     SmithayKnownSurfacesSnapshot, SmithayKnownToplevelSurface, SmithayKnownUnmanagedSurface,
     SmithayPopupParentSnapshot, SmithayStateError, SmithayStateSnapshot, SmithaySurfaceRoleCounts,
     SpidersSmithayState,
