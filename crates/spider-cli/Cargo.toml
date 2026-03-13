@@ -1,0 +1,17 @@
+[package]
+name = "spider-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+spider-config = { path = "../spider-config" }
+spider-effects = { path = "../spider-effects" }
+spider-ipc = { path = "../spider-ipc" }
+spider-layout = { path = "../spider-layout" }
+
+[[bin]]
+name = "spider-cli"
+path = "src/main.rs"
