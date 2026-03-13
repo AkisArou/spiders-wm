@@ -43,6 +43,8 @@ pub struct BootstrapReport {
     pub runtime_config: String,
     pub active_seat: Option<String>,
     pub active_output: Option<String>,
+    pub current_workspace: Option<String>,
+    pub focused_window: Option<String>,
     pub seat_count: usize,
     pub output_count: usize,
     pub surface_count: usize,
@@ -78,5 +80,31 @@ mod tests {
         assert_eq!(json["phase"], "load");
         assert!(json.get("errors").is_none());
         assert!(json.get("runtime_config").is_none());
+    }
+
+    #[test]
+    fn bootstrap_report_serializes_expected_fields() {
+        let report = BootstrapReport {
+            status: "ok",
+            runtime_ready: true,
+            authored_config: "/tmp/authored.js".into(),
+            runtime_config: "/tmp/runtime.json".into(),
+            active_seat: Some("seat-0".into()),
+            active_output: Some("out-1".into()),
+            current_workspace: Some("ws-1".into()),
+            focused_window: Some("w1".into()),
+            seat_count: 1,
+            output_count: 1,
+            surface_count: 0,
+            mapped_surface_count: 0,
+            applied_events: 0,
+        };
+
+        let json = serde_json::to_value(report).unwrap();
+
+        assert_eq!(json["status"], "ok");
+        assert_eq!(json["active_seat"], "seat-0");
+        assert_eq!(json["current_workspace"], "ws-1");
+        assert_eq!(json["focused_window"], "w1");
     }
 }

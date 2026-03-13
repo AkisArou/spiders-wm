@@ -26,6 +26,8 @@ pub struct BootstrapRunner<L, R> {
 pub struct BootstrapDiagnostics {
     pub active_seat: Option<String>,
     pub active_output: Option<OutputId>,
+    pub current_workspace: Option<String>,
+    pub focused_window: Option<String>,
     pub seat_count: usize,
     pub output_count: usize,
     pub surface_count: usize,
@@ -56,6 +58,18 @@ impl<L, R> BootstrapRunner<L, R> {
         BootstrapDiagnostics {
             active_seat: self.app.topology().active_seat_name.clone(),
             active_output: self.app.topology().active_output_id.clone(),
+            current_workspace: self
+                .app
+                .state()
+                .current_workspace_id
+                .as_ref()
+                .map(ToString::to_string),
+            focused_window: self
+                .app
+                .state()
+                .focused_window_id
+                .as_ref()
+                .map(ToString::to_string),
             seat_count: self.app.topology().seats.len(),
             output_count: self.app.topology().outputs.len(),
             surface_count: self.app.topology().surfaces.len(),
@@ -289,6 +303,8 @@ mod tests {
         let trace = runner.trace();
         assert_eq!(trace.applied_events.len(), 5);
         assert_eq!(trace.diagnostics.active_seat.as_deref(), Some("seat-1"));
+        assert_eq!(trace.diagnostics.current_workspace.as_deref(), Some("ws-1"));
+        assert_eq!(trace.diagnostics.focused_window.as_deref(), Some("w1"));
     }
 
     #[test]

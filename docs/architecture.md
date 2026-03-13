@@ -79,6 +79,8 @@ Current implementation note:
   bootstrap events in order before any backend-specific runtime loop exists
 - that runner can also expose typed diagnostics/traces so CLI and test tooling can
   inspect startup state without backend integration
+- those diagnostics can include active seat/output plus stable workspace/window
+  ids, keeping bootstrap inspection aligned with snapshot semantics
 - session operations return a typed `SessionUpdate` containing emitted events,
   relayout status, and the current computed layout snapshot
 - lower-level action helpers are internal support code, not the intended outer

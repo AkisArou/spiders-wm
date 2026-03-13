@@ -275,6 +275,8 @@ fn bootstrap_trace_command(cli: &CliContext, output_mode: OutputMode) -> std::pr
     };
 
     let trace = runner.trace();
+    let current_workspace = trace.diagnostics.current_workspace.clone();
+    let focused_window = trace.diagnostics.focused_window.clone();
     emit(
         output_mode,
         &BootstrapReport {
@@ -284,6 +286,8 @@ fn bootstrap_trace_command(cli: &CliContext, output_mode: OutputMode) -> std::pr
             runtime_config: bootstrap.paths.runtime_config.display().to_string(),
             active_seat: trace.diagnostics.active_seat,
             active_output: trace.diagnostics.active_output.map(|id| id.to_string()),
+            current_workspace: current_workspace.clone(),
+            focused_window: focused_window.clone(),
             seat_count: trace.diagnostics.seat_count,
             output_count: trace.diagnostics.output_count,
             surface_count: trace.diagnostics.surface_count,
@@ -292,7 +296,9 @@ fn bootstrap_trace_command(cli: &CliContext, output_mode: OutputMode) -> std::pr
         },
         || {
             format!(
-                "bootstrap trace ok (seats: {}, outputs: {}, surfaces: {}, mapped: {})",
+                "bootstrap trace ok (workspace: {}, focused: {}, seats: {}, outputs: {}, surfaces: {}, mapped: {})",
+                current_workspace.as_deref().unwrap_or("none"),
+                focused_window.as_deref().unwrap_or("none"),
                 trace.diagnostics.seat_count,
                 trace.diagnostics.output_count,
                 trace.diagnostics.surface_count,
