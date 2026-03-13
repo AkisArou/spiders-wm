@@ -62,7 +62,11 @@ pub use host::CompositorHost;
 pub use runner::{BootstrapRunner, BootstrapRunnerError};
 pub use runtime::{CompositorRuntimeState, WorkspaceLayoutState};
 pub use session::{CompositorSession, SessionUpdate};
-pub use smithay_adapter::{SmithayAdapter, SmithayAdapterEvent};
+pub use smithay_adapter::{
+    SmithayAdapter, SmithayAdapterEvent, SmithayOutputDescriptor, SmithaySeatDescriptor,
+};
+#[cfg(feature = "smithay-winit")]
+pub use smithay_runtime::initialize_winit_controller;
 pub use smithay_runtime::{SmithayRuntimeError, SmithayStartupReport};
 pub use spiders_runtime::{
     BootstrapDiagnostics, BootstrapEvent, BootstrapFailureTrace, BootstrapRunTrace,

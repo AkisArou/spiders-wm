@@ -114,6 +114,9 @@ The first real smithay slice should stay intentionally small:
   `BackendTopologySnapshot`
 - feed that snapshot through `SmithayAdapter` into `CompositorController`
 
+The public entrypoint for that slice should initialize a controller from config
+and snapshot state first, then hand it to the smithay-winit bootstrap helper.
+
 That slice is only a startup/discovery proof, not full surface or rendering
 integration.
 

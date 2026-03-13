@@ -8,7 +8,22 @@ use spiders_runtime::ControllerCommand;
 #[serde(rename_all = "kebab-case")]
 pub enum SmithayAdapterEvent {
     Seat { seat_name: String, active: bool },
+    Output { output_id: String, active: bool },
     SurfaceLost { surface_id: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SmithaySeatDescriptor {
+    pub seat_name: String,
+    pub active: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SmithayOutputDescriptor {
+    pub output_id: String,
+    pub active: bool,
+    pub width: i32,
+    pub height: i32,
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -23,9 +38,30 @@ impl SmithayAdapter {
                     active,
                 })
             }
+            SmithayAdapterEvent::Output { output_id, active } => {
+                ControllerCommand::DiscoveryEvent(BackendDiscoveryEvent::OutputDiscovered {
+                    output_id: output_id.into(),
+                    active,
+                })
+            }
             SmithayAdapterEvent::SurfaceLost { surface_id } => {
                 ControllerCommand::DiscoveryEvent(BackendDiscoveryEvent::SurfaceLost { surface_id })
             }
+        }
+    }
+
+    pub fn translate_seat_descriptor(seat: SmithaySeatDescriptor) -> BackendSeatSnapshot {
+        BackendSeatSnapshot {
+            seat_name: seat.seat_name,
+            active: seat.active,
+        }
+    }
+
+    pub fn translate_output_descriptor(output: SmithayOutputDescriptor) -> BackendOutputSnapshot {
+        let _ = (output.width, output.height);
+        BackendOutputSnapshot {
+            output_id: output.output_id.into(),
+            active: output.active,
         }
     }
 
@@ -62,6 +98,39 @@ mod tests {
             command,
             ControllerCommand::DiscoveryEvent(BackendDiscoveryEvent::SeatDiscovered { .. })
         ));
+    }
+
+    #[test]
+    fn adapter_translates_output_event_into_controller_command() {
+        let command = SmithayAdapter::translate_event(SmithayAdapterEvent::Output {
+            output_id: "out-1".into(),
+            active: true,
+        });
+
+        assert!(matches!(
+            command,
+            ControllerCommand::DiscoveryEvent(BackendDiscoveryEvent::OutputDiscovered { .. })
+        ));
+    }
+
+    #[test]
+    fn adapter_translates_descriptors_into_backend_snapshots() {
+        let seat = SmithayAdapter::translate_seat_descriptor(SmithaySeatDescriptor {
+            seat_name: "seat-0".into(),
+            active: true,
+        });
+        let output = SmithayAdapter::translate_output_descriptor(SmithayOutputDescriptor {
+            output_id: "out-1".into(),
+            active: true,
+            width: 1280,
+            height: 720,
+        });
+
+        assert_eq!(seat.seat_name, "seat-0");
+        assert_eq!(
+            output.output_id,
+            spiders_shared::ids::OutputId::from("out-1")
+        );
     }
 
     #[test]
