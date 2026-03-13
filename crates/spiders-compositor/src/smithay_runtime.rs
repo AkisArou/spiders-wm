@@ -547,6 +547,61 @@ mod imp {
             assert_eq!(bootstrap.report.seat_name, "smithay-test-seat");
             assert_eq!(bootstrap.controller.phase(), ControllerPhase::Pending);
         }
+
+        #[test]
+        fn bootstrap_applies_pending_discovery_events_to_controller() {
+            let runtime_service = test_runtime_service();
+            let config = test_config();
+            let state = test_state_snapshot();
+            let controller =
+                crate::CompositorController::initialize(runtime_service, config, state).unwrap();
+            let mut runtime = test_runtime("wayland-test-3");
+            runtime.state_mut().track_test_surface_snapshot(
+                crate::backend::BackendSurfaceSnapshot::Window {
+                    surface_id: "wl-surface-601".into(),
+                    window_id: spiders_shared::ids::WindowId::from("smithay-window-601"),
+                    output_id: None,
+                },
+            );
+
+            let report = SmithayStartupReport {
+                controller: controller.report(),
+                output_name: "smithay-test-output".into(),
+                seat_name: "smithay-test-seat".into(),
+                logical_size: (1280, 720),
+                socket_name: Some("wayland-test-3".into()),
+            };
+            let mut bootstrap = SmithayBootstrap {
+                controller,
+                runtime,
+                report,
+            };
+
+            for event in bootstrap.runtime.take_pending_discovery_events() {
+                bootstrap
+                    .controller
+                    .apply_command(ControllerCommand::DiscoveryEvent(event))
+                    .unwrap();
+            }
+            bootstrap.report.controller = bootstrap.controller.report();
+
+            let snapshot = bootstrap.snapshot();
+            assert_eq!(snapshot.state.pending_discovery_event_count, 0);
+            assert_eq!(snapshot.state.known_surfaces.toplevels.len(), 1);
+            assert_eq!(bootstrap.controller.phase(), ControllerPhase::Running);
+            let surface = bootstrap
+                .controller
+                .app()
+                .session()
+                .topology()
+                .surface("wl-surface-601")
+                .unwrap();
+            assert_eq!(surface.id, "wl-surface-601");
+            assert_eq!(
+                surface.window_id,
+                Some(spiders_shared::ids::WindowId::from("smithay-window-601"))
+            );
+        }
     }
 }
 

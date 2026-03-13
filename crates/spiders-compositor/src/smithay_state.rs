@@ -186,6 +186,16 @@ mod imp {
 
         #[cfg(test)]
         pub(crate) fn track_test_surface_snapshot(&mut self, snapshot: BackendSurfaceSnapshot) {
+            if let BackendSurfaceSnapshot::Window {
+                surface_id,
+                window_id,
+                ..
+            } = &snapshot
+            {
+                self.toplevel_window_ids
+                    .insert(surface_id.clone(), window_id.clone());
+            }
+
             self.track_surface_snapshot(snapshot);
         }
 

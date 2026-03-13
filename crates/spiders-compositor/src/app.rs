@@ -16,6 +16,10 @@ pub struct CompositorApp<L, R> {
 }
 
 impl<L, R> CompositorApp<L, R> {
+    pub fn session(&self) -> &CompositorSession<L, R> {
+        &self.session
+    }
+
     pub fn topology(&self) -> &CompositorTopologyState {
         self.session.topology()
     }
