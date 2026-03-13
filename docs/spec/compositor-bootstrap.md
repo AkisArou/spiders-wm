@@ -77,6 +77,27 @@ The controller also owns a coarse lifecycle phase (`pending`, `bootstrapping`,
 `running`, `degraded`) so outer layers like the CLI or a future backend runtime
 can report bootstrap health without depending directly on runner internals.
 
+Backend-facing discovery now has its own typed adapter boundary:
+
+- `BackendDiscoveryEvent` models seat/output/surface discovery without exposing
+  backend handles
+- `BackendTopologySnapshot` models full discovered topology batches from a
+  backend/source before they are expanded into incremental events
+- `ControllerCommand` gives outer layers one command channel for replay scripts,
+  one-off bootstrap events, backend discovery events, and backend discovery
+  snapshots
+
+This keeps the future smithay adapter responsible only for translating backend
+notifications into typed controller commands.
+
+In practice, a smithay-facing adapter should stay thin and do only three things:
+
+1. read backend state/notifications
+2. translate them into `BackendDiscoveryEvent` or `BackendTopologySnapshot`
+3. submit those typed values through `CompositorController`
+
+It should not mutate topology/session state directly.
+
 JSON event scripts remain useful for CLI diagnostics and black-box integration
 tests.
 

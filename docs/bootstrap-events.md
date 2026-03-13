@@ -92,3 +92,12 @@ registration plus a nested scenario.
 - Successful runs return bootstrap diagnostics, startup registration, topology id
   lists, applied event counts, and the controller lifecycle phase.
 - Failed runs return a structured error with the failed event and partial trace.
+
+Future backend integration should translate compositor/backend notifications into
+typed `BackendDiscoveryEvent` values first, then feed those into
+`CompositorController` rather than reaching into runner or topology state
+directly.
+
+For initial synchronization, a backend adapter can also construct a
+`BackendTopologySnapshot` and let the controller expand it into typed discovery
+events, which keeps batch import policy on the compositor side.

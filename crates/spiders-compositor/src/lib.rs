@@ -1,5 +1,6 @@
 pub mod actions;
 pub mod app;
+pub mod backend;
 pub mod controller;
 pub mod host;
 pub mod runner;
@@ -50,7 +51,11 @@ pub trait LayoutEngine {
 pub struct LayoutService;
 
 pub use app::{BootstrapEvent, CompositorApp, StartupRegistration};
-pub use controller::{CompositorController, ControllerPhase, ControllerReport};
+pub use backend::BackendDiscoveryEvent;
+pub use controller::{
+    CompositorController, ControllerCommand, ControllerCommandError, ControllerCommandReport,
+    ControllerPhase, ControllerReport,
+};
 pub use host::CompositorHost;
 pub use runner::{
     BootstrapDiagnostics, BootstrapFailureTrace, BootstrapRunTrace, BootstrapRunner,

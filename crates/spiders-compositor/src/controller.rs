@@ -4,6 +4,7 @@ use spiders_config::service::ConfigRuntimeService;
 use spiders_shared::wm::StateSnapshot;
 
 use crate::app::{BootstrapEvent, StartupRegistration};
+use crate::backend::{BackendDiscoveryEvent, BackendTopologySnapshot};
 use crate::host::CompositorHost;
 use crate::runner::{BootstrapFailureTrace, BootstrapRunTrace, BootstrapRunnerError};
 use crate::scenario::BootstrapScenario;
@@ -32,6 +33,22 @@ pub struct ControllerReport {
     pub startup: StartupRegistration,
     pub applied_events: usize,
     pub diagnostics: crate::BootstrapDiagnostics,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ControllerCommand {
+    BootstrapScript(BootstrapScript),
+    BootstrapEvent(BootstrapEvent),
+    DiscoveryEvent(BackendDiscoveryEvent),
+    DiscoverySnapshot(BackendTopologySnapshot),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct ControllerCommandReport {
+    pub command: ControllerCommand,
+    pub phase: ControllerPhase,
+    pub controller: ControllerReport,
 }
 
 impl<L, R> CompositorController<L, R> {
@@ -202,6 +219,67 @@ impl<L: spiders_config::loader::LayoutSourceLoader, R: LayoutRuntime> Compositor
             }
         }
     }
+
+    pub fn apply_discovery_event(
+        &mut self,
+        event: BackendDiscoveryEvent,
+    ) -> Result<(), BootstrapRunnerError> {
+        self.apply_bootstrap_event(event.into_bootstrap_event())
+    }
+
+    pub fn apply_discovery_snapshot(
+        &mut self,
+        snapshot: BackendTopologySnapshot,
+    ) -> Result<(), BootstrapRunnerError> {
+        self.phase = ControllerPhase::Bootstrapping;
+
+        for event in snapshot.into_discovery_events() {
+            if let Err(error) = self
+                .host
+                .apply_bootstrap_event(event.into_bootstrap_event())
+            {
+                self.phase = ControllerPhase::Degraded;
+                return Err(error);
+            }
+        }
+
+        self.phase = ControllerPhase::Running;
+        Ok(())
+    }
+
+    pub fn apply_command(
+        &mut self,
+        command: ControllerCommand,
+    ) -> Result<ControllerCommandReport, ControllerCommandError> {
+        match command.clone() {
+            ControllerCommand::BootstrapScript(script) => self
+                .apply_bootstrap_script(script)
+                .map_err(ControllerCommandError::BootstrapFailure)?,
+            ControllerCommand::BootstrapEvent(event) => self
+                .apply_bootstrap_event(event)
+                .map_err(ControllerCommandError::Runner)?,
+            ControllerCommand::DiscoveryEvent(event) => self
+                .apply_discovery_event(event)
+                .map_err(ControllerCommandError::Runner)?,
+            ControllerCommand::DiscoverySnapshot(snapshot) => self
+                .apply_discovery_snapshot(snapshot)
+                .map_err(ControllerCommandError::Runner)?,
+        }
+
+        Ok(ControllerCommandReport {
+            command,
+            phase: self.phase,
+            controller: self.report(),
+        })
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum ControllerCommandError {
+    #[error(transparent)]
+    Runner(#[from] BootstrapRunnerError),
+    #[error("bootstrap command failed")]
+    BootstrapFailure(BootstrapFailureTrace),
 }
 
 #[cfg(test)]
@@ -371,5 +449,79 @@ mod tests {
 
         assert!(controller.apply_bootstrap_script(script).is_err());
         assert_eq!(controller.phase(), ControllerPhase::Degraded);
+    }
+
+    #[test]
+    fn controller_accepts_backend_discovery_event() {
+        let mut controller =
+            CompositorController::initialize(runtime_service(), config(), state()).unwrap();
+
+        controller
+            .apply_discovery_event(BackendDiscoveryEvent::SeatDiscovered {
+                seat_name: "seat-backend".into(),
+                active: true,
+            })
+            .unwrap();
+
+        assert_eq!(controller.phase(), ControllerPhase::Running);
+        assert_eq!(
+            controller
+                .bootstrap_trace()
+                .diagnostics
+                .active_seat
+                .as_deref(),
+            Some("seat-backend")
+        );
+    }
+
+    #[test]
+    fn controller_command_returns_command_report() {
+        let mut controller =
+            CompositorController::initialize(runtime_service(), config(), state()).unwrap();
+
+        let report = controller
+            .apply_command(ControllerCommand::DiscoveryEvent(
+                BackendDiscoveryEvent::OutputActivated {
+                    output_id: OutputId::from("out-1"),
+                },
+            ))
+            .unwrap();
+
+        assert_eq!(report.phase, ControllerPhase::Running);
+        assert_eq!(report.controller.applied_events, 1);
+    }
+
+    #[test]
+    fn controller_accepts_backend_topology_snapshot() {
+        let mut controller =
+            CompositorController::initialize(runtime_service(), config(), state()).unwrap();
+
+        controller
+            .apply_discovery_snapshot(BackendTopologySnapshot {
+                source: crate::backend::BackendSource::Mock,
+                seats: vec![crate::backend::BackendSeatSnapshot {
+                    seat_name: "seat-batch".into(),
+                    active: true,
+                }],
+                outputs: vec![crate::backend::BackendOutputSnapshot {
+                    output_id: OutputId::from("out-1"),
+                    active: true,
+                }],
+                surfaces: vec![crate::backend::BackendSurfaceSnapshot::Window {
+                    surface_id: "window-w1".into(),
+                    window_id: WindowId::from("w1"),
+                    output_id: Some(OutputId::from("out-1")),
+                }],
+            })
+            .unwrap();
+
+        let report = controller.report();
+        assert_eq!(report.phase, ControllerPhase::Running);
+        assert_eq!(report.applied_events, 3);
+        assert!(report
+            .diagnostics
+            .seat_names
+            .iter()
+            .any(|seat| seat == "seat-batch"));
     }
 }
