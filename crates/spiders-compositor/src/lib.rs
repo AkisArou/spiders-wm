@@ -1,3 +1,5 @@
+pub mod startup;
+
 use spiders_config::model::{Config, LayoutConfigError};
 use spiders_config::runtime::{LayoutRuntime, LayoutRuntimeError};
 use spiders_config::service::{ConfigRuntimeService, ConfigRuntimeServiceError};
@@ -35,24 +37,7 @@ pub trait LayoutEngine {
 #[derive(Debug, Default, Clone, Copy)]
 pub struct LayoutService;
 
-#[derive(Debug)]
-pub struct StartupRuntime<L, R> {
-    pub config: Config,
-    pub service: ConfigRuntimeService<L, R>,
-    pub startup_layout: Option<StartupLayoutState>,
-}
-
-#[derive(Debug)]
-pub struct StartupConfig<L, R> {
-    pub runtime: StartupRuntime<L, R>,
-    pub state: StateSnapshot,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct StartupLayoutState {
-    pub evaluated: spiders_config::service::EvaluatedLayout,
-    pub workspace_id: spiders_shared::ids::WorkspaceId,
-}
+pub use startup::{StartupConfig, StartupLayoutState, StartupRuntime, StartupSequence};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkspaceLayoutSource<'a> {
@@ -68,17 +53,11 @@ impl LayoutService {
         R: LayoutRuntime,
     >(
         &self,
-        mut service: ConfigRuntimeService<L, R>,
+        service: ConfigRuntimeService<L, R>,
         config: Config,
         state: &StateSnapshot,
     ) -> Result<StartupRuntime<L, R>, CompositorLayoutError> {
-        let startup_layout = self.bootstrap_runtime(&mut service, &config, state)?;
-
-        Ok(StartupRuntime {
-            config,
-            service,
-            startup_layout,
-        })
+        startup::initialize_startup_runtime(self, service, config, state)
     }
 
     pub fn initialize_startup_config<
@@ -90,9 +69,7 @@ impl LayoutService {
         config: Config,
         state: StateSnapshot,
     ) -> Result<StartupConfig<L, R>, CompositorLayoutError> {
-        let runtime = self.initialize_startup_runtime(service, config, &state)?;
-
-        Ok(StartupConfig { runtime, state })
+        startup::initialize_startup_config(self, service, config, state)
     }
 
     pub fn bootstrap_runtime<L: spiders_config::loader::LayoutSourceLoader, R: LayoutRuntime>(
@@ -101,16 +78,7 @@ impl LayoutService {
         config: &Config,
         state: &StateSnapshot,
     ) -> Result<Option<StartupLayoutState>, CompositorLayoutError> {
-        let Some(workspace) = state.current_workspace() else {
-            return Ok(None);
-        };
-
-        Ok(service
-            .evaluate_for_workspace(config, state, workspace)?
-            .map(|evaluated| StartupLayoutState {
-                workspace_id: workspace.id.clone(),
-                evaluated,
-            }))
+        startup::bootstrap_runtime(self, service, config, state)
     }
 
     pub fn make_request(
@@ -190,7 +158,7 @@ impl LayoutService {
     }
 }
 
-fn build_request_from_context(
+pub(crate) fn build_request_from_context(
     context: LayoutEvaluationContext,
     selected_layout: SelectedLayout,
     root: ResolvedLayoutNode,
@@ -624,6 +592,7 @@ mod tests {
 
         assert_eq!(evaluated.workspace_id, WorkspaceId::from("ws-1"));
         assert_eq!(evaluated.evaluated.loaded.selected.name, "master-stack");
+        assert_eq!(evaluated.response.root.window_nodes().len(), 1);
         assert!(matches!(
             evaluated.evaluated.layout,
             spiders_shared::layout::SourceLayoutNode::Workspace { .. }
@@ -694,6 +663,17 @@ mod tests {
 
         assert!(startup.startup_layout.is_some());
         assert_eq!(startup.config.layouts.len(), 1);
+        assert_eq!(
+            startup
+                .startup_layout
+                .as_ref()
+                .unwrap()
+                .response
+                .root
+                .window_nodes()
+                .len(),
+            1
+        );
 
         let _ = fs::remove_file(module_path);
     }
@@ -759,6 +739,18 @@ mod tests {
             .unwrap();
 
         assert!(startup.runtime.startup_layout.is_some());
+        assert_eq!(
+            startup
+                .runtime
+                .startup_layout
+                .as_ref()
+                .unwrap()
+                .response
+                .root
+                .window_nodes()
+                .len(),
+            1
+        );
         assert_eq!(
             startup.state.current_workspace_id,
             Some(WorkspaceId::from("ws-1"))
