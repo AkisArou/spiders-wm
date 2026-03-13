@@ -30,6 +30,8 @@ pub struct LayoutDefinition {
     pub module: String,
     #[serde(default)]
     pub stylesheet: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_source: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -107,6 +109,7 @@ impl Config {
                     name: layout.name.clone(),
                     module: layout.module.clone(),
                     stylesheet: layout.stylesheet.clone(),
+                    runtime_source: layout.runtime_source.clone(),
                 })
             })
             .or_else(|| {
@@ -214,6 +217,7 @@ mod tests {
                 name: "master-stack".into(),
                 module: "layouts/master-stack.js".into(),
                 stylesheet: "workspace { display: flex; }".into(),
+                runtime_source: None,
             }],
             ..Config::default()
         };
@@ -231,6 +235,7 @@ mod tests {
                 name: "master-stack".into(),
                 module: "layouts/master-stack.js".into(),
                 stylesheet: "workspace { display: flex; }".into(),
+                runtime_source: None,
             }],
             ..Config::default()
         };
@@ -259,6 +264,7 @@ mod tests {
                 name: "master-stack".into(),
                 module: "layouts/master-stack.js".into(),
                 stylesheet: "workspace { display: flex; }".into(),
+                runtime_source: None,
             }],
             ..Config::default()
         };
@@ -273,6 +279,7 @@ mod tests {
                 name: "master-stack".into(),
                 module: "layouts/master-stack.js".into(),
                 stylesheet: "workspace { display: flex; }".into(),
+                runtime_source: None,
             })
         );
     }
@@ -284,6 +291,7 @@ mod tests {
                 name: "master-stack".into(),
                 module: "layouts/master-stack.js".into(),
                 stylesheet: "workspace { display: flex; }".into(),
+                runtime_source: None,
             }],
             ..Config::default()
         };

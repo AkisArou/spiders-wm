@@ -278,6 +278,7 @@ mod tests {
                 name: "master-stack".into(),
                 module: "layouts/master-stack.js".into(),
                 stylesheet: "workspace { display: flex; }".into(),
+                runtime_source: None,
             }],
             ..Config::default()
         };
@@ -329,6 +330,7 @@ mod tests {
                 name: "master-stack".into(),
                 module: "layouts/master-stack.js".into(),
                 stylesheet: "workspace { display: flex; }".into(),
+                runtime_source: None,
             }],
             ..Config::default()
         };
@@ -386,8 +388,9 @@ mod tests {
         let config = Config {
             layouts: vec![spiders_config::model::LayoutDefinition {
                 name: "master-stack".into(),
-                module: "ctx => ({ type: 'workspace', children: [{ type: 'window', id: 'main', match: 'app_id=\"firefox\"' }, { type: 'slot', id: 'rest', class: ['rest'] }] })".into(),
+                module: "layouts/master-stack.js".into(),
                 stylesheet: "workspace { display: flex; flex-direction: row; width: 800px; height: 600px; } #main { width: 250px; } .rest { flex-grow: 1; }".into(),
+                runtime_source: Some("ctx => ({ type: 'workspace', children: [{ type: 'window', id: 'main', match: 'app_id=\"firefox\"' }, { type: 'slot', id: 'rest', class: ['rest'] }] })".into()),
             }],
             ..Config::default()
         };

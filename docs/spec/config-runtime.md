@@ -60,6 +60,12 @@ V1 config-facing layout definitions should include at least:
 - `module`
 - `stylesheet`
 
+Runtime-loaded source should be treated as distinct from the user-facing module
+identifier/path. The config/runtime boundary may carry both:
+
+- `module`: stable identifier or source path
+- `runtime_source?`: loaded compiled JavaScript source
+
 `WorkspaceSnapshot.effective_layout.name` selects one of these definitions. Rust
 then builds a `LayoutRequest` using the selected definition's stylesheet and the
 workspace/output geometry.
@@ -69,6 +75,7 @@ The selected runtime payload should be representable as shared data with at leas
 - `name`
 - `module`
 - `stylesheet`
+- `runtime_source?`
 
 State-driven orchestration should be able to derive the current workspace and
 output from `StateSnapshot`, resolve the selected layout definition, and build a

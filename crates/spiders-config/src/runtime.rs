@@ -11,6 +11,31 @@ use spiders_shared::wm::{LayoutEvaluationContext, SelectedLayout};
 use crate::model::{Config, LayoutConfigError};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DecodePath(Vec<String>);
+
+impl DecodePath {
+    fn root() -> Self {
+        Self(vec!["root".into()])
+    }
+
+    fn field(&self, field: &str) -> Self {
+        let mut path = self.0.clone();
+        path.push(field.to_owned());
+        Self(path)
+    }
+
+    fn index(&self, index: usize) -> Self {
+        let mut path = self.0.clone();
+        path.push(format!("[{index}]"));
+        Self(path)
+    }
+
+    fn display(&self) -> String {
+        self.0.join(".")
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LayoutModuleContract {
     pub export_name: String,
 }
@@ -28,7 +53,7 @@ pub struct EvaluatedLayoutModule {
     pub export: JsValue,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 struct JsAuthoredNodeMeta {
     #[serde(default)]
     id: Option<String>,
@@ -40,7 +65,7 @@ struct JsAuthoredNodeMeta {
     data: BTreeMap<String, String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 #[serde(tag = "type", rename_all = "kebab-case")]
 enum JsAuthoredLayoutNode {
     Workspace {
@@ -228,13 +253,15 @@ impl BoaLayoutRuntime {
                 message: "layout function returned undefined".into(),
             })?;
 
-        let authored: JsAuthoredLayoutNode =
-            serde_json::from_value(json).map_err(|error| LayoutRuntimeError::ValueConversion {
-                name: selected_layout.name.clone(),
-                message: error.to_string(),
+        let authored =
+            decode_authored_layout_node(&json, &DecodePath::root()).map_err(|message| {
+                LayoutRuntimeError::ValueConversion {
+                    name: selected_layout.name.clone(),
+                    message,
+                }
             })?;
 
-        self.normalize_authored_layout(convert_authored_layout_node(authored))
+        self.normalize_authored_layout(authored)
     }
 }
 
@@ -294,7 +321,13 @@ impl LayoutRuntime for BoaLayoutRuntime {
         selected_layout: &SelectedLayout,
         context: &LayoutEvaluationContext,
     ) -> Result<SourceLayoutNode, LayoutRuntimeError> {
-        self.evaluate_module_source(selected_layout, context, &selected_layout.module)
+        let source = selected_layout.runtime_source.as_deref().ok_or_else(|| {
+            LayoutRuntimeError::NotImplemented {
+                name: selected_layout.name.clone(),
+            }
+        })?;
+
+        self.evaluate_module_source(selected_layout, context, source)
     }
 
     fn contract(&self) -> LayoutModuleContract {
@@ -302,24 +335,42 @@ impl LayoutRuntime for BoaLayoutRuntime {
     }
 }
 
-fn convert_authored_layout_node(node: JsAuthoredLayoutNode) -> AuthoredLayoutNode {
-    match node {
+fn decode_authored_layout_node(
+    value: &serde_json::Value,
+    path: &DecodePath,
+) -> Result<AuthoredLayoutNode, String> {
+    let node: JsAuthoredLayoutNode = serde_json::from_value(value.clone())
+        .map_err(|error| format!("{}: {error}", path.display()))?;
+
+    decode_authored_layout_node_from_node(node, path)
+}
+
+fn decode_children(
+    children: Vec<JsAuthoredLayoutNode>,
+    path: &DecodePath,
+) -> Result<Vec<AuthoredLayoutNode>, String> {
+    children
+        .into_iter()
+        .enumerate()
+        .map(|(index, child)| decode_authored_layout_node_from_node(child, &path.index(index)))
+        .collect()
+}
+
+fn decode_authored_layout_node_from_node(
+    node: JsAuthoredLayoutNode,
+    path: &DecodePath,
+) -> Result<AuthoredLayoutNode, String> {
+    Ok(match node {
         JsAuthoredLayoutNode::Workspace { meta, children } => AuthoredLayoutNode::Workspace {
-            meta: convert_meta(meta),
-            children: children
-                .into_iter()
-                .map(convert_authored_layout_node)
-                .collect(),
+            meta: decode_meta(meta),
+            children: decode_children(children, &path.field("children"))?,
         },
         JsAuthoredLayoutNode::Group { meta, children } => AuthoredLayoutNode::Group {
-            meta: convert_meta(meta),
-            children: children
-                .into_iter()
-                .map(convert_authored_layout_node)
-                .collect(),
+            meta: decode_meta(meta),
+            children: decode_children(children, &path.field("children"))?,
         },
         JsAuthoredLayoutNode::Window { meta, match_expr } => AuthoredLayoutNode::Window {
-            meta: convert_meta(meta),
+            meta: decode_meta(meta),
             match_expr,
         },
         JsAuthoredLayoutNode::Slot {
@@ -327,14 +378,14 @@ fn convert_authored_layout_node(node: JsAuthoredLayoutNode) -> AuthoredLayoutNod
             match_expr,
             take,
         } => AuthoredLayoutNode::Slot {
-            meta: convert_meta(meta),
+            meta: decode_meta(meta),
             match_expr,
             take,
         },
-    }
+    })
 }
 
-fn convert_meta(meta: JsAuthoredNodeMeta) -> AuthoredNodeMeta {
+fn decode_meta(meta: JsAuthoredNodeMeta) -> AuthoredNodeMeta {
     AuthoredNodeMeta {
         id: meta.id,
         class: meta.class,
@@ -397,6 +448,7 @@ mod tests {
                 name: "master-stack".into(),
                 module: "layouts/master-stack.js".into(),
                 stylesheet: "workspace { display: flex; }".into(),
+                runtime_source: None,
             }],
             ..Config::default()
         };
@@ -418,6 +470,7 @@ mod tests {
                     name: "master-stack".into(),
                     module: "layouts/master-stack.js".into(),
                     stylesheet: "workspace { display: flex; }".into(),
+                    runtime_source: None,
                 },
                 &state().layout_context(&workspace(), None),
             )
@@ -463,6 +516,7 @@ mod tests {
                     name: "master-stack".into(),
                     module: "layouts/master-stack.js".into(),
                     stylesheet: String::new(),
+                    runtime_source: None,
                 },
                 &state().layout_context(&workspace(), None),
                 "undefined",
@@ -487,6 +541,7 @@ mod tests {
                     name: "master-stack".into(),
                     module: "layouts/master-stack.js".into(),
                     stylesheet: String::new(),
+                    runtime_source: None,
                 },
                 &state().layout_context(&workspace(), None),
                 "({ type: 'workspace', children: [] })",
@@ -511,6 +566,7 @@ mod tests {
                     name: "master-stack".into(),
                     module: "layouts/master-stack.js".into(),
                     stylesheet: String::new(),
+                    runtime_source: None,
                 },
                 &state().layout_context(&workspace(), None),
                 "ctx => ({ type: 'workspace', children: [{ type: 'window', match: 'app_id=\"firefox\"' }] })",
@@ -529,6 +585,7 @@ mod tests {
                     name: "master-stack".into(),
                     module: "layouts/master-stack.js".into(),
                     stylesheet: String::new(),
+                    runtime_source: None,
                 },
                 &state().layout_context(&workspace(), None),
                 "ctx => ({ type: 'workspace', children: [{ type: 'slot', id: 'rest', class: ['stack'], data: { role: 'secondary' }, take: 2 }] })",
@@ -558,6 +615,7 @@ mod tests {
                     name: "master-stack".into(),
                     module: "layouts/master-stack.js".into(),
                     stylesheet: String::new(),
+                    runtime_source: None,
                 },
                 &state().layout_context(&workspace(), None),
                 "ctx => ({ children: [] })",
@@ -568,5 +626,27 @@ mod tests {
             error,
             LayoutRuntimeError::ValueConversion { name, .. } if name == "master-stack"
         ));
+    }
+
+    #[test]
+    fn boa_runtime_uses_runtime_source_not_module_path() {
+        let runtime = BoaLayoutRuntime::new();
+        let selected_layout = SelectedLayout {
+            name: "master-stack".into(),
+            module: "layouts/master-stack.js".into(),
+            stylesheet: String::new(),
+            runtime_source: Some(
+                "ctx => ({ type: 'workspace', children: [{ type: 'window', id: 'main' }] })".into(),
+            ),
+        };
+
+        let layout = runtime
+            .evaluate_layout(
+                &selected_layout,
+                &state().layout_context(&workspace(), None),
+            )
+            .unwrap();
+
+        assert!(matches!(layout, SourceLayoutNode::Workspace { .. }));
     }
 }
