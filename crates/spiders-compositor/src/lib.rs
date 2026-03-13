@@ -1,5 +1,6 @@
 pub mod runtime;
 pub mod startup;
+pub mod wm;
 
 use spiders_config::model::{Config, LayoutConfigError};
 use spiders_config::runtime::{LayoutRuntime, LayoutRuntimeError};
@@ -42,6 +43,7 @@ pub use runtime::{CompositorRuntimeState, WorkspaceLayoutState};
 pub use startup::{
     StartupConfig, StartupLayoutState, StartupRuntime, StartupSequence, StartupSession,
 };
+pub use wm::{WmState, WmStateError};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkspaceLayoutSource<'a> {
