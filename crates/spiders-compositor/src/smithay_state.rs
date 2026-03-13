@@ -1,6 +1,6 @@
 #[cfg(feature = "smithay-winit")]
 mod imp {
-    use std::collections::{HashMap, HashSet};
+    use std::collections::HashMap;
 
     use crate::backend::{BackendDiscoveryEvent, BackendSurfaceSnapshot};
     use smithay::backend::renderer::utils::on_commit_buffer_handler;
@@ -45,11 +45,20 @@ mod imp {
     }
 
     #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct SmithaySurfaceRoleCounts {
+        pub toplevel: usize,
+        pub popup: usize,
+        pub unmanaged: usize,
+        pub layer: usize,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
     pub struct SmithayStateSnapshot {
         pub seat_name: String,
         pub tracked_surface_count: usize,
         pub tracked_toplevel_count: usize,
         pub pending_discovery_event_count: usize,
+        pub role_counts: SmithaySurfaceRoleCounts,
     }
 
     impl ClientData for SmithayClientState {
@@ -69,8 +78,16 @@ mod imp {
         pub seat_name: String,
         next_window_serial: u64,
         toplevel_window_ids: HashMap<String, WindowId>,
-        tracked_surfaces: HashSet<String>,
+        tracked_surfaces: HashMap<String, SmithayTrackedSurfaceKind>,
         pending_discovery_events: Vec<BackendDiscoveryEvent>,
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum SmithayTrackedSurfaceKind {
+        Toplevel,
+        Popup,
+        Layer,
+        Unmanaged,
     }
 
     impl SpidersSmithayState {
@@ -98,7 +115,7 @@ mod imp {
                 seat_name,
                 next_window_serial: 1,
                 toplevel_window_ids: HashMap::new(),
-                tracked_surfaces: HashSet::new(),
+                tracked_surfaces: HashMap::new(),
                 pending_discovery_events: Vec::new(),
             })
         }
@@ -112,32 +129,44 @@ mod imp {
         }
 
         pub fn snapshot(&self) -> SmithayStateSnapshot {
+            let role_counts = self.role_counts();
             SmithayStateSnapshot {
                 seat_name: self.seat_name.clone(),
                 tracked_surface_count: self.tracked_surfaces.len(),
                 tracked_toplevel_count: self.toplevel_window_ids.len(),
                 pending_discovery_event_count: self.pending_discovery_events.len(),
+                role_counts,
             }
         }
 
         fn track_surface_snapshot(&mut self, snapshot: BackendSurfaceSnapshot) {
-            let surface_id = match &snapshot {
-                BackendSurfaceSnapshot::Window { surface_id, .. }
-                | BackendSurfaceSnapshot::Popup { surface_id, .. }
-                | BackendSurfaceSnapshot::Layer { surface_id, .. }
-                | BackendSurfaceSnapshot::Unmanaged { surface_id } => surface_id.clone(),
+            let (surface_id, kind) = match &snapshot {
+                BackendSurfaceSnapshot::Window { surface_id, .. } => {
+                    (surface_id.clone(), SmithayTrackedSurfaceKind::Toplevel)
+                }
+                BackendSurfaceSnapshot::Popup { surface_id, .. } => {
+                    (surface_id.clone(), SmithayTrackedSurfaceKind::Popup)
+                }
+                BackendSurfaceSnapshot::Layer { surface_id, .. } => {
+                    (surface_id.clone(), SmithayTrackedSurfaceKind::Layer)
+                }
+                BackendSurfaceSnapshot::Unmanaged { surface_id } => {
+                    (surface_id.clone(), SmithayTrackedSurfaceKind::Unmanaged)
+                }
             };
 
-            if !self.tracked_surfaces.insert(surface_id) {
+            if self.tracked_surfaces.contains_key(&surface_id) {
                 return;
             }
+
+            self.tracked_surfaces.insert(surface_id, kind);
 
             self.pending_discovery_events
                 .push(snapshot_into_discovery_event(snapshot));
         }
 
         fn track_surface_loss_by_id(&mut self, surface_id: String) {
-            if self.tracked_surfaces.remove(&surface_id) {
+            if self.tracked_surfaces.remove(&surface_id).is_some() {
                 self.pending_discovery_events
                     .push(BackendDiscoveryEvent::SurfaceLost { surface_id });
             }
@@ -191,7 +220,7 @@ mod imp {
                 Some(XDG_TOPLEVEL_ROLE) => {
                     if surface_has_buffer(&root) {
                         self.track_toplevel_surface(&root);
-                    } else if self.tracked_surfaces.contains(&surface_id) {
+                    } else if self.tracked_surfaces.contains_key(&surface_id) {
                         self.toplevel_window_ids.remove(&surface_id);
                         self.track_surface_loss_by_id(surface_id);
                     }
@@ -199,7 +228,7 @@ mod imp {
                 Some(XDG_POPUP_ROLE) => {
                     if surface_has_buffer(&root) {
                         self.track_popup_surface_by_root(&root);
-                    } else if self.tracked_surfaces.contains(&surface_id) {
+                    } else if self.tracked_surfaces.contains_key(&surface_id) {
                         self.track_surface_loss_by_id(surface_id);
                     }
                 }
@@ -242,6 +271,26 @@ mod imp {
             self.toplevel_window_ids
                 .insert(surface_id.to_owned(), window_id.clone());
             window_id
+        }
+
+        fn role_counts(&self) -> SmithaySurfaceRoleCounts {
+            let mut counts = SmithaySurfaceRoleCounts {
+                toplevel: 0,
+                popup: 0,
+                unmanaged: 0,
+                layer: 0,
+            };
+
+            for kind in self.tracked_surfaces.values() {
+                match kind {
+                    SmithayTrackedSurfaceKind::Toplevel => counts.toplevel += 1,
+                    SmithayTrackedSurfaceKind::Popup => counts.popup += 1,
+                    SmithayTrackedSurfaceKind::Unmanaged => counts.unmanaged += 1,
+                    SmithayTrackedSurfaceKind::Layer => counts.layer += 1,
+                }
+            }
+
+            counts
         }
     }
 
@@ -525,6 +574,10 @@ mod imp {
             assert_eq!(before.tracked_surface_count, 0);
             assert_eq!(before.tracked_toplevel_count, 0);
             assert_eq!(before.pending_discovery_event_count, 0);
+            assert_eq!(before.role_counts.toplevel, 0);
+            assert_eq!(before.role_counts.popup, 0);
+            assert_eq!(before.role_counts.unmanaged, 0);
+            assert_eq!(before.role_counts.layer, 0);
 
             let window_id = state.window_id_for_surface("wl-surface-101");
             state.track_surface_snapshot(BackendSurfaceSnapshot::Window {
@@ -540,14 +593,53 @@ mod imp {
             assert_eq!(after.tracked_surface_count, 2);
             assert_eq!(after.tracked_toplevel_count, 1);
             assert_eq!(after.pending_discovery_event_count, 2);
+            assert_eq!(after.role_counts.toplevel, 1);
+            assert_eq!(after.role_counts.popup, 0);
+            assert_eq!(after.role_counts.unmanaged, 1);
+            assert_eq!(after.role_counts.layer, 0);
 
             let _ = state.take_discovery_events();
             let drained = state.snapshot();
             assert_eq!(drained.pending_discovery_event_count, 0);
             assert_eq!(drained.tracked_surface_count, 2);
         }
+
+        #[test]
+        fn smithay_state_snapshot_reports_role_breakdown() {
+            let display = Display::<SpidersSmithayState>::new().unwrap();
+            let mut state = SpidersSmithayState::new(&display, "test-seat").unwrap();
+
+            let window_id = state.window_id_for_surface("wl-surface-201");
+            state.track_surface_snapshot(BackendSurfaceSnapshot::Window {
+                surface_id: "wl-surface-201".into(),
+                window_id,
+                output_id: None,
+            });
+            state.track_surface_snapshot(BackendSurfaceSnapshot::Popup {
+                surface_id: "wl-surface-202".into(),
+                output_id: None,
+                parent_surface_id: "wl-surface-201".into(),
+            });
+            state.track_surface_snapshot(BackendSurfaceSnapshot::Layer {
+                surface_id: "wl-surface-203".into(),
+                output_id: "out-1".into(),
+            });
+            state.track_surface_snapshot(BackendSurfaceSnapshot::Unmanaged {
+                surface_id: "wl-surface-204".into(),
+            });
+
+            let snapshot = state.snapshot();
+            assert_eq!(snapshot.tracked_surface_count, 4);
+            assert_eq!(snapshot.role_counts.toplevel, 1);
+            assert_eq!(snapshot.role_counts.popup, 1);
+            assert_eq!(snapshot.role_counts.layer, 1);
+            assert_eq!(snapshot.role_counts.unmanaged, 1);
+        }
     }
 }
 
 #[cfg(feature = "smithay-winit")]
-pub use imp::{SmithayClientState, SmithayStateError, SmithayStateSnapshot, SpidersSmithayState};
+pub use imp::{
+    SmithayClientState, SmithayStateError, SmithayStateSnapshot, SmithaySurfaceRoleCounts,
+    SpidersSmithayState,
+};

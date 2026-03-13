@@ -73,7 +73,8 @@ pub use smithay_runtime::{bootstrap_winit, SmithayBootstrap, SmithayWinitRuntime
 pub use smithay_runtime::{SmithayRuntimeError, SmithayRuntimeSnapshot, SmithayStartupReport};
 #[cfg(feature = "smithay-winit")]
 pub use smithay_state::{
-    SmithayClientState, SmithayStateError, SmithayStateSnapshot, SpidersSmithayState,
+    SmithayClientState, SmithayStateError, SmithayStateSnapshot, SmithaySurfaceRoleCounts,
+    SpidersSmithayState,
 };
 pub use spiders_runtime::{
     BootstrapDiagnostics, BootstrapEvent, BootstrapFailureTrace, BootstrapRunTrace,
