@@ -50,6 +50,24 @@ mod imp {
         pub report: SmithayStartupReport,
     }
 
+    impl<L, R> SmithayBootstrap<L, R>
+    where
+        L: spiders_config::loader::LayoutSourceLoader,
+        R: spiders_config::runtime::LayoutRuntime,
+    {
+        pub fn run_startup_cycle(&mut self) -> Result<(), SmithayRuntimeError> {
+            self.runtime.run_startup_cycle()?;
+
+            for event in self.runtime.take_pending_discovery_events() {
+                self.controller
+                    .apply_command(ControllerCommand::DiscoveryEvent(event))?;
+            }
+
+            self.report.controller = self.controller.report();
+            Ok(())
+        }
+    }
+
     #[derive(Debug)]
     pub struct SmithayWinitRuntime<'a> {
         event_loop: EventLoop<'a, SpidersSmithayState>,
@@ -99,6 +117,12 @@ mod imp {
                 .map_err(|error| SmithayRuntimeError::Winit(error.to_string()))?;
 
             Ok(())
+        }
+
+        pub fn take_pending_discovery_events(
+            &mut self,
+        ) -> Vec<crate::backend::BackendDiscoveryEvent> {
+            self.state_mut().take_discovery_events()
         }
 
         fn dispatch_winit_events(&mut self) -> Result<(), SmithayRuntimeError> {

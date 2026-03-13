@@ -1,5 +1,8 @@
 #[cfg(feature = "smithay-winit")]
 mod imp {
+    use std::collections::HashSet;
+
+    use crate::backend::{BackendDiscoveryEvent, BackendSurfaceSnapshot};
     use smithay::delegate_compositor;
     use smithay::delegate_seat;
     use smithay::delegate_shm;
@@ -11,6 +14,7 @@ mod imp {
     use smithay::reexports::wayland_server::protocol::wl_buffer;
     use smithay::reexports::wayland_server::protocol::wl_seat;
     use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
+    use smithay::reexports::wayland_server::Resource;
     use smithay::reexports::wayland_server::{BindError, Client, Display, DisplayHandle};
     use smithay::utils::Serial;
     use smithay::wayland::buffer::BufferHandler;
@@ -20,6 +24,7 @@ mod imp {
     };
     use smithay::wayland::shm::{ShmHandler, ShmState};
     use smithay::wayland::socket::ListeningSocketSource;
+    use spiders_shared::ids::WindowId;
 
     #[derive(Debug, thiserror::Error)]
     pub enum SmithayStateError {
@@ -49,6 +54,8 @@ mod imp {
         pub seat_state: SeatState<Self>,
         pub seat: Seat<Self>,
         pub seat_name: String,
+        tracked_surfaces: HashSet<String>,
+        pending_discovery_events: Vec<BackendDiscoveryEvent>,
     }
 
     impl SpidersSmithayState {
@@ -74,11 +81,109 @@ mod imp {
                 seat_state,
                 seat,
                 seat_name,
+                tracked_surfaces: HashSet::new(),
+                pending_discovery_events: Vec::new(),
             })
         }
 
         pub fn bind_auto_socket_source(&self) -> Result<ListeningSocketSource, SmithayStateError> {
             ListeningSocketSource::new_auto().map_err(Into::into)
+        }
+
+        pub fn take_discovery_events(&mut self) -> Vec<BackendDiscoveryEvent> {
+            std::mem::take(&mut self.pending_discovery_events)
+        }
+
+        fn track_surface_snapshot(&mut self, snapshot: BackendSurfaceSnapshot) {
+            let surface_id = match &snapshot {
+                BackendSurfaceSnapshot::Window { surface_id, .. }
+                | BackendSurfaceSnapshot::Popup { surface_id, .. }
+                | BackendSurfaceSnapshot::Layer { surface_id, .. }
+                | BackendSurfaceSnapshot::Unmanaged { surface_id } => surface_id.clone(),
+            };
+
+            if !self.tracked_surfaces.insert(surface_id) {
+                return;
+            }
+
+            self.pending_discovery_events
+                .push(snapshot_into_discovery_event(snapshot));
+        }
+
+        fn track_surface_loss_by_id(&mut self, surface_id: String) {
+            if self.tracked_surfaces.remove(&surface_id) {
+                self.pending_discovery_events
+                    .push(BackendDiscoveryEvent::SurfaceLost { surface_id });
+            }
+        }
+
+        fn track_toplevel_surface(&mut self, surface: &WlSurface) {
+            let surface_id = smithay_surface_id(surface);
+            self.track_surface_snapshot(BackendSurfaceSnapshot::Window {
+                window_id: WindowId::from(format!("window-{surface_id}")),
+                surface_id,
+                output_id: None,
+            });
+        }
+
+        fn track_popup_surface(&mut self, surface: &PopupSurface) {
+            let wl_surface = surface.wl_surface();
+            let surface_id = smithay_surface_id(wl_surface);
+            let parent_surface_id = surface
+                .get_parent_surface()
+                .map(|parent| smithay_surface_id(&parent))
+                .unwrap_or_else(|| format!("parent-{surface_id}"));
+
+            self.track_surface_snapshot(BackendSurfaceSnapshot::Popup {
+                surface_id,
+                output_id: None,
+                parent_surface_id,
+            });
+        }
+
+        fn track_toplevel_surface_loss(&mut self, surface: &ToplevelSurface) {
+            self.track_surface_loss_by_id(smithay_surface_id(surface.wl_surface()));
+        }
+
+        fn track_popup_surface_loss(&mut self, surface: &PopupSurface) {
+            self.track_surface_loss_by_id(smithay_surface_id(surface.wl_surface()));
+        }
+    }
+
+    fn smithay_surface_id(surface: &WlSurface) -> String {
+        format!("wl-surface-{}", surface.id().protocol_id())
+    }
+
+    fn snapshot_into_discovery_event(snapshot: BackendSurfaceSnapshot) -> BackendDiscoveryEvent {
+        match snapshot {
+            BackendSurfaceSnapshot::Window {
+                surface_id,
+                window_id,
+                output_id,
+            } => BackendDiscoveryEvent::WindowSurfaceDiscovered {
+                surface_id,
+                window_id,
+                output_id,
+            },
+            BackendSurfaceSnapshot::Popup {
+                surface_id,
+                output_id,
+                parent_surface_id,
+            } => BackendDiscoveryEvent::PopupSurfaceDiscovered {
+                surface_id,
+                output_id,
+                parent_surface_id,
+            },
+            BackendSurfaceSnapshot::Layer {
+                surface_id,
+                output_id,
+            } => BackendDiscoveryEvent::LayerSurfaceDiscovered {
+                surface_id,
+                output_id,
+            },
+            BackendSurfaceSnapshot::Unmanaged { surface_id } => {
+                BackendDiscoveryEvent::UnmanagedSurfaceDiscovered { surface_id }
+            }
         }
     }
 
@@ -113,13 +218,16 @@ mod imp {
         }
 
         fn new_toplevel(&mut self, surface: ToplevelSurface) {
+            self.track_toplevel_surface(surface.wl_surface());
             surface.with_pending_state(|state| {
                 state.states.set(xdg_toplevel::State::Activated);
             });
             surface.send_configure();
         }
 
-        fn new_popup(&mut self, _surface: PopupSurface, _positioner: PositionerState) {}
+        fn new_popup(&mut self, surface: PopupSurface, _positioner: PositionerState) {
+            self.track_popup_surface(&surface);
+        }
 
         fn grab(&mut self, _surface: PopupSurface, _seat: wl_seat::WlSeat, _serial: Serial) {}
 
@@ -129,6 +237,14 @@ mod imp {
             _positioner: PositionerState,
             _token: u32,
         ) {
+        }
+
+        fn toplevel_destroyed(&mut self, surface: ToplevelSurface) {
+            self.track_toplevel_surface_loss(&surface);
+        }
+
+        fn popup_destroyed(&mut self, surface: PopupSurface) {
+            self.track_popup_surface_loss(&surface);
         }
     }
 
@@ -177,6 +293,37 @@ mod imp {
             let socket = state.bind_auto_socket_source().unwrap();
 
             assert!(!socket.socket_name().is_empty());
+        }
+
+        #[test]
+        fn smithay_state_tracks_surface_events_by_id() {
+            let display = Display::<SpidersSmithayState>::new().unwrap();
+            let mut state = SpidersSmithayState::new(&display, "test-seat").unwrap();
+
+            state.track_surface_snapshot(BackendSurfaceSnapshot::Window {
+                surface_id: "wl-surface-11".into(),
+                window_id: WindowId::from("window-wl-surface-11"),
+                output_id: None,
+            });
+            state.track_surface_snapshot(BackendSurfaceSnapshot::Window {
+                surface_id: "wl-surface-11".into(),
+                window_id: WindowId::from("window-wl-surface-11"),
+                output_id: None,
+            });
+            state.track_surface_loss_by_id("wl-surface-11".into());
+
+            let events = state.take_discovery_events();
+            assert_eq!(events.len(), 2);
+            assert!(matches!(
+                &events[0],
+                BackendDiscoveryEvent::WindowSurfaceDiscovered { surface_id, .. }
+                    if surface_id == "wl-surface-11"
+            ));
+            assert!(matches!(
+                &events[1],
+                BackendDiscoveryEvent::SurfaceLost { surface_id }
+                    if surface_id == "wl-surface-11"
+            ));
         }
     }
 }
