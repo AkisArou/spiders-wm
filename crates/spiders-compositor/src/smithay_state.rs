@@ -55,6 +55,7 @@ mod imp {
             let seat_name = seat_name.into();
             let mut seat = seat_state.new_wl_seat(&display_handle, seat_name.clone());
             seat.add_keyboard(XkbConfig::default(), 200, 25)?;
+            seat.add_pointer();
 
             Ok(Self {
                 display_handle,

@@ -3,14 +3,21 @@ mod imp {
     use std::sync::Arc;
     use std::time::Duration;
 
+    use smithay::backend::input::{
+        AbsolutePositionEvent, Event, InputEvent, KeyboardKeyEvent, PointerButtonEvent,
+    };
     use smithay::backend::renderer::gles::GlesRenderer;
-    use smithay::backend::winit::{self, WinitEventLoop};
+    use smithay::backend::winit::{self, WinitEvent, WinitEventLoop};
+    use smithay::input::keyboard::FilterResult;
+    use smithay::input::pointer::{ButtonEvent, MotionEvent};
     use smithay::output::{Mode, Output, PhysicalProperties, Subpixel};
     use smithay::reexports::calloop::generic::Generic;
     use smithay::reexports::calloop::{
         EventLoop, Interest, LoopSignal, Mode as CalloopMode, PostAction,
     };
+    use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
     use smithay::reexports::wayland_server::Display;
+    use smithay::utils::{Point, SERIAL_COUNTER};
     use spiders_runtime::{ControllerCommand, ControllerReport};
     use spiders_shared::ids::OutputId;
 
@@ -49,6 +56,7 @@ mod imp {
         display_handle: smithay::reexports::wayland_server::DisplayHandle,
         loop_signal: LoopSignal,
         socket_name: String,
+        window_size: (i32, i32),
         state: Option<SpidersSmithayState>,
         winit: Option<WinitEventLoop>,
     }
@@ -75,15 +83,7 @@ mod imp {
         }
 
         pub fn run_startup_cycle(&mut self) -> Result<(), SmithayRuntimeError> {
-            let winit = self
-                .winit
-                .as_mut()
-                .ok_or_else(|| SmithayRuntimeError::Winit("winit event loop missing".into()))?;
-
-            let status = winit.dispatch_new_events(|_event| {});
-            if let smithay::reexports::winit::platform::pump_events::PumpStatus::Exit(_) = status {
-                self.loop_signal.stop();
-            }
+            self.dispatch_winit_events()?;
 
             let state = self.state.as_mut().ok_or_else(|| {
                 SmithayRuntimeError::Winit("smithay runtime state missing".into())
@@ -99,6 +99,113 @@ mod imp {
                 .map_err(|error| SmithayRuntimeError::Winit(error.to_string()))?;
 
             Ok(())
+        }
+
+        fn dispatch_winit_events(&mut self) -> Result<(), SmithayRuntimeError> {
+            let winit = self
+                .winit
+                .as_mut()
+                .ok_or_else(|| SmithayRuntimeError::Winit("winit event loop missing".into()))?;
+
+            let mut pending_events = Vec::new();
+            let status = winit.dispatch_new_events(|event| pending_events.push(event));
+            if let smithay::reexports::winit::platform::pump_events::PumpStatus::Exit(_) = status {
+                self.loop_signal.stop();
+            }
+
+            let mut window_size = self.window_size;
+            let state = self.state_mut();
+            for event in pending_events {
+                handle_winit_event(state, event, &mut window_size)?;
+            }
+            self.window_size = window_size;
+
+            Ok(())
+        }
+    }
+
+    fn handle_winit_event(
+        state: &mut SpidersSmithayState,
+        event: WinitEvent,
+        window_size: &mut (i32, i32),
+    ) -> Result<(), SmithayRuntimeError> {
+        match event {
+            WinitEvent::Input(input) => handle_input_event(state, input, window_size),
+            WinitEvent::CloseRequested => Ok(()),
+            WinitEvent::Resized { size, .. } => {
+                *window_size = (size.w, size.h);
+                Ok(())
+            }
+            WinitEvent::Focus(_) | WinitEvent::Redraw => Ok(()),
+        }
+    }
+
+    fn handle_input_event<I>(
+        state: &mut SpidersSmithayState,
+        event: InputEvent<I>,
+        window_size: &mut (i32, i32),
+    ) -> Result<(), SmithayRuntimeError>
+    where
+        I: smithay::backend::input::InputBackend,
+    {
+        match event {
+            InputEvent::Keyboard { event, .. } => {
+                let keyboard = state.seat.get_keyboard().ok_or_else(|| {
+                    SmithayRuntimeError::Winit("smithay keyboard capability missing".into())
+                })?;
+                let serial = SERIAL_COUNTER.next_serial();
+
+                keyboard.input::<(), _>(
+                    state,
+                    event.key_code(),
+                    event.state(),
+                    serial,
+                    event.time_msec(),
+                    |_, _, _| FilterResult::Forward,
+                );
+
+                Ok(())
+            }
+            InputEvent::PointerMotionAbsolute { event, .. } => {
+                let pointer = state.seat.get_pointer().ok_or_else(|| {
+                    SmithayRuntimeError::Winit("smithay pointer capability missing".into())
+                })?;
+                let serial = SERIAL_COUNTER.next_serial();
+                let location = event.position_transformed((*window_size).into());
+
+                pointer.motion(
+                    state,
+                    None::<(WlSurface, Point<f64, smithay::utils::Logical>)>,
+                    &MotionEvent {
+                        location,
+                        serial,
+                        time: event.time_msec(),
+                    },
+                );
+                pointer.frame(state);
+
+                Ok(())
+            }
+            InputEvent::PointerButton { event, .. } => {
+                let pointer = state.seat.get_pointer().ok_or_else(|| {
+                    SmithayRuntimeError::Winit("smithay pointer capability missing".into())
+                })?;
+                let serial = SERIAL_COUNTER.next_serial();
+
+                pointer.button(
+                    state,
+                    &ButtonEvent {
+                        serial,
+                        time: event.time_msec(),
+                        button: event.button_code(),
+                        state: event.state(),
+                    },
+                );
+                pointer.frame(state);
+
+                Ok(())
+            }
+            _ => Ok(()),
         }
     }
 
@@ -229,6 +336,7 @@ mod imp {
             loop_signal: event_loop.get_signal(),
             event_loop,
             socket_name: socket_name.clone(),
+            window_size: (size.w, size.h),
             state: Some(smithay_state),
             winit: Some(winit),
         };
