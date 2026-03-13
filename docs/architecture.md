@@ -75,6 +75,8 @@ Current implementation note:
   events into that boundary without exposing raw backend objects
 - that event boundary should cover both registration and teardown/loss events so
   backend churn does not leak directly into domain state handling
+- a thin bootstrap runner can own the app/session object and replay typed
+  bootstrap events in order before any backend-specific runtime loop exists
 - session operations return a typed `SessionUpdate` containing emitted events,
   relayout status, and the current computed layout snapshot
 - lower-level action helpers are internal support code, not the intended outer
