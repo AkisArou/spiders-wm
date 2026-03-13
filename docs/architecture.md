@@ -67,6 +67,8 @@ Current implementation note:
   WM/layout runtime state instead of leaking backend handles through the domain
 - a thin compositor bootstrap/app layer can own `CompositorSession` plus startup
   seat/output registration without needing backend objects in the domain model
+- startup registration policy for active seat/output selection should stay typed
+  and backend-agnostic at the app/bootstrap boundary
 - popup, layer, and unmanaged surface registration can also flow through that
   app/session boundary as pure topology updates before backend handles exist
 - session operations return a typed `SessionUpdate` containing emitted events,

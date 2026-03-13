@@ -12,6 +12,8 @@ use crate::{CompositorLayoutError, LayoutService};
 pub struct StartupRegistration {
     pub seats: Vec<String>,
     pub outputs: Vec<OutputId>,
+    pub active_seat: Option<String>,
+    pub active_output: Option<OutputId>,
 }
 
 impl Default for StartupRegistration {
@@ -19,7 +21,25 @@ impl Default for StartupRegistration {
         Self {
             seats: vec!["seat-0".into()],
             outputs: Vec::new(),
+            active_seat: Some("seat-0".into()),
+            active_output: None,
         }
+    }
+}
+
+impl StartupRegistration {
+    pub fn from_state(state: &StateSnapshot) -> Self {
+        let mut registration = Self::default();
+        registration.outputs = state
+            .outputs
+            .iter()
+            .map(|output| output.id.clone())
+            .collect();
+        registration.active_output = state
+            .current_output_id
+            .clone()
+            .or_else(|| registration.outputs.first().cloned());
+        registration
     }
 }
 
@@ -99,22 +119,36 @@ impl<L: spiders_config::loader::LayoutSourceLoader, R: LayoutRuntime> Compositor
         config: Config,
         state: StateSnapshot,
     ) -> Result<Self, CompositorLayoutError> {
+        Self::initialize_with_registration(
+            layout_service,
+            runtime_service,
+            config,
+            state.clone(),
+            StartupRegistration::from_state(&state),
+        )
+    }
+
+    pub fn initialize_with_registration(
+        layout_service: LayoutService,
+        runtime_service: ConfigRuntimeService<L, R>,
+        config: Config,
+        state: StateSnapshot,
+        startup: StartupRegistration,
+    ) -> Result<Self, CompositorLayoutError> {
         let mut session =
-            CompositorSession::initialize(layout_service, runtime_service, config, state.clone())?;
-        let startup = StartupRegistration {
-            seats: vec!["seat-0".into()],
-            outputs: state
-                .outputs
-                .iter()
-                .map(|output| output.id.clone())
-                .collect(),
-        };
+            CompositorSession::initialize(layout_service, runtime_service, config, state)?;
 
         for seat in &startup.seats {
             session.register_seat(seat.clone());
         }
         for output in &startup.outputs {
             let _ = session.register_output(output.clone());
+        }
+        if let Some(active_seat) = startup.active_seat.as_deref() {
+            let _ = session.activate_seat(active_seat);
+        }
+        if let Some(active_output) = startup.active_output.as_ref() {
+            let _ = session.activate_output(active_output);
         }
 
         Ok(Self { session, startup })
@@ -222,11 +256,70 @@ mod tests {
 
         assert_eq!(app.startup.seats, vec!["seat-0".to_string()]);
         assert_eq!(app.startup.outputs, vec![OutputId::from("out-1")]);
+        assert_eq!(app.startup.active_seat.as_deref(), Some("seat-0"));
+        assert_eq!(app.startup.active_output, Some(OutputId::from("out-1")));
         assert!(app.topology().seat("seat-0").is_some());
         assert!(app.topology().output(&OutputId::from("out-1")).is_some());
+        assert_eq!(app.topology().active_seat_name.as_deref(), Some("seat-0"));
+        assert_eq!(
+            app.topology().active_output_id,
+            Some(OutputId::from("out-1"))
+        );
         assert_eq!(
             app.state().current_workspace_id,
             Some(WorkspaceId::from("ws-1"))
+        );
+    }
+
+    #[test]
+    fn app_initializes_with_custom_startup_registration() {
+        let temp_dir = std::env::temp_dir();
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let runtime_root = temp_dir.join(format!("spiders-app-custom-startup-{unique}"));
+        let _ = fs::create_dir_all(runtime_root.join("layouts"));
+        fs::write(
+            runtime_root.join("layouts/master-stack.js"),
+            "ctx => ({ type: 'workspace', children: [{ type: 'slot', id: 'rest' }] })",
+        )
+        .unwrap();
+
+        let loader =
+            RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
+        let runtime = BoaLayoutRuntime::with_loader(loader.clone());
+        let service = ConfigRuntimeService::new(loader, runtime);
+        let mut snapshot = state();
+        snapshot.outputs.push(OutputSnapshot {
+            id: OutputId::from("out-2"),
+            name: "DP-1".into(),
+            logical_width: 2560,
+            logical_height: 1440,
+            scale: 1,
+            transform: OutputTransform::Normal,
+            enabled: true,
+            current_workspace_id: None,
+        });
+
+        let app = CompositorApp::initialize_with_registration(
+            LayoutService,
+            service,
+            config(),
+            snapshot,
+            StartupRegistration {
+                seats: vec!["seat-a".into(), "seat-b".into()],
+                outputs: vec![OutputId::from("out-1"), OutputId::from("out-2")],
+                active_seat: Some("seat-b".into()),
+                active_output: Some(OutputId::from("out-2")),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(app.topology().active_seat_name.as_deref(), Some("seat-b"));
+        assert_eq!(
+            app.topology().active_output_id,
+            Some(OutputId::from("out-2"))
         );
     }
 
