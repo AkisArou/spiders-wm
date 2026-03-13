@@ -11,7 +11,7 @@ The Rust rewrite preserves the old model:
 - the tree uses structural nodes instead of named hardcoded layouts
 - Rust validates and resolves the tree
 - CSS-like rules style the structural nodes
-- Taffy computes final layout geometry
+- `taffy` computes final layout geometry
 
 ## Source Node Types
 
@@ -43,7 +43,7 @@ The resolved runtime tree contains:
 ### `group`
 
 - structural container only
-- layout behavior comes from CSS and Taffy-backed style, not the tag name
+- layout behavior comes from CSS and `taffy`-backed style, not the tag name
 - may contain `group`, `window`, and `slot`
 
 ### `window`
@@ -142,9 +142,9 @@ V1 selector support should include at least:
 Potential future selectors such as attributes may be added later, but should not
 block V1.
 
-## CSS-To-Taffy Mapping
+## CSS-To-`taffy` Mapping
 
-The layout engine should map supported structural CSS into Taffy style values.
+The layout engine should map supported structural CSS into `taffy` style values.
 
 V1 should focus on the subset required for existing layouts, especially:
 
@@ -180,12 +180,12 @@ Validation happens in Rust, not in JS.
 
 ## Runtime Flow
 
-1. JS layout module is evaluated in Boa.
+1. JS layout module is evaluated in `boa_engine`.
 2. Rust obtains the returned tree value.
 3. Rust validates and normalizes the tree.
 4. Rust resolves `window` and `slot` claims against live windows.
 5. Rust applies structural CSS rules to the resolved runtime tree.
-6. Rust creates a Taffy tree and computes geometry.
+6. Rust creates a `taffy` tree and computes geometry.
 7. Rust applies computed geometry to tiled windows.
 
 ## Non-Goals For V1
@@ -204,5 +204,5 @@ V1 is acceptable when:
 - a layout function can express `master-stack` style behavior
 - claim resolution is deterministic
 - CSS selectors correctly target resolved runtime nodes
-- Taffy-computed geometry is stable across recomputation
+- `taffy`-computed geometry is stable across recomputation
 - invalid trees fail with clear diagnostics

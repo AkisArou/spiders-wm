@@ -3,8 +3,8 @@
 ## Overview
 
 The Rust rewrite keeps JavaScript or TypeScript-authored configuration and layout
-definitions, but moves the runtime implementation to Rust with Boa as the
-embedded JS engine.
+definitions, but moves the runtime implementation to Rust with `boa_engine` as
+the embedded JS engine.
 
 The compositor runtime loads compiled JavaScript bundles. It does not transpile
 TS or TSX internally.
@@ -14,7 +14,7 @@ TS or TSX internally.
 - authored source may be `config.ts` or `config.js`
 - authored layouts may be `index.tsx`, `index.ts`, or `index.js`
 - runtime loads compiled JavaScript bundles
-- JS executes inside Boa with a limited host API
+- JS executes inside `boa_engine` with a limited host API
 - JS does not receive raw compositor objects
 - JS actions cross into Rust through explicit typed commands
 
@@ -25,12 +25,12 @@ strong implementation reason to simplify it.
 
 Preferred authored config paths:
 
-- `~/.config/spider-wm/config.ts`
-- `~/.config/spider-wm/config.js`
+- `~/.config/spiders-wm/config.ts`
+- `~/.config/spiders-wm/config.js`
 
 Preferred compiled runtime path:
 
-- `~/.local/share/spider-wm/config.js`
+- `~/.local/share/spiders-wm/config.js`
 
 Environment-variable overrides may exist, but they should be documented only once
 the implementation is stable.
@@ -53,11 +53,11 @@ The rewrite should preserve these top-level config concepts:
 
 The runtime should expose host modules conceptually equivalent to:
 
-- `spider-wm/config`
-- `spider-wm/actions`
-- `spider-wm/layout`
-- `spider-wm/api`
-- `spider-wm/jsx-runtime`
+- `spiders-wm/config`
+- `spiders-wm/actions`
+- `spiders-wm/layout`
+- `spiders-wm/api`
+- `spiders-wm/jsx-runtime`
 
 Exact implementation may change, but the intent should remain:
 
@@ -71,7 +71,7 @@ Exact implementation may change, but the intent should remain:
 
 The JS runtime must not expose:
 
-- Smithay objects
+- `smithay` objects
 - raw Wayland objects
 - direct scene mutation
 - arbitrary filesystem access
@@ -172,7 +172,7 @@ V1 is acceptable when:
 
 - a user can author `config.ts`
 - a user can author layouts in JS, TS, or TSX
-- compiled JS bundles load in Boa
+- compiled JS bundles load in `boa_engine`
 - config events and actions work through stable host APIs
 - invalid config and JS runtime errors are reported clearly without crashing the
   compositor where practical

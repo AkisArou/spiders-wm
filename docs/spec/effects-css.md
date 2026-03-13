@@ -53,6 +53,9 @@ Full browser transform grammar is out of scope.
 
 ## Animation And Transition Support
 
+The Rust implementation should use the `keyframe` crate for animation timelines
+and interpolation.
+
 V1 should support:
 
 - `@keyframes`
@@ -99,7 +102,8 @@ the animation.
 - parse stylesheet into typed effect rules
 - match rules against live window/workspace snapshot state
 - compute static visual state
-- run animation and transition state machines separately from layout geometry
+- run `keyframe`-backed animation and transition state machines separately from
+  layout geometry
 
 ## Current Limitations Intentionally Preserved In V1
 

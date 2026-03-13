@@ -1,13 +1,13 @@
 [workspace]
 resolver = "2"
 members = [
-  "crates/spider-cli",
-  "crates/spider-compositor",
-  "crates/spider-config",
-  "crates/spider-effects",
-  "crates/spider-ipc",
-  "crates/spider-layout",
-  "crates/spider-shared",
+  "crates/spiders-cli",
+  "crates/spiders-compositor",
+  "crates/spiders-config",
+  "crates/spiders-effects",
+  "crates/spiders-ipc",
+  "crates/spiders-layout",
+  "crates/spiders-shared",
 ]
 
 [workspace.package]

@@ -124,5 +124,5 @@ Recommended rule:
 V1 is acceptable when:
 
 - config runtime, layout system, and IPC can all agree on shared entity meanings
-- event payloads and snapshots do not depend on Smithay internals leaking through
+- event payloads and snapshots do not depend on `smithay` internals leaking through
 - the same state model can support both user config and external bar clients

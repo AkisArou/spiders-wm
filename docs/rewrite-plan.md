@@ -2,7 +2,7 @@
 
 ## Goal
 
-Deliver a Rust-native `spider-wm` that preserves the documented product shape of
+Deliver a Rust-native `spiders-wm` that preserves the documented product shape of
 the old project without inheriting its implementation constraints.
 
 ## Milestone 0: Workspace Scaffold
@@ -24,7 +24,7 @@ Done when:
 
 Deliver:
 
-- Smithay-based compositor startup
+- `smithay`-based compositor startup
 - output discovery and basic rendering loop
 - seat/input plumbing
 - xdg-shell window lifecycle integration
@@ -40,7 +40,7 @@ Done when:
 
 Deliver:
 
-- Boa runtime bootstrapping
+- `boa_engine` runtime bootstrapping
 - config module loading
 - config validation
 - action bridge from JS to Rust commands
@@ -59,7 +59,7 @@ Deliver:
 - AST validation
 - `match` parsing
 - deterministic `window` and `slot` claim resolution
-- context-to-layout execution bridge through Boa
+- context-to-layout execution bridge through `boa_engine`
 
 Done when:
 
@@ -72,7 +72,7 @@ Deliver:
 
 - structural layout CSS parser/evaluator
 - selector matching for `workspace`, `group`, `window`, `#id`, `.class`
-- CSS-to-Taffy style mapping
+- CSS-to-`taffy` style mapping
 - computed geometry for tiled windows
 
 Done when:
@@ -86,7 +86,8 @@ Deliver:
 
 - effects stylesheet support
 - static visual styling for real windows
-- transitions, keyframes, close snapshots, and workspace transitions
+- transitions, `keyframe`-driven animation timelines, close snapshots, and workspace
+  transitions
 
 Done when:
 

@@ -1,10 +1,11 @@
 [package]
-name = "spider-effects"
+name = "spiders-config"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish.workspace = true
 
 [dependencies]
-spider-shared = { path = "../spider-shared" }
+serde.workspace = true
+spiders-shared = { path = "../spiders-shared" }
 thiserror.workspace = true

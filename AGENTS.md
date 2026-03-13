@@ -4,11 +4,12 @@ This repository is designed for agent-driven implementation.
 
 ## Mission
 
-Build a Rust-native rewrite of `spider-wm` with:
+Build `spiders-wm` as a Rust-native Wayland compositor/window manager with:
 
 - `smithay` for the compositor core
 - `taffy` for layout computation
 - `boa_engine` for JavaScript configuration and layout evaluation
+- `keyframe` for animation timelines and interpolation
 
 The old C repo is a behavior reference only.
 
@@ -20,7 +21,8 @@ These are fixed unless the user explicitly changes them:
 - The implementation language is Rust.
 - The compositor stack targets `smithay`.
 - The layout engine targets `taffy`.
-- The embedded JS engine target is Boa.
+- The embedded JS engine target is `boa_engine`.
+- The animation engine target is `keyframe`.
 - User-facing config and layout authoring stays JavaScript/TypeScript-based.
 - The JS environment must remain capability-limited and deterministic.
 
@@ -54,11 +56,14 @@ Drop if convenient:
 - Prefer multiple focused crates over a monolith once subsystem boundaries are
   clear.
 - Keep unsafe Rust isolated and justified.
-- Do not expose raw Smithay state directly to JS.
+- Do not expose raw `smithay` state directly to JS.
 - Treat JS layout functions as pure functions of context.
 - Keep layout validation on the Rust side.
 - Favor explicit typed intermediate representations between parsing, validation,
   resolution, and rendering.
+- Local reference repositories under `/home/akisarou/projects` may be consulted
+  when needed, especially `niri`, `keyframe`, `boa`, `smithay`, `taffy`, and
+  `rust-cssparser`.
 
 ## Expected Deliverables
 
@@ -80,7 +85,7 @@ Prefer this build order:
 2. compositor skeleton with outputs, seats, surfaces, and event loop
 3. config runtime and typed config model
 4. layout AST validation and resolution
-5. CSS-to-Taffy styling and geometry computation
+5. CSS-to-`taffy` styling and geometry computation
 6. effects styling and animations
 7. IPC and workspace export
 8. polish, tests, docs, and tooling

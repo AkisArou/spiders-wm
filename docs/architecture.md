@@ -10,21 +10,21 @@ the old C code.
 
 The compositor has five main layers:
 
-1. backend and Wayland integration via Smithay
+1. backend and Wayland integration via `smithay`
 2. window manager domain state in Rust
-3. config and layout evaluation through Boa
+3. config and layout evaluation through `boa_engine`
 4. layout and effects computation in Rust
 5. IPC, workspace export, and helper tooling
 
 ## High-Level Data Flow
 
-1. Rust boots Smithay, outputs, inputs, seat state, and shell integrations.
+1. Rust boots `smithay`, outputs, inputs, seat state, and shell integrations.
 2. Rust loads compiled user config and layout bundles.
-3. Boa evaluates config and layout entry modules inside a restricted runtime.
+3. `boa_engine` evaluates config and layout entry modules inside a restricted runtime.
 4. Rust validates config objects and layout AST results.
 5. Rust resolves layout claims against live windows.
 6. Rust applies layout CSS to structural nodes.
-7. Rust maps computed style into Taffy nodes and computes geometry.
+7. Rust maps computed style into `taffy` nodes and computes geometry.
 8. Rust applies effects styling to live window visuals and workspace snapshots.
 9. Rust drives scene updates, input behavior, IPC, and protocol exports.
 
@@ -34,7 +34,7 @@ The compositor has five main layers:
 
 Owns:
 
-- Smithay integration
+- `smithay` integration
 - outputs, seats, input routing, focus, surfaces, popups, layer-shell, xdg-shell
 - scene/lifecycle plumbing required for rendering and damage tracking
 
@@ -63,7 +63,7 @@ This layer is the source of truth for runtime state exposed to config and IPC.
 Owns:
 
 - loading compiled config JS
-- exposing stable host modules to Boa
+- exposing stable host modules to `boa_engine`
 - validating config shape
 - dispatching config event subscribers
 - executing action requests from JS through typed Rust command bridges
@@ -77,7 +77,7 @@ Owns:
 - layout AST validation
 - deterministic `window` and `slot` claim resolution
 - CSS selector matching for structural nodes
-- CSS-to-Taffy mapping
+- CSS-to-`taffy` mapping
 - geometry output for tiled windows
 
 The layout system consumes pure data and produces pure computed results.
@@ -89,6 +89,7 @@ Owns:
 - parsing and evaluating effects CSS
 - static window styling
 - animated transitions and keyframes
+- `keyframe`-based animation timelines and interpolation
 - closing snapshots and workspace transition snapshots
 
 Effects styling is separate from structural layout styling on purpose.
@@ -106,13 +107,13 @@ Owns:
 
 Suggested responsibilities:
 
-- `spider-shared`: shared types, ids, enums, serialization shapes
-- `spider-layout`: AST, validation, CSS layout, claim resolution, Taffy mapping
-- `spider-config`: config parsing, Boa integration, host modules, action bridge
-- `spider-effects`: effects stylesheet model and animation state machine
-- `spider-ipc`: IPC protocol and server/client helpers
-- `spider-compositor`: Smithay integration and WM runtime
-- `spider-cli`: helper commands such as validation, compile, inspect, IPC tools
+- `spiders-shared`: shared types, ids, enums, serialization shapes
+- `spiders-layout`: AST, validation, CSS layout, claim resolution, `taffy` mapping
+- `spiders-config`: config parsing, `boa_engine` integration, host modules, action bridge
+- `spiders-effects`: effects stylesheet model and `keyframe`-backed animation state machine
+- `spiders-ipc`: IPC protocol and server/client helpers
+- `spiders-compositor`: `smithay` integration and WM runtime
+- `spiders-cli`: helper commands such as validation, compile, inspect, IPC tools
 
 ## Source Of Truth Rules
 
@@ -127,14 +128,14 @@ Suggested responsibilities:
 - porting old C APIs one-for-one
 - browser-grade CSS support
 - React-like runtime semantics
-- exposing Smithay or Wayland objects to JS
+- exposing `smithay` or Wayland objects to JS
 - arbitrary filesystem or network access from JS modules
 
 ## Main Risk Areas
 
-- Boa module embedding and host interop ergonomics
+- `boa_engine` module embedding and host interop ergonomics
 - maintaining responsive compositor behavior while running JS safely
-- matching enough CSS/Yoga behavior with Taffy-backed layout semantics
+- matching enough CSS/Yoga behavior with `taffy`-backed layout semantics
 - designing IPC once instead of repeatedly refactoring it
 
 These risks should be handled with small vertical slices, not broad speculative
