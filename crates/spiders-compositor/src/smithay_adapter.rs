@@ -1,6 +1,6 @@
 use crate::backend::{
-    BackendDiscoveryEvent, BackendSeatSnapshot, BackendSource, BackendSurfaceSnapshot,
-    BackendTopologySnapshot,
+    BackendDiscoveryEvent, BackendOutputSnapshot, BackendSeatSnapshot, BackendSource,
+    BackendSurfaceSnapshot, BackendTopologySnapshot,
 };
 use spiders_runtime::ControllerCommand;
 
@@ -32,13 +32,14 @@ impl SmithayAdapter {
     pub fn translate_snapshot(
         generation: u64,
         seats: Vec<BackendSeatSnapshot>,
+        outputs: Vec<BackendOutputSnapshot>,
         surfaces: Vec<BackendSurfaceSnapshot>,
     ) -> ControllerCommand {
         ControllerCommand::DiscoverySnapshot(BackendTopologySnapshot {
             source: BackendSource::Smithay,
             generation,
             seats,
-            outputs: Vec::new(),
+            outputs,
             surfaces,
         })
     }
@@ -71,6 +72,10 @@ mod tests {
                 seat_name: "seat-0".into(),
                 active: true,
             }],
+            vec![BackendOutputSnapshot {
+                output_id: spiders_shared::ids::OutputId::from("out-1"),
+                active: true,
+            }],
             vec![BackendSurfaceSnapshot::Window {
                 surface_id: "window-w1".into(),
                 window_id: WindowId::from("w1"),
@@ -83,6 +88,7 @@ mod tests {
                 assert_eq!(snapshot.source, BackendSource::Smithay);
                 assert_eq!(snapshot.generation, 4);
                 assert_eq!(snapshot.seats.len(), 1);
+                assert_eq!(snapshot.outputs.len(), 1);
                 assert_eq!(snapshot.surfaces.len(), 1);
             }
             other => panic!("unexpected command: {other:?}"),

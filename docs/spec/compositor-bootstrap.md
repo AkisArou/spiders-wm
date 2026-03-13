@@ -106,6 +106,17 @@ came from.
 that turns future smithay callbacks/snapshots into controller commands without
 linking smithay objects into domain state.
 
+The first real smithay slice should stay intentionally small:
+
+- use a feature-gated winit-backed smithay runtime scaffold
+- create the display/event-loop/backend objects
+- translate one discovered seat and one discovered output into a
+  `BackendTopologySnapshot`
+- feed that snapshot through `SmithayAdapter` into `CompositorController`
+
+That slice is only a startup/discovery proof, not full surface or rendering
+integration.
+
 JSON event scripts remain useful for CLI diagnostics and black-box integration
 tests.
 

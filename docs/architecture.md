@@ -96,6 +96,9 @@ See also: `docs/spec/compositor-bootstrap.md`
   integration boundary
 - a future `smithay` adapter should remain a thin translator that emits typed
   controller commands instead of mutating compositor state directly
+- the first smithay integration slice should bring up a small feature-gated
+  runtime scaffold for startup, seat discovery, and output discovery before any
+  real surface management or rendering responsibilities expand
 
 ## Config Runtime
 

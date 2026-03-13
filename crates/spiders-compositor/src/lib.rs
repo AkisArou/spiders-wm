@@ -9,6 +9,7 @@ pub mod scenario;
 pub mod script;
 pub mod session;
 pub mod smithay_adapter;
+pub mod smithay_runtime;
 pub mod startup;
 pub mod topology;
 pub mod transcript;
@@ -62,6 +63,7 @@ pub use runner::{BootstrapRunner, BootstrapRunnerError};
 pub use runtime::{CompositorRuntimeState, WorkspaceLayoutState};
 pub use session::{CompositorSession, SessionUpdate};
 pub use smithay_adapter::{SmithayAdapter, SmithayAdapterEvent};
+pub use smithay_runtime::{SmithayRuntimeError, SmithayStartupReport};
 pub use spiders_runtime::{
     BootstrapDiagnostics, BootstrapEvent, BootstrapFailureTrace, BootstrapRunTrace,
     BootstrapScenario, BootstrapScript, BootstrapScriptKind, BootstrapTranscript,
