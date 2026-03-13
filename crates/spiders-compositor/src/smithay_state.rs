@@ -61,8 +61,16 @@ mod imp {
     #[derive(Debug, Clone, PartialEq, Eq)]
     pub struct SmithayKnownPopupSurface {
         pub surface_id: String,
-        pub parent_surface_id: String,
-        pub parent_window_id: Option<WindowId>,
+        pub parent: SmithayPopupParentSnapshot,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub enum SmithayPopupParentSnapshot {
+        Resolved {
+            surface_id: String,
+            window_id: Option<WindowId>,
+        },
+        Unresolved,
     }
 
     #[derive(Debug, Clone, PartialEq, Eq)]
@@ -125,8 +133,7 @@ mod imp {
 
     #[derive(Debug, Clone, PartialEq, Eq)]
     struct SmithayPopupParentLink {
-        parent_surface_id: String,
-        parent_window_id: Option<WindowId>,
+        parent: SmithayPopupParentSnapshot,
     }
 
     impl SpidersSmithayState {
@@ -233,19 +240,25 @@ mod imp {
         fn track_popup_surface(&mut self, surface: &PopupSurface) {
             let wl_surface = surface.wl_surface();
             let surface_id = smithay_surface_id(wl_surface);
-            let parent_surface_id = surface
+            let parent = surface
                 .get_parent_surface()
-                .map(|parent| smithay_surface_id(&parent))
-                .unwrap_or_else(|| format!("parent-{surface_id}"));
-            let parent_window_id = self.toplevel_window_ids.get(&parent_surface_id).cloned();
+                .map(|parent| {
+                    let parent_surface_id = smithay_surface_id(&parent);
+                    SmithayPopupParentSnapshot::Resolved {
+                        window_id: self.toplevel_window_ids.get(&parent_surface_id).cloned(),
+                        surface_id: parent_surface_id,
+                    }
+                })
+                .unwrap_or(SmithayPopupParentSnapshot::Unresolved);
 
             self.popup_parent_links.insert(
                 surface_id.clone(),
                 SmithayPopupParentLink {
-                    parent_surface_id: parent_surface_id.clone(),
-                    parent_window_id,
+                    parent: parent.clone(),
                 },
             );
+
+            let parent_surface_id = popup_parent_surface_id(&parent, &surface_id);
 
             self.track_surface_snapshot(BackendSurfaceSnapshot::Popup {
                 surface_id,
@@ -301,24 +314,35 @@ mod imp {
 
         fn track_popup_surface_by_root(&mut self, surface: &WlSurface) {
             let surface_id = smithay_surface_id(surface);
-            let parent_surface_id = with_states(surface, |states| {
+            let parent = with_states(surface, |states| {
                 states
                     .data_map
                     .get::<XdgPopupSurfaceData>()
-                    .and_then(|data| data.lock().ok())
-                    .and_then(|data| data.parent.clone())
-                    .map(|parent| smithay_surface_id(&parent))
+                    .and_then(|data| {
+                        data.lock().ok().and_then(|data| {
+                            data.parent.clone().map(|parent| {
+                                let parent_surface_id = smithay_surface_id(&parent);
+                                SmithayPopupParentSnapshot::Resolved {
+                                    window_id: self
+                                        .toplevel_window_ids
+                                        .get(&parent_surface_id)
+                                        .cloned(),
+                                    surface_id: parent_surface_id,
+                                }
+                            })
+                        })
+                    })
             })
-            .unwrap_or_else(|| format!("parent-{surface_id}"));
-            let parent_window_id = self.toplevel_window_ids.get(&parent_surface_id).cloned();
+            .unwrap_or(SmithayPopupParentSnapshot::Unresolved);
 
             self.popup_parent_links.insert(
                 surface_id.clone(),
                 SmithayPopupParentLink {
-                    parent_surface_id: parent_surface_id.clone(),
-                    parent_window_id,
+                    parent: parent.clone(),
                 },
             );
+
+            let parent_surface_id = popup_parent_surface_id(&parent, &surface_id);
 
             self.track_surface_snapshot(BackendSurfaceSnapshot::Popup {
                 surface_id,
@@ -378,11 +402,9 @@ mod imp {
                         let parent = self.popup_parent_links.get(surface_id);
                         SmithayKnownPopupSurface {
                             surface_id: surface_id.clone(),
-                            parent_surface_id: parent
-                                .map(|parent| parent.parent_surface_id.clone())
-                                .unwrap_or_else(|| format!("parent-{surface_id}")),
-                            parent_window_id: parent
-                                .and_then(|parent| parent.parent_window_id.clone()),
+                            parent: parent
+                                .map(|parent| parent.parent.clone())
+                                .unwrap_or(SmithayPopupParentSnapshot::Unresolved),
                         }
                     })
                 })
@@ -449,6 +471,13 @@ mod imp {
             );
             pending || current
         })
+    }
+
+    fn popup_parent_surface_id(parent: &SmithayPopupParentSnapshot, surface_id: &str) -> String {
+        match parent {
+            SmithayPopupParentSnapshot::Resolved { surface_id, .. } => surface_id.clone(),
+            SmithayPopupParentSnapshot::Unresolved => format!("unresolved-parent-{surface_id}"),
+        }
     }
 
     fn snapshot_into_discovery_event(snapshot: BackendSurfaceSnapshot) -> BackendDiscoveryEvent {
@@ -788,8 +817,10 @@ mod imp {
             state.popup_parent_links.insert(
                 "wl-surface-302".into(),
                 SmithayPopupParentLink {
-                    parent_surface_id: "wl-surface-301".into(),
-                    parent_window_id: Some(parent_window_id.clone()),
+                    parent: SmithayPopupParentSnapshot::Resolved {
+                        surface_id: "wl-surface-301".into(),
+                        window_id: Some(parent_window_id.clone()),
+                    },
                 },
             );
             state.track_surface_snapshot(BackendSurfaceSnapshot::Popup {
@@ -801,12 +832,36 @@ mod imp {
             let snapshot = state.snapshot();
             assert_eq!(snapshot.known_surfaces.popups.len(), 1);
             assert_eq!(
-                snapshot.known_surfaces.popups[0].parent_window_id,
-                Some(parent_window_id)
+                snapshot.known_surfaces.popups[0].parent,
+                SmithayPopupParentSnapshot::Resolved {
+                    surface_id: "wl-surface-301".into(),
+                    window_id: Some(parent_window_id),
+                }
             );
+        }
+
+        #[test]
+        fn smithay_state_snapshot_reports_unresolved_popup_parent() {
+            let display = Display::<SpidersSmithayState>::new().unwrap();
+            let mut state = SpidersSmithayState::new(&display, "test-seat").unwrap();
+
+            state.popup_parent_links.insert(
+                "wl-surface-401".into(),
+                SmithayPopupParentLink {
+                    parent: SmithayPopupParentSnapshot::Unresolved,
+                },
+            );
+            state.track_surface_snapshot(BackendSurfaceSnapshot::Popup {
+                surface_id: "wl-surface-401".into(),
+                output_id: None,
+                parent_surface_id: "unresolved-parent-wl-surface-401".into(),
+            });
+
+            let snapshot = state.snapshot();
+            assert_eq!(snapshot.known_surfaces.popups.len(), 1);
             assert_eq!(
-                snapshot.known_surfaces.popups[0].parent_surface_id,
-                "wl-surface-301"
+                snapshot.known_surfaces.popups[0].parent,
+                SmithayPopupParentSnapshot::Unresolved
             );
         }
     }
@@ -816,5 +871,6 @@ mod imp {
 pub use imp::{
     SmithayClientState, SmithayKnownLayerSurface, SmithayKnownPopupSurface,
     SmithayKnownSurfacesSnapshot, SmithayKnownToplevelSurface, SmithayKnownUnmanagedSurface,
-    SmithayStateError, SmithayStateSnapshot, SmithaySurfaceRoleCounts, SpidersSmithayState,
+    SmithayPopupParentSnapshot, SmithayStateError, SmithayStateSnapshot, SmithaySurfaceRoleCounts,
+    SpidersSmithayState,
 };

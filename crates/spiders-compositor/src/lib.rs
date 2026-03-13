@@ -75,7 +75,8 @@ pub use smithay_runtime::{SmithayRuntimeError, SmithayRuntimeSnapshot, SmithaySt
 pub use smithay_state::{
     SmithayClientState, SmithayKnownLayerSurface, SmithayKnownPopupSurface,
     SmithayKnownSurfacesSnapshot, SmithayKnownToplevelSurface, SmithayKnownUnmanagedSurface,
-    SmithayStateError, SmithayStateSnapshot, SmithaySurfaceRoleCounts, SpidersSmithayState,
+    SmithayPopupParentSnapshot, SmithayStateError, SmithayStateSnapshot, SmithaySurfaceRoleCounts,
+    SpidersSmithayState,
 };
 pub use spiders_runtime::{
     BootstrapDiagnostics, BootstrapEvent, BootstrapFailureTrace, BootstrapRunTrace,
