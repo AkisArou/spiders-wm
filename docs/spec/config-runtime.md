@@ -92,6 +92,13 @@ State-driven orchestration should be able to derive the current workspace and
 output from `StateSnapshot`, resolve the selected layout definition, and build a
 `LayoutRequest` without compositor-specific discovery logic.
 
+A higher-level config runtime service should own:
+
+- module path resolution
+- runtime artifact loading
+- loaded layout caching
+- JS layout evaluation for a selected workspace
+
 ## JS Runtime Surface
 
 The runtime should expose host modules conceptually equivalent to:

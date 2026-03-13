@@ -2,6 +2,38 @@ use spiders_shared::wm::{LoadedLayout, SelectedLayout};
 
 use crate::model::{Config, LayoutConfigError, LayoutDefinition};
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimePathResolver {
+    pub project_root: std::path::PathBuf,
+    pub runtime_root: std::path::PathBuf,
+}
+
+impl RuntimePathResolver {
+    pub fn new(
+        project_root: impl Into<std::path::PathBuf>,
+        runtime_root: impl Into<std::path::PathBuf>,
+    ) -> Self {
+        Self {
+            project_root: project_root.into(),
+            runtime_root: runtime_root.into(),
+        }
+    }
+
+    pub fn resolve_module_path(&self, module: &str) -> std::path::PathBuf {
+        let module_path = std::path::Path::new(module);
+        if module_path.is_absolute() {
+            return module_path.to_path_buf();
+        }
+
+        let runtime_candidate = self.runtime_root.join(module_path);
+        if runtime_candidate.exists() {
+            return runtime_candidate;
+        }
+
+        self.project_root.join(module_path)
+    }
+}
+
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum LayoutLoadError {
     #[error(transparent)]
@@ -23,6 +55,35 @@ pub struct InlineLayoutSourceLoader;
 
 #[derive(Debug, Default, Clone, Copy)]
 pub struct FsLayoutSourceLoader;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeProjectLayoutSourceLoader {
+    resolver: RuntimePathResolver,
+}
+
+impl RuntimeProjectLayoutSourceLoader {
+    pub fn new(resolver: RuntimePathResolver) -> Self {
+        Self { resolver }
+    }
+
+    pub fn load_definition(
+        &self,
+        layout: &LayoutDefinition,
+    ) -> Result<LoadedLayout, LayoutLoadError> {
+        let module_path = self.resolver.resolve_module_path(&layout.module);
+        let runtime_source = std::fs::read_to_string(&module_path).map_err(|_| {
+            LayoutLoadError::MissingRuntimeSource {
+                module: module_path.to_string_lossy().into_owned(),
+            }
+        })?;
+
+        Ok(loaded_layout_definition(
+            layout,
+            module_path.to_string_lossy().into_owned(),
+            runtime_source,
+        ))
+    }
+}
 
 impl LayoutSourceLoader for InlineLayoutSourceLoader {
     fn load_runtime_source(
@@ -51,7 +112,11 @@ impl FsLayoutSourceLoader {
             }
         })?;
 
-        Ok(loaded_layout_definition(layout, runtime_source))
+        Ok(loaded_layout_definition(
+            layout,
+            layout.module.clone(),
+            runtime_source,
+        ))
     }
 }
 
@@ -69,11 +134,29 @@ impl LayoutSourceLoader for FsLayoutSourceLoader {
     }
 }
 
-pub fn loaded_layout_definition(layout: &LayoutDefinition, runtime_source: String) -> LoadedLayout {
+impl LayoutSourceLoader for RuntimeProjectLayoutSourceLoader {
+    fn load_runtime_source(
+        &self,
+        config: &Config,
+        workspace: &spiders_shared::wm::WorkspaceSnapshot,
+    ) -> Result<Option<LoadedLayout>, LayoutLoadError> {
+        let Some(layout) = config.selected_layout(workspace) else {
+            return Ok(None);
+        };
+
+        self.load_definition(layout).map(Some)
+    }
+}
+
+pub fn loaded_layout_definition(
+    layout: &LayoutDefinition,
+    module: String,
+    runtime_source: String,
+) -> LoadedLayout {
     LoadedLayout {
         selected: SelectedLayout {
             name: layout.name.clone(),
-            module: layout.module.clone(),
+            module,
             stylesheet: layout.stylesheet.clone(),
         },
         runtime_source,
@@ -172,6 +255,62 @@ mod tests {
             loaded.runtime_source,
             "ctx => ({ type: 'workspace', children: [] })"
         );
+
+        let _ = fs::remove_file(module_path);
+    }
+
+    #[test]
+    fn runtime_path_resolver_prefers_runtime_root_then_project_root() {
+        let temp_dir = std::env::temp_dir();
+        let project_root = temp_dir.join("spiders-loader-project");
+        let runtime_root = temp_dir.join("spiders-loader-runtime");
+        let _ = fs::create_dir_all(project_root.join("layouts"));
+        let _ = fs::create_dir_all(runtime_root.join("layouts"));
+
+        let resolver = RuntimePathResolver::new(&project_root, &runtime_root);
+        let runtime_path = runtime_root.join("layouts/master-stack.js");
+        fs::write(&runtime_path, "runtime").unwrap();
+
+        assert_eq!(
+            resolver.resolve_module_path("layouts/master-stack.js"),
+            runtime_path
+        );
+
+        let _ = fs::remove_file(runtime_path);
+        let project_path = project_root.join("layouts/master-stack.js");
+        fs::write(&project_path, "project").unwrap();
+
+        assert_eq!(
+            resolver.resolve_module_path("layouts/master-stack.js"),
+            project_path
+        );
+
+        let _ = fs::remove_file(project_path);
+    }
+
+    #[test]
+    fn runtime_project_loader_reads_from_resolved_runtime_location() {
+        let temp_dir = std::env::temp_dir();
+        let project_root = temp_dir.join("spiders-runtime-project");
+        let runtime_root = temp_dir.join("spiders-runtime-artifacts");
+        let _ = fs::create_dir_all(runtime_root.join("layouts"));
+        let module_path = runtime_root.join("layouts/master-stack.js");
+        fs::write(&module_path, "ctx => ({ type: 'workspace', children: [] })").unwrap();
+
+        let loader = RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(
+            &project_root,
+            &runtime_root,
+        ));
+        let definition = LayoutDefinition {
+            name: "master-stack".into(),
+            module: "layouts/master-stack.js".into(),
+            stylesheet: String::new(),
+        };
+
+        let loaded = loader.load_definition(&definition).unwrap();
+
+        assert_eq!(loaded.selected.module, module_path.to_string_lossy());
+        assert!(loaded.runtime_source.contains("workspace"));
 
         let _ = fs::remove_file(module_path);
     }
