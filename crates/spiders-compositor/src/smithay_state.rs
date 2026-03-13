@@ -53,12 +53,44 @@ mod imp {
     }
 
     #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct SmithayKnownToplevelSurface {
+        pub surface_id: String,
+        pub window_id: WindowId,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct SmithayKnownPopupSurface {
+        pub surface_id: String,
+        pub parent_surface_id: String,
+        pub parent_window_id: Option<WindowId>,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct SmithayKnownUnmanagedSurface {
+        pub surface_id: String,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct SmithayKnownLayerSurface {
+        pub surface_id: String,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct SmithayKnownSurfacesSnapshot {
+        pub toplevels: Vec<SmithayKnownToplevelSurface>,
+        pub popups: Vec<SmithayKnownPopupSurface>,
+        pub unmanaged: Vec<SmithayKnownUnmanagedSurface>,
+        pub layers: Vec<SmithayKnownLayerSurface>,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
     pub struct SmithayStateSnapshot {
         pub seat_name: String,
         pub tracked_surface_count: usize,
         pub tracked_toplevel_count: usize,
         pub pending_discovery_event_count: usize,
         pub role_counts: SmithaySurfaceRoleCounts,
+        pub known_surfaces: SmithayKnownSurfacesSnapshot,
     }
 
     impl ClientData for SmithayClientState {
@@ -79,6 +111,7 @@ mod imp {
         next_window_serial: u64,
         toplevel_window_ids: HashMap<String, WindowId>,
         tracked_surfaces: HashMap<String, SmithayTrackedSurfaceKind>,
+        popup_parent_links: HashMap<String, SmithayPopupParentLink>,
         pending_discovery_events: Vec<BackendDiscoveryEvent>,
     }
 
@@ -88,6 +121,12 @@ mod imp {
         Popup,
         Layer,
         Unmanaged,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    struct SmithayPopupParentLink {
+        parent_surface_id: String,
+        parent_window_id: Option<WindowId>,
     }
 
     impl SpidersSmithayState {
@@ -116,6 +155,7 @@ mod imp {
                 next_window_serial: 1,
                 toplevel_window_ids: HashMap::new(),
                 tracked_surfaces: HashMap::new(),
+                popup_parent_links: HashMap::new(),
                 pending_discovery_events: Vec::new(),
             })
         }
@@ -130,12 +170,14 @@ mod imp {
 
         pub fn snapshot(&self) -> SmithayStateSnapshot {
             let role_counts = self.role_counts();
+            let known_surfaces = self.known_surfaces_snapshot();
             SmithayStateSnapshot {
                 seat_name: self.seat_name.clone(),
                 tracked_surface_count: self.tracked_surfaces.len(),
                 tracked_toplevel_count: self.toplevel_window_ids.len(),
                 pending_discovery_event_count: self.pending_discovery_events.len(),
                 role_counts,
+                known_surfaces,
             }
         }
 
@@ -167,6 +209,7 @@ mod imp {
 
         fn track_surface_loss_by_id(&mut self, surface_id: String) {
             if self.tracked_surfaces.remove(&surface_id).is_some() {
+                self.popup_parent_links.remove(&surface_id);
                 self.pending_discovery_events
                     .push(BackendDiscoveryEvent::SurfaceLost { surface_id });
             }
@@ -189,6 +232,15 @@ mod imp {
                 .get_parent_surface()
                 .map(|parent| smithay_surface_id(&parent))
                 .unwrap_or_else(|| format!("parent-{surface_id}"));
+            let parent_window_id = self.toplevel_window_ids.get(&parent_surface_id).cloned();
+
+            self.popup_parent_links.insert(
+                surface_id.clone(),
+                SmithayPopupParentLink {
+                    parent_surface_id: parent_surface_id.clone(),
+                    parent_window_id,
+                },
+            );
 
             self.track_surface_snapshot(BackendSurfaceSnapshot::Popup {
                 surface_id,
@@ -253,6 +305,15 @@ mod imp {
                     .map(|parent| smithay_surface_id(&parent))
             })
             .unwrap_or_else(|| format!("parent-{surface_id}"));
+            let parent_window_id = self.toplevel_window_ids.get(&parent_surface_id).cloned();
+
+            self.popup_parent_links.insert(
+                surface_id.clone(),
+                SmithayPopupParentLink {
+                    parent_surface_id: parent_surface_id.clone(),
+                    parent_window_id,
+                },
+            );
 
             self.track_surface_snapshot(BackendSurfaceSnapshot::Popup {
                 surface_id,
@@ -291,6 +352,68 @@ mod imp {
             }
 
             counts
+        }
+
+        fn known_surfaces_snapshot(&self) -> SmithayKnownSurfacesSnapshot {
+            let mut toplevels = self
+                .toplevel_window_ids
+                .iter()
+                .map(|(surface_id, window_id)| SmithayKnownToplevelSurface {
+                    surface_id: surface_id.clone(),
+                    window_id: window_id.clone(),
+                })
+                .collect::<Vec<_>>();
+            toplevels.sort_by(|left, right| left.surface_id.cmp(&right.surface_id));
+
+            let mut popups = self
+                .tracked_surfaces
+                .iter()
+                .filter_map(|(surface_id, kind)| {
+                    (*kind == SmithayTrackedSurfaceKind::Popup).then(|| {
+                        let parent = self.popup_parent_links.get(surface_id);
+                        SmithayKnownPopupSurface {
+                            surface_id: surface_id.clone(),
+                            parent_surface_id: parent
+                                .map(|parent| parent.parent_surface_id.clone())
+                                .unwrap_or_else(|| format!("parent-{surface_id}")),
+                            parent_window_id: parent
+                                .and_then(|parent| parent.parent_window_id.clone()),
+                        }
+                    })
+                })
+                .collect::<Vec<_>>();
+            popups.sort_by(|left, right| left.surface_id.cmp(&right.surface_id));
+
+            let mut unmanaged = self
+                .tracked_surfaces
+                .iter()
+                .filter_map(|(surface_id, kind)| {
+                    (*kind == SmithayTrackedSurfaceKind::Unmanaged).then(|| {
+                        SmithayKnownUnmanagedSurface {
+                            surface_id: surface_id.clone(),
+                        }
+                    })
+                })
+                .collect::<Vec<_>>();
+            unmanaged.sort_by(|left, right| left.surface_id.cmp(&right.surface_id));
+
+            let mut layers = self
+                .tracked_surfaces
+                .iter()
+                .filter_map(|(surface_id, kind)| {
+                    (*kind == SmithayTrackedSurfaceKind::Layer).then(|| SmithayKnownLayerSurface {
+                        surface_id: surface_id.clone(),
+                    })
+                })
+                .collect::<Vec<_>>();
+            layers.sort_by(|left, right| left.surface_id.cmp(&right.surface_id));
+
+            SmithayKnownSurfacesSnapshot {
+                toplevels,
+                popups,
+                unmanaged,
+                layers,
+            }
         }
     }
 
@@ -578,6 +701,10 @@ mod imp {
             assert_eq!(before.role_counts.popup, 0);
             assert_eq!(before.role_counts.unmanaged, 0);
             assert_eq!(before.role_counts.layer, 0);
+            assert!(before.known_surfaces.toplevels.is_empty());
+            assert!(before.known_surfaces.popups.is_empty());
+            assert!(before.known_surfaces.unmanaged.is_empty());
+            assert!(before.known_surfaces.layers.is_empty());
 
             let window_id = state.window_id_for_surface("wl-surface-101");
             state.track_surface_snapshot(BackendSurfaceSnapshot::Window {
@@ -597,6 +724,8 @@ mod imp {
             assert_eq!(after.role_counts.popup, 0);
             assert_eq!(after.role_counts.unmanaged, 1);
             assert_eq!(after.role_counts.layer, 0);
+            assert_eq!(after.known_surfaces.toplevels.len(), 1);
+            assert_eq!(after.known_surfaces.unmanaged.len(), 1);
 
             let _ = state.take_discovery_events();
             let drained = state.snapshot();
@@ -634,12 +763,53 @@ mod imp {
             assert_eq!(snapshot.role_counts.popup, 1);
             assert_eq!(snapshot.role_counts.layer, 1);
             assert_eq!(snapshot.role_counts.unmanaged, 1);
+            assert_eq!(snapshot.known_surfaces.toplevels.len(), 1);
+            assert_eq!(snapshot.known_surfaces.popups.len(), 1);
+            assert_eq!(snapshot.known_surfaces.layers.len(), 1);
+            assert_eq!(snapshot.known_surfaces.unmanaged.len(), 1);
+        }
+
+        #[test]
+        fn smithay_state_snapshot_reports_popup_parent_window_identity() {
+            let display = Display::<SpidersSmithayState>::new().unwrap();
+            let mut state = SpidersSmithayState::new(&display, "test-seat").unwrap();
+
+            let parent_window_id = state.window_id_for_surface("wl-surface-301");
+            state.track_surface_snapshot(BackendSurfaceSnapshot::Window {
+                surface_id: "wl-surface-301".into(),
+                window_id: parent_window_id.clone(),
+                output_id: None,
+            });
+            state.popup_parent_links.insert(
+                "wl-surface-302".into(),
+                SmithayPopupParentLink {
+                    parent_surface_id: "wl-surface-301".into(),
+                    parent_window_id: Some(parent_window_id.clone()),
+                },
+            );
+            state.track_surface_snapshot(BackendSurfaceSnapshot::Popup {
+                surface_id: "wl-surface-302".into(),
+                output_id: None,
+                parent_surface_id: "wl-surface-301".into(),
+            });
+
+            let snapshot = state.snapshot();
+            assert_eq!(snapshot.known_surfaces.popups.len(), 1);
+            assert_eq!(
+                snapshot.known_surfaces.popups[0].parent_window_id,
+                Some(parent_window_id)
+            );
+            assert_eq!(
+                snapshot.known_surfaces.popups[0].parent_surface_id,
+                "wl-surface-301"
+            );
         }
     }
 }
 
 #[cfg(feature = "smithay-winit")]
 pub use imp::{
-    SmithayClientState, SmithayStateError, SmithayStateSnapshot, SmithaySurfaceRoleCounts,
-    SpidersSmithayState,
+    SmithayClientState, SmithayKnownLayerSurface, SmithayKnownPopupSurface,
+    SmithayKnownSurfacesSnapshot, SmithayKnownToplevelSurface, SmithayKnownUnmanagedSurface,
+    SmithayStateError, SmithayStateSnapshot, SmithaySurfaceRoleCounts, SpidersSmithayState,
 };
