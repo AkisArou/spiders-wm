@@ -69,9 +69,9 @@ where
             wm_state.view_tag_on_output(&output_id, tag)?
         }
         WmAction::ToggleViewTag { tag } => {
-            let output_id = wm_state.current_output_id()?.clone();
-            recompute = true;
-            wm_state.view_tag_on_output(&output_id, tag)?
+            let events = wm_state.toggle_tag_on_current_output(tag)?;
+            recompute = !events.is_empty();
+            events
         }
         WmAction::ToggleFloating => {
             let event = wm_state.toggle_focused_floating()?;
@@ -123,6 +123,7 @@ fn cycle_layout_name(
 #[cfg(test)]
 mod tests {
     use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     use spiders_config::loader::{RuntimePathResolver, RuntimeProjectLayoutSourceLoader};
     use spiders_config::model::{Config, LayoutDefinition};
@@ -243,7 +244,11 @@ mod tests {
         BoaLayoutRuntime<RuntimeProjectLayoutSourceLoader>,
     > {
         let temp_dir = std::env::temp_dir();
-        let runtime_root = temp_dir.join("spiders-action-runtime");
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let runtime_root = temp_dir.join(format!("spiders-action-runtime-{unique}"));
         let _ = fs::create_dir_all(runtime_root.join("layouts"));
         fs::write(
             runtime_root.join("layouts/master-stack.js"),
@@ -335,5 +340,48 @@ mod tests {
             event,
             CompositorEvent::WindowFloatingChange { window_id, floating } if window_id == &WindowId::from("w1") && *floating
         )));
+    }
+
+    #[test]
+    fn toggle_view_tag_switches_when_tag_is_not_currently_visible() {
+        let mut runtime = runtime_state();
+        let mut wm_state = WmState::from_snapshot(state());
+
+        let outcome = apply_action(
+            &mut runtime,
+            &mut wm_state,
+            &WmAction::ToggleViewTag { tag: "2".into() },
+        )
+        .unwrap();
+
+        assert!(outcome.recomputed_layout);
+        assert_eq!(
+            wm_state.snapshot().current_workspace_id,
+            Some(WorkspaceId::from("ws-2"))
+        );
+        assert!(outcome
+            .events
+            .iter()
+            .any(|event| matches!(event, CompositorEvent::TagChange { .. })));
+    }
+
+    #[test]
+    fn toggle_view_tag_is_noop_for_currently_visible_tag() {
+        let mut runtime = runtime_state();
+        let mut wm_state = WmState::from_snapshot(state());
+
+        let outcome = apply_action(
+            &mut runtime,
+            &mut wm_state,
+            &WmAction::ToggleViewTag { tag: "1".into() },
+        )
+        .unwrap();
+
+        assert!(!outcome.recomputed_layout);
+        assert!(outcome.events.is_empty());
+        assert_eq!(
+            wm_state.snapshot().current_workspace_id,
+            Some(WorkspaceId::from("ws-1"))
+        );
     }
 }

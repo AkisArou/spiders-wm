@@ -196,6 +196,63 @@ impl WmState {
         })
     }
 
+    pub fn current_workspace(&self) -> Result<&WorkspaceSnapshot, WmStateError> {
+        self.current_workspace_id()
+            .and_then(|workspace_id| self.workspace_by_id(workspace_id))
+    }
+
+    pub fn workspace_by_id(
+        &self,
+        workspace_id: &WorkspaceId,
+    ) -> Result<&WorkspaceSnapshot, WmStateError> {
+        self.snapshot
+            .workspace_by_id(workspace_id)
+            .ok_or_else(|| WmStateError::WorkspaceNotFound(workspace_id.clone()))
+    }
+
+    pub fn toggle_tag_on_current_output(
+        &mut self,
+        tag: &str,
+    ) -> Result<Vec<CompositorEvent>, WmStateError> {
+        let output_id = self.current_output_id()?.clone();
+        let current_workspace = self.current_workspace()?.clone();
+
+        if current_workspace
+            .active_tags
+            .iter()
+            .any(|active| active == tag)
+        {
+            return Ok(Vec::new());
+        }
+
+        let workspace = self
+            .snapshot
+            .workspaces
+            .iter()
+            .find(|workspace| {
+                workspace.output_id.as_ref() == Some(&output_id)
+                    && workspace.active_tags.iter().any(|active| active == tag)
+            })
+            .cloned()
+            .ok_or_else(|| WmStateError::TagNotFound {
+                output_id: output_id.clone(),
+                tag: tag.to_owned(),
+            })?;
+
+        self.select_workspace(&workspace.id)?;
+
+        let mut events = vec![CompositorEvent::TagChange {
+            workspace_id: Some(workspace.id.clone()),
+            active_tags: workspace.active_tags.clone(),
+        }];
+
+        if self.snapshot.focused_window_id.is_none() {
+            events.push(self.focus_change_event());
+        }
+
+        Ok(events)
+    }
+
     pub fn toggle_focused_floating(&mut self) -> Result<CompositorEvent, WmStateError> {
         let window_id = self.focused_window_id()?.clone();
         let window = self
@@ -543,6 +600,38 @@ mod tests {
                 .as_ref()
                 .map(|layout| layout.name.as_str()),
             Some("columns")
+        );
+    }
+
+    #[test]
+    fn wm_state_toggle_tag_on_current_output_is_noop_for_visible_tag() {
+        let mut state = WmState::from_snapshot(state());
+
+        let events = state.toggle_tag_on_current_output("1").unwrap();
+
+        assert!(events.is_empty());
+        assert_eq!(
+            state.snapshot().current_workspace_id,
+            Some(WorkspaceId::from("ws-1"))
+        );
+    }
+
+    #[test]
+    fn wm_state_toggle_tag_on_current_output_switches_to_hidden_tag() {
+        let mut state = WmState::from_snapshot(state());
+
+        let events = state.toggle_tag_on_current_output("2").unwrap();
+
+        assert!(events.iter().any(|event| matches!(
+            event,
+            CompositorEvent::TagChange {
+                workspace_id: Some(id),
+                ..
+            } if id == &WorkspaceId::from("ws-2")
+        )));
+        assert_eq!(
+            state.snapshot().current_workspace_id,
+            Some(WorkspaceId::from("ws-2"))
         );
     }
 }
