@@ -117,6 +117,36 @@ The first real smithay slice should stay intentionally small:
 The public entrypoint for that slice should initialize a controller from config
 and snapshot state first, then hand it to the smithay-winit bootstrap helper.
 
+That helper should also own a minimal smithay frontend state object for:
+
+- `Display`
+- compositor state
+- shm state
+- seat state / wl_seat creation
+- initial listening socket binding
+
+It is useful to expose this as a small `SmithayBootstrap` result that returns
+both the initialized controller and the startup report, so later runtime-loop
+work can build on the same bootstrap path instead of replacing it.
+
+The next runtime-owner step should keep that shape but extend it to return a
+small smithay runtime owner that keeps together:
+
+- the `calloop::EventLoop`
+- the display dispatch source
+- the listening socket source and chosen socket name
+- the minimal smithay frontend state object
+- the winit event pump handle
+
+That runtime owner should expose a tiny "startup cycle" boundary that pumps the
+winit event source once, dispatches pending Wayland clients once, and flushes
+client connections. This is enough to prove the runtime ownership boundary
+without committing yet to full input routing, shell protocol setup, or
+rendering-loop structure.
+
+The initial seat setup should also include keyboard capability creation so the
+bootstrap state matches the first real runtime owner more closely.
+
 That slice is only a startup/discovery proof, not full surface or rendering
 integration.
 

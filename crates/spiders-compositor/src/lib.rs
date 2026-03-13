@@ -10,6 +10,7 @@ pub mod script;
 pub mod session;
 pub mod smithay_adapter;
 pub mod smithay_runtime;
+pub mod smithay_state;
 pub mod startup;
 pub mod topology;
 pub mod transcript;
@@ -67,7 +68,11 @@ pub use smithay_adapter::{
 };
 #[cfg(feature = "smithay-winit")]
 pub use smithay_runtime::initialize_winit_controller;
+#[cfg(feature = "smithay-winit")]
+pub use smithay_runtime::{bootstrap_winit, SmithayBootstrap, SmithayWinitRuntime};
 pub use smithay_runtime::{SmithayRuntimeError, SmithayStartupReport};
+#[cfg(feature = "smithay-winit")]
+pub use smithay_state::{SmithayClientState, SmithayStateError, SpidersSmithayState};
 pub use spiders_runtime::{
     BootstrapDiagnostics, BootstrapEvent, BootstrapFailureTrace, BootstrapRunTrace,
     BootstrapScenario, BootstrapScript, BootstrapScriptKind, BootstrapTranscript,
