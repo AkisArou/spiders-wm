@@ -106,8 +106,9 @@ pub(crate) fn bootstrap_runtime<L: spiders_config::loader::LayoutSourceLoader, R
         .evaluate_for_workspace(config, state, workspace)?
         .map(
             |evaluated| -> Result<StartupLayoutState, CompositorLayoutError> {
+                let workspace_windows = state.windows_for_workspace(workspace);
                 let validated = ValidatedLayoutTree::new(evaluated.layout.clone())?;
-                let resolved = validated.resolve(&state.windows)?;
+                let resolved = validated.resolve(&workspace_windows)?;
                 let request = build_request_from_context(
                     evaluated.context.clone(),
                     evaluated.loaded.selected.clone(),
@@ -177,8 +178,11 @@ mod tests {
     use spiders_config::loader::{RuntimePathResolver, RuntimeProjectLayoutSourceLoader};
     use spiders_config::runtime::BoaLayoutRuntime;
     use spiders_config::service::ConfigRuntimeService;
-    use spiders_shared::ids::{OutputId, WorkspaceId};
-    use spiders_shared::wm::{OutputSnapshot, OutputTransform, StateSnapshot, WorkspaceSnapshot};
+    use spiders_shared::ids::{OutputId, WindowId, WorkspaceId};
+    use spiders_shared::wm::{
+        OutputSnapshot, OutputTransform, ShellKind, StateSnapshot, WindowSnapshot,
+        WorkspaceSnapshot,
+    };
 
     use super::*;
 
@@ -313,6 +317,109 @@ mod tests {
             session.state.current_workspace_id,
             Some(WorkspaceId::from("ws-1"))
         );
+
+        let _ = fs::remove_file(module_path);
+    }
+
+    #[test]
+    fn startup_runtime_filters_resolution_to_current_workspace_windows() {
+        let temp_dir = std::env::temp_dir();
+        let runtime_root = temp_dir.join("spiders-startup-window-filter-runtime");
+        let _ = fs::create_dir_all(runtime_root.join("layouts"));
+        let module_path = runtime_root.join("layouts/master-stack.js");
+        fs::write(
+            &module_path,
+            "ctx => ({ type: 'workspace', children: [{ type: 'slot', id: 'visible' }] })",
+        )
+        .unwrap();
+
+        let loader =
+            RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
+        let runtime = BoaLayoutRuntime::with_loader(loader.clone());
+        let mut runtime_service = ConfigRuntimeService::new(loader, runtime);
+        let config = config();
+        let state = StateSnapshot {
+            focused_window_id: Some(WindowId::from("w1")),
+            current_output_id: Some(OutputId::from("out-1")),
+            current_workspace_id: Some(WorkspaceId::from("ws-1")),
+            outputs: vec![OutputSnapshot {
+                id: OutputId::from("out-1"),
+                name: "HDMI-A-1".into(),
+                logical_width: 800,
+                logical_height: 600,
+                scale: 1,
+                transform: OutputTransform::Normal,
+                enabled: true,
+                current_workspace_id: Some(WorkspaceId::from("ws-1")),
+            }],
+            workspaces: vec![WorkspaceSnapshot {
+                id: WorkspaceId::from("ws-1"),
+                name: "1".into(),
+                output_id: Some(OutputId::from("out-1")),
+                active_tags: vec!["1".into()],
+                focused: true,
+                visible: true,
+                effective_layout: Some(spiders_shared::wm::LayoutRef {
+                    name: "master-stack".into(),
+                }),
+            }],
+            windows: vec![
+                WindowSnapshot {
+                    id: WindowId::from("w1"),
+                    shell: ShellKind::XdgToplevel,
+                    app_id: Some("firefox".into()),
+                    title: Some("Firefox".into()),
+                    class: None,
+                    instance: None,
+                    role: None,
+                    window_type: None,
+                    mapped: true,
+                    floating: false,
+                    fullscreen: false,
+                    focused: true,
+                    urgent: false,
+                    output_id: Some(OutputId::from("out-1")),
+                    workspace_id: Some(WorkspaceId::from("ws-1")),
+                    tags: vec!["1".into()],
+                },
+                WindowSnapshot {
+                    id: WindowId::from("w2"),
+                    shell: ShellKind::XdgToplevel,
+                    app_id: Some("discord".into()),
+                    title: Some("Discord".into()),
+                    class: None,
+                    instance: None,
+                    role: None,
+                    window_type: None,
+                    mapped: true,
+                    floating: false,
+                    fullscreen: false,
+                    focused: false,
+                    urgent: false,
+                    output_id: Some(OutputId::from("out-2")),
+                    workspace_id: Some(WorkspaceId::from("ws-2")),
+                    tags: vec!["2".into()],
+                },
+            ],
+            visible_window_ids: vec![WindowId::from("w1")],
+            tag_names: vec!["1".into(), "2".into()],
+        };
+
+        let startup = bootstrap_runtime(&LayoutService, &mut runtime_service, &config, &state)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(startup.response.root.window_nodes().len(), 1);
+        assert!(startup
+            .response
+            .root
+            .find_by_window_id(&WindowId::from("w1"))
+            .is_some());
+        assert!(startup
+            .response
+            .root
+            .find_by_window_id(&WindowId::from("w2"))
+            .is_none());
 
         let _ = fs::remove_file(module_path);
     }

@@ -133,6 +133,24 @@ impl StateSnapshot {
         self.outputs.iter().find(|output| &output.id == output_id)
     }
 
+    pub fn windows_for_workspace(&self, workspace: &WorkspaceSnapshot) -> Vec<WindowSnapshot> {
+        self.windows
+            .iter()
+            .filter(|window| {
+                let matches_workspace = window.workspace_id.as_ref() == Some(&workspace.id);
+                let matches_output = workspace
+                    .output_id
+                    .as_ref()
+                    .is_none_or(|output_id| window.output_id.as_ref() == Some(output_id));
+                let is_visible = self.visible_window_ids.is_empty()
+                    || self.visible_window_ids.iter().any(|id| id == &window.id);
+
+                matches_workspace && matches_output && is_visible
+            })
+            .cloned()
+            .collect()
+    }
+
     pub fn layout_space_for_workspace(&self, workspace: &WorkspaceSnapshot) -> LayoutSpace {
         let output = workspace
             .output_id
@@ -261,5 +279,98 @@ mod tests {
         assert_eq!(context.workspace.id, WorkspaceId::from("ws-1"));
         assert_eq!(context.output.unwrap().id, OutputId::from("out-1"));
         assert_eq!(context.space.width, 1920.0);
+    }
+
+    #[test]
+    fn state_snapshot_filters_windows_for_workspace_visibility() {
+        let state = StateSnapshot {
+            focused_window_id: Some(WindowId::from("w1")),
+            current_output_id: Some(OutputId::from("out-1")),
+            current_workspace_id: Some(WorkspaceId::from("ws-1")),
+            outputs: vec![OutputSnapshot {
+                id: OutputId::from("out-1"),
+                name: "HDMI-A-1".into(),
+                logical_width: 1920,
+                logical_height: 1080,
+                scale: 1,
+                transform: OutputTransform::Normal,
+                enabled: true,
+                current_workspace_id: Some(WorkspaceId::from("ws-1")),
+            }],
+            workspaces: vec![WorkspaceSnapshot {
+                id: WorkspaceId::from("ws-1"),
+                name: "1".into(),
+                output_id: Some(OutputId::from("out-1")),
+                active_tags: vec!["1".into()],
+                focused: true,
+                visible: true,
+                effective_layout: Some(LayoutRef {
+                    name: "master-stack".into(),
+                }),
+            }],
+            windows: vec![
+                WindowSnapshot {
+                    id: WindowId::from("w1"),
+                    shell: ShellKind::XdgToplevel,
+                    app_id: Some("firefox".into()),
+                    title: Some("Firefox".into()),
+                    class: None,
+                    instance: None,
+                    role: None,
+                    window_type: None,
+                    mapped: true,
+                    floating: false,
+                    fullscreen: false,
+                    focused: true,
+                    urgent: false,
+                    output_id: Some(OutputId::from("out-1")),
+                    workspace_id: Some(WorkspaceId::from("ws-1")),
+                    tags: vec!["1".into()],
+                },
+                WindowSnapshot {
+                    id: WindowId::from("w2"),
+                    shell: ShellKind::XdgToplevel,
+                    app_id: Some("alacritty".into()),
+                    title: Some("Terminal".into()),
+                    class: None,
+                    instance: None,
+                    role: None,
+                    window_type: None,
+                    mapped: true,
+                    floating: false,
+                    fullscreen: false,
+                    focused: false,
+                    urgent: false,
+                    output_id: Some(OutputId::from("out-1")),
+                    workspace_id: Some(WorkspaceId::from("ws-1")),
+                    tags: vec!["1".into()],
+                },
+                WindowSnapshot {
+                    id: WindowId::from("w3"),
+                    shell: ShellKind::XdgToplevel,
+                    app_id: Some("discord".into()),
+                    title: Some("Discord".into()),
+                    class: None,
+                    instance: None,
+                    role: None,
+                    window_type: None,
+                    mapped: true,
+                    floating: false,
+                    fullscreen: false,
+                    focused: false,
+                    urgent: false,
+                    output_id: Some(OutputId::from("out-2")),
+                    workspace_id: Some(WorkspaceId::from("ws-2")),
+                    tags: vec!["2".into()],
+                },
+            ],
+            visible_window_ids: vec![WindowId::from("w1")],
+            tag_names: vec!["1".into(), "2".into()],
+        };
+
+        let windows = state.windows_for_workspace(state.current_workspace().unwrap());
+
+        assert_eq!(windows.len(), 1);
+        assert_eq!(windows[0].id, WindowId::from("w1"));
     }
 }
