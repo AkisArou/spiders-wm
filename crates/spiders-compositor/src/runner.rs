@@ -37,6 +37,10 @@ pub struct BootstrapDiagnostics {
     pub active_output: Option<OutputId>,
     pub current_workspace: Option<String>,
     pub focused_window: Option<String>,
+    pub seat_names: Vec<String>,
+    pub output_ids: Vec<String>,
+    pub surface_ids: Vec<String>,
+    pub mapped_surface_ids: Vec<String>,
     pub seat_count: usize,
     pub output_count: usize,
     pub surface_count: usize,
@@ -79,6 +83,35 @@ impl<L, R> BootstrapRunner<L, R> {
                 .focused_window_id
                 .as_ref()
                 .map(ToString::to_string),
+            seat_names: self
+                .app
+                .topology()
+                .seats
+                .iter()
+                .map(|seat| seat.name.clone())
+                .collect(),
+            output_ids: self
+                .app
+                .topology()
+                .outputs
+                .iter()
+                .map(|output| output.snapshot.id.to_string())
+                .collect(),
+            surface_ids: self
+                .app
+                .topology()
+                .surfaces
+                .iter()
+                .map(|surface| surface.id.clone())
+                .collect(),
+            mapped_surface_ids: self
+                .app
+                .topology()
+                .surfaces
+                .iter()
+                .filter(|surface| surface.mapped)
+                .map(|surface| surface.id.clone())
+                .collect(),
             seat_count: self.app.topology().seats.len(),
             output_count: self.app.topology().outputs.len(),
             surface_count: self.app.topology().surfaces.len(),
@@ -346,6 +379,12 @@ mod tests {
         assert_eq!(trace.diagnostics.active_seat.as_deref(), Some("seat-1"));
         assert_eq!(trace.diagnostics.current_workspace.as_deref(), Some("ws-1"));
         assert_eq!(trace.diagnostics.focused_window.as_deref(), Some("w1"));
+        assert!(trace.diagnostics.seat_names.contains(&"seat-1".to_string()));
+        assert!(trace.diagnostics.output_ids.contains(&"out-2".to_string()));
+        assert!(trace
+            .diagnostics
+            .surface_ids
+            .contains(&"popup-1".to_string()));
     }
 
     #[test]

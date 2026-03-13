@@ -45,6 +45,10 @@ pub struct BootstrapReport {
     pub active_output: Option<String>,
     pub current_workspace: Option<String>,
     pub focused_window: Option<String>,
+    pub seat_names: Vec<String>,
+    pub output_ids: Vec<String>,
+    pub surface_ids: Vec<String>,
+    pub mapped_surface_ids: Vec<String>,
     pub seat_count: usize,
     pub output_count: usize,
     pub surface_count: usize,
@@ -107,6 +111,10 @@ mod tests {
             active_output: Some("out-1".into()),
             current_workspace: Some("ws-1".into()),
             focused_window: Some("w1".into()),
+            seat_names: vec!["seat-0".into()],
+            output_ids: vec!["out-1".into()],
+            surface_ids: vec!["window-w1".into()],
+            mapped_surface_ids: vec!["window-w1".into()],
             seat_count: 1,
             output_count: 1,
             surface_count: 0,
@@ -126,6 +134,7 @@ mod tests {
         assert_eq!(json["active_seat"], "seat-0");
         assert_eq!(json["current_workspace"], "ws-1");
         assert_eq!(json["focused_window"], "w1");
+        assert_eq!(json["seat_names"][0], "seat-0");
         assert_eq!(json["startup"]["active_seat"], "seat-0");
     }
 

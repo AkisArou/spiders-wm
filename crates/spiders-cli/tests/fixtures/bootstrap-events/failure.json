@@ -1,0 +1,13 @@
+[
+  {
+    "register-seat": {
+      "seat_name": "seat-x",
+      "active": true
+    }
+  },
+  {
+    "remove-output": {
+      "output_id": "missing-output"
+    }
+  }
+]

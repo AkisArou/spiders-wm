@@ -44,8 +44,14 @@ any real compositor backend loop exists.
 spiders-cli bootstrap-trace --json --events path/to/bootstrap-events.json
 ```
 
+Reusable examples live in:
+
+- `crates/spiders-cli/tests/fixtures/bootstrap-events/success.json`
+- `crates/spiders-cli/tests/fixtures/bootstrap-events/failure.json`
+
 ## Notes
 
 - Event names use kebab-case.
-- Successful runs return bootstrap diagnostics plus applied event counts.
+- Successful runs return bootstrap diagnostics, startup registration, topology id
+  lists, and applied event counts.
 - Failed runs return a structured error with the failed event and partial trace.
