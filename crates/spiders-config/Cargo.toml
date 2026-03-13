@@ -6,6 +6,9 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+boa_engine = "0.21.0"
 serde.workspace = true
+serde_json.workspace = true
+spiders-layout = { path = "../spiders-layout" }
 spiders-shared = { path = "../spiders-shared" }
 thiserror.workspace = true

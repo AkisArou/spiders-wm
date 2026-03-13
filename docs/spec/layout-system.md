@@ -196,6 +196,20 @@ Validation happens in Rust, not in JS.
 6. Rust creates a `taffy` tree and computes geometry.
 7. Rust applies computed geometry to tiled windows.
 
+The compositor-facing boundary should use explicit shared request/response types:
+
+- `LayoutRequest { workspace_id, output_id?, layout_name?, root, stylesheet, space }`
+- `LayoutResponse { root }`
+
+Where `space` is the available workspace size and `root` in the response is a
+serializable `LayoutSnapshotNode` tree carrying final rects.
+
+Requests should carry enough identity for tracing and policy decisions without
+requiring callers to infer which workspace/output a layout result belongs to.
+
+`LayoutSnapshotNode` should support compositor-friendly lookup by structural
+node id and by claimed `window_id`, plus easy collection of runtime window nodes.
+
 ## Non-Goals For V1
 
 - React runtime semantics

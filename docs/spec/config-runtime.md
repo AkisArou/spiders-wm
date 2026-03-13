@@ -49,6 +49,31 @@ The rewrite should preserve these top-level config concepts:
 - `autostart`
 - `autostart_once`
 
+## Layout Definitions
+
+Named entries in `layouts` should carry enough information for Rust to select the
+runtime layout source without executing discovery logic at layout time.
+
+V1 config-facing layout definitions should include at least:
+
+- `name`
+- `module`
+- `stylesheet`
+
+`WorkspaceSnapshot.effective_layout.name` selects one of these definitions. Rust
+then builds a `LayoutRequest` using the selected definition's stylesheet and the
+workspace/output geometry.
+
+The selected runtime payload should be representable as shared data with at least:
+
+- `name`
+- `module`
+- `stylesheet`
+
+State-driven orchestration should be able to derive the current workspace and
+output from `StateSnapshot`, resolve the selected layout definition, and build a
+`LayoutRequest` without compositor-specific discovery logic.
+
 ## JS Runtime Surface
 
 The runtime should expose host modules conceptually equivalent to:
@@ -86,9 +111,37 @@ Input:
 
 - layout context `ctx`
 
+V1 Rust-side contract should model this as a serializable shared payload carrying:
+
+- full `StateSnapshot`
+- selected `WorkspaceSnapshot`
+- selected `OutputSnapshot?`
+- selected layout payload `{ name, module, stylesheet }?`
+- resolved available `space`
+
 Output:
 
 - a structural layout tree
+
+The Rust config/runtime boundary should expose a trait-like evaluation surface that:
+
+1. resolves the selected layout definition
+2. builds the layout evaluation context
+3. evaluates the compiled JS module into a structural layout tree
+
+Before `boa_engine` integration lands, placeholder implementations may keep step 3
+explicitly unimplemented as long as the contract is stable and tested.
+
+The initial JS module contract should assume a single selected export named
+`default`, and that export should be callable with `ctx` as its only argument.
+V1 Rust runtime handling may begin with a narrow shell that evaluates module
+source in `boa_engine`, invokes the callable export with the serialized layout
+evaluation context, and then passes the resulting JS value into a Rust-side
+conversion layer for `AuthoredLayoutNode` normalization.
+
+Malformed returned layout objects should fail with Rust-side diagnostics that
+identify layout decoding or validation errors, rather than falling back to
+opaque JS-only failure modes.
 
 The compositor owns recomputation timing, resize persistence, and all mutable WM
 state.

@@ -1,4 +1,6 @@
-use spiders_shared::layout::{LayoutRect, LayoutSnapshotNode, ResolvedLayoutNode};
+use spiders_shared::layout::{
+    LayoutRect, LayoutRequest, LayoutResponse, LayoutSnapshotNode, ResolvedLayoutNode,
+};
 use taffy::prelude::{AvailableSpace, Size as TaffyAvailableSize, TaffyTree};
 use taffy::tree::{Layout as TaffyLayout, NodeId as TaffyNodeId};
 
@@ -96,6 +98,21 @@ pub fn compute_layout(
 ) -> Result<LaidOutTree, LayoutPipelineError> {
     let styled = build_styled_layout_tree(root, stylesheet_source)?;
     compute_layout_from_styled(&styled, width, height)
+}
+
+pub fn compute_layout_from_request(
+    request: &LayoutRequest,
+) -> Result<LayoutResponse, LayoutPipelineError> {
+    let laid_out = compute_layout(
+        &request.root,
+        &request.stylesheet,
+        request.space.width,
+        request.space.height,
+    )?;
+
+    Ok(LayoutResponse {
+        root: laid_out.snapshot(),
+    })
 }
 
 pub fn compute_layout_from_styled(
@@ -205,8 +222,8 @@ fn geometry_from_layout(layout: TaffyLayout) -> LayoutGeometry {
 
 #[cfg(test)]
 mod tests {
-    use spiders_shared::ids::WindowId;
-    use spiders_shared::layout::{LayoutNodeMeta, ResolvedLayoutNode};
+    use spiders_shared::ids::{OutputId, WindowId, WorkspaceId};
+    use spiders_shared::layout::{LayoutNodeMeta, LayoutResponse, LayoutSpace, ResolvedLayoutNode};
 
     use super::*;
     use crate::css::{Display, FlexDirectionValue, LengthPercentage, SizeValue};
@@ -386,6 +403,57 @@ mod tests {
                     },
                     window_id: Some(WindowId::from("win-1")),
                 }],
+            }
+        );
+    }
+
+    #[test]
+    fn pipeline_supports_shared_layout_request_response_types() {
+        let request = LayoutRequest {
+            workspace_id: WorkspaceId::from("ws-1"),
+            output_id: Some(OutputId::from("out-1")),
+            layout_name: Some("master-stack".into()),
+            root: sample_tree(),
+            stylesheet:
+                "workspace { display: flex; width: 320px; height: 200px; } #main { width: 100px; }"
+                    .into(),
+            space: LayoutSpace {
+                width: 320.0,
+                height: 200.0,
+            },
+        };
+
+        let response = compute_layout_from_request(&request).unwrap();
+
+        assert_eq!(
+            response,
+            LayoutResponse {
+                root: LayoutSnapshotNode::Workspace {
+                    meta: LayoutNodeMeta {
+                        class: vec!["root".into()],
+                        ..LayoutNodeMeta::default()
+                    },
+                    rect: LayoutRect {
+                        x: 0.0,
+                        y: 0.0,
+                        width: 320.0,
+                        height: 200.0,
+                    },
+                    children: vec![LayoutSnapshotNode::Window {
+                        meta: LayoutNodeMeta {
+                            id: Some("main".into()),
+                            class: vec!["stack".into()],
+                            ..LayoutNodeMeta::default()
+                        },
+                        rect: LayoutRect {
+                            x: 0.0,
+                            y: 0.0,
+                            width: 100.0,
+                            height: 200.0,
+                        },
+                        window_id: Some(WindowId::from("win-1")),
+                    }],
+                },
             }
         );
     }
