@@ -2,7 +2,7 @@ use spiders_shared::ids::{OutputId, WindowId};
 
 use crate::app::BootstrapEvent;
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct BootstrapScenario {
     events: Vec<BootstrapEvent>,
 }
@@ -22,6 +22,14 @@ impl BootstrapScenario {
 
     pub fn into_events(self) -> Vec<BootstrapEvent> {
         self.events
+    }
+
+    pub fn to_json_pretty(&self) -> String {
+        serde_json::to_string_pretty(&self.events).unwrap()
+    }
+
+    pub fn from_json_str(json: &str) -> Result<Self, serde_json::Error> {
+        serde_json::from_str::<Vec<BootstrapEvent>>(json).map(Self::from_events)
     }
 
     pub fn register_seat(mut self, seat_name: impl Into<String>, active: bool) -> Self {
@@ -157,5 +165,18 @@ mod tests {
             scenario.events()[4],
             BootstrapEvent::RemoveWindowSurface { .. }
         ));
+    }
+
+    #[test]
+    fn scenario_round_trips_through_json() {
+        let scenario = BootstrapScenario::new()
+            .register_seat("seat-1", true)
+            .register_window_surface("window-w1", "w1", Some(OutputId::from("out-1")))
+            .register_popup_surface("popup-1", Some(OutputId::from("out-1")), "window-w1");
+
+        let json = scenario.to_json_pretty();
+        let parsed = BootstrapScenario::from_json_str(&json).unwrap();
+
+        assert_eq!(parsed, scenario);
     }
 }

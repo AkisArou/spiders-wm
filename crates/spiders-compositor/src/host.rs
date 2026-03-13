@@ -1,0 +1,214 @@
+use spiders_config::model::Config;
+use spiders_config::runtime::LayoutRuntime;
+use spiders_config::service::ConfigRuntimeService;
+use spiders_shared::wm::StateSnapshot;
+
+use crate::app::{BootstrapEvent, StartupRegistration};
+use crate::runner::{
+    BootstrapFailureTrace, BootstrapRunTrace, BootstrapRunner, BootstrapRunnerError,
+};
+use crate::scenario::BootstrapScenario;
+use crate::{CompositorApp, LayoutService};
+
+#[derive(Debug)]
+pub struct CompositorHost<L, R> {
+    runner: BootstrapRunner<L, R>,
+}
+
+impl<L, R> CompositorHost<L, R> {
+    pub fn runner(&self) -> &BootstrapRunner<L, R> {
+        &self.runner
+    }
+
+    pub fn app(&self) -> &CompositorApp<L, R> {
+        self.runner.app()
+    }
+
+    pub fn bootstrap_trace(&self) -> BootstrapRunTrace {
+        self.runner.trace()
+    }
+}
+
+impl<L: spiders_config::loader::LayoutSourceLoader, R: LayoutRuntime> CompositorHost<L, R> {
+    pub fn initialize(
+        runtime_service: ConfigRuntimeService<L, R>,
+        config: Config,
+        state: StateSnapshot,
+    ) -> Result<Self, BootstrapRunnerError> {
+        Ok(Self {
+            runner: BootstrapRunner::initialize(LayoutService, runtime_service, config, state)?,
+        })
+    }
+
+    pub fn initialize_with_registration(
+        runtime_service: ConfigRuntimeService<L, R>,
+        config: Config,
+        state: StateSnapshot,
+        startup: StartupRegistration,
+    ) -> Result<Self, BootstrapRunnerError> {
+        Ok(Self {
+            runner: BootstrapRunner::initialize_with_registration(
+                LayoutService,
+                runtime_service,
+                config,
+                state,
+                startup,
+            )?,
+        })
+    }
+
+    pub fn apply_bootstrap_event(
+        &mut self,
+        event: BootstrapEvent,
+    ) -> Result<(), BootstrapRunnerError> {
+        self.runner.apply_event(event)
+    }
+
+    pub fn apply_bootstrap_scenario(
+        &mut self,
+        scenario: BootstrapScenario,
+    ) -> Result<(), BootstrapRunnerError> {
+        self.runner.apply_scenario(scenario)
+    }
+
+    pub fn apply_bootstrap_scenario_with_trace(
+        &mut self,
+        scenario: BootstrapScenario,
+    ) -> Result<(), BootstrapFailureTrace> {
+        self.runner.apply_scenario_with_trace(scenario)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use spiders_config::loader::{RuntimePathResolver, RuntimeProjectLayoutSourceLoader};
+    use spiders_config::model::{Config, LayoutDefinition};
+    use spiders_config::runtime::BoaLayoutRuntime;
+    use spiders_config::service::ConfigRuntimeService;
+    use spiders_shared::ids::{OutputId, WindowId, WorkspaceId};
+    use spiders_shared::wm::{
+        LayoutRef, OutputSnapshot, OutputTransform, ShellKind, StateSnapshot, WindowSnapshot,
+        WorkspaceSnapshot,
+    };
+
+    use super::*;
+
+    fn config() -> Config {
+        Config {
+            layouts: vec![LayoutDefinition {
+                name: "master-stack".into(),
+                module: "layouts/master-stack.js".into(),
+                stylesheet: String::new(),
+            }],
+            ..Config::default()
+        }
+    }
+
+    fn state() -> StateSnapshot {
+        StateSnapshot {
+            focused_window_id: Some(WindowId::from("w1")),
+            current_output_id: Some(OutputId::from("out-1")),
+            current_workspace_id: Some(WorkspaceId::from("ws-1")),
+            outputs: vec![OutputSnapshot {
+                id: OutputId::from("out-1"),
+                name: "HDMI-A-1".into(),
+                logical_width: 800,
+                logical_height: 600,
+                scale: 1,
+                transform: OutputTransform::Normal,
+                enabled: true,
+                current_workspace_id: Some(WorkspaceId::from("ws-1")),
+            }],
+            workspaces: vec![WorkspaceSnapshot {
+                id: WorkspaceId::from("ws-1"),
+                name: "1".into(),
+                output_id: Some(OutputId::from("out-1")),
+                active_tags: vec!["1".into()],
+                focused: true,
+                visible: true,
+                effective_layout: Some(LayoutRef {
+                    name: "master-stack".into(),
+                }),
+            }],
+            windows: vec![WindowSnapshot {
+                id: WindowId::from("w1"),
+                shell: ShellKind::XdgToplevel,
+                app_id: Some("firefox".into()),
+                title: Some("Firefox".into()),
+                class: None,
+                instance: None,
+                role: None,
+                window_type: None,
+                mapped: true,
+                floating: false,
+                fullscreen: false,
+                focused: true,
+                urgent: false,
+                output_id: Some(OutputId::from("out-1")),
+                workspace_id: Some(WorkspaceId::from("ws-1")),
+                tags: vec!["1".into()],
+            }],
+            visible_window_ids: vec![WindowId::from("w1")],
+            tag_names: vec!["1".into()],
+        }
+    }
+
+    fn host() -> CompositorHost<
+        RuntimeProjectLayoutSourceLoader,
+        BoaLayoutRuntime<RuntimeProjectLayoutSourceLoader>,
+    > {
+        let temp_dir = std::env::temp_dir();
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let runtime_root = temp_dir.join(format!("spiders-host-{unique}"));
+        let _ = fs::create_dir_all(runtime_root.join("layouts"));
+        fs::write(
+            runtime_root.join("layouts/master-stack.js"),
+            "ctx => ({ type: 'workspace', children: [{ type: 'slot', id: 'rest' }] })",
+        )
+        .unwrap();
+
+        let loader =
+            RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
+        let runtime = BoaLayoutRuntime::with_loader(loader.clone());
+        let service = ConfigRuntimeService::new(loader, runtime);
+
+        CompositorHost::initialize(service, config(), state()).unwrap()
+    }
+
+    #[test]
+    fn host_applies_bootstrap_scenario_and_exposes_trace() {
+        let mut host = host();
+        host.runner
+            .app_mut()
+            .session
+            .register_output_snapshot(OutputSnapshot {
+                id: OutputId::from("out-2"),
+                name: "DP-1".into(),
+                logical_width: 2560,
+                logical_height: 1440,
+                scale: 1,
+                transform: OutputTransform::Normal,
+                enabled: true,
+                current_workspace_id: None,
+            });
+
+        host.apply_bootstrap_scenario(
+            BootstrapScenario::new()
+                .register_seat("seat-1", true)
+                .register_window_surface("window-w1", "w1", Some(OutputId::from("out-1")))
+                .register_popup_surface("popup-1", Some(OutputId::from("out-1")), "window-w1")
+                .move_surface_to_output("popup-1", "out-2"),
+        )
+        .unwrap();
+
+        let trace = host.bootstrap_trace();
+        assert_eq!(trace.applied_events.len(), 4);
+        assert!(trace.diagnostics.seat_names.contains(&"seat-1".to_string()));
+    }
+}

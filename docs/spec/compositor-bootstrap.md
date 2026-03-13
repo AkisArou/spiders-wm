@@ -54,6 +54,10 @@ These traces should use stable ids and summary data only, including:
 In-memory startup simulations can use `BootstrapScenario` to build ordered event
 sequences without going through JSON fixtures.
 
+`BootstrapScenario` can also round-trip through the same JSON event format used by
+`spiders-cli bootstrap-trace --events`, so test helpers and CLI fixtures can stay
+aligned.
+
 JSON event scripts remain useful for CLI diagnostics and black-box integration
 tests.
 

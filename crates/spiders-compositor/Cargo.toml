@@ -12,4 +12,5 @@ spiders-ipc = { path = "../spiders-ipc" }
 spiders-layout = { path = "../spiders-layout" }
 spiders-shared = { path = "../spiders-shared" }
 serde.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true

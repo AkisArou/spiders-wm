@@ -1,5 +1,6 @@
 pub mod actions;
 pub mod app;
+pub mod host;
 pub mod runner;
 pub mod runtime;
 pub mod scenario;
@@ -46,6 +47,7 @@ pub trait LayoutEngine {
 pub struct LayoutService;
 
 pub use app::{BootstrapEvent, CompositorApp, StartupRegistration};
+pub use host::CompositorHost;
 pub use runner::{
     BootstrapDiagnostics, BootstrapFailureTrace, BootstrapRunTrace, BootstrapRunner,
     BootstrapRunnerError,

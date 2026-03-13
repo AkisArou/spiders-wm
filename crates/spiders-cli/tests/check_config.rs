@@ -10,6 +10,29 @@ fn bootstrap_fixture(name: &str) -> std::path::PathBuf {
         .join(name)
 }
 
+fn runtime_fixture_paths() -> (std::path::PathBuf, std::path::PathBuf) {
+    let fixture_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../spiders-config/tests/fixtures");
+    (
+        fixture_root.join("runtime"),
+        fixture_root.join("project/config.ts"),
+    )
+}
+
+fn write_runtime_config(name: &str) -> std::path::PathBuf {
+    let (runtime_dir, _) = runtime_fixture_paths();
+    let runtime_config = std::env::temp_dir().join(name);
+    std::fs::write(
+        &runtime_config,
+        format!(
+            r#"{{"layouts":[{{"name":"master-stack","module":"{}","stylesheet":"workspace {{ display: flex; }}"}}]}}"#,
+            runtime_dir.join("layouts/master-stack.js").display()
+        ),
+    )
+    .unwrap();
+    runtime_config
+}
+
 #[test]
 fn cli_reports_discovery_in_json_mode() {
     let output = Command::new(cli_bin())
@@ -59,19 +82,8 @@ fn cli_check_config_reports_validation_errors_in_json_mode() {
 
 #[test]
 fn cli_check_config_reports_success_in_json_mode_with_fixture_layout() {
-    let fixture_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../spiders-config/tests/fixtures");
-    let runtime_config = std::env::temp_dir().join("spiders-cli-runtime-success.json");
-    let runtime_dir = fixture_root.join("runtime");
-    let authored_config = fixture_root.join("project/config.ts");
-    std::fs::write(
-        &runtime_config,
-        format!(
-            r#"{{"layouts":[{{"name":"master-stack","module":"{}","stylesheet":"workspace {{ display: flex; }}"}}]}}"#,
-            runtime_dir.join("layouts/master-stack.js").display()
-        ),
-    )
-    .unwrap();
+    let (_, authored_config) = runtime_fixture_paths();
+    let runtime_config = write_runtime_config("spiders-cli-runtime-success.json");
 
     let output = Command::new(cli_bin())
         .arg("check-config")
@@ -93,19 +105,8 @@ fn cli_check_config_reports_success_in_json_mode_with_fixture_layout() {
 
 #[test]
 fn cli_bootstrap_trace_reports_json_diagnostics() {
-    let fixture_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../spiders-config/tests/fixtures");
-    let runtime_config = std::env::temp_dir().join("spiders-cli-bootstrap-trace.json");
-    let runtime_dir = fixture_root.join("runtime");
-    let authored_config = fixture_root.join("project/config.ts");
-    std::fs::write(
-        &runtime_config,
-        format!(
-            r#"{{"layouts":[{{"name":"master-stack","module":"{}","stylesheet":"workspace {{ display: flex; }}"}}]}}"#,
-            runtime_dir.join("layouts/master-stack.js").display()
-        ),
-    )
-    .unwrap();
+    let (_, authored_config) = runtime_fixture_paths();
+    let runtime_config = write_runtime_config("spiders-cli-bootstrap-trace.json");
 
     let output = Command::new(cli_bin())
         .arg("bootstrap-trace")
@@ -137,20 +138,9 @@ fn cli_bootstrap_trace_reports_json_diagnostics() {
 
 #[test]
 fn cli_bootstrap_trace_reports_script_failure_in_json_mode() {
-    let fixture_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../spiders-config/tests/fixtures");
-    let runtime_config = std::env::temp_dir().join("spiders-cli-bootstrap-trace-failure.json");
-    let runtime_dir = fixture_root.join("runtime");
-    let authored_config = fixture_root.join("project/config.ts");
+    let (_, authored_config) = runtime_fixture_paths();
+    let runtime_config = write_runtime_config("spiders-cli-bootstrap-trace-failure.json");
     let events_path = bootstrap_fixture("failure.json");
-    std::fs::write(
-        &runtime_config,
-        format!(
-            r#"{{"layouts":[{{"name":"master-stack","module":"{}","stylesheet":"workspace {{ display: flex; }}"}}]}}"#,
-            runtime_dir.join("layouts/master-stack.js").display()
-        ),
-    )
-    .unwrap();
     let output = Command::new(cli_bin())
         .arg("bootstrap-trace")
         .arg("--json")
@@ -178,21 +168,9 @@ fn cli_bootstrap_trace_reports_script_failure_in_json_mode() {
 
 #[test]
 fn cli_bootstrap_trace_reports_script_success_fixture() {
-    let fixture_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../spiders-config/tests/fixtures");
-    let runtime_config =
-        std::env::temp_dir().join("spiders-cli-bootstrap-trace-success-script.json");
-    let runtime_dir = fixture_root.join("runtime");
-    let authored_config = fixture_root.join("project/config.ts");
+    let (_, authored_config) = runtime_fixture_paths();
+    let runtime_config = write_runtime_config("spiders-cli-bootstrap-trace-success-script.json");
     let events_path = bootstrap_fixture("success.json");
-    std::fs::write(
-        &runtime_config,
-        format!(
-            r#"{{"layouts":[{{"name":"master-stack","module":"{}","stylesheet":"workspace {{ display: flex; }}"}}]}}"#,
-            runtime_dir.join("layouts/master-stack.js").display()
-        ),
-    )
-    .unwrap();
 
     let output = Command::new(cli_bin())
         .arg("bootstrap-trace")
