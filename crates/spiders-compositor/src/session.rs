@@ -7,7 +7,7 @@ use spiders_shared::wm::{StateSnapshot, WindowSnapshot};
 
 use crate::actions::{apply_action, ActionError, ActionOutcome};
 use crate::runtime::{CompositorRuntimeState, WorkspaceLayoutState};
-use crate::topology::{CompositorTopologyState, SurfaceState, TopologyError};
+use crate::topology::{CompositorTopologyState, SurfaceRole, SurfaceState, TopologyError};
 use crate::wm::WmState;
 use crate::{CompositorLayoutError, LayoutService};
 
@@ -57,6 +57,54 @@ impl<L, R> CompositorSession<L, R> {
 
     pub fn topology(&self) -> &CompositorTopologyState {
         &self.topology
+    }
+
+    pub fn register_popup_surface(
+        &mut self,
+        surface_id: impl Into<String>,
+        output_id: Option<OutputId>,
+        parent_surface_id: impl Into<String>,
+    ) -> Result<&SurfaceState, TopologyError> {
+        self.topology.register_surface(
+            surface_id,
+            SurfaceRole::Popup,
+            output_id,
+            Some(parent_surface_id.into()),
+        )
+    }
+
+    pub fn register_layer_surface(
+        &mut self,
+        surface_id: impl Into<String>,
+        output_id: OutputId,
+    ) -> Result<&SurfaceState, TopologyError> {
+        self.topology
+            .register_surface(surface_id, SurfaceRole::Layer, Some(output_id), None)
+    }
+
+    pub fn register_unmanaged_surface(
+        &mut self,
+        surface_id: impl Into<String>,
+    ) -> Result<&SurfaceState, TopologyError> {
+        self.topology
+            .register_surface(surface_id, SurfaceRole::Unmanaged, None, None)
+    }
+
+    pub fn register_output_snapshot(&mut self, output: spiders_shared::wm::OutputSnapshot) {
+        self.topology.register_output(output);
+    }
+
+    pub fn move_surface_to_output(
+        &mut self,
+        surface_id: &str,
+        output_id: OutputId,
+    ) -> Result<(), TopologyError> {
+        self.topology
+            .update_surface_attachment(surface_id, Some(output_id))
+    }
+
+    pub fn unmap_surface(&mut self, surface_id: &str) -> Result<(), TopologyError> {
+        self.topology.unmap_surface(surface_id)
     }
 }
 
@@ -662,5 +710,60 @@ mod tests {
             .topology()
             .output(&OutputId::from("out-1"))
             .is_some());
+    }
+
+    #[test]
+    fn session_registers_popup_layer_and_unmanaged_surfaces() {
+        let mut session = session();
+
+        session
+            .register_popup_surface("popup-1", Some(OutputId::from("out-1")), "window-w1")
+            .unwrap();
+        session
+            .register_layer_surface("layer-1", OutputId::from("out-1"))
+            .unwrap();
+        session.register_unmanaged_surface("overlay-1").unwrap();
+
+        assert_eq!(
+            session.topology().surface("popup-1").unwrap().role,
+            SurfaceRole::Popup
+        );
+        assert_eq!(
+            session.topology().surface("layer-1").unwrap().role,
+            SurfaceRole::Layer
+        );
+        assert_eq!(
+            session.topology().surface("overlay-1").unwrap().role,
+            SurfaceRole::Unmanaged
+        );
+    }
+
+    #[test]
+    fn session_moves_and_unmaps_registered_surfaces() {
+        let mut session = session();
+        session.register_output_snapshot(spiders_shared::wm::OutputSnapshot {
+            id: OutputId::from("out-2"),
+            name: "DP-1".into(),
+            logical_width: 2560,
+            logical_height: 1440,
+            scale: 1,
+            transform: spiders_shared::wm::OutputTransform::Normal,
+            enabled: true,
+            current_workspace_id: None,
+        });
+        session
+            .register_layer_surface("layer-1", OutputId::from("out-1"))
+            .unwrap();
+
+        session
+            .move_surface_to_output("layer-1", OutputId::from("out-2"))
+            .unwrap();
+        session.unmap_surface("layer-1").unwrap();
+
+        assert_eq!(
+            session.topology().surface("layer-1").unwrap().output_id,
+            Some(OutputId::from("out-2"))
+        );
+        assert!(!session.topology().surface("layer-1").unwrap().mapped);
     }
 }

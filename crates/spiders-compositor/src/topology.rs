@@ -161,6 +161,112 @@ impl CompositorTopologyState {
             .ok_or(TopologyError::SurfaceNotFound(surface_id))
     }
 
+    pub fn register_surface(
+        &mut self,
+        surface_id: impl Into<String>,
+        role: SurfaceRole,
+        output_id: Option<OutputId>,
+        parent_surface_id: Option<String>,
+    ) -> Result<&SurfaceState, TopologyError> {
+        let surface_id = surface_id.into();
+
+        if let Some(output_id) = output_id.as_ref() {
+            self.output(output_id)
+                .ok_or_else(|| TopologyError::OutputNotFound(output_id.clone()))?;
+        }
+
+        if self.surface(&surface_id).is_some() {
+            self.update_surface_attachment(&surface_id, output_id.clone())?;
+            let surface = self
+                .surfaces
+                .iter_mut()
+                .find(|surface| surface.id == surface_id)
+                .expect("surface exists after attachment update");
+            surface.role = role;
+            surface.parent_surface_id = parent_surface_id;
+            surface.mapped = true;
+        } else {
+            self.surfaces.push(SurfaceState {
+                id: surface_id.clone(),
+                role,
+                output_id: output_id.clone(),
+                window_id: None,
+                parent_surface_id,
+                mapped: true,
+            });
+            if let Some(output_id) = output_id {
+                self.attach_surface_to_output(&surface_id, &output_id)?;
+            }
+        }
+
+        self.surface(&surface_id)
+            .ok_or(TopologyError::SurfaceNotFound(surface_id))
+    }
+
+    pub fn unmap_surface(&mut self, surface_id: &str) -> Result<(), TopologyError> {
+        let surface = self
+            .surfaces
+            .iter_mut()
+            .find(|surface| surface.id == surface_id)
+            .ok_or_else(|| TopologyError::SurfaceNotFound(surface_id.to_owned()))?;
+        surface.mapped = false;
+        Ok(())
+    }
+
+    pub fn update_surface_attachment(
+        &mut self,
+        surface_id: &str,
+        output_id: Option<OutputId>,
+    ) -> Result<(), TopologyError> {
+        let current_output_id = self
+            .surface(surface_id)
+            .ok_or_else(|| TopologyError::SurfaceNotFound(surface_id.to_owned()))?
+            .output_id
+            .clone();
+
+        if current_output_id == output_id {
+            return Ok(());
+        }
+
+        if let Some(current_output_id) = current_output_id {
+            if let Some(output) = self
+                .outputs
+                .iter_mut()
+                .find(|output| output.snapshot.id == current_output_id)
+            {
+                output.mapped_surface_ids.retain(|id| id != surface_id);
+            }
+        }
+
+        if let Some(output_id) = output_id.as_ref() {
+            self.attach_surface_to_output(surface_id, output_id)?;
+        }
+
+        let surface = self
+            .surfaces
+            .iter_mut()
+            .find(|surface| surface.id == surface_id)
+            .ok_or_else(|| TopologyError::SurfaceNotFound(surface_id.to_owned()))?;
+        surface.output_id = output_id;
+        Ok(())
+    }
+
+    fn attach_surface_to_output(
+        &mut self,
+        surface_id: &str,
+        output_id: &OutputId,
+    ) -> Result<(), TopologyError> {
+        let output = self
+            .outputs
+            .iter_mut()
+            .find(|output| output.snapshot.id == *output_id)
+            .ok_or_else(|| TopologyError::OutputNotFound(output_id.clone()))?;
+        if !output.mapped_surface_ids.iter().any(|id| id == surface_id) {
+            output.mapped_surface_ids.push(surface_id.to_owned());
+        }
+        Ok(())
+    }
+
     pub fn focus_seat_window(
         &mut self,
         seat_name: &str,
@@ -264,5 +370,84 @@ mod tests {
         let seat = topology.seat("seat-0").unwrap();
         assert_eq!(seat.focused_window_id, Some(WindowId::from("w1")));
         assert_eq!(seat.focused_output_id, Some(OutputId::from("out-1")));
+    }
+
+    #[test]
+    fn topology_registers_popup_and_unmanaged_surfaces() {
+        let mut topology = CompositorTopologyState::from_snapshot(&state());
+
+        topology
+            .register_surface(
+                "popup-1",
+                SurfaceRole::Popup,
+                Some(OutputId::from("out-1")),
+                Some("window-w1".into()),
+            )
+            .unwrap();
+        topology
+            .register_surface("overlay-1", SurfaceRole::Unmanaged, None, None)
+            .unwrap();
+
+        assert_eq!(
+            topology.surface("popup-1").unwrap().role,
+            SurfaceRole::Popup
+        );
+        assert_eq!(
+            topology
+                .surface("popup-1")
+                .unwrap()
+                .parent_surface_id
+                .as_deref(),
+            Some("window-w1")
+        );
+        assert_eq!(
+            topology.surface("overlay-1").unwrap().role,
+            SurfaceRole::Unmanaged
+        );
+    }
+
+    #[test]
+    fn topology_updates_surface_output_attachment() {
+        let mut snapshot = state();
+        snapshot.outputs.push(OutputSnapshot {
+            id: OutputId::from("out-2"),
+            name: "DP-1".into(),
+            logical_width: 2560,
+            logical_height: 1440,
+            scale: 1,
+            transform: OutputTransform::Normal,
+            enabled: true,
+            current_workspace_id: None,
+        });
+        let mut topology = CompositorTopologyState::from_snapshot(&snapshot);
+        topology
+            .register_surface(
+                "layer-1",
+                SurfaceRole::Layer,
+                Some(OutputId::from("out-1")),
+                None,
+            )
+            .unwrap();
+
+        topology
+            .update_surface_attachment("layer-1", Some(OutputId::from("out-2")))
+            .unwrap();
+
+        assert_eq!(
+            topology.surface("layer-1").unwrap().output_id,
+            Some(OutputId::from("out-2"))
+        );
+        assert!(topology
+            .output(&OutputId::from("out-1"))
+            .unwrap()
+            .mapped_surface_ids
+            .is_empty());
+        assert_eq!(
+            topology
+                .output(&OutputId::from("out-2"))
+                .unwrap()
+                .mapped_surface_ids,
+            vec!["layer-1".to_string()]
+        );
     }
 }

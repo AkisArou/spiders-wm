@@ -5,7 +5,7 @@ use spiders_shared::ids::OutputId;
 use spiders_shared::wm::StateSnapshot;
 
 use crate::session::CompositorSession;
-use crate::topology::CompositorTopologyState;
+use crate::topology::{CompositorTopologyState, SurfaceState, TopologyError};
 use crate::{CompositorLayoutError, LayoutService};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -36,6 +36,43 @@ impl<L, R> CompositorApp<L, R> {
 
     pub fn state(&self) -> &StateSnapshot {
         self.session.state()
+    }
+
+    pub fn register_popup_surface(
+        &mut self,
+        surface_id: impl Into<String>,
+        output_id: Option<OutputId>,
+        parent_surface_id: impl Into<String>,
+    ) -> Result<&SurfaceState, TopologyError> {
+        self.session
+            .register_popup_surface(surface_id, output_id, parent_surface_id)
+    }
+
+    pub fn register_layer_surface(
+        &mut self,
+        surface_id: impl Into<String>,
+        output_id: OutputId,
+    ) -> Result<&SurfaceState, TopologyError> {
+        self.session.register_layer_surface(surface_id, output_id)
+    }
+
+    pub fn register_unmanaged_surface(
+        &mut self,
+        surface_id: impl Into<String>,
+    ) -> Result<&SurfaceState, TopologyError> {
+        self.session.register_unmanaged_surface(surface_id)
+    }
+
+    pub fn move_surface_to_output(
+        &mut self,
+        surface_id: &str,
+        output_id: OutputId,
+    ) -> Result<(), TopologyError> {
+        self.session.move_surface_to_output(surface_id, output_id)
+    }
+
+    pub fn unmap_surface(&mut self, surface_id: &str) -> Result<(), TopologyError> {
+        self.session.unmap_surface(surface_id)
     }
 }
 
@@ -174,6 +211,66 @@ mod tests {
         assert_eq!(
             app.state().current_workspace_id,
             Some(WorkspaceId::from("ws-1"))
+        );
+    }
+
+    #[test]
+    fn app_registers_and_moves_backend_agnostic_surfaces() {
+        let temp_dir = std::env::temp_dir();
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let runtime_root = temp_dir.join(format!("spiders-app-surface-runtime-{unique}"));
+        let _ = fs::create_dir_all(runtime_root.join("layouts"));
+        fs::write(
+            runtime_root.join("layouts/master-stack.js"),
+            "ctx => ({ type: 'workspace', children: [{ type: 'slot', id: 'rest' }] })",
+        )
+        .unwrap();
+
+        let loader =
+            RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
+        let runtime = BoaLayoutRuntime::with_loader(loader.clone());
+        let service = ConfigRuntimeService::new(loader, runtime);
+
+        let mut app = CompositorApp::initialize(LayoutService, service, config(), state()).unwrap();
+        app.session.register_output_snapshot(OutputSnapshot {
+            id: OutputId::from("out-2"),
+            name: "DP-1".into(),
+            logical_width: 2560,
+            logical_height: 1440,
+            scale: 1,
+            transform: OutputTransform::Normal,
+            enabled: true,
+            current_workspace_id: None,
+        });
+
+        app.register_popup_surface("popup-1", Some(OutputId::from("out-1")), "window-w1")
+            .unwrap();
+        app.register_layer_surface("layer-1", OutputId::from("out-1"))
+            .unwrap();
+        app.register_unmanaged_surface("overlay-1").unwrap();
+        app.move_surface_to_output("layer-1", OutputId::from("out-2"))
+            .unwrap();
+        app.unmap_surface("popup-1").unwrap();
+
+        assert_eq!(
+            app.topology()
+                .surface("popup-1")
+                .unwrap()
+                .parent_surface_id
+                .as_deref(),
+            Some("window-w1")
+        );
+        assert!(!app.topology().surface("popup-1").unwrap().mapped);
+        assert_eq!(
+            app.topology().surface("layer-1").unwrap().output_id,
+            Some(OutputId::from("out-2"))
+        );
+        assert_eq!(
+            app.topology().surface("overlay-1").unwrap().role,
+            crate::SurfaceRole::Unmanaged
         );
     }
 }
