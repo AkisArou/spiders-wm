@@ -1,11 +1,13 @@
 use spiders_config::model::Config;
 use spiders_config::runtime::LayoutRuntime;
 use spiders_config::service::ConfigRuntimeService;
-use spiders_shared::ids::OutputId;
+use spiders_runtime::{
+    BootstrapDiagnostics, BootstrapEvent, BootstrapFailureTrace, BootstrapRunTrace,
+    BootstrapScenario, StartupRegistration,
+};
 use spiders_shared::wm::StateSnapshot;
 
-use crate::app::{BootstrapEvent, CompositorApp, StartupRegistration};
-use crate::scenario::BootstrapScenario;
+use crate::app::CompositorApp;
 use crate::topology::TopologyError;
 use crate::{CompositorLayoutError, LayoutService};
 
@@ -17,42 +19,10 @@ pub enum BootstrapRunnerError {
     Topology(#[from] TopologyError),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
-pub struct BootstrapFailureTrace {
-    pub startup: StartupRegistration,
-    pub applied_events: Vec<BootstrapEvent>,
-    pub failed_event: Option<BootstrapEvent>,
-    pub diagnostics: Option<BootstrapDiagnostics>,
-    pub error: String,
-}
-
 #[derive(Debug)]
 pub struct BootstrapRunner<L, R> {
     app: CompositorApp<L, R>,
     applied_events: Vec<BootstrapEvent>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
-pub struct BootstrapDiagnostics {
-    pub active_seat: Option<String>,
-    pub active_output: Option<OutputId>,
-    pub current_workspace: Option<String>,
-    pub focused_window: Option<String>,
-    pub seat_names: Vec<String>,
-    pub output_ids: Vec<String>,
-    pub surface_ids: Vec<String>,
-    pub mapped_surface_ids: Vec<String>,
-    pub seat_count: usize,
-    pub output_count: usize,
-    pub surface_count: usize,
-    pub mapped_surface_count: usize,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
-pub struct BootstrapRunTrace {
-    pub startup: StartupRegistration,
-    pub applied_events: Vec<BootstrapEvent>,
-    pub diagnostics: BootstrapDiagnostics,
 }
 
 impl<L, R> BootstrapRunner<L, R> {

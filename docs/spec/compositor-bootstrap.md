@@ -98,6 +98,14 @@ In practice, a smithay-facing adapter should stay thin and do only three things:
 
 It should not mutate topology/session state directly.
 
+`BackendSessionReport` now tracks the last imported backend source, generation,
+and batch summary so diagnostics can explain where the current topology import
+came from.
+
+`SmithayAdapter` is the intended pre-integration seam: a thin translation module
+that turns future smithay callbacks/snapshots into controller commands without
+linking smithay objects into domain state.
+
 JSON event scripts remain useful for CLI diagnostics and black-box integration
 tests.
 

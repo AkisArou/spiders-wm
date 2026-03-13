@@ -77,6 +77,9 @@ See also: `docs/spec/compositor-bootstrap.md`
   events into that boundary without exposing raw backend objects
 - that event boundary should cover both registration and teardown/loss events so
   backend churn does not leak directly into domain state handling
+- batch backend synchronization should also be expressible as a typed topology
+  snapshot plus source/generation metadata, so initial backend imports remain
+  deterministic and inspectable
 - a thin bootstrap runner can own the app/session object and replay typed
   bootstrap events in order before any backend-specific runtime loop exists
 - that runner can also expose typed diagnostics/traces so CLI and test tooling can
@@ -91,6 +94,8 @@ See also: `docs/spec/compositor-bootstrap.md`
   relayout status, and the current computed layout snapshot
 - lower-level action helpers are internal support code, not the intended outer
   integration boundary
+- a future `smithay` adapter should remain a thin translator that emits typed
+  controller commands instead of mutating compositor state directly
 
 ## Config Runtime
 

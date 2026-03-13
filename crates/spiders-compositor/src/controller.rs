@@ -1,54 +1,25 @@
 use spiders_config::model::Config;
 use spiders_config::runtime::LayoutRuntime;
 use spiders_config::service::ConfigRuntimeService;
+use spiders_runtime::{
+    BootstrapEvent, BootstrapFailureTrace, BootstrapRunTrace, BootstrapScenario, BootstrapScript,
+    BootstrapTranscript, ControllerCommand, ControllerCommandReport, ControllerPhase,
+    ControllerReport, StartupRegistration,
+};
 use spiders_shared::wm::StateSnapshot;
 
-use crate::app::{BootstrapEvent, StartupRegistration};
-use crate::backend::{BackendDiscoveryEvent, BackendTopologySnapshot};
+use crate::backend::{
+    BackendDiscoveryEvent, BackendSessionState, BackendSource, BackendTopologySnapshot,
+};
 use crate::host::CompositorHost;
-use crate::runner::{BootstrapFailureTrace, BootstrapRunTrace, BootstrapRunnerError};
-use crate::scenario::BootstrapScenario;
-use crate::script::BootstrapScript;
-use crate::transcript::BootstrapTranscript;
+use crate::runner::BootstrapRunnerError;
 use crate::CompositorApp;
 
 #[derive(Debug)]
 pub struct CompositorController<L, R> {
     host: CompositorHost<L, R>,
     phase: ControllerPhase,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum ControllerPhase {
-    Pending,
-    Bootstrapping,
-    Running,
-    Degraded,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
-pub struct ControllerReport {
-    pub phase: ControllerPhase,
-    pub startup: StartupRegistration,
-    pub applied_events: usize,
-    pub diagnostics: crate::BootstrapDiagnostics,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum ControllerCommand {
-    BootstrapScript(BootstrapScript),
-    BootstrapEvent(BootstrapEvent),
-    DiscoveryEvent(BackendDiscoveryEvent),
-    DiscoverySnapshot(BackendTopologySnapshot),
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
-pub struct ControllerCommandReport {
-    pub command: ControllerCommand,
-    pub phase: ControllerPhase,
-    pub controller: ControllerReport,
+    backend: BackendSessionState,
 }
 
 impl<L, R> CompositorController<L, R> {
@@ -72,6 +43,7 @@ impl<L, R> CompositorController<L, R> {
         let trace = self.bootstrap_trace();
         ControllerReport {
             phase: self.phase,
+            backend: Some(self.backend.report()),
             startup: trace.startup,
             applied_events: trace.applied_events.len(),
             diagnostics: trace.diagnostics,
@@ -92,6 +64,7 @@ impl<L: spiders_config::loader::LayoutSourceLoader, R: LayoutRuntime> Compositor
         Ok(Self {
             host: CompositorHost::initialize(runtime_service, config, state)?,
             phase: ControllerPhase::Pending,
+            backend: BackendSessionState::default(),
         })
     }
 
@@ -109,6 +82,7 @@ impl<L: spiders_config::loader::LayoutSourceLoader, R: LayoutRuntime> Compositor
                 startup,
             )?,
             phase: ControllerPhase::Pending,
+            backend: BackendSessionState::default(),
         })
     }
 
@@ -126,6 +100,7 @@ impl<L: spiders_config::loader::LayoutSourceLoader, R: LayoutRuntime> Compositor
                 transcript,
             )?,
             phase: ControllerPhase::Pending,
+            backend: BackendSessionState::default(),
         })
     }
 
@@ -224,6 +199,7 @@ impl<L: spiders_config::loader::LayoutSourceLoader, R: LayoutRuntime> Compositor
         &mut self,
         event: BackendDiscoveryEvent,
     ) -> Result<(), BootstrapRunnerError> {
+        self.backend.record_batch(BackendSource::Mock, 0);
         self.apply_bootstrap_event(event.into_bootstrap_event())
     }
 
@@ -232,6 +208,7 @@ impl<L: spiders_config::loader::LayoutSourceLoader, R: LayoutRuntime> Compositor
         snapshot: BackendTopologySnapshot,
     ) -> Result<(), BootstrapRunnerError> {
         self.phase = ControllerPhase::Bootstrapping;
+        self.backend.record_snapshot(&snapshot);
 
         for event in snapshot.into_discovery_events() {
             if let Err(error) = self
@@ -499,6 +476,7 @@ mod tests {
         controller
             .apply_discovery_snapshot(BackendTopologySnapshot {
                 source: crate::backend::BackendSource::Mock,
+                generation: 0,
                 seats: vec![crate::backend::BackendSeatSnapshot {
                     seat_name: "seat-batch".into(),
                     active: true,
@@ -517,11 +495,69 @@ mod tests {
 
         let report = controller.report();
         assert_eq!(report.phase, ControllerPhase::Running);
+        assert_eq!(
+            report
+                .backend
+                .as_ref()
+                .and_then(|backend| backend.last_source.clone()),
+            Some(BackendSource::Mock)
+        );
+        assert_eq!(
+            report
+                .backend
+                .as_ref()
+                .and_then(|backend| backend.last_generation),
+            Some(0)
+        );
         assert_eq!(report.applied_events, 3);
         assert!(report
             .diagnostics
             .seat_names
             .iter()
             .any(|seat| seat == "seat-batch"));
+    }
+
+    #[test]
+    fn controller_report_tracks_backend_snapshot_metadata() {
+        let mut controller =
+            CompositorController::initialize(runtime_service(), config(), state()).unwrap();
+
+        controller
+            .apply_discovery_snapshot(BackendTopologySnapshot {
+                source: BackendSource::Smithay,
+                generation: 9,
+                seats: vec![crate::backend::BackendSeatSnapshot {
+                    seat_name: "seat-smithay".into(),
+                    active: true,
+                }],
+                outputs: vec![],
+                surfaces: vec![],
+            })
+            .unwrap();
+
+        let report = controller.report();
+        assert_eq!(
+            report
+                .backend
+                .as_ref()
+                .and_then(|backend| backend.last_source.clone()),
+            Some(BackendSource::Smithay)
+        );
+        assert_eq!(
+            report
+                .backend
+                .as_ref()
+                .and_then(|backend| backend.last_generation),
+            Some(9)
+        );
+        assert_eq!(
+            report
+                .backend
+                .as_ref()
+                .and_then(|backend| backend.last_snapshot.clone())
+                .unwrap()
+                .seat_count,
+            1
+        );
     }
 }

@@ -1,12 +1,12 @@
 use spiders_config::model::Config;
 use spiders_config::runtime::LayoutRuntime;
 use spiders_config::service::ConfigRuntimeService;
+use spiders_runtime::{
+    BootstrapEvent, BootstrapFailureTrace, BootstrapRunTrace, StartupRegistration,
+};
 use spiders_shared::wm::StateSnapshot;
 
-use crate::app::{BootstrapEvent, StartupRegistration};
-use crate::runner::{
-    BootstrapFailureTrace, BootstrapRunTrace, BootstrapRunner, BootstrapRunnerError,
-};
+use crate::runner::{BootstrapRunner, BootstrapRunnerError};
 use crate::scenario::BootstrapScenario;
 use crate::transcript::BootstrapTranscript;
 use crate::{CompositorApp, LayoutService};

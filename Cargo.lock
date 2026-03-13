@@ -1045,6 +1045,7 @@ dependencies = [
  "spiders-effects",
  "spiders-ipc",
  "spiders-layout",
+ "spiders-runtime",
  "spiders-shared",
 ]
 
@@ -1058,6 +1059,7 @@ dependencies = [
  "spiders-effects",
  "spiders-ipc",
  "spiders-layout",
+ "spiders-runtime",
  "spiders-shared",
  "thiserror",
 ]
@@ -1100,6 +1102,16 @@ dependencies = [
  "cssparser",
  "spiders-shared",
  "taffy",
+ "thiserror",
+]
+
+[[package]]
+name = "spiders-runtime"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "spiders-shared",
  "thiserror",
 ]
 

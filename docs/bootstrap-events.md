@@ -101,3 +101,7 @@ directly.
 For initial synchronization, a backend adapter can also construct a
 `BackendTopologySnapshot` and let the controller expand it into typed discovery
 events, which keeps batch import policy on the compositor side.
+
+Controller reports can also carry backend-session metadata such as the last
+backend source and snapshot generation, which should help future adapter and CLI
+debugging once real backend sync begins.

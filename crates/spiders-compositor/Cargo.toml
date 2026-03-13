@@ -10,6 +10,7 @@ spiders-config = { path = "../spiders-config" }
 spiders-effects = { path = "../spiders-effects" }
 spiders-ipc = { path = "../spiders-ipc" }
 spiders-layout = { path = "../spiders-layout" }
+spiders-runtime = { path = "../spiders-runtime" }
 spiders-shared = { path = "../spiders-shared" }
 serde.workspace = true
 serde_json.workspace = true

@@ -1,105 +1,13 @@
 use spiders_config::model::Config;
 use spiders_config::runtime::LayoutRuntime;
 use spiders_config::service::ConfigRuntimeService;
+use spiders_runtime::{BootstrapEvent, StartupRegistration};
 use spiders_shared::ids::{OutputId, WindowId};
 use spiders_shared::wm::StateSnapshot;
 
 use crate::session::CompositorSession;
 use crate::topology::{CompositorTopologyState, SurfaceState, TopologyError};
 use crate::{CompositorLayoutError, LayoutService};
-
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum BootstrapEvent {
-    RegisterSeat {
-        seat_name: String,
-        active: bool,
-    },
-    RegisterOutput {
-        output_id: OutputId,
-        active: bool,
-    },
-    ActivateOutput {
-        output_id: OutputId,
-    },
-    EnableOutput {
-        output_id: OutputId,
-    },
-    DisableOutput {
-        output_id: OutputId,
-    },
-    RemoveOutput {
-        output_id: OutputId,
-    },
-    RegisterWindowSurface {
-        surface_id: String,
-        window_id: WindowId,
-        output_id: Option<OutputId>,
-    },
-    RegisterPopupSurface {
-        surface_id: String,
-        output_id: Option<OutputId>,
-        parent_surface_id: String,
-    },
-    RegisterLayerSurface {
-        surface_id: String,
-        output_id: OutputId,
-    },
-    RegisterUnmanagedSurface {
-        surface_id: String,
-    },
-    RemoveSurface {
-        surface_id: String,
-    },
-    RemoveWindowSurface {
-        window_id: WindowId,
-    },
-    MoveSurfaceToOutput {
-        surface_id: String,
-        output_id: OutputId,
-    },
-    UnmapSurface {
-        surface_id: String,
-    },
-    RemoveSeat {
-        seat_name: String,
-    },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct StartupRegistration {
-    pub seats: Vec<String>,
-    pub outputs: Vec<OutputId>,
-    pub active_seat: Option<String>,
-    pub active_output: Option<OutputId>,
-}
-
-impl Default for StartupRegistration {
-    fn default() -> Self {
-        Self {
-            seats: vec!["seat-0".into()],
-            outputs: Vec::new(),
-            active_seat: Some("seat-0".into()),
-            active_output: None,
-        }
-    }
-}
-
-impl StartupRegistration {
-    pub fn from_state(state: &StateSnapshot) -> Self {
-        let mut registration = Self::default();
-        registration.outputs = state
-            .outputs
-            .iter()
-            .map(|output| output.id.clone())
-            .collect();
-        registration.active_output = state
-            .current_output_id
-            .clone()
-            .or_else(|| registration.outputs.first().cloned());
-        registration
-    }
-}
 
 #[derive(Debug)]
 pub struct CompositorApp<L, R> {

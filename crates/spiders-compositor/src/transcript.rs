@@ -1,36 +1,16 @@
-use crate::app::StartupRegistration;
-use crate::scenario::BootstrapScenario;
-
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct BootstrapTranscript {
-    pub startup: StartupRegistration,
-    pub scenario: BootstrapScenario,
-}
-
-impl BootstrapTranscript {
-    pub fn new(startup: StartupRegistration, scenario: BootstrapScenario) -> Self {
-        Self { startup, scenario }
-    }
-
-    pub fn to_json_pretty(&self) -> String {
-        serde_json::to_string_pretty(self).unwrap()
-    }
-
-    pub fn from_json_str(json: &str) -> Result<Self, serde_json::Error> {
-        serde_json::from_str(json)
-    }
-}
+pub use spiders_runtime::BootstrapTranscript;
 
 #[cfg(test)]
 mod tests {
     use spiders_shared::ids::OutputId;
 
     use super::*;
+    use crate::scenario::BootstrapScenario;
 
     #[test]
     fn transcript_round_trips_through_json() {
         let transcript = BootstrapTranscript::new(
-            StartupRegistration {
+            spiders_runtime::StartupRegistration {
                 seats: vec!["seat-0".into(), "seat-1".into()],
                 outputs: vec![OutputId::from("out-1")],
                 active_seat: Some("seat-1".into()),

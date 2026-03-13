@@ -1,21 +1,21 @@
 use spiders_config::model::Config;
 use spiders_config::runtime::LayoutRuntime;
 use spiders_config::service::ConfigRuntimeService;
+use spiders_runtime::{
+    CompositorTopologyState, DomainSession, DomainUpdate, SurfaceState, TopologyError, WmState,
+};
 use spiders_shared::api::{CompositorEvent, FocusDirection, WmAction};
 use spiders_shared::ids::{OutputId, WindowId};
 use spiders_shared::wm::{StateSnapshot, WindowSnapshot};
 
-use crate::actions::{apply_action, ActionError, ActionOutcome};
+use crate::actions::{apply_action, ActionError};
 use crate::runtime::{CompositorRuntimeState, WorkspaceLayoutState};
-use crate::topology::{CompositorTopologyState, SurfaceRole, SurfaceState, TopologyError};
-use crate::wm::WmState;
 use crate::{CompositorLayoutError, LayoutService};
 
 #[derive(Debug)]
 pub struct CompositorSession<L, R> {
     runtime: CompositorRuntimeState<L, R>,
-    wm: WmState,
-    topology: CompositorTopologyState,
+    domain: DomainSession,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -34,8 +34,7 @@ impl<L, R> CompositorSession<L, R> {
     ) -> Self {
         Self {
             runtime,
-            wm,
-            topology,
+            domain: DomainSession::new(wm, topology),
         }
     }
 
@@ -44,11 +43,11 @@ impl<L, R> CompositorSession<L, R> {
     }
 
     pub fn wm(&self) -> &WmState {
-        &self.wm
+        self.domain.wm()
     }
 
     pub fn state(&self) -> &StateSnapshot {
-        self.wm.snapshot()
+        self.domain.state()
     }
 
     pub fn current_layout(&self) -> Option<&WorkspaceLayoutState> {
@@ -56,7 +55,7 @@ impl<L, R> CompositorSession<L, R> {
     }
 
     pub fn topology(&self) -> &CompositorTopologyState {
-        &self.topology
+        self.domain.topology()
     }
 
     pub fn register_popup_surface(
@@ -65,12 +64,8 @@ impl<L, R> CompositorSession<L, R> {
         output_id: Option<OutputId>,
         parent_surface_id: impl Into<String>,
     ) -> Result<&SurfaceState, TopologyError> {
-        self.topology.register_surface(
-            surface_id,
-            SurfaceRole::Popup,
-            output_id,
-            Some(parent_surface_id.into()),
-        )
+        self.domain
+            .register_popup_surface(surface_id, output_id, parent_surface_id)
     }
 
     pub fn register_layer_surface(
@@ -78,46 +73,38 @@ impl<L, R> CompositorSession<L, R> {
         surface_id: impl Into<String>,
         output_id: OutputId,
     ) -> Result<&SurfaceState, TopologyError> {
-        self.topology
-            .register_surface(surface_id, SurfaceRole::Layer, Some(output_id), None)
+        self.domain.register_layer_surface(surface_id, output_id)
     }
 
     pub fn register_unmanaged_surface(
         &mut self,
         surface_id: impl Into<String>,
     ) -> Result<&SurfaceState, TopologyError> {
-        self.topology
-            .register_surface(surface_id, SurfaceRole::Unmanaged, None, None)
+        self.domain.register_unmanaged_surface(surface_id)
     }
 
     pub fn register_output_snapshot(&mut self, output: spiders_shared::wm::OutputSnapshot) {
-        self.topology.register_output(output);
+        self.domain.register_output_snapshot(output);
     }
 
     pub fn register_output_by_id(&mut self, output_id: &OutputId) -> Result<(), TopologyError> {
-        let output = self
-            .state()
-            .output_by_id(output_id)
-            .cloned()
-            .ok_or_else(|| TopologyError::OutputNotFound(output_id.clone()))?;
-        self.topology.register_output(output);
-        Ok(())
+        self.domain.register_output_by_id(output_id)
     }
 
     pub fn unregister_output(&mut self, output_id: &OutputId) -> Result<(), TopologyError> {
-        self.topology.unregister_output(output_id)
+        self.domain.unregister_output(output_id)
     }
 
     pub fn unregister_seat(&mut self, seat_name: &str) -> Result<(), TopologyError> {
-        self.topology.unregister_seat(seat_name)
+        self.domain.unregister_seat(seat_name)
     }
 
     pub fn unregister_surface(&mut self, surface_id: &str) -> Result<(), TopologyError> {
-        self.topology.unregister_surface(surface_id)
+        self.domain.unregister_surface(surface_id)
     }
 
     pub fn unregister_window_surface(&mut self, window_id: &WindowId) -> Result<(), TopologyError> {
-        self.topology.unregister_window_surface(window_id)
+        self.domain.unregister_window_surface(window_id)
     }
 
     pub fn move_surface_to_output(
@@ -125,12 +112,11 @@ impl<L, R> CompositorSession<L, R> {
         surface_id: &str,
         output_id: OutputId,
     ) -> Result<(), TopologyError> {
-        self.topology
-            .update_surface_attachment(surface_id, Some(output_id))
+        self.domain.move_surface_to_output(surface_id, output_id)
     }
 
     pub fn unmap_surface(&mut self, surface_id: &str) -> Result<(), TopologyError> {
-        self.topology.unmap_surface(surface_id)
+        self.domain.unmap_surface(surface_id)
     }
 
     pub fn register_window_surface(
@@ -139,31 +125,28 @@ impl<L, R> CompositorSession<L, R> {
         window_id: WindowId,
         output_id: Option<OutputId>,
     ) -> Result<&SurfaceState, TopologyError> {
-        self.topology
-            .map_window_surface(surface_id, window_id, output_id)
+        self.domain
+            .register_window_surface(surface_id, window_id, output_id)
     }
 
     pub fn register_seat(&mut self, seat_name: impl Into<String>) -> &str {
-        let seat = self.topology.register_seat(seat_name);
-        &seat.name
+        self.domain.register_seat(seat_name)
     }
 
     pub fn activate_seat(&mut self, seat_name: &str) -> Result<(), TopologyError> {
-        self.topology.activate_seat(seat_name)?;
-        Ok(())
+        self.domain.activate_seat(seat_name)
     }
 
     pub fn activate_output(&mut self, output_id: &OutputId) -> Result<(), TopologyError> {
-        self.topology.activate_output(output_id)?;
-        Ok(())
+        self.domain.activate_output(output_id)
     }
 
     pub fn disable_output(&mut self, output_id: &OutputId) -> Result<(), TopologyError> {
-        self.topology.disable_output(output_id)
+        self.domain.disable_output(output_id)
     }
 
     pub fn enable_output(&mut self, output_id: &OutputId) -> Result<(), TopologyError> {
-        self.topology.enable_output(output_id)
+        self.domain.enable_output(output_id)
     }
 }
 
@@ -192,82 +175,66 @@ impl<L: spiders_config::loader::LayoutSourceLoader, R: LayoutRuntime> Compositor
             WmAction::ToggleFloating => self.toggle_focused_floating(),
             WmAction::ToggleFullscreen => self.toggle_focused_fullscreen(),
             _ => {
-                let outcome = apply_action(&mut self.runtime, &mut self.wm, action)?;
-                Ok(self.session_update(outcome))
+                let outcome = apply_action(&mut self.runtime, self.domain.wm_mut(), action)?;
+                Ok(SessionUpdate {
+                    events: outcome.events,
+                    recomputed_layout: outcome.recomputed_layout,
+                    current_layout: self.runtime.current_layout().cloned(),
+                    topology: self.domain.topology().clone(),
+                })
             }
         }
     }
 
     pub fn map_window(&mut self, window: WindowSnapshot) -> Result<SessionUpdate, ActionError> {
-        let output_id = window.output_id.clone();
-        let window_id = window.id.clone();
-        let event = self.wm.map_window(window);
+        let update = self.domain.map_window(window).map_err(map_domain_error)?;
         self.runtime
-            .update_from_wm_state(self.wm.snapshot().clone());
+            .update_from_wm_state(self.domain.state().clone());
         self.runtime.recompute_current_layout()?;
-        let surface_id = format!("window-{window_id}");
-        self.topology
-            .map_window_surface(surface_id, window_id, output_id)
-            .map_err(map_topology_error)?;
-        Ok(self.session_update(ActionOutcome {
-            events: vec![event],
-            recomputed_layout: true,
-        }))
+        Ok(self.session_update(update))
     }
 
     pub fn focus_window(&mut self, window_id: &WindowId) -> Result<SessionUpdate, ActionError> {
-        let event = self.wm.focus_window(window_id)?;
+        let update = self
+            .domain
+            .focus_window(window_id)
+            .map_err(map_domain_error)?;
         self.runtime
-            .update_from_wm_state(self.wm.snapshot().clone());
-        self.synchronize_topology_focus()
-            .map_err(map_topology_error)?;
-        Ok(self.session_update(ActionOutcome {
-            events: vec![event],
-            recomputed_layout: false,
-        }))
+            .update_from_wm_state(self.domain.state().clone());
+        Ok(self.session_update(update))
     }
 
     pub fn destroy_window(&mut self, window_id: &WindowId) -> Result<SessionUpdate, ActionError> {
-        let events = self.wm.destroy_window(window_id)?;
+        let update = self
+            .domain
+            .destroy_window(window_id)
+            .map_err(map_domain_error)?;
         self.runtime
-            .update_from_wm_state(self.wm.snapshot().clone());
+            .update_from_wm_state(self.domain.state().clone());
         self.runtime.recompute_current_layout()?;
-        if let Some(surface) = self
-            .topology
-            .surfaces
-            .iter_mut()
-            .find(|surface| surface.window_id.as_ref() == Some(window_id))
-        {
-            surface.mapped = false;
-        }
-        self.synchronize_topology_focus()
-            .map_err(map_topology_error)?;
-        Ok(self.session_update(ActionOutcome {
-            events,
-            recomputed_layout: true,
-        }))
+        Ok(self.session_update(update))
     }
 
     pub fn toggle_focused_floating(&mut self) -> Result<SessionUpdate, ActionError> {
-        let event = self.wm.toggle_focused_floating()?;
+        let update = self
+            .domain
+            .toggle_focused_floating()
+            .map_err(map_domain_error)?;
         self.runtime
-            .update_from_wm_state(self.wm.snapshot().clone());
+            .update_from_wm_state(self.domain.state().clone());
         self.runtime.recompute_current_layout()?;
-        Ok(self.session_update(ActionOutcome {
-            events: vec![event],
-            recomputed_layout: true,
-        }))
+        Ok(self.session_update(update))
     }
 
     pub fn toggle_focused_fullscreen(&mut self) -> Result<SessionUpdate, ActionError> {
-        let event = self.wm.toggle_focused_fullscreen()?;
+        let update = self
+            .domain
+            .toggle_focused_fullscreen()
+            .map_err(map_domain_error)?;
         self.runtime
-            .update_from_wm_state(self.wm.snapshot().clone());
+            .update_from_wm_state(self.domain.state().clone());
         self.runtime.recompute_current_layout()?;
-        Ok(self.session_update(ActionOutcome {
-            events: vec![event],
-            recomputed_layout: true,
-        }))
+        Ok(self.session_update(update))
     }
 
     pub fn focus_direction(
@@ -275,19 +242,13 @@ impl<L: spiders_config::loader::LayoutSourceLoader, R: LayoutRuntime> Compositor
         direction: FocusDirection,
     ) -> Result<SessionUpdate, ActionError> {
         let order = self.focus_ordered_window_ids();
-        let focused = self.wm.focused_window_id()?.clone();
-        let current_index = order
-            .iter()
-            .position(|window_id| window_id == &focused)
-            .unwrap_or(0);
-        let next_index = match direction {
-            FocusDirection::Left | FocusDirection::Up => {
-                (current_index + order.len() - 1) % order.len()
-            }
-            FocusDirection::Right | FocusDirection::Down => (current_index + 1) % order.len(),
-        };
-
-        self.focus_window(&order[next_index])
+        let update = self
+            .domain
+            .focus_direction_with_order(&order, direction)
+            .map_err(map_domain_error)?;
+        self.runtime
+            .update_from_wm_state(self.domain.state().clone());
+        Ok(self.session_update(update))
     }
 
     pub fn register_output(&mut self, output_id: OutputId) -> Result<(), TopologyError> {
@@ -295,7 +256,8 @@ impl<L: spiders_config::loader::LayoutSourceLoader, R: LayoutRuntime> Compositor
     }
 
     pub fn window_surface(&self, window_id: &WindowId) -> Option<&SurfaceState> {
-        self.topology
+        self.domain
+            .topology()
             .surfaces
             .iter()
             .find(|surface| surface.window_id.as_ref() == Some(window_id))
@@ -326,26 +288,13 @@ impl<L: spiders_config::loader::LayoutSourceLoader, R: LayoutRuntime> Compositor
         ordered
     }
 
-    fn session_update(&self, outcome: ActionOutcome) -> SessionUpdate {
+    fn session_update(&self, outcome: DomainUpdate) -> SessionUpdate {
         SessionUpdate {
             events: outcome.events,
             recomputed_layout: outcome.recomputed_layout,
             current_layout: self.runtime.current_layout().cloned(),
-            topology: self.topology.clone(),
+            topology: outcome.topology,
         }
-    }
-
-    fn synchronize_topology_focus(&mut self) -> Result<(), TopologyError> {
-        if self.topology.seat("seat-0").is_none() {
-            self.topology.register_seat("seat-0");
-        }
-
-        self.topology.focus_seat_window(
-            "seat-0",
-            self.state().focused_window_id.clone(),
-            self.state().current_output_id.clone(),
-        )?;
-        Ok(())
     }
 }
 
@@ -357,6 +306,13 @@ fn map_topology_error(error: TopologyError) -> ActionError {
     ))
 }
 
+fn map_domain_error(error: spiders_runtime::DomainSessionError) -> ActionError {
+    match error {
+        spiders_runtime::DomainSessionError::Wm(error) => ActionError::WmState(error),
+        spiders_runtime::DomainSessionError::Topology(error) => map_topology_error(error),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs;
@@ -366,6 +322,7 @@ mod tests {
     use spiders_config::model::{Config, LayoutDefinition};
     use spiders_config::runtime::BoaLayoutRuntime;
     use spiders_config::service::ConfigRuntimeService;
+    use spiders_runtime::SurfaceRole;
     use spiders_shared::api::{CompositorEvent, FocusDirection, WmAction};
     use spiders_shared::ids::{OutputId, WindowId, WorkspaceId};
     use spiders_shared::wm::{

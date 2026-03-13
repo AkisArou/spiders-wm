@@ -8,6 +8,7 @@ pub mod runtime;
 pub mod scenario;
 pub mod script;
 pub mod session;
+pub mod smithay_adapter;
 pub mod startup;
 pub mod topology;
 pub mod transcript;
@@ -50,29 +51,27 @@ pub trait LayoutEngine {
 #[derive(Debug, Default, Clone, Copy)]
 pub struct LayoutService;
 
-pub use app::{BootstrapEvent, CompositorApp, StartupRegistration};
-pub use backend::BackendDiscoveryEvent;
-pub use controller::{
-    CompositorController, ControllerCommand, ControllerCommandError, ControllerCommandReport,
-    ControllerPhase, ControllerReport,
+pub use app::CompositorApp;
+pub use backend::{
+    BackendDiscoveryEvent, BackendSessionReport, BackendSessionState, BackendSnapshotSummary,
+    BackendSource, BackendTopologySnapshot,
 };
+pub use controller::CompositorController;
 pub use host::CompositorHost;
-pub use runner::{
-    BootstrapDiagnostics, BootstrapFailureTrace, BootstrapRunTrace, BootstrapRunner,
-    BootstrapRunnerError,
-};
+pub use runner::{BootstrapRunner, BootstrapRunnerError};
 pub use runtime::{CompositorRuntimeState, WorkspaceLayoutState};
-pub use scenario::BootstrapScenario;
-pub use script::{BootstrapScript, BootstrapScriptKind};
 pub use session::{CompositorSession, SessionUpdate};
+pub use smithay_adapter::{SmithayAdapter, SmithayAdapterEvent};
+pub use spiders_runtime::{
+    BootstrapDiagnostics, BootstrapEvent, BootstrapFailureTrace, BootstrapRunTrace,
+    BootstrapScenario, BootstrapScript, BootstrapScriptKind, BootstrapTranscript,
+    CompositorTopologyState, ControllerCommand, ControllerCommandReport, ControllerPhase,
+    ControllerReport, OutputState, SeatState, StartupRegistration, SurfaceRole, SurfaceState,
+    TopologyError, WmState, WmStateError,
+};
 pub use startup::{
     StartupConfig, StartupLayoutState, StartupRuntime, StartupSequence, StartupSession,
 };
-pub use topology::{
-    CompositorTopologyState, OutputState, SeatState, SurfaceRole, SurfaceState, TopologyError,
-};
-pub use transcript::BootstrapTranscript;
-pub use wm::{WmState, WmStateError};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkspaceLayoutSource<'a> {

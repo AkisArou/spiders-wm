@@ -1,4 +1,5 @@
 use serde::Serialize;
+use spiders_runtime::{BootstrapDiagnostics, BootstrapEvent, ControllerPhase, StartupRegistration};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum OutputMode {
@@ -41,7 +42,7 @@ pub struct BootstrapReport {
     pub runtime_ready: bool,
     pub authored_config: String,
     pub runtime_config: String,
-    pub controller_phase: spiders_compositor::ControllerPhase,
+    pub controller_phase: ControllerPhase,
     pub active_seat: Option<String>,
     pub active_output: Option<String>,
     pub current_workspace: Option<String>,
@@ -55,7 +56,7 @@ pub struct BootstrapReport {
     pub surface_count: usize,
     pub mapped_surface_count: usize,
     pub applied_events: usize,
-    pub startup: spiders_compositor::StartupRegistration,
+    pub startup: StartupRegistration,
 }
 
 #[derive(Debug, Serialize, PartialEq, Eq)]
@@ -64,12 +65,12 @@ pub struct BootstrapFailureReport {
     pub runtime_ready: bool,
     pub authored_config: String,
     pub runtime_config: String,
-    pub controller_phase: spiders_compositor::ControllerPhase,
+    pub controller_phase: ControllerPhase,
     pub error: String,
-    pub failed_event: Option<spiders_compositor::BootstrapEvent>,
+    pub failed_event: Option<BootstrapEvent>,
     pub applied_events: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub diagnostics: Option<spiders_compositor::BootstrapDiagnostics>,
+    pub diagnostics: Option<BootstrapDiagnostics>,
 }
 
 pub fn emit<T: Serialize>(mode: OutputMode, report: &T, text: impl FnOnce() -> String) {
@@ -109,7 +110,7 @@ mod tests {
             runtime_ready: true,
             authored_config: "/tmp/authored.js".into(),
             runtime_config: "/tmp/runtime.json".into(),
-            controller_phase: spiders_compositor::ControllerPhase::Running,
+            controller_phase: ControllerPhase::Running,
             active_seat: Some("seat-0".into()),
             active_output: Some("out-1".into()),
             current_workspace: Some("ws-1".into()),
@@ -123,7 +124,7 @@ mod tests {
             surface_count: 0,
             mapped_surface_count: 0,
             applied_events: 0,
-            startup: spiders_compositor::StartupRegistration {
+            startup: StartupRegistration {
                 seats: vec!["seat-0".into()],
                 outputs: vec![spiders_shared::ids::OutputId::from("out-1")],
                 active_seat: Some("seat-0".into()),
@@ -149,9 +150,9 @@ mod tests {
             runtime_ready: true,
             authored_config: "/tmp/authored.js".into(),
             runtime_config: "/tmp/runtime.json".into(),
-            controller_phase: spiders_compositor::ControllerPhase::Degraded,
+            controller_phase: ControllerPhase::Degraded,
             error: "boom".into(),
-            failed_event: Some(spiders_compositor::BootstrapEvent::RemoveOutput {
+            failed_event: Some(BootstrapEvent::RemoveOutput {
                 output_id: spiders_shared::ids::OutputId::from("out-9"),
             }),
             applied_events: 1,

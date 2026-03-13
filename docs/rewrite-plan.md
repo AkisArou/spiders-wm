@@ -29,6 +29,8 @@ Deliver:
 - seat/input plumbing
 - xdg-shell window lifecycle integration
 - internal WM state model for windows, outputs, and workspaces
+- a thin smithay-to-controller translation boundary that can be wired before
+  real backend objects reach compositor domain state
 
 Done when:
 

@@ -1,77 +1,12 @@
-use crate::app::{BootstrapEvent, StartupRegistration};
-use crate::scenario::BootstrapScenario;
-use crate::transcript::BootstrapTranscript;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BootstrapScriptKind {
-    Events,
-    Transcript,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub enum BootstrapScript {
-    Events(BootstrapScenario),
-    Transcript(BootstrapTranscript),
-}
-
-impl BootstrapScript {
-    pub fn kind(&self) -> BootstrapScriptKind {
-        match self {
-            Self::Events(_) => BootstrapScriptKind::Events,
-            Self::Transcript(_) => BootstrapScriptKind::Transcript,
-        }
-    }
-
-    pub fn startup(&self) -> Option<&StartupRegistration> {
-        match self {
-            Self::Events(_) => None,
-            Self::Transcript(transcript) => Some(&transcript.startup),
-        }
-    }
-
-    pub fn scenario(&self) -> &BootstrapScenario {
-        match self {
-            Self::Events(scenario) => scenario,
-            Self::Transcript(transcript) => &transcript.scenario,
-        }
-    }
-
-    pub fn into_parts(self) -> (Option<StartupRegistration>, BootstrapScenario) {
-        match self {
-            Self::Events(scenario) => (None, scenario),
-            Self::Transcript(transcript) => (Some(transcript.startup), transcript.scenario),
-        }
-    }
-
-    pub fn to_json_pretty(&self) -> String {
-        match self {
-            Self::Events(scenario) => scenario.to_json_pretty(),
-            Self::Transcript(transcript) => transcript.to_json_pretty(),
-        }
-    }
-
-    pub fn from_json_str(json: &str) -> Result<Self, serde_json::Error> {
-        #[derive(serde::Deserialize)]
-        #[serde(untagged)]
-        enum BootstrapScriptRepr {
-            Transcript(BootstrapTranscript),
-            Events(Vec<BootstrapEvent>),
-        }
-
-        match serde_json::from_str::<BootstrapScriptRepr>(json)? {
-            BootstrapScriptRepr::Transcript(transcript) => Ok(Self::Transcript(transcript)),
-            BootstrapScriptRepr::Events(events) => {
-                Ok(Self::Events(BootstrapScenario::from_events(events)))
-            }
-        }
-    }
-}
+pub use spiders_runtime::{BootstrapScript, BootstrapScriptKind};
 
 #[cfg(test)]
 mod tests {
     use spiders_shared::ids::OutputId;
 
     use super::*;
+    use crate::scenario::BootstrapScenario;
+    use crate::transcript::BootstrapTranscript;
 
     #[test]
     fn script_round_trips_event_arrays() {
@@ -92,7 +27,7 @@ mod tests {
     #[test]
     fn script_round_trips_transcripts() {
         let script = BootstrapScript::Transcript(BootstrapTranscript::new(
-            StartupRegistration {
+            spiders_runtime::StartupRegistration {
                 seats: vec!["seat-0".into(), "seat-1".into()],
                 outputs: vec![OutputId::from("out-1")],
                 active_seat: Some("seat-1".into()),
