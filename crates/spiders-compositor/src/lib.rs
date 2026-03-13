@@ -1,5 +1,6 @@
 use spiders_config::model::{Config, LayoutConfigError};
 use spiders_config::runtime::{LayoutRuntime, LayoutRuntimeError};
+use spiders_config::service::{ConfigRuntimeService, ConfigRuntimeServiceError};
 use spiders_layout::ast::{LayoutValidationError, ValidatedLayoutTree};
 use spiders_layout::pipeline::{compute_layout_from_request, LayoutPipelineError};
 use spiders_shared::layout::{LayoutRequest, LayoutResponse, LayoutSpace, ResolvedLayoutNode};
@@ -20,6 +21,8 @@ pub enum CompositorLayoutError {
     Validation(#[from] LayoutValidationError),
     #[error(transparent)]
     Resolve(#[from] spiders_layout::ast::LayoutResolveError),
+    #[error(transparent)]
+    Service(#[from] ConfigRuntimeServiceError),
 }
 
 pub trait LayoutEngine {
@@ -32,6 +35,25 @@ pub trait LayoutEngine {
 #[derive(Debug, Default, Clone, Copy)]
 pub struct LayoutService;
 
+#[derive(Debug)]
+pub struct StartupRuntime<L, R> {
+    pub config: Config,
+    pub service: ConfigRuntimeService<L, R>,
+    pub startup_layout: Option<StartupLayoutState>,
+}
+
+#[derive(Debug)]
+pub struct StartupConfig<L, R> {
+    pub runtime: StartupRuntime<L, R>,
+    pub state: StateSnapshot,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct StartupLayoutState {
+    pub evaluated: spiders_config::service::EvaluatedLayout,
+    pub workspace_id: spiders_shared::ids::WorkspaceId,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkspaceLayoutSource<'a> {
     pub workspace: &'a WorkspaceSnapshot,
@@ -41,6 +63,56 @@ pub struct WorkspaceLayoutSource<'a> {
 }
 
 impl LayoutService {
+    pub fn initialize_startup_runtime<
+        L: spiders_config::loader::LayoutSourceLoader,
+        R: LayoutRuntime,
+    >(
+        &self,
+        mut service: ConfigRuntimeService<L, R>,
+        config: Config,
+        state: &StateSnapshot,
+    ) -> Result<StartupRuntime<L, R>, CompositorLayoutError> {
+        let startup_layout = self.bootstrap_runtime(&mut service, &config, state)?;
+
+        Ok(StartupRuntime {
+            config,
+            service,
+            startup_layout,
+        })
+    }
+
+    pub fn initialize_startup_config<
+        L: spiders_config::loader::LayoutSourceLoader,
+        R: LayoutRuntime,
+    >(
+        &self,
+        service: ConfigRuntimeService<L, R>,
+        config: Config,
+        state: StateSnapshot,
+    ) -> Result<StartupConfig<L, R>, CompositorLayoutError> {
+        let runtime = self.initialize_startup_runtime(service, config, &state)?;
+
+        Ok(StartupConfig { runtime, state })
+    }
+
+    pub fn bootstrap_runtime<L: spiders_config::loader::LayoutSourceLoader, R: LayoutRuntime>(
+        &self,
+        service: &mut ConfigRuntimeService<L, R>,
+        config: &Config,
+        state: &StateSnapshot,
+    ) -> Result<Option<StartupLayoutState>, CompositorLayoutError> {
+        let Some(workspace) = state.current_workspace() else {
+            return Ok(None);
+        };
+
+        Ok(service
+            .evaluate_for_workspace(config, state, workspace)?
+            .map(|evaluated| StartupLayoutState {
+                workspace_id: workspace.id.clone(),
+                evaluated,
+            }))
+    }
+
     pub fn make_request(
         &self,
         source: WorkspaceLayoutSource<'_>,
@@ -484,6 +556,213 @@ mod tests {
         assert_eq!(main.rect().width, 250.0);
         assert_eq!(rest.rect().x, 250.0);
         assert_eq!(rest.rect().width, 550.0);
+
+        let _ = fs::remove_file(module_path);
+    }
+
+    #[test]
+    fn layout_service_bootstraps_runtime_service_for_current_workspace() {
+        let service = LayoutService;
+        let temp_dir = std::env::temp_dir();
+        let runtime_root = temp_dir.join("spiders-bootstrap-runtime");
+        let _ = fs::create_dir_all(runtime_root.join("layouts"));
+        let module_path = runtime_root.join("layouts/master-stack.js");
+        fs::write(
+            &module_path,
+            "ctx => ({ type: 'workspace', children: [{ type: 'window', id: 'main' }] })",
+        )
+        .unwrap();
+
+        let loader = spiders_config::loader::RuntimeProjectLayoutSourceLoader::new(
+            spiders_config::loader::RuntimePathResolver::new(".", &runtime_root),
+        );
+        let runtime = spiders_config::runtime::BoaLayoutRuntime::with_loader(loader.clone());
+        let mut runtime_service =
+            spiders_config::service::ConfigRuntimeService::new(loader, runtime);
+        let config = Config {
+            layouts: vec![spiders_config::model::LayoutDefinition {
+                name: "master-stack".into(),
+                module: "layouts/master-stack.js".into(),
+                stylesheet: String::new(),
+            }],
+            ..Config::default()
+        };
+        let state = StateSnapshot {
+            focused_window_id: None,
+            current_output_id: Some(OutputId::from("out-1")),
+            current_workspace_id: Some(WorkspaceId::from("ws-1")),
+            outputs: vec![OutputSnapshot {
+                id: OutputId::from("out-1"),
+                name: "HDMI-A-1".into(),
+                logical_width: 800,
+                logical_height: 600,
+                scale: 1,
+                transform: OutputTransform::Normal,
+                enabled: true,
+                current_workspace_id: Some(WorkspaceId::from("ws-1")),
+            }],
+            workspaces: vec![WorkspaceSnapshot {
+                id: WorkspaceId::from("ws-1"),
+                name: "1".into(),
+                output_id: Some(OutputId::from("out-1")),
+                active_tags: vec!["1".into()],
+                focused: true,
+                visible: true,
+                effective_layout: Some(spiders_shared::wm::LayoutRef {
+                    name: "master-stack".into(),
+                }),
+            }],
+            windows: vec![],
+            visible_window_ids: vec![],
+            tag_names: vec!["1".into()],
+        };
+
+        let evaluated = service
+            .bootstrap_runtime(&mut runtime_service, &config, &state)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(evaluated.workspace_id, WorkspaceId::from("ws-1"));
+        assert_eq!(evaluated.evaluated.loaded.selected.name, "master-stack");
+        assert!(matches!(
+            evaluated.evaluated.layout,
+            spiders_shared::layout::SourceLayoutNode::Workspace { .. }
+        ));
+
+        let _ = fs::remove_file(module_path);
+    }
+
+    #[test]
+    fn layout_service_initializes_startup_runtime_state() {
+        let service = LayoutService;
+        let temp_dir = std::env::temp_dir();
+        let runtime_root = temp_dir.join("spiders-startup-runtime");
+        let _ = fs::create_dir_all(runtime_root.join("layouts"));
+        let module_path = runtime_root.join("layouts/master-stack.js");
+        fs::write(
+            &module_path,
+            "ctx => ({ type: 'workspace', children: [{ type: 'window', id: 'main' }] })",
+        )
+        .unwrap();
+
+        let loader = spiders_config::loader::RuntimeProjectLayoutSourceLoader::new(
+            spiders_config::loader::RuntimePathResolver::new(".", &runtime_root),
+        );
+        let runtime = spiders_config::runtime::BoaLayoutRuntime::with_loader(loader.clone());
+        let runtime_service = spiders_config::service::ConfigRuntimeService::new(loader, runtime);
+        let config = Config {
+            layouts: vec![spiders_config::model::LayoutDefinition {
+                name: "master-stack".into(),
+                module: "layouts/master-stack.js".into(),
+                stylesheet: String::new(),
+            }],
+            ..Config::default()
+        };
+        let state = StateSnapshot {
+            focused_window_id: None,
+            current_output_id: Some(OutputId::from("out-1")),
+            current_workspace_id: Some(WorkspaceId::from("ws-1")),
+            outputs: vec![OutputSnapshot {
+                id: OutputId::from("out-1"),
+                name: "HDMI-A-1".into(),
+                logical_width: 800,
+                logical_height: 600,
+                scale: 1,
+                transform: OutputTransform::Normal,
+                enabled: true,
+                current_workspace_id: Some(WorkspaceId::from("ws-1")),
+            }],
+            workspaces: vec![WorkspaceSnapshot {
+                id: WorkspaceId::from("ws-1"),
+                name: "1".into(),
+                output_id: Some(OutputId::from("out-1")),
+                active_tags: vec!["1".into()],
+                focused: true,
+                visible: true,
+                effective_layout: Some(spiders_shared::wm::LayoutRef {
+                    name: "master-stack".into(),
+                }),
+            }],
+            windows: vec![],
+            visible_window_ids: vec![],
+            tag_names: vec!["1".into()],
+        };
+
+        let startup = service
+            .initialize_startup_runtime(runtime_service, config, &state)
+            .unwrap();
+
+        assert!(startup.startup_layout.is_some());
+        assert_eq!(startup.config.layouts.len(), 1);
+
+        let _ = fs::remove_file(module_path);
+    }
+
+    #[test]
+    fn layout_service_initializes_startup_config_object() {
+        let service = LayoutService;
+        let temp_dir = std::env::temp_dir();
+        let runtime_root = temp_dir.join("spiders-startup-config-runtime");
+        let _ = fs::create_dir_all(runtime_root.join("layouts"));
+        let module_path = runtime_root.join("layouts/master-stack.js");
+        fs::write(
+            &module_path,
+            "ctx => ({ type: 'workspace', children: [{ type: 'window', id: 'main' }] })",
+        )
+        .unwrap();
+
+        let loader = spiders_config::loader::RuntimeProjectLayoutSourceLoader::new(
+            spiders_config::loader::RuntimePathResolver::new(".", &runtime_root),
+        );
+        let runtime = spiders_config::runtime::BoaLayoutRuntime::with_loader(loader.clone());
+        let runtime_service = spiders_config::service::ConfigRuntimeService::new(loader, runtime);
+        let config = Config {
+            layouts: vec![spiders_config::model::LayoutDefinition {
+                name: "master-stack".into(),
+                module: "layouts/master-stack.js".into(),
+                stylesheet: String::new(),
+            }],
+            ..Config::default()
+        };
+        let state = StateSnapshot {
+            focused_window_id: None,
+            current_output_id: Some(OutputId::from("out-1")),
+            current_workspace_id: Some(WorkspaceId::from("ws-1")),
+            outputs: vec![OutputSnapshot {
+                id: OutputId::from("out-1"),
+                name: "HDMI-A-1".into(),
+                logical_width: 800,
+                logical_height: 600,
+                scale: 1,
+                transform: OutputTransform::Normal,
+                enabled: true,
+                current_workspace_id: Some(WorkspaceId::from("ws-1")),
+            }],
+            workspaces: vec![WorkspaceSnapshot {
+                id: WorkspaceId::from("ws-1"),
+                name: "1".into(),
+                output_id: Some(OutputId::from("out-1")),
+                active_tags: vec!["1".into()],
+                focused: true,
+                visible: true,
+                effective_layout: Some(spiders_shared::wm::LayoutRef {
+                    name: "master-stack".into(),
+                }),
+            }],
+            windows: vec![],
+            visible_window_ids: vec![],
+            tag_names: vec!["1".into()],
+        };
+
+        let startup = service
+            .initialize_startup_config(runtime_service, config, state)
+            .unwrap();
+
+        assert!(startup.runtime.startup_layout.is_some());
+        assert_eq!(
+            startup.state.current_workspace_id,
+            Some(WorkspaceId::from("ws-1"))
+        );
 
         let _ = fs::remove_file(module_path);
     }
