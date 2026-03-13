@@ -32,6 +32,10 @@ The resolved runtime tree contains:
 
 `slot` is source-only and expands into zero or more runtime `window` leaves.
 
+When `slot` expands into runtime `window` leaves, each generated leaf inherits the
+slot node's structural metadata (`id`, `class`, `name`, `data-*`) so structural
+CSS still has a stable target after claim resolution.
+
 ## Node Semantics
 
 ### `workspace`
@@ -126,6 +130,10 @@ Rules:
 2. `window` claims the first matching unclaimed client
 3. `slot` claims matching unclaimed clients up to `take`
 4. later nodes only see unclaimed remaining clients
+
+If a `window` node does not claim any live client, it still remains in the
+resolved tree as an unclaimed runtime `window` leaf so authored structure can
+preserve intended placement.
 
 ## Structural CSS Domain
 

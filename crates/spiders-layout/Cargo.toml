@@ -6,5 +6,7 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+cssparser = "0.36.0"
 spiders-shared = { path = "../spiders-shared" }
+taffy = "0.9.2"
 thiserror.workspace = true
