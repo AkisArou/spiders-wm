@@ -43,7 +43,7 @@ pub struct LayoutService;
 
 pub use actions::{apply_action, ActionError, ActionOutcome};
 pub use runtime::{CompositorRuntimeState, WorkspaceLayoutState};
-pub use session::CompositorSession;
+pub use session::{CompositorSession, SessionUpdate};
 pub use startup::{
     StartupConfig, StartupLayoutState, StartupRuntime, StartupSequence, StartupSession,
 };

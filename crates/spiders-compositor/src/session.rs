@@ -6,7 +6,7 @@ use spiders_shared::ids::WindowId;
 use spiders_shared::wm::{StateSnapshot, WindowSnapshot};
 
 use crate::actions::{apply_action, ActionError, ActionOutcome};
-use crate::runtime::CompositorRuntimeState;
+use crate::runtime::{CompositorRuntimeState, WorkspaceLayoutState};
 use crate::wm::WmState;
 use crate::{CompositorLayoutError, LayoutService};
 
@@ -14,6 +14,13 @@ use crate::{CompositorLayoutError, LayoutService};
 pub struct CompositorSession<L, R> {
     runtime: CompositorRuntimeState<L, R>,
     wm: WmState,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SessionUpdate {
+    pub events: Vec<CompositorEvent>,
+    pub recomputed_layout: bool,
+    pub current_layout: Option<WorkspaceLayoutState>,
 }
 
 impl<L, R> CompositorSession<L, R> {
@@ -31,6 +38,10 @@ impl<L, R> CompositorSession<L, R> {
 
     pub fn state(&self) -> &StateSnapshot {
         self.wm.snapshot()
+    }
+
+    pub fn current_layout(&self) -> Option<&WorkspaceLayoutState> {
+        self.runtime.current_layout()
     }
 }
 
@@ -52,40 +63,49 @@ impl<L: spiders_config::loader::LayoutSourceLoader, R: LayoutRuntime> Compositor
         Ok(Self::new(runtime, wm))
     }
 
-    pub fn apply_action(&mut self, action: &WmAction) -> Result<ActionOutcome, ActionError> {
-        apply_action(&mut self.runtime, &mut self.wm, action)
+    pub fn apply_action(&mut self, action: &WmAction) -> Result<SessionUpdate, ActionError> {
+        let outcome = apply_action(&mut self.runtime, &mut self.wm, action)?;
+        Ok(self.session_update(outcome))
     }
 
-    pub fn map_window(
-        &mut self,
-        window: WindowSnapshot,
-    ) -> Result<Vec<CompositorEvent>, ActionError> {
+    pub fn map_window(&mut self, window: WindowSnapshot) -> Result<SessionUpdate, ActionError> {
         let event = self.wm.map_window(window);
         self.runtime
             .update_from_wm_state(self.wm.snapshot().clone());
         self.runtime.recompute_current_layout()?;
-        Ok(vec![event])
+        Ok(self.session_update(ActionOutcome {
+            events: vec![event],
+            recomputed_layout: true,
+        }))
     }
 
-    pub fn focus_window(
-        &mut self,
-        window_id: &WindowId,
-    ) -> Result<Vec<CompositorEvent>, ActionError> {
+    pub fn focus_window(&mut self, window_id: &WindowId) -> Result<SessionUpdate, ActionError> {
         let event = self.wm.focus_window(window_id)?;
         self.runtime
             .update_from_wm_state(self.wm.snapshot().clone());
-        Ok(vec![event])
+        Ok(self.session_update(ActionOutcome {
+            events: vec![event],
+            recomputed_layout: false,
+        }))
     }
 
-    pub fn destroy_window(
-        &mut self,
-        window_id: &WindowId,
-    ) -> Result<Vec<CompositorEvent>, ActionError> {
+    pub fn destroy_window(&mut self, window_id: &WindowId) -> Result<SessionUpdate, ActionError> {
         let events = self.wm.destroy_window(window_id)?;
         self.runtime
             .update_from_wm_state(self.wm.snapshot().clone());
         self.runtime.recompute_current_layout()?;
-        Ok(events)
+        Ok(self.session_update(ActionOutcome {
+            events,
+            recomputed_layout: true,
+        }))
+    }
+
+    fn session_update(&self, outcome: ActionOutcome) -> SessionUpdate {
+        SessionUpdate {
+            events: outcome.events,
+            recomputed_layout: outcome.recomputed_layout,
+            current_layout: self.runtime.current_layout().cloned(),
+        }
     }
 }
 
@@ -241,17 +261,24 @@ mod tests {
     fn session_applies_layout_action_and_updates_runtime_and_wm_state() {
         let mut session = session();
 
-        let outcome = session
+        let update = session
             .apply_action(&WmAction::SetLayout {
                 name: "columns".into(),
             })
             .unwrap();
 
-        assert!(outcome.recomputed_layout);
-        assert!(outcome
+        assert!(update.recomputed_layout);
+        assert!(update
             .events
             .iter()
             .any(|event| matches!(event, CompositorEvent::LayoutChange { .. })));
+        assert_eq!(
+            update
+                .current_layout
+                .as_ref()
+                .and_then(|layout| layout.request.layout_name.as_deref()),
+            Some("columns")
+        );
         assert_eq!(
             session
                 .wm()
@@ -275,19 +302,19 @@ mod tests {
     fn session_applies_tag_switch_action_and_updates_snapshot() {
         let mut session = session();
 
-        let outcome = session
+        let update = session
             .apply_action(&WmAction::ToggleViewTag { tag: "2".into() })
             .unwrap();
 
-        assert!(outcome.recomputed_layout);
+        assert!(update.recomputed_layout);
         assert_eq!(
             session.state().current_workspace_id,
             Some(WorkspaceId::from("ws-2"))
         );
         assert_eq!(
-            session
-                .runtime()
-                .current_layout()
+            update
+                .current_layout
+                .as_ref()
                 .and_then(|layout| layout.request.layout_name.as_deref()),
             Some("columns")
         );
@@ -297,9 +324,10 @@ mod tests {
     fn session_focus_window_updates_wm_state_without_relayout() {
         let mut session = session();
 
-        let events = session.focus_window(&WindowId::from("w1")).unwrap();
+        let update = session.focus_window(&WindowId::from("w1")).unwrap();
 
-        assert!(events.iter().any(|event| matches!(
+        assert!(!update.recomputed_layout);
+        assert!(update.events.iter().any(|event| matches!(
             event,
             CompositorEvent::FocusChange {
                 focused_window_id: Some(window_id),
@@ -316,7 +344,7 @@ mod tests {
     fn session_map_window_recomputes_layout_state() {
         let mut session = session();
 
-        let events = session
+        let update = session
             .map_window(WindowSnapshot {
                 id: WindowId::from("w3"),
                 shell: ShellKind::XdgToplevel,
@@ -337,7 +365,9 @@ mod tests {
             })
             .unwrap();
 
-        assert!(events
+        assert!(update.recomputed_layout);
+        assert!(update
+            .events
             .iter()
             .any(|event| matches!(event, CompositorEvent::WindowCreated { .. })));
         assert!(session
@@ -345,16 +375,17 @@ mod tests {
             .windows
             .iter()
             .any(|window| window.id == WindowId::from("w3") && window.mapped));
-        assert!(session.runtime().current_layout().is_some());
+        assert!(update.current_layout.is_some());
     }
 
     #[test]
     fn session_destroy_window_recomputes_layout_state() {
         let mut session = session();
 
-        let events = session.destroy_window(&WindowId::from("w1")).unwrap();
+        let update = session.destroy_window(&WindowId::from("w1")).unwrap();
 
-        assert!(events.iter().any(|event| matches!(
+        assert!(update.recomputed_layout);
+        assert!(update.events.iter().any(|event| matches!(
             event,
             CompositorEvent::WindowDestroyed { window_id } if window_id == &WindowId::from("w1")
         )));
@@ -387,13 +418,13 @@ mod tests {
             tags: vec!["1".into()],
         });
 
-        let outcome = session
+        let update = session
             .apply_action(&WmAction::FocusDirection {
                 direction: FocusDirection::Right,
             })
             .unwrap();
 
-        assert!(!outcome.recomputed_layout);
+        assert!(!update.recomputed_layout);
         assert_eq!(
             session.state().focused_window_id,
             Some(WindowId::from("w3"))
