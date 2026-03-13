@@ -3,6 +3,7 @@ mod imp {
     use std::collections::{HashMap, HashSet};
 
     use crate::backend::{BackendDiscoveryEvent, BackendSurfaceSnapshot};
+    use smithay::backend::renderer::utils::on_commit_buffer_handler;
     use smithay::delegate_compositor;
     use smithay::delegate_seat;
     use smithay::delegate_shm;
@@ -18,9 +19,13 @@ mod imp {
     use smithay::reexports::wayland_server::{BindError, Client, Display, DisplayHandle};
     use smithay::utils::Serial;
     use smithay::wayland::buffer::BufferHandler;
+    use smithay::wayland::compositor::{
+        get_parent, get_role, is_sync_subsurface, with_states, BufferAssignment,
+    };
     use smithay::wayland::compositor::{CompositorClientState, CompositorHandler, CompositorState};
     use smithay::wayland::shell::xdg::{
-        PopupSurface, PositionerState, ToplevelSurface, XdgShellHandler, XdgShellState,
+        PopupSurface, PositionerState, ToplevelSurface, XdgPopupSurfaceData, XdgShellHandler,
+        XdgShellState, XdgToplevelSurfaceData, XDG_POPUP_ROLE, XDG_TOPLEVEL_ROLE,
     };
     use smithay::wayland::shm::{ShmHandler, ShmState};
     use smithay::wayland::socket::ListeningSocketSource;
@@ -156,6 +161,60 @@ mod imp {
             self.track_surface_loss_by_id(smithay_surface_id(surface.wl_surface()));
         }
 
+        fn track_committed_surface(&mut self, surface: &WlSurface) {
+            if is_sync_subsurface(surface) {
+                return;
+            }
+
+            let root = root_surface(surface);
+            let role = get_role(&root);
+            let surface_id = smithay_surface_id(&root);
+
+            match role {
+                Some(XDG_TOPLEVEL_ROLE) => {
+                    if surface_has_buffer(&root) {
+                        self.track_toplevel_surface(&root);
+                    } else if self.tracked_surfaces.contains(&surface_id) {
+                        self.toplevel_window_ids.remove(&surface_id);
+                        self.track_surface_loss_by_id(surface_id);
+                    }
+                }
+                Some(XDG_POPUP_ROLE) => {
+                    if surface_has_buffer(&root) {
+                        self.track_popup_surface_by_root(&root);
+                    } else if self.tracked_surfaces.contains(&surface_id) {
+                        self.track_surface_loss_by_id(surface_id);
+                    }
+                }
+                _ => {
+                    if surface_has_buffer(&root) {
+                        self.track_surface_snapshot(BackendSurfaceSnapshot::Unmanaged {
+                            surface_id,
+                        });
+                    }
+                }
+            }
+        }
+
+        fn track_popup_surface_by_root(&mut self, surface: &WlSurface) {
+            let surface_id = smithay_surface_id(surface);
+            let parent_surface_id = with_states(surface, |states| {
+                states
+                    .data_map
+                    .get::<XdgPopupSurfaceData>()
+                    .and_then(|data| data.lock().ok())
+                    .and_then(|data| data.parent.clone())
+                    .map(|parent| smithay_surface_id(&parent))
+            })
+            .unwrap_or_else(|| format!("parent-{surface_id}"));
+
+            self.track_surface_snapshot(BackendSurfaceSnapshot::Popup {
+                surface_id,
+                output_id: None,
+                parent_surface_id,
+            });
+        }
+
         fn window_id_for_surface(&mut self, surface_id: &str) -> WindowId {
             if let Some(window_id) = self.toplevel_window_ids.get(surface_id) {
                 return window_id.clone();
@@ -171,6 +230,31 @@ mod imp {
 
     fn smithay_surface_id(surface: &WlSurface) -> String {
         format!("wl-surface-{}", surface.id().protocol_id())
+    }
+
+    fn root_surface(surface: &WlSurface) -> WlSurface {
+        let mut root = surface.clone();
+        while let Some(parent) = get_parent(&root) {
+            root = parent;
+        }
+        root
+    }
+
+    fn surface_has_buffer(surface: &WlSurface) -> bool {
+        with_states(surface, |states| {
+            let mut attributes = states
+                .cached_state
+                .get::<smithay::wayland::compositor::SurfaceAttributes>();
+            let pending = matches!(
+                attributes.pending().buffer,
+                Some(BufferAssignment::NewBuffer(_))
+            );
+            let current = matches!(
+                attributes.current().buffer,
+                Some(BufferAssignment::NewBuffer(_))
+            );
+            pending || current
+        })
     }
 
     fn snapshot_into_discovery_event(snapshot: BackendSurfaceSnapshot) -> BackendDiscoveryEvent {
@@ -222,7 +306,32 @@ mod imp {
                 .compositor_state
         }
 
-        fn commit(&mut self, _surface: &WlSurface) {}
+        fn commit(&mut self, surface: &WlSurface) {
+            on_commit_buffer_handler::<Self>(surface);
+            self.track_committed_surface(surface);
+
+            let root = root_surface(surface);
+            if get_role(&root) == Some(XDG_TOPLEVEL_ROLE) {
+                let needs_initial_configure = with_states(&root, |states| {
+                    states
+                        .data_map
+                        .get::<XdgToplevelSurfaceData>()
+                        .and_then(|data| data.lock().ok())
+                        .map(|data| !data.initial_configure_sent)
+                        .unwrap_or(false)
+                });
+
+                if needs_initial_configure {
+                    self.xdg_shell_state
+                        .toplevel_surfaces()
+                        .iter()
+                        .filter(|surface| surface.wl_surface() == &root)
+                        .for_each(|surface| {
+                            let _ = surface.send_configure();
+                        });
+                }
+            }
+        }
     }
 
     impl ShmHandler for SpidersSmithayState {
@@ -370,6 +479,23 @@ mod imp {
 
             assert_eq!(first, WindowId::from("smithay-window-1"));
             assert_eq!(second, WindowId::from("smithay-window-2"));
+        }
+
+        #[test]
+        fn smithay_state_tracks_unmanaged_surface_snapshots() {
+            let display = Display::<SpidersSmithayState>::new().unwrap();
+            let mut state = SpidersSmithayState::new(&display, "test-seat").unwrap();
+
+            state.track_surface_snapshot(BackendSurfaceSnapshot::Unmanaged {
+                surface_id: "wl-surface-90".into(),
+            });
+
+            let events = state.take_discovery_events();
+            assert!(matches!(
+                &events[0],
+                BackendDiscoveryEvent::UnmanagedSurfaceDiscovered { surface_id }
+                    if surface_id == "wl-surface-90"
+            ));
         }
     }
 }
