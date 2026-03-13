@@ -1,3 +1,4 @@
+pub mod actions;
 pub mod runtime;
 pub mod startup;
 pub mod wm;
@@ -39,6 +40,7 @@ pub trait LayoutEngine {
 #[derive(Debug, Default, Clone, Copy)]
 pub struct LayoutService;
 
+pub use actions::{apply_action, ActionError, ActionOutcome};
 pub use runtime::{CompositorRuntimeState, WorkspaceLayoutState};
 pub use startup::{
     StartupConfig, StartupLayoutState, StartupRuntime, StartupSequence, StartupSession,

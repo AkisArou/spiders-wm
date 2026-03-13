@@ -6,6 +6,12 @@ use spiders_shared::wm::{
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum WmStateError {
+    #[error("no current output selected")]
+    NoCurrentOutput,
+    #[error("no current workspace selected")]
+    NoCurrentWorkspace,
+    #[error("no focused window")]
+    NoFocusedWindow,
     #[error("output not found: {0}")]
     OutputNotFound(OutputId),
     #[error("workspace not found: {0}")]
@@ -30,6 +36,27 @@ impl WmState {
 
     pub fn snapshot(&self) -> &StateSnapshot {
         &self.snapshot
+    }
+
+    pub fn current_output_id(&self) -> Result<&OutputId, WmStateError> {
+        self.snapshot
+            .current_output_id
+            .as_ref()
+            .ok_or(WmStateError::NoCurrentOutput)
+    }
+
+    pub fn current_workspace_id(&self) -> Result<&WorkspaceId, WmStateError> {
+        self.snapshot
+            .current_workspace_id
+            .as_ref()
+            .ok_or(WmStateError::NoCurrentWorkspace)
+    }
+
+    pub fn focused_window_id(&self) -> Result<&WindowId, WmStateError> {
+        self.snapshot
+            .focused_window_id
+            .as_ref()
+            .ok_or(WmStateError::NoFocusedWindow)
     }
 
     pub fn into_snapshot(self) -> StateSnapshot {
@@ -166,6 +193,40 @@ impl WmState {
         Ok(CompositorEvent::LayoutChange {
             workspace_id: Some(workspace.id.clone()),
             layout: workspace.effective_layout.clone(),
+        })
+    }
+
+    pub fn toggle_focused_floating(&mut self) -> Result<CompositorEvent, WmStateError> {
+        let window_id = self.focused_window_id()?.clone();
+        let window = self
+            .snapshot
+            .windows
+            .iter_mut()
+            .find(|window| window.id == window_id)
+            .ok_or_else(|| WmStateError::WindowNotFound(window_id.clone()))?;
+
+        window.floating = !window.floating;
+
+        Ok(CompositorEvent::WindowFloatingChange {
+            window_id,
+            floating: window.floating,
+        })
+    }
+
+    pub fn toggle_focused_fullscreen(&mut self) -> Result<CompositorEvent, WmStateError> {
+        let window_id = self.focused_window_id()?.clone();
+        let window = self
+            .snapshot
+            .windows
+            .iter_mut()
+            .find(|window| window.id == window_id)
+            .ok_or_else(|| WmStateError::WindowNotFound(window_id.clone()))?;
+
+        window.fullscreen = !window.fullscreen;
+
+        Ok(CompositorEvent::WindowFullscreenChange {
+            window_id,
+            fullscreen: window.fullscreen,
         })
     }
 

@@ -60,6 +60,27 @@ impl<L, R> CompositorRuntimeState<L, R> {
     pub fn startup_session(&self) -> &StartupSession<L, R> {
         &self.startup
     }
+
+    pub fn update_from_wm_state(&mut self, state: StateSnapshot) {
+        self.startup.state = state;
+    }
+}
+
+impl<L: spiders_config::loader::LayoutSourceLoader, R: LayoutRuntime> CompositorRuntimeState<L, R> {
+    pub fn recompute_current_layout(&mut self) -> Result<(), CompositorLayoutError> {
+        let startup_layout = startup::bootstrap_runtime(
+            &self.layout_service,
+            &mut self.startup.runtime.service,
+            &self.startup.runtime.config,
+            &self.startup.state,
+        )?;
+
+        self.current_layout = startup_layout
+            .as_ref()
+            .map(WorkspaceLayoutState::from_startup);
+        self.startup.runtime.startup_layout = startup_layout;
+        Ok(())
+    }
 }
 
 pub(crate) fn initialize_runtime_state<
