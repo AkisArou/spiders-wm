@@ -166,6 +166,7 @@ pub fn loaded_layout_definition(
 #[cfg(test)]
 mod tests {
     use std::fs;
+    use std::path::PathBuf;
 
     use spiders_shared::ids::{OutputId, WorkspaceId};
     use spiders_shared::wm::{LayoutRef, WorkspaceSnapshot};
@@ -185,6 +186,10 @@ mod tests {
                 name: "master-stack".into(),
             }),
         }
+    }
+
+    fn fixture_root() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures")
     }
 
     #[test]
@@ -290,12 +295,10 @@ mod tests {
 
     #[test]
     fn runtime_project_loader_reads_from_resolved_runtime_location() {
-        let temp_dir = std::env::temp_dir();
-        let project_root = temp_dir.join("spiders-runtime-project");
-        let runtime_root = temp_dir.join("spiders-runtime-artifacts");
-        let _ = fs::create_dir_all(runtime_root.join("layouts"));
+        let fixtures = fixture_root();
+        let project_root = fixtures.join("project");
+        let runtime_root = fixtures.join("runtime");
         let module_path = runtime_root.join("layouts/master-stack.js");
-        fs::write(&module_path, "ctx => ({ type: 'workspace', children: [] })").unwrap();
 
         let loader = RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(
             &project_root,
@@ -311,7 +314,27 @@ mod tests {
 
         assert_eq!(loaded.selected.module, module_path.to_string_lossy());
         assert!(loaded.runtime_source.contains("workspace"));
+    }
 
-        let _ = fs::remove_file(module_path);
+    #[test]
+    fn runtime_project_loader_falls_back_to_project_root_fixture() {
+        let fixtures = fixture_root();
+        let project_root = fixtures.join("project");
+        let runtime_root = fixtures.join("runtime-missing");
+
+        let loader = RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(
+            &project_root,
+            &runtime_root,
+        ));
+        let definition = LayoutDefinition {
+            name: "fallback".into(),
+            module: "layouts/fallback.js".into(),
+            stylesheet: String::new(),
+        };
+
+        let loaded = loader.load_definition(&definition).unwrap();
+
+        assert!(loaded.selected.module.ends_with("layouts/fallback.js"));
+        assert!(loaded.runtime_source.contains("fallback-group"));
     }
 }

@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use spiders_shared::wm::{LayoutEvaluationContext, LoadedLayout};
 
 use crate::loader::{LayoutLoadError, LayoutSourceLoader};
-use crate::model::Config;
+use crate::model::{Config, ConfigDiscoveryOptions, ConfigPaths, LayoutConfigError};
 use crate::runtime::{LayoutRuntime, LayoutRuntimeError};
 
 #[derive(Debug, thiserror::Error, PartialEq)]
@@ -12,6 +12,8 @@ pub enum ConfigRuntimeServiceError {
     Load(#[from] LayoutLoadError),
     #[error(transparent)]
     Runtime(#[from] LayoutRuntimeError),
+    #[error(transparent)]
+    Config(#[from] LayoutConfigError),
 }
 
 #[derive(Debug)]
@@ -32,6 +34,44 @@ impl<L, R> ConfigRuntimeService<L, R> {
 }
 
 impl<L: LayoutSourceLoader, R: LayoutRuntime> ConfigRuntimeService<L, R> {
+    pub fn discover_config_paths(
+        &self,
+        options: ConfigDiscoveryOptions,
+    ) -> Result<ConfigPaths, ConfigRuntimeServiceError> {
+        Ok(ConfigPaths::discover(options)?)
+    }
+
+    pub fn load_config(&self, paths: &ConfigPaths) -> Result<Config, ConfigRuntimeServiceError> {
+        Ok(Config::from_path(&paths.runtime_config)?)
+    }
+
+    pub fn validate_layout_modules(
+        &self,
+        config: &Config,
+    ) -> Result<Vec<String>, ConfigRuntimeServiceError> {
+        let mut errors = Vec::new();
+
+        for layout in &config.layouts {
+            let workspace = spiders_shared::wm::WorkspaceSnapshot {
+                id: spiders_shared::ids::WorkspaceId::from("validation"),
+                name: "validation".into(),
+                output_id: None,
+                active_tags: vec![],
+                focused: true,
+                visible: true,
+                effective_layout: Some(spiders_shared::wm::LayoutRef {
+                    name: layout.name.clone(),
+                }),
+            };
+
+            if let Err(error) = self.loader.load_runtime_source(config, &workspace) {
+                errors.push(format!("{}: {error}", layout.name));
+            }
+        }
+
+        Ok(errors)
+    }
+
     pub fn load_for_workspace(
         &mut self,
         config: &Config,
@@ -91,7 +131,7 @@ mod tests {
 
     use super::*;
     use crate::loader::{RuntimePathResolver, RuntimeProjectLayoutSourceLoader};
-    use crate::model::{Config, LayoutDefinition};
+    use crate::model::{Config, ConfigDiscoveryOptions, LayoutDefinition};
     use crate::runtime::BoaLayoutRuntime;
 
     fn workspace() -> WorkspaceSnapshot {
@@ -205,5 +245,77 @@ mod tests {
         ));
 
         let _ = fs::remove_file(module_path);
+    }
+
+    #[test]
+    fn runtime_service_loads_config_from_runtime_path() {
+        let temp_dir = std::env::temp_dir();
+        let runtime_config_path = temp_dir.join("spiders-runtime-config.json");
+        fs::write(
+            &runtime_config_path,
+            r#"{"layouts":[{"name":"master-stack","module":"layouts/master-stack.js","stylesheet":"workspace { display: flex; }"}]}"#,
+        )
+        .unwrap();
+
+        let loader = RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", "."));
+        let runtime = BoaLayoutRuntime::with_loader(loader.clone());
+        let service: ConfigRuntimeService<_, _> = ConfigRuntimeService::new(loader, runtime);
+        let config = service
+            .load_config(&ConfigPaths::new("unused", &runtime_config_path))
+            .unwrap();
+
+        assert_eq!(config.layouts[0].module, "layouts/master-stack.js");
+
+        let _ = fs::remove_file(runtime_config_path);
+    }
+
+    #[test]
+    fn runtime_service_discovers_config_paths_from_options() {
+        let temp_dir = std::env::temp_dir();
+        let home_dir = temp_dir.join("spiders-service-discovery-home");
+        let config_dir = home_dir.join(".config/spiders-wm");
+        let data_dir = home_dir.join(".local/share/spiders-wm");
+        let _ = fs::create_dir_all(&config_dir);
+        let _ = fs::create_dir_all(&data_dir);
+        fs::write(config_dir.join("config.ts"), "export default {};").unwrap();
+
+        let loader = RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", "."));
+        let runtime = BoaLayoutRuntime::with_loader(loader.clone());
+        let service: ConfigRuntimeService<_, _> = ConfigRuntimeService::new(loader, runtime);
+        let paths = service
+            .discover_config_paths(ConfigDiscoveryOptions {
+                home_dir: Some(home_dir.clone()),
+                ..ConfigDiscoveryOptions::default()
+            })
+            .unwrap();
+
+        assert!(paths
+            .authored_config
+            .ends_with(".config/spiders-wm/config.ts"));
+        assert!(paths
+            .runtime_config
+            .ends_with(".local/share/spiders-wm/config.json"));
+
+        let _ = fs::remove_file(config_dir.join("config.ts"));
+    }
+
+    #[test]
+    fn runtime_service_reports_missing_layout_module_sources() {
+        let loader = RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", "."));
+        let runtime = BoaLayoutRuntime::with_loader(loader.clone());
+        let service: ConfigRuntimeService<_, _> = ConfigRuntimeService::new(loader, runtime);
+        let config = Config {
+            layouts: vec![LayoutDefinition {
+                name: "missing".into(),
+                module: "layouts/missing.js".into(),
+                stylesheet: String::new(),
+            }],
+            ..Config::default()
+        };
+
+        let errors = service.validate_layout_modules(&config).unwrap();
+
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].contains("missing"));
     }
 }

@@ -32,8 +32,19 @@ Preferred compiled runtime path:
 
 - `~/.local/share/spiders-wm/config.js`
 
-Environment-variable overrides may exist, but they should be documented only once
-the implementation is stable.
+The Rust side should also expose explicit path objects for discovered authored and
+runtime config locations, so startup code can pass filesystem intent around
+without repeating discovery rules.
+
+Discovery should support explicit override inputs and home-directory expansion,
+so CLI and compositor startup paths can share one implementation.
+
+Discovery may support environment-variable overrides for home, config dir, data
+dir, and direct config file paths, so startup tools can override filesystem
+locations without re-implementing path resolution.
+
+Startup-facing tools should be able to emit both human-readable and structured
+machine-readable status for discovery, config loading, and runtime validation.
 
 ## Supported Top-Level Sections
 
