@@ -118,6 +118,8 @@ fn cli_bootstrap_trace_reports_json_diagnostics() {
     assert_eq!(json["active_output"], "bootstrap-output");
     assert_eq!(json["current_workspace"], "bootstrap-workspace");
     assert_eq!(json["focused_window"], "bootstrap-window");
+    assert_eq!(json["startup"]["active_seat"], "seat-0");
+    assert_eq!(json["startup"]["active_output"], "bootstrap-output");
     assert_eq!(json["seat_count"], 1);
     assert_eq!(json["output_count"], 1);
     assert_eq!(json["applied_events"], 0);

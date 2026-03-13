@@ -83,6 +83,8 @@ Current implementation note:
   ids, keeping bootstrap inspection aligned with snapshot semantics
 - failure traces should preserve partial progress plus the failed typed event so
   bootstrap debugging stays deterministic and backend-agnostic
+- scripted bootstrap event fixtures can serve as backend-agnostic startup
+  scenarios for CLI diagnostics and future skeleton testing
 - session operations return a typed `SessionUpdate` containing emitted events,
   relayout status, and the current computed layout snapshot
 - lower-level action helpers are internal support code, not the intended outer

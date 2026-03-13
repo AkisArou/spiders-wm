@@ -50,6 +50,7 @@ pub struct BootstrapReport {
     pub surface_count: usize,
     pub mapped_surface_count: usize,
     pub applied_events: usize,
+    pub startup: spiders_compositor::StartupRegistration,
 }
 
 #[derive(Debug, Serialize, PartialEq, Eq)]
@@ -111,6 +112,12 @@ mod tests {
             surface_count: 0,
             mapped_surface_count: 0,
             applied_events: 0,
+            startup: spiders_compositor::StartupRegistration {
+                seats: vec!["seat-0".into()],
+                outputs: vec![spiders_shared::ids::OutputId::from("out-1")],
+                active_seat: Some("seat-0".into()),
+                active_output: Some(spiders_shared::ids::OutputId::from("out-1")),
+            },
         };
 
         let json = serde_json::to_value(report).unwrap();
@@ -119,6 +126,7 @@ mod tests {
         assert_eq!(json["active_seat"], "seat-0");
         assert_eq!(json["current_workspace"], "ws-1");
         assert_eq!(json["focused_window"], "w1");
+        assert_eq!(json["startup"]["active_seat"], "seat-0");
     }
 
     #[test]

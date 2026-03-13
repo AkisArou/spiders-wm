@@ -373,6 +373,7 @@ fn bootstrap_trace_command(
             surface_count: trace.diagnostics.surface_count,
             mapped_surface_count: trace.diagnostics.mapped_surface_count,
             applied_events: trace.applied_events.len(),
+            startup: trace.startup,
         },
         || {
             format!(
