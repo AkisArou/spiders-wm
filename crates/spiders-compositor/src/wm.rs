@@ -1,4 +1,4 @@
-use spiders_shared::api::CompositorEvent;
+use spiders_shared::api::{CompositorEvent, FocusDirection};
 use spiders_shared::ids::{OutputId, WindowId, WorkspaceId};
 use spiders_shared::wm::{
     LayoutRef, OutputSnapshot, StateSnapshot, WindowSnapshot, WorkspaceSnapshot,
@@ -285,6 +285,54 @@ impl WmState {
             window_id,
             fullscreen: window.fullscreen,
         })
+    }
+
+    pub fn focus_direction(
+        &mut self,
+        direction: FocusDirection,
+    ) -> Result<CompositorEvent, WmStateError> {
+        let current_workspace_id = self.current_workspace_id()?.clone();
+        let visible_windows: Vec<_> = self
+            .snapshot
+            .windows
+            .iter()
+            .filter(|window| {
+                window.mapped
+                    && window.workspace_id.as_ref() == Some(&current_workspace_id)
+                    && self
+                        .snapshot
+                        .visible_window_ids
+                        .iter()
+                        .any(|id| id == &window.id)
+            })
+            .map(|window| window.id.clone())
+            .collect();
+
+        if visible_windows.is_empty() {
+            return Err(WmStateError::NoFocusedWindow);
+        }
+
+        let current_index = self
+            .snapshot
+            .focused_window_id
+            .as_ref()
+            .and_then(|focused| {
+                visible_windows
+                    .iter()
+                    .position(|window_id| window_id == focused)
+            })
+            .unwrap_or(0);
+
+        let next_index = match direction {
+            FocusDirection::Left | FocusDirection::Up => {
+                (current_index + visible_windows.len() - 1) % visible_windows.len()
+            }
+            FocusDirection::Right | FocusDirection::Down => {
+                (current_index + 1) % visible_windows.len()
+            }
+        };
+
+        self.focus_window(&visible_windows[next_index])
     }
 
     fn select_workspace(&mut self, workspace_id: &WorkspaceId) -> Result<(), WmStateError> {
@@ -632,6 +680,45 @@ mod tests {
         assert_eq!(
             state.snapshot().current_workspace_id,
             Some(WorkspaceId::from("ws-2"))
+        );
+    }
+
+    #[test]
+    fn wm_state_focus_direction_cycles_visible_workspace_windows() {
+        let mut snapshot = state();
+        snapshot.windows.push(WindowSnapshot {
+            id: WindowId::from("w3"),
+            shell: ShellKind::XdgToplevel,
+            app_id: Some("thunar".into()),
+            title: Some("Files".into()),
+            class: None,
+            instance: None,
+            role: None,
+            window_type: None,
+            mapped: true,
+            floating: false,
+            fullscreen: false,
+            focused: false,
+            urgent: false,
+            output_id: Some(OutputId::from("out-1")),
+            workspace_id: Some(WorkspaceId::from("ws-1")),
+            tags: vec!["1".into()],
+        });
+        snapshot.visible_window_ids = vec![WindowId::from("w1"), WindowId::from("w3")];
+        let mut state = WmState::from_snapshot(snapshot);
+
+        let event = state.focus_direction(FocusDirection::Right).unwrap();
+
+        assert!(matches!(
+            event,
+            CompositorEvent::FocusChange {
+                focused_window_id: Some(window_id),
+                ..
+            } if window_id == WindowId::from("w3")
+        ));
+        assert_eq!(
+            state.snapshot().focused_window_id,
+            Some(WindowId::from("w3"))
         );
     }
 }

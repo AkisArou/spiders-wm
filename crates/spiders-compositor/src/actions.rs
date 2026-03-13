@@ -81,7 +81,10 @@ where
             let event = wm_state.toggle_focused_fullscreen()?;
             vec![event]
         }
-        WmAction::FocusDirection { .. } => Vec::new(),
+        WmAction::FocusDirection { direction } => {
+            let event = wm_state.focus_direction(*direction)?;
+            vec![event]
+        }
         WmAction::CloseFocusedWindow => {
             let focused = wm_state.focused_window_id()?.clone();
             recompute = true;
@@ -129,7 +132,7 @@ mod tests {
     use spiders_config::model::{Config, LayoutDefinition};
     use spiders_config::runtime::BoaLayoutRuntime;
     use spiders_config::service::ConfigRuntimeService;
-    use spiders_shared::api::{CompositorEvent, WmAction};
+    use spiders_shared::api::{CompositorEvent, FocusDirection, WmAction};
     use spiders_shared::ids::{OutputId, WindowId, WorkspaceId};
     use spiders_shared::wm::{
         LayoutRef, OutputSnapshot, OutputTransform, ShellKind, StateSnapshot, WindowSnapshot,
@@ -382,6 +385,54 @@ mod tests {
         assert_eq!(
             wm_state.snapshot().current_workspace_id,
             Some(WorkspaceId::from("ws-1"))
+        );
+    }
+
+    #[test]
+    fn focus_direction_cycles_visible_windows() {
+        let mut runtime = runtime_state();
+        let mut state = state();
+        state.windows.push(WindowSnapshot {
+            id: WindowId::from("w3"),
+            shell: ShellKind::XdgToplevel,
+            app_id: Some("thunar".into()),
+            title: Some("Files".into()),
+            class: None,
+            instance: None,
+            role: None,
+            window_type: None,
+            mapped: true,
+            floating: false,
+            fullscreen: false,
+            focused: false,
+            urgent: false,
+            output_id: Some(OutputId::from("out-1")),
+            workspace_id: Some(WorkspaceId::from("ws-1")),
+            tags: vec!["1".into()],
+        });
+        state.visible_window_ids = vec![WindowId::from("w1"), WindowId::from("w3")];
+        let mut wm_state = WmState::from_snapshot(state);
+
+        let outcome = apply_action(
+            &mut runtime,
+            &mut wm_state,
+            &WmAction::FocusDirection {
+                direction: FocusDirection::Right,
+            },
+        )
+        .unwrap();
+
+        assert!(!outcome.recomputed_layout);
+        assert!(outcome.events.iter().any(|event| matches!(
+            event,
+            CompositorEvent::FocusChange {
+                focused_window_id: Some(window_id),
+                ..
+            } if window_id == &WindowId::from("w3")
+        )));
+        assert_eq!(
+            wm_state.snapshot().focused_window_id,
+            Some(WindowId::from("w3"))
         );
     }
 }
