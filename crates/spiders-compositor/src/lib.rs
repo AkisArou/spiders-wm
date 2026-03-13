@@ -592,6 +592,10 @@ mod tests {
 
         assert_eq!(evaluated.workspace_id, WorkspaceId::from("ws-1"));
         assert_eq!(evaluated.evaluated.loaded.selected.name, "master-stack");
+        assert_eq!(
+            evaluated.request.layout_name.as_deref(),
+            Some("master-stack")
+        );
         assert_eq!(evaluated.response.root.window_nodes().len(), 1);
         assert!(matches!(
             evaluated.evaluated.layout,
@@ -668,6 +672,16 @@ mod tests {
                 .startup_layout
                 .as_ref()
                 .unwrap()
+                .request
+                .layout_name
+                .as_deref(),
+            Some("master-stack")
+        );
+        assert_eq!(
+            startup
+                .startup_layout
+                .as_ref()
+                .unwrap()
                 .response
                 .root
                 .window_nodes()
@@ -739,6 +753,17 @@ mod tests {
             .unwrap();
 
         assert!(startup.runtime.startup_layout.is_some());
+        assert_eq!(
+            startup
+                .runtime
+                .startup_layout
+                .as_ref()
+                .unwrap()
+                .request
+                .layout_name
+                .as_deref(),
+            Some("master-stack")
+        );
         assert_eq!(
             startup
                 .runtime

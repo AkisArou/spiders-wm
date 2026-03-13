@@ -4,7 +4,7 @@ use spiders_config::service::ConfigRuntimeService;
 use spiders_layout::ast::ValidatedLayoutTree;
 use spiders_layout::pipeline::compute_layout_from_request;
 use spiders_shared::ids::WorkspaceId;
-use spiders_shared::layout::LayoutResponse;
+use spiders_shared::layout::{LayoutRequest, LayoutResponse};
 use spiders_shared::wm::StateSnapshot;
 
 use crate::{build_request_from_context, CompositorLayoutError, LayoutService};
@@ -26,6 +26,7 @@ pub struct StartupConfig<L, R> {
 pub struct StartupLayoutState {
     pub evaluated: spiders_config::service::EvaluatedLayout,
     pub workspace_id: WorkspaceId,
+    pub request: LayoutRequest,
     pub response: LayoutResponse,
 }
 
@@ -84,6 +85,7 @@ pub(crate) fn bootstrap_runtime<L: spiders_config::loader::LayoutSourceLoader, R
                 Ok(StartupLayoutState {
                     workspace_id: workspace.id.clone(),
                     evaluated,
+                    request,
                     response,
                 })
             },
@@ -199,6 +201,17 @@ mod tests {
         let startup = sequence.bootstrap().unwrap();
 
         assert!(startup.runtime.startup_layout.is_some());
+        assert_eq!(
+            startup
+                .runtime
+                .startup_layout
+                .as_ref()
+                .unwrap()
+                .request
+                .layout_name
+                .as_deref(),
+            Some("master-stack")
+        );
         assert_eq!(
             startup
                 .runtime
