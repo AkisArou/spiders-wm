@@ -168,6 +168,11 @@ mod imp {
             std::mem::take(&mut self.pending_discovery_events)
         }
 
+        #[cfg(test)]
+        pub(crate) fn track_test_surface_snapshot(&mut self, snapshot: BackendSurfaceSnapshot) {
+            self.track_surface_snapshot(snapshot);
+        }
+
         pub fn snapshot(&self) -> SmithayStateSnapshot {
             let role_counts = self.role_counts();
             let known_surfaces = self.known_surfaces_snapshot();

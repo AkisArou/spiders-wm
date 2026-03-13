@@ -397,6 +397,157 @@ mod imp {
             },
         ))
     }
+
+    #[cfg(test)]
+    mod tests {
+        use std::fs;
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        use spiders_config::loader::{RuntimePathResolver, RuntimeProjectLayoutSourceLoader};
+        use spiders_config::model::{Config, LayoutDefinition};
+        use spiders_config::runtime::BoaLayoutRuntime;
+        use spiders_config::service::ConfigRuntimeService;
+        use spiders_runtime::ControllerPhase;
+        use spiders_shared::ids::{OutputId, WorkspaceId};
+        use spiders_shared::wm::{
+            LayoutRef, OutputSnapshot, OutputTransform, StateSnapshot, WorkspaceSnapshot,
+        };
+
+        use super::*;
+
+        fn test_state_snapshot() -> StateSnapshot {
+            StateSnapshot {
+                focused_window_id: None,
+                current_output_id: Some(OutputId::from("out-1")),
+                current_workspace_id: Some(WorkspaceId::from("ws-1")),
+                outputs: vec![OutputSnapshot {
+                    id: OutputId::from("out-1"),
+                    name: "HDMI-A-1".into(),
+                    logical_width: 800,
+                    logical_height: 600,
+                    scale: 1,
+                    transform: OutputTransform::Normal,
+                    enabled: true,
+                    current_workspace_id: Some(WorkspaceId::from("ws-1")),
+                }],
+                workspaces: vec![WorkspaceSnapshot {
+                    id: WorkspaceId::from("ws-1"),
+                    name: "1".into(),
+                    output_id: Some(OutputId::from("out-1")),
+                    active_tags: vec!["1".into()],
+                    focused: true,
+                    visible: true,
+                    effective_layout: Some(LayoutRef {
+                        name: "master-stack".into(),
+                    }),
+                }],
+                windows: vec![],
+                visible_window_ids: vec![],
+                tag_names: vec!["1".into()],
+            }
+        }
+
+        fn test_config() -> Config {
+            Config {
+                layouts: vec![LayoutDefinition {
+                    name: "master-stack".into(),
+                    module: "layouts/master-stack.js".into(),
+                    stylesheet: String::new(),
+                }],
+                ..Config::default()
+            }
+        }
+
+        fn test_runtime_service() -> ConfigRuntimeService<
+            RuntimeProjectLayoutSourceLoader,
+            BoaLayoutRuntime<RuntimeProjectLayoutSourceLoader>,
+        > {
+            let unique = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos();
+            let runtime_root = std::env::temp_dir().join(format!(
+                "spiders-smithay-runtime-test-{}-{}",
+                std::process::id(),
+                unique
+            ));
+
+            fs::create_dir_all(runtime_root.join("layouts")).unwrap();
+            fs::write(
+                runtime_root.join("layouts/master-stack.js"),
+                "ctx => ({ type: 'workspace', children: [] })",
+            )
+            .unwrap();
+
+            let loader =
+                RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
+            let runtime = BoaLayoutRuntime::with_loader(loader.clone());
+            ConfigRuntimeService::new(loader, runtime)
+        }
+
+        fn test_runtime(socket_name: &str) -> SmithayWinitRuntime<'static> {
+            let event_loop = EventLoop::<SpidersSmithayState>::try_new().unwrap();
+            let display = Display::new().unwrap();
+            let state = SpidersSmithayState::new(&display, "smithay-test-seat").unwrap();
+
+            SmithayWinitRuntime {
+                display_handle: state.display_handle.clone(),
+                loop_signal: event_loop.get_signal(),
+                event_loop,
+                socket_name: socket_name.into(),
+                window_size: (1280, 720),
+                state: Some(state),
+                winit: None,
+            }
+        }
+
+        #[test]
+        fn runtime_snapshot_exposes_state_snapshot() {
+            let mut runtime = test_runtime("wayland-test-1");
+
+            runtime.state_mut().track_test_surface_snapshot(
+                crate::backend::BackendSurfaceSnapshot::Unmanaged {
+                    surface_id: "wl-surface-1".into(),
+                },
+            );
+
+            let snapshot = runtime.snapshot();
+            assert_eq!(snapshot.socket_name, "wayland-test-1");
+            assert_eq!(snapshot.window_size, (1280, 720));
+            assert_eq!(snapshot.state.seat_name, "smithay-test-seat");
+            assert_eq!(snapshot.state.tracked_surface_count, 1);
+            assert_eq!(snapshot.state.role_counts.unmanaged, 1);
+            assert_eq!(snapshot.state.known_surfaces.unmanaged.len(), 1);
+        }
+
+        #[test]
+        fn bootstrap_snapshot_matches_runtime_snapshot() {
+            let runtime_service = test_runtime_service();
+            let config = test_config();
+            let state = test_state_snapshot();
+            let controller =
+                crate::CompositorController::initialize(runtime_service, config, state).unwrap();
+            let runtime = test_runtime("wayland-test-2");
+            let report = SmithayStartupReport {
+                controller: controller.report(),
+                output_name: "smithay-test-output".into(),
+                seat_name: "smithay-test-seat".into(),
+                logical_size: (1280, 720),
+                socket_name: Some("wayland-test-2".into()),
+            };
+            let bootstrap = SmithayBootstrap {
+                controller,
+                runtime,
+                report,
+            };
+
+            let snapshot = bootstrap.snapshot();
+            assert_eq!(snapshot, bootstrap.runtime.snapshot());
+            assert_eq!(snapshot.socket_name, "wayland-test-2");
+            assert_eq!(bootstrap.report.seat_name, "smithay-test-seat");
+            assert_eq!(bootstrap.controller.phase(), ControllerPhase::Pending);
+        }
+    }
 }
 
 #[cfg(feature = "smithay-winit")]
