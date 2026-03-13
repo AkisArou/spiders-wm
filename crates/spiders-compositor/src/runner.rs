@@ -1,6 +1,7 @@
 use spiders_config::model::Config;
 use spiders_config::runtime::LayoutRuntime;
 use spiders_config::service::ConfigRuntimeService;
+use spiders_shared::ids::OutputId;
 use spiders_shared::wm::StateSnapshot;
 
 use crate::app::{BootstrapEvent, CompositorApp, StartupRegistration};
@@ -18,6 +19,24 @@ pub enum BootstrapRunnerError {
 #[derive(Debug)]
 pub struct BootstrapRunner<L, R> {
     app: CompositorApp<L, R>,
+    applied_events: Vec<BootstrapEvent>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BootstrapDiagnostics {
+    pub active_seat: Option<String>,
+    pub active_output: Option<OutputId>,
+    pub seat_count: usize,
+    pub output_count: usize,
+    pub surface_count: usize,
+    pub mapped_surface_count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BootstrapRunTrace {
+    pub startup: StartupRegistration,
+    pub applied_events: Vec<BootstrapEvent>,
+    pub diagnostics: BootstrapDiagnostics,
 }
 
 impl<L, R> BootstrapRunner<L, R> {
@@ -32,6 +51,31 @@ impl<L, R> BootstrapRunner<L, R> {
     pub fn into_app(self) -> CompositorApp<L, R> {
         self.app
     }
+
+    pub fn diagnostics(&self) -> BootstrapDiagnostics {
+        BootstrapDiagnostics {
+            active_seat: self.app.topology().active_seat_name.clone(),
+            active_output: self.app.topology().active_output_id.clone(),
+            seat_count: self.app.topology().seats.len(),
+            output_count: self.app.topology().outputs.len(),
+            surface_count: self.app.topology().surfaces.len(),
+            mapped_surface_count: self
+                .app
+                .topology()
+                .surfaces
+                .iter()
+                .filter(|surface| surface.mapped)
+                .count(),
+        }
+    }
+
+    pub fn trace(&self) -> BootstrapRunTrace {
+        BootstrapRunTrace {
+            startup: self.app.startup.clone(),
+            applied_events: self.applied_events.clone(),
+            diagnostics: self.diagnostics(),
+        }
+    }
 }
 
 impl<L: spiders_config::loader::LayoutSourceLoader, R: LayoutRuntime> BootstrapRunner<L, R> {
@@ -43,6 +87,7 @@ impl<L: spiders_config::loader::LayoutSourceLoader, R: LayoutRuntime> BootstrapR
     ) -> Result<Self, BootstrapRunnerError> {
         Ok(Self {
             app: CompositorApp::initialize(layout_service, runtime_service, config, state)?,
+            applied_events: Vec::new(),
         })
     }
 
@@ -61,11 +106,13 @@ impl<L: spiders_config::loader::LayoutSourceLoader, R: LayoutRuntime> BootstrapR
                 state,
                 startup,
             )?,
+            applied_events: Vec::new(),
         })
     }
 
     pub fn apply_event(&mut self, event: BootstrapEvent) -> Result<(), BootstrapRunnerError> {
-        self.app.apply_bootstrap_event(event)?;
+        self.app.apply_bootstrap_event(event.clone())?;
+        self.applied_events.push(event);
         Ok(())
     }
 
@@ -239,6 +286,9 @@ mod tests {
                 .output_id,
             Some(OutputId::from("out-2"))
         );
+        let trace = runner.trace();
+        assert_eq!(trace.applied_events.len(), 5);
+        assert_eq!(trace.diagnostics.active_seat.as_deref(), Some("seat-1"));
     }
 
     #[test]
@@ -293,6 +343,10 @@ mod tests {
         assert_eq!(
             runner.app().topology().active_output_id,
             Some(OutputId::from("out-2"))
+        );
+        assert_eq!(
+            runner.trace().startup.active_seat.as_deref(),
+            Some("seat-a")
         );
     }
 }

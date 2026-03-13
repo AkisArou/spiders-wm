@@ -77,6 +77,8 @@ Current implementation note:
   backend churn does not leak directly into domain state handling
 - a thin bootstrap runner can own the app/session object and replay typed
   bootstrap events in order before any backend-specific runtime loop exists
+- that runner can also expose typed diagnostics/traces so CLI and test tooling can
+  inspect startup state without backend integration
 - session operations return a typed `SessionUpdate` containing emitted events,
   relayout status, and the current computed layout snapshot
 - lower-level action helpers are internal support code, not the intended outer

@@ -35,6 +35,21 @@ pub struct ErrorReport {
     pub message: Option<String>,
 }
 
+#[derive(Debug, Serialize, PartialEq, Eq)]
+pub struct BootstrapReport {
+    pub status: &'static str,
+    pub runtime_ready: bool,
+    pub authored_config: String,
+    pub runtime_config: String,
+    pub active_seat: Option<String>,
+    pub active_output: Option<String>,
+    pub seat_count: usize,
+    pub output_count: usize,
+    pub surface_count: usize,
+    pub mapped_surface_count: usize,
+    pub applied_events: usize,
+}
+
 pub fn emit<T: Serialize>(mode: OutputMode, report: &T, text: impl FnOnce() -> String) {
     match mode {
         OutputMode::Text => println!("{}", text()),

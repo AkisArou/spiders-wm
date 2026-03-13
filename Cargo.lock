@@ -1040,10 +1040,12 @@ dependencies = [
  "anyhow",
  "serde",
  "serde_json",
+ "spiders-compositor",
  "spiders-config",
  "spiders-effects",
  "spiders-ipc",
  "spiders-layout",
+ "spiders-shared",
 ]
 
 [[package]]
