@@ -43,7 +43,7 @@ pub trait LayoutEngine {
 #[derive(Debug, Default, Clone, Copy)]
 pub struct LayoutService;
 
-pub use app::{CompositorApp, StartupRegistration};
+pub use app::{BootstrapEvent, CompositorApp, StartupRegistration};
 pub use runtime::{CompositorRuntimeState, WorkspaceLayoutState};
 pub use session::{CompositorSession, SessionUpdate};
 pub use startup::{

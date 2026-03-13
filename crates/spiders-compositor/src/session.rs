@@ -94,6 +94,16 @@ impl<L, R> CompositorSession<L, R> {
         self.topology.register_output(output);
     }
 
+    pub fn register_output_by_id(&mut self, output_id: &OutputId) -> Result<(), TopologyError> {
+        let output = self
+            .state()
+            .output_by_id(output_id)
+            .cloned()
+            .ok_or_else(|| TopologyError::OutputNotFound(output_id.clone()))?;
+        self.topology.register_output(output);
+        Ok(())
+    }
+
     pub fn move_surface_to_output(
         &mut self,
         surface_id: &str,
@@ -105,6 +115,21 @@ impl<L, R> CompositorSession<L, R> {
 
     pub fn unmap_surface(&mut self, surface_id: &str) -> Result<(), TopologyError> {
         self.topology.unmap_surface(surface_id)
+    }
+
+    pub fn register_window_surface(
+        &mut self,
+        surface_id: impl Into<String>,
+        window_id: WindowId,
+        output_id: Option<OutputId>,
+    ) -> Result<&SurfaceState, TopologyError> {
+        self.topology
+            .map_window_surface(surface_id, window_id, output_id)
+    }
+
+    pub fn register_seat(&mut self, seat_name: impl Into<String>) -> &str {
+        let seat = self.topology.register_seat(seat_name);
+        &seat.name
     }
 
     pub fn activate_seat(&mut self, seat_name: &str) -> Result<(), TopologyError> {
@@ -249,19 +274,8 @@ impl<L: spiders_config::loader::LayoutSourceLoader, R: LayoutRuntime> Compositor
         self.focus_window(&order[next_index])
     }
 
-    pub fn register_seat(&mut self, seat_name: impl Into<String>) -> &str {
-        let seat = self.topology.register_seat(seat_name);
-        &seat.name
-    }
-
     pub fn register_output(&mut self, output_id: OutputId) -> Result<(), TopologyError> {
-        let output = self
-            .state()
-            .output_by_id(&output_id)
-            .cloned()
-            .ok_or_else(|| TopologyError::OutputNotFound(output_id.clone()))?;
-        self.topology.register_output(output);
-        Ok(())
+        self.register_output_by_id(&output_id)
     }
 
     pub fn window_surface(&self, window_id: &WindowId) -> Option<&SurfaceState> {

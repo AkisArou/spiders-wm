@@ -1,12 +1,48 @@
 use spiders_config::model::Config;
 use spiders_config::runtime::LayoutRuntime;
 use spiders_config::service::ConfigRuntimeService;
-use spiders_shared::ids::OutputId;
+use spiders_shared::ids::{OutputId, WindowId};
 use spiders_shared::wm::StateSnapshot;
 
 use crate::session::CompositorSession;
 use crate::topology::{CompositorTopologyState, SurfaceState, TopologyError};
 use crate::{CompositorLayoutError, LayoutService};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BootstrapEvent {
+    RegisterSeat {
+        seat_name: String,
+        active: bool,
+    },
+    RegisterOutput {
+        output_id: OutputId,
+        active: bool,
+    },
+    RegisterWindowSurface {
+        surface_id: String,
+        window_id: WindowId,
+        output_id: Option<OutputId>,
+    },
+    RegisterPopupSurface {
+        surface_id: String,
+        output_id: Option<OutputId>,
+        parent_surface_id: String,
+    },
+    RegisterLayerSurface {
+        surface_id: String,
+        output_id: OutputId,
+    },
+    RegisterUnmanagedSurface {
+        surface_id: String,
+    },
+    MoveSurfaceToOutput {
+        surface_id: String,
+        output_id: OutputId,
+    },
+    UnmapSurface {
+        surface_id: String,
+    },
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StartupRegistration {
@@ -109,6 +145,59 @@ impl<L, R> CompositorApp<L, R> {
 
     pub fn enable_output(&mut self, output_id: &OutputId) -> Result<(), TopologyError> {
         self.session.enable_output(output_id)
+    }
+
+    pub fn apply_bootstrap_event(&mut self, event: BootstrapEvent) -> Result<(), TopologyError> {
+        match event {
+            BootstrapEvent::RegisterSeat { seat_name, active } => {
+                self.session.register_seat(seat_name.clone());
+                if active {
+                    self.activate_seat(&seat_name)?;
+                }
+            }
+            BootstrapEvent::RegisterOutput { output_id, active } => {
+                self.session.register_output_by_id(&output_id)?;
+                if active {
+                    self.activate_output(&output_id)?;
+                }
+            }
+            BootstrapEvent::RegisterWindowSurface {
+                surface_id,
+                window_id,
+                output_id,
+            } => {
+                let _ = self
+                    .session
+                    .register_window_surface(surface_id, window_id, output_id)?;
+            }
+            BootstrapEvent::RegisterPopupSurface {
+                surface_id,
+                output_id,
+                parent_surface_id,
+            } => {
+                let _ = self.register_popup_surface(surface_id, output_id, parent_surface_id)?;
+            }
+            BootstrapEvent::RegisterLayerSurface {
+                surface_id,
+                output_id,
+            } => {
+                let _ = self.register_layer_surface(surface_id, output_id)?;
+            }
+            BootstrapEvent::RegisterUnmanagedSurface { surface_id } => {
+                let _ = self.register_unmanaged_surface(surface_id)?;
+            }
+            BootstrapEvent::MoveSurfaceToOutput {
+                surface_id,
+                output_id,
+            } => {
+                self.move_surface_to_output(&surface_id, output_id)?;
+            }
+            BootstrapEvent::UnmapSurface { surface_id } => {
+                self.unmap_surface(&surface_id)?;
+            }
+        }
+
+        Ok(())
     }
 }
 
@@ -430,5 +519,77 @@ mod tests {
                 .enabled
         );
         assert_eq!(app.topology().active_seat_name.as_deref(), Some("seat-1"));
+    }
+
+    #[test]
+    fn app_applies_backend_agnostic_bootstrap_events() {
+        let temp_dir = std::env::temp_dir();
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let runtime_root = temp_dir.join(format!("spiders-app-bootstrap-events-{unique}"));
+        let _ = fs::create_dir_all(runtime_root.join("layouts"));
+        fs::write(
+            runtime_root.join("layouts/master-stack.js"),
+            "ctx => ({ type: 'workspace', children: [{ type: 'slot', id: 'rest' }] })",
+        )
+        .unwrap();
+
+        let loader =
+            RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
+        let runtime = BoaLayoutRuntime::with_loader(loader.clone());
+        let service = ConfigRuntimeService::new(loader, runtime);
+
+        let mut app = CompositorApp::initialize(LayoutService, service, config(), state()).unwrap();
+        app.session.register_output_snapshot(OutputSnapshot {
+            id: OutputId::from("out-2"),
+            name: "DP-1".into(),
+            logical_width: 2560,
+            logical_height: 1440,
+            scale: 1,
+            transform: OutputTransform::Normal,
+            enabled: true,
+            current_workspace_id: None,
+        });
+
+        app.apply_bootstrap_event(BootstrapEvent::RegisterSeat {
+            seat_name: "seat-1".into(),
+            active: true,
+        })
+        .unwrap();
+        app.apply_bootstrap_event(BootstrapEvent::RegisterWindowSurface {
+            surface_id: "window-w1".into(),
+            window_id: WindowId::from("w1"),
+            output_id: Some(OutputId::from("out-1")),
+        })
+        .unwrap();
+        app.apply_bootstrap_event(BootstrapEvent::RegisterPopupSurface {
+            surface_id: "popup-1".into(),
+            output_id: Some(OutputId::from("out-1")),
+            parent_surface_id: "window-w1".into(),
+        })
+        .unwrap();
+        app.apply_bootstrap_event(BootstrapEvent::RegisterLayerSurface {
+            surface_id: "layer-1".into(),
+            output_id: OutputId::from("out-2"),
+        })
+        .unwrap();
+        app.apply_bootstrap_event(BootstrapEvent::MoveSurfaceToOutput {
+            surface_id: "popup-1".into(),
+            output_id: OutputId::from("out-2"),
+        })
+        .unwrap();
+        app.apply_bootstrap_event(BootstrapEvent::UnmapSurface {
+            surface_id: "layer-1".into(),
+        })
+        .unwrap();
+
+        assert_eq!(app.topology().active_seat_name.as_deref(), Some("seat-1"));
+        assert_eq!(
+            app.topology().surface("popup-1").unwrap().output_id,
+            Some(OutputId::from("out-2"))
+        );
+        assert!(!app.topology().surface("layer-1").unwrap().mapped);
     }
 }

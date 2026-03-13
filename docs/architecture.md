@@ -71,6 +71,8 @@ Current implementation note:
   and backend-agnostic at the app/bootstrap boundary
 - popup, layer, and unmanaged surface registration can also flow through that
   app/session boundary as pure topology updates before backend handles exist
+- backend discovery/bootstrap should be able to feed typed seat/output/surface
+  events into that boundary without exposing raw backend objects
 - session operations return a typed `SessionUpdate` containing emitted events,
   relayout status, and the current computed layout snapshot
 - lower-level action helpers are internal support code, not the intended outer
