@@ -70,9 +70,11 @@ pub use smithay_adapter::{
 pub use smithay_runtime::initialize_winit_controller;
 #[cfg(feature = "smithay-winit")]
 pub use smithay_runtime::{bootstrap_winit, SmithayBootstrap, SmithayWinitRuntime};
-pub use smithay_runtime::{SmithayRuntimeError, SmithayStartupReport};
+pub use smithay_runtime::{SmithayRuntimeError, SmithayRuntimeSnapshot, SmithayStartupReport};
 #[cfg(feature = "smithay-winit")]
-pub use smithay_state::{SmithayClientState, SmithayStateError, SpidersSmithayState};
+pub use smithay_state::{
+    SmithayClientState, SmithayStateError, SmithayStateSnapshot, SpidersSmithayState,
+};
 pub use spiders_runtime::{
     BootstrapDiagnostics, BootstrapEvent, BootstrapFailureTrace, BootstrapRunTrace,
     BootstrapScenario, BootstrapScript, BootstrapScriptKind, BootstrapTranscript,

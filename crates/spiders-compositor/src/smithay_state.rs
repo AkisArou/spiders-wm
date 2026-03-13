@@ -44,6 +44,14 @@ mod imp {
         pub compositor_state: CompositorClientState,
     }
 
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct SmithayStateSnapshot {
+        pub seat_name: String,
+        pub tracked_surface_count: usize,
+        pub tracked_toplevel_count: usize,
+        pub pending_discovery_event_count: usize,
+    }
+
     impl ClientData for SmithayClientState {
         fn initialized(&self, _client_id: ClientId) {}
 
@@ -101,6 +109,15 @@ mod imp {
 
         pub fn take_discovery_events(&mut self) -> Vec<BackendDiscoveryEvent> {
             std::mem::take(&mut self.pending_discovery_events)
+        }
+
+        pub fn snapshot(&self) -> SmithayStateSnapshot {
+            SmithayStateSnapshot {
+                seat_name: self.seat_name.clone(),
+                tracked_surface_count: self.tracked_surfaces.len(),
+                tracked_toplevel_count: self.toplevel_window_ids.len(),
+                pending_discovery_event_count: self.pending_discovery_events.len(),
+            }
         }
 
         fn track_surface_snapshot(&mut self, snapshot: BackendSurfaceSnapshot) {
@@ -497,8 +514,40 @@ mod imp {
                     if surface_id == "wl-surface-90"
             ));
         }
+
+        #[test]
+        fn smithay_state_snapshot_reports_tracked_counts() {
+            let display = Display::<SpidersSmithayState>::new().unwrap();
+            let mut state = SpidersSmithayState::new(&display, "test-seat").unwrap();
+
+            let before = state.snapshot();
+            assert_eq!(before.seat_name, "test-seat");
+            assert_eq!(before.tracked_surface_count, 0);
+            assert_eq!(before.tracked_toplevel_count, 0);
+            assert_eq!(before.pending_discovery_event_count, 0);
+
+            let window_id = state.window_id_for_surface("wl-surface-101");
+            state.track_surface_snapshot(BackendSurfaceSnapshot::Window {
+                surface_id: "wl-surface-101".into(),
+                window_id,
+                output_id: None,
+            });
+            state.track_surface_snapshot(BackendSurfaceSnapshot::Unmanaged {
+                surface_id: "wl-surface-102".into(),
+            });
+
+            let after = state.snapshot();
+            assert_eq!(after.tracked_surface_count, 2);
+            assert_eq!(after.tracked_toplevel_count, 1);
+            assert_eq!(after.pending_discovery_event_count, 2);
+
+            let _ = state.take_discovery_events();
+            let drained = state.snapshot();
+            assert_eq!(drained.pending_discovery_event_count, 0);
+            assert_eq!(drained.tracked_surface_count, 2);
+        }
     }
 }
 
 #[cfg(feature = "smithay-winit")]
-pub use imp::{SmithayClientState, SmithayStateError, SpidersSmithayState};
+pub use imp::{SmithayClientState, SmithayStateError, SmithayStateSnapshot, SpidersSmithayState};

@@ -22,7 +22,9 @@ mod imp {
     use spiders_shared::ids::OutputId;
 
     use crate::smithay_adapter::{SmithayAdapter, SmithayOutputDescriptor, SmithaySeatDescriptor};
-    use crate::smithay_state::{SmithayClientState, SmithayStateError, SpidersSmithayState};
+    use crate::smithay_state::{
+        SmithayClientState, SmithayStateError, SmithayStateSnapshot, SpidersSmithayState,
+    };
 
     #[derive(Debug, thiserror::Error)]
     pub enum SmithayRuntimeError {
@@ -41,6 +43,13 @@ mod imp {
         pub seat_name: String,
         pub logical_size: (i32, i32),
         pub socket_name: Option<String>,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct SmithayRuntimeSnapshot {
+        pub socket_name: String,
+        pub window_size: (i32, i32),
+        pub state: SmithayStateSnapshot,
     }
 
     #[derive(Debug)]
@@ -65,6 +74,10 @@ mod imp {
 
             self.report.controller = self.controller.report();
             Ok(())
+        }
+
+        pub fn snapshot(&self) -> SmithayRuntimeSnapshot {
+            self.runtime.snapshot()
         }
     }
 
@@ -98,6 +111,14 @@ mod imp {
 
         pub fn state_mut(&mut self) -> &mut SpidersSmithayState {
             self.state.as_mut().expect("smithay runtime state missing")
+        }
+
+        pub fn snapshot(&self) -> SmithayRuntimeSnapshot {
+            SmithayRuntimeSnapshot {
+                socket_name: self.socket_name.clone(),
+                window_size: self.window_size,
+                state: self.state().snapshot(),
+            }
         }
 
         pub fn run_startup_cycle(&mut self) -> Result<(), SmithayRuntimeError> {
@@ -381,7 +402,7 @@ mod imp {
 #[cfg(feature = "smithay-winit")]
 pub use imp::{
     bootstrap_winit, bootstrap_winit_controller, initialize_winit_controller, SmithayBootstrap,
-    SmithayRuntimeError, SmithayStartupReport, SmithayWinitRuntime,
+    SmithayRuntimeError, SmithayRuntimeSnapshot, SmithayStartupReport, SmithayWinitRuntime,
 };
 
 #[cfg(not(feature = "smithay-winit"))]
