@@ -449,6 +449,53 @@ mod imp {
             );
         }
 
+        pub fn backend_surface_snapshots(&self) -> Vec<BackendSurfaceSnapshot> {
+            let mut snapshots = Vec::new();
+
+            for toplevel in &self.known_surfaces_snapshot().toplevels {
+                snapshots.push(BackendSurfaceSnapshot::Window {
+                    surface_id: toplevel.surface_id.clone(),
+                    window_id: toplevel.window_id.clone(),
+                    output_id: self.focused_output_id(&toplevel.surface_id),
+                });
+            }
+
+            for popup in &self.known_surfaces_snapshot().popups {
+                let parent_surface_id = match &popup.parent {
+                    SmithayPopupParentSnapshot::Resolved { surface_id, .. } => surface_id.clone(),
+                    SmithayPopupParentSnapshot::Unresolved => {
+                        format!("unresolved-parent-{}", popup.surface_id)
+                    }
+                };
+                snapshots.push(BackendSurfaceSnapshot::Popup {
+                    surface_id: popup.surface_id.clone(),
+                    output_id: self.layer_output_ids.get(&popup.surface_id).cloned(),
+                    parent_surface_id,
+                });
+            }
+
+            for layer in &self.known_surfaces_snapshot().layers {
+                snapshots.push(BackendSurfaceSnapshot::Layer {
+                    surface_id: layer.surface_id.clone(),
+                    output_id: layer.output_id.clone().unwrap_or_else(|| {
+                        self.active_output_id
+                            .clone()
+                            .or_else(|| self.known_output_ids.first().cloned())
+                            .unwrap_or_else(|| OutputId::from("unknown-output"))
+                    }),
+                    metadata: layer.metadata.clone(),
+                });
+            }
+
+            for unmanaged in &self.known_surfaces_snapshot().unmanaged {
+                snapshots.push(BackendSurfaceSnapshot::Unmanaged {
+                    surface_id: unmanaged.surface_id.clone(),
+                });
+            }
+
+            snapshots
+        }
+
         pub fn activate_output_id(&mut self, output_id: OutputId) {
             if self.active_output_id.as_ref() == Some(&output_id) {
                 return;

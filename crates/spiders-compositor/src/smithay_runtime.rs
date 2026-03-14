@@ -142,6 +142,14 @@ mod imp {
             ))
         }
 
+        pub fn apply_tracked_smithay_surface_discovery(
+            &mut self,
+            generation: u64,
+        ) -> Result<(), SmithayRuntimeError> {
+            let surfaces = self.runtime.state().backend_surface_snapshots();
+            self.apply_adapter_surface_discovery_batch(generation, surfaces)
+        }
+
         pub fn apply_adapter_discovery_batch(
             &mut self,
             generation: u64,
@@ -1268,6 +1276,93 @@ mod imp {
                 snapshot.outputs.active_output_id,
                 Some(OutputId::from("smithay-winit-output"))
             );
+        }
+
+        #[test]
+        fn smithay_state_extracts_backend_surface_snapshots_from_tracked_surfaces() {
+            let display = Display::<SpidersSmithayState>::new().unwrap();
+            let mut state = SpidersSmithayState::new(&display, "test-seat").unwrap();
+            state.register_output_id(OutputId::from("out-1"), true);
+            state.track_test_surface_snapshot(crate::backend::BackendSurfaceSnapshot::Window {
+                surface_id: "wl-window-extract-1".into(),
+                window_id: WindowId::from("w1"),
+                output_id: None,
+            });
+            state.track_test_surface_snapshot(crate::backend::BackendSurfaceSnapshot::Popup {
+                surface_id: "wl-popup-extract-1".into(),
+                output_id: Some(OutputId::from("out-1")),
+                parent_surface_id: "wl-window-extract-1".into(),
+            });
+            state.track_test_surface_snapshot(crate::backend::BackendSurfaceSnapshot::Layer {
+                surface_id: "wl-layer-extract-1".into(),
+                output_id: OutputId::from("out-1"),
+                metadata: LayerSurfaceMetadata {
+                    namespace: "panel".into(),
+                    tier: LayerSurfaceTier::Top,
+                    keyboard_interactivity: LayerKeyboardInteractivity::OnDemand,
+                    exclusive_zone: LayerExclusiveZone::Exclusive(8),
+                },
+            });
+            state.track_test_surface_snapshot(crate::backend::BackendSurfaceSnapshot::Unmanaged {
+                surface_id: "wl-unmanaged-extract-1".into(),
+            });
+
+            let snapshots = state.backend_surface_snapshots();
+            assert_eq!(snapshots.len(), 4);
+            assert!(snapshots.iter().any(|snapshot| {
+                matches!(snapshot, crate::backend::BackendSurfaceSnapshot::Window { surface_id, .. } if surface_id == "wl-window-extract-1")
+            }));
+            assert!(snapshots.iter().any(|snapshot| {
+                matches!(snapshot, crate::backend::BackendSurfaceSnapshot::Popup { surface_id, .. } if surface_id == "wl-popup-extract-1")
+            }));
+            assert!(snapshots.iter().any(|snapshot| {
+                matches!(snapshot, crate::backend::BackendSurfaceSnapshot::Layer { surface_id, .. } if surface_id == "wl-layer-extract-1")
+            }));
+            assert!(snapshots.iter().any(|snapshot| {
+                matches!(snapshot, crate::backend::BackendSurfaceSnapshot::Unmanaged { surface_id } if surface_id == "wl-unmanaged-extract-1")
+            }));
+        }
+
+        #[test]
+        fn bootstrap_applies_tracked_smithay_surface_discovery_to_controller() {
+            let mut bootstrap = test_bootstrap("wayland-test-tracked-surface-discovery");
+            bootstrap
+                .runtime
+                .state_mut()
+                .register_output_id(OutputId::from("out-1"), true);
+            bootstrap.runtime.state_mut().track_test_surface_snapshot(
+                crate::backend::BackendSurfaceSnapshot::Window {
+                    surface_id: "wl-bootstrap-window-1".into(),
+                    window_id: WindowId::from("w1"),
+                    output_id: None,
+                },
+            );
+            bootstrap.runtime.state_mut().track_test_surface_snapshot(
+                crate::backend::BackendSurfaceSnapshot::Popup {
+                    surface_id: "wl-bootstrap-popup-1".into(),
+                    output_id: Some(OutputId::from("out-1")),
+                    parent_surface_id: "wl-bootstrap-window-1".into(),
+                },
+            );
+
+            let _ = bootstrap.runtime.state_mut().take_discovery_events();
+            bootstrap
+                .apply_tracked_smithay_surface_discovery(1)
+                .unwrap();
+
+            let snapshot = bootstrap.snapshot();
+            assert!(snapshot
+                .topology
+                .surfaces
+                .iter()
+                .any(|surface| surface.id == "wl-bootstrap-window-1"
+                    && surface.role == SurfaceRole::Window));
+            assert!(snapshot
+                .topology
+                .surfaces
+                .iter()
+                .any(|surface| surface.id == "wl-bootstrap-popup-1"
+                    && surface.role == SurfaceRole::Popup));
         }
 
         #[test]

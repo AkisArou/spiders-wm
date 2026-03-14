@@ -348,6 +348,10 @@ That direct adapter path also covers surface lifecycle deltas such as unmap and
 loss when topology tests only need stable surface ids and existing parent/output
 relationships to update backend-agnostic state.
 
+When smithay already has tracked surface knowledge in its own inspection state,
+bootstrap/runtime code may extract a typed surface discovery batch from that
+smithay-owned snapshot instead of reconstructing the same test data separately.
+
 When several incremental lifecycle changes arrive together, the bootstrap owner
 may batch typed adapter events and forward them in order through the same
 controller-command path instead of rebuilding a larger discovery snapshot.

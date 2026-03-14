@@ -168,6 +168,9 @@ Compositor-domain note:
 - when the real smithay bootstrap path constructs a backend-created output
   snapshot, smithay-side inspection should record matching lightweight metadata
   so diagnostics and bootstrap reports describe the same initial output
+- when smithay inspection already knows about tracked surfaces, extracting a
+  typed backend surface batch from that inspection state is preferable to
+  duplicating equivalent test-only surface registration data
 - layer-shell configure bookkeeping also remains compositor-owned, but a small
   typed inspection snapshot for last acked serial, pending configure count, and
   configured size may cross the smithay seam for diagnostics and tests
