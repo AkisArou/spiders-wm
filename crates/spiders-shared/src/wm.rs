@@ -45,15 +45,65 @@ pub struct LoadedLayout {
     pub runtime_source: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct LayoutEvaluationContext {
-    pub state: StateSnapshot,
-    pub workspace: WorkspaceSnapshot,
+    pub monitor: LayoutMonitorContext,
+    pub workspace: LayoutWorkspaceContext,
+    pub windows: Vec<LayoutWindowContext>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state: Option<LayoutStateContext>,
+    #[serde(skip)]
+    pub workspace_id: WorkspaceId,
+    #[serde(skip)]
     pub output: Option<OutputSnapshot>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub selected_layout: Option<SelectedLayout>,
+    #[serde(skip)]
+    pub selected_layout_name: Option<String>,
+    #[serde(skip)]
     pub space: LayoutSpace,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LayoutMonitorContext {
+    pub name: String,
+    pub width: u32,
+    pub height: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scale: Option<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LayoutWorkspaceContext {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
+    #[serde(rename = "windowCount")]
+    pub window_count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LayoutWindowContext {
+    pub id: WindowId,
+    pub app_id: Option<String>,
+    pub title: Option<String>,
+    pub class: Option<String>,
+    pub instance: Option<String>,
+    pub role: Option<String>,
+    pub shell: Option<String>,
+    pub window_type: Option<String>,
+    pub floating: bool,
+    pub fullscreen: bool,
+    pub focused: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LayoutStateContext {
+    pub focused_window_id: Option<WindowId>,
+    pub current_output_id: Option<OutputId>,
+    pub current_workspace_id: Option<WorkspaceId>,
+    pub visible_window_ids: Vec<WindowId>,
+    pub tag_names: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selected_layout_name: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -181,17 +231,66 @@ impl StateSnapshot {
         workspace: &WorkspaceSnapshot,
         selected_layout: Option<SelectedLayout>,
     ) -> LayoutEvaluationContext {
+        let windows = self.windows_for_workspace(workspace);
         let output = workspace
             .output_id
             .as_ref()
             .and_then(|output_id| self.output_by_id(output_id))
             .cloned();
+        let selected_layout_name = selected_layout.as_ref().map(|layout| layout.name.clone());
 
         LayoutEvaluationContext {
-            state: self.clone(),
-            workspace: workspace.clone(),
+            monitor: LayoutMonitorContext {
+                name: output
+                    .as_ref()
+                    .map(|output| output.name.clone())
+                    .unwrap_or_default(),
+                width: output
+                    .as_ref()
+                    .map(|output| output.logical_width)
+                    .unwrap_or(0),
+                height: output
+                    .as_ref()
+                    .map(|output| output.logical_height)
+                    .unwrap_or(0),
+                scale: output.as_ref().map(|output| output.scale),
+            },
+            workspace: LayoutWorkspaceContext {
+                name: workspace.name.clone(),
+                tags: workspace.active_tags.clone(),
+                window_count: windows.len(),
+            },
+            windows: windows
+                .iter()
+                .map(|window| LayoutWindowContext {
+                    id: window.id.clone(),
+                    app_id: window.app_id.clone(),
+                    title: window.title.clone(),
+                    class: window.class.clone(),
+                    instance: window.instance.clone(),
+                    role: window.role.clone(),
+                    shell: Some(match window.shell {
+                        ShellKind::XdgToplevel => "xdg-toplevel".into(),
+                        ShellKind::X11 => "x11".into(),
+                        ShellKind::Unknown => "unknown".into(),
+                    }),
+                    window_type: window.window_type.clone(),
+                    floating: window.floating,
+                    fullscreen: window.fullscreen,
+                    focused: window.focused,
+                })
+                .collect(),
+            state: Some(LayoutStateContext {
+                focused_window_id: self.focused_window_id.clone(),
+                current_output_id: self.current_output_id.clone(),
+                current_workspace_id: self.current_workspace_id.clone(),
+                visible_window_ids: self.visible_window_ids.clone(),
+                tag_names: self.tag_names.clone(),
+                selected_layout_name: selected_layout_name.clone(),
+            }),
+            workspace_id: workspace.id.clone(),
             output,
-            selected_layout,
+            selected_layout_name,
             space: self.layout_space_for_workspace(workspace),
         }
     }
@@ -286,12 +385,15 @@ mod tests {
                 name: "master-stack".into(),
                 module: "layouts/master-stack.js".into(),
                 stylesheet: "workspace { display: flex; }".into(),
+                effects_stylesheet: String::new(),
             }),
         );
 
-        assert_eq!(context.workspace.id, WorkspaceId::from("ws-1"));
+        assert_eq!(context.workspace_id, WorkspaceId::from("ws-1"));
         assert_eq!(context.output.unwrap().id, OutputId::from("out-1"));
         assert_eq!(context.space.width, 1920.0);
+        assert_eq!(context.workspace.name, "1");
+        assert_eq!(context.workspace.window_count, 0);
     }
 
     #[test]

@@ -417,6 +417,7 @@ mod tests {
             stylesheet:
                 "workspace { display: flex; width: 320px; height: 200px; } #main { width: 100px; }"
                     .into(),
+            effects_stylesheet: String::new(),
             space: LayoutSpace {
                 width: 320.0,
                 height: 200.0,

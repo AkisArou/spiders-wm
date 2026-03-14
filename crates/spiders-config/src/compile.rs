@@ -13,7 +13,7 @@ use oxc::diagnostics::OxcDiagnostic;
 use oxc::parser::Parser;
 use oxc::span::GetSpan;
 use oxc::span::SourceType;
-use oxc::transformer::TransformOptions;
+use oxc::transformer::{JsxRuntime, TransformOptions};
 use oxc::CompilerInterface;
 
 use crate::graph::{ImportedModuleKind, ModuleGraph, ModuleId, ModuleKind, ModuleRecord};
@@ -138,7 +138,9 @@ struct AppScriptCompiler {
 impl Default for AppScriptCompiler {
     fn default() -> Self {
         let mut transform = TransformOptions::default();
-        transform.jsx.import_source = Some("spider-wm".into());
+        transform.jsx.runtime = JsxRuntime::Classic;
+        transform.jsx.pragma = Some("sp".into());
+        transform.jsx.pragma_frag = Some("Fragment".into());
 
         Self {
             printed: String::new(),
@@ -186,8 +188,16 @@ pub fn compile_app(plan: &AppBuildPlan) -> Result<CompiledApp, CompileError> {
         let source_type = SourceType::from_path(path)
             .map_err(|_| CompileError::UnsupportedSourceType { path: path.clone() })?;
         let mut compiler = AppScriptCompiler::default();
+        let injected_source = if matches!(
+            path.extension().and_then(|extension| extension.to_str()),
+            Some("tsx" | "jsx")
+        ) {
+            format!("import {{ sp, Fragment }} from \"spider-wm/jsx-runtime\";\n{source}")
+        } else {
+            source.clone()
+        };
         let code = compiler
-            .execute(&source, source_type, path)
+            .execute(&injected_source, source_type, path)
             .map_err(|_| CompileError::Transpile { path: path.clone() })?;
         scripts.push(CompiledScriptModule {
             path: path.clone(),

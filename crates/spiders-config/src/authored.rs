@@ -76,14 +76,8 @@ pub fn load_authored_config(path: impl AsRef<Path>) -> Result<Config, LayoutConf
         layout_defs.push(LayoutDefinition {
             name: app.name.clone(),
             module: layout_runtime_module_path(&app.name),
-            stylesheet: String::new(),
-            effects_stylesheet: if global_stylesheet.is_empty() {
-                bundled.stylesheet
-            } else if bundled.stylesheet.is_empty() {
-                global_stylesheet.clone()
-            } else {
-                format!("{}\n{}", global_stylesheet, bundled.stylesheet)
-            },
+            stylesheet: bundled.stylesheet,
+            effects_stylesheet: global_stylesheet.clone(),
             runtime_source: Some(bundled.javascript),
         });
     }
@@ -624,7 +618,7 @@ mod tests {
         let root = unique_root("project");
         fs::create_dir_all(root.join("config")).unwrap();
         fs::create_dir_all(root.join("layouts/master-stack")).unwrap();
-        fs::write(root.join("index.css"), "workspace { gap: 4px; }").unwrap();
+        fs::write(root.join("index.css"), "window { appearance: none; }").unwrap();
         fs::write(
             root.join("config.ts"),
             r#"
@@ -746,10 +740,29 @@ mod tests {
             .as_ref()
             .unwrap()
             .contains("__require"));
-        assert!(config.layouts[0].stylesheet.is_empty());
+        assert!(config.layouts[0].stylesheet.contains(".master {}"));
         assert!(config.layouts[0]
             .effects_stylesheet
-            .contains("workspace { gap: 4px; }"));
-        assert!(config.layouts[0].effects_stylesheet.contains(".master {}"));
+            .contains("window { appearance: none; }"));
+    }
+
+    #[test]
+    fn debug_writes_master_stack_runtime_source_for_node() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test_config/config.ts");
+        let config = load_authored_config(path).unwrap();
+        let layout = config
+            .layouts
+            .iter()
+            .find(|layout| layout.name == "master-stack")
+            .unwrap();
+        let output_path = Path::new("/home/akisarou/OUTPUT.js");
+        std::fs::write(
+            output_path,
+            format!(
+                "module.exports = {}\n",
+                layout.runtime_source.as_deref().unwrap()
+            ),
+        )
+        .unwrap();
     }
 }

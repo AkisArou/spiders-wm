@@ -515,7 +515,8 @@ mod tests {
         assert_eq!(selected.unwrap().module, "layouts/master-stack.js");
         assert_eq!(loaded.unwrap().selected.module, "layouts/master-stack.js");
         assert_eq!(context.space.width, 1920.0);
-        assert_eq!(context.workspace.id, WorkspaceId::from("ws-1"));
+        assert_eq!(context.workspace_id, WorkspaceId::from("ws-1"));
+        assert_eq!(context.workspace.name, "1");
     }
 
     #[test]

@@ -105,6 +105,7 @@ pub struct ComputedStyle {
     pub max_width: Option<SizeValue>,
     pub max_height: Option<SizeValue>,
     pub gap: Option<LengthPercentage>,
+    pub border: Option<BoxEdges<LengthPercentage>>,
     pub padding: Option<BoxEdges<LengthPercentage>>,
     pub margin: Option<BoxEdges<LengthPercentage>>,
 }
@@ -136,6 +137,7 @@ pub enum CompiledDeclaration {
     MaxWidth(SizeValue),
     MaxHeight(SizeValue),
     Gap(LengthPercentage),
+    Border(BoxEdges<LengthPercentage>),
     Padding(BoxEdges<LengthPercentage>),
     Margin(BoxEdges<LengthPercentage>),
 }
@@ -258,6 +260,9 @@ pub fn map_computed_style_to_taffy(style: &ComputedStyle) -> TaffyStyle {
             width: gap,
             height: gap,
         };
+    }
+    if let Some(border) = style.border {
+        taffy_style.border = map_box_edges(border, map_length_percentage);
     }
     if let Some(padding) = style.padding {
         taffy_style.padding = map_box_edges(padding, map_length_percentage);
@@ -486,7 +491,7 @@ fn validate_property(property: &str) -> Result<(), CssParseError> {
     match property {
         "display" | "flex-direction" | "flex-grow" | "flex-shrink" | "flex-basis" | "width"
         | "height" | "min-width" | "min-height" | "max-width" | "max-height" | "gap"
-        | "padding" | "margin" => Ok(()),
+        | "border-width" | "padding" | "margin" => Ok(()),
         _ => Err(CssParseError::UnsupportedProperty {
             property: property.to_owned(),
         }),
@@ -536,6 +541,9 @@ pub fn compile_declaration(
         "gap" => Ok(CompiledDeclaration::Gap(parse_length_percentage(
             property, value,
         )?)),
+        "border-width" => Ok(CompiledDeclaration::Border(parse_box_edges(
+            property, value,
+        )?)),
         "padding" => Ok(CompiledDeclaration::Padding(parse_box_edges(
             property, value,
         )?)),
@@ -564,6 +572,7 @@ impl ComputedStyle {
             CompiledDeclaration::MaxWidth(value) => self.max_width = Some(value),
             CompiledDeclaration::MaxHeight(value) => self.max_height = Some(value),
             CompiledDeclaration::Gap(value) => self.gap = Some(value),
+            CompiledDeclaration::Border(value) => self.border = Some(value),
             CompiledDeclaration::Padding(value) => self.padding = Some(value),
             CompiledDeclaration::Margin(value) => self.margin = Some(value),
         }

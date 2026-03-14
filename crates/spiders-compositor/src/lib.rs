@@ -260,7 +260,7 @@ pub(crate) fn build_request_from_context(
     root: ResolvedLayoutNode,
 ) -> LayoutRequest {
     LayoutRequest {
-        workspace_id: context.workspace.id,
+        workspace_id: context.workspace_id,
         output_id: context.output.map(|output| output.id),
         layout_name: Some(selected_layout.name),
         root,
