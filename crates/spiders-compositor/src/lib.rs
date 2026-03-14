@@ -561,7 +561,7 @@ mod tests {
     }
 
     #[test]
-    fn layout_service_bootstraps_runtime_service_for_current_workspace() {
+    fn layout_service_bootstraps_authoring_layout_service_for_current_workspace() {
         let service = LayoutService;
         let temp_dir = std::env::temp_dir();
         let runtime_root = temp_dir.join("spiders-bootstrap-runtime");
@@ -577,12 +577,12 @@ mod tests {
             spiders_runtime_js::loader::RuntimePathResolver::new(".", &runtime_root),
         );
         let runtime = spiders_runtime_js::runtime::BoaPreparedLayoutRuntime::with_loader(loader.clone());
-        let mut runtime_service = spiders_config::authoring_layout::AuthoringLayoutService::new(runtime);
+        let mut authoring_layout_service = spiders_config::authoring_layout::AuthoringLayoutService::new(runtime);
         let config = layout_config("", "layouts/master-stack.js");
         let state = state_snapshot(800, 600);
 
         let evaluated = service
-            .bootstrap_runtime(&mut runtime_service, &config, &state)
+            .bootstrap_runtime(&mut authoring_layout_service, &config, &state)
             .unwrap()
             .unwrap();
 
@@ -618,12 +618,12 @@ mod tests {
             spiders_runtime_js::loader::RuntimePathResolver::new(".", &runtime_root),
         );
         let runtime = spiders_runtime_js::runtime::BoaPreparedLayoutRuntime::with_loader(loader.clone());
-        let runtime_service = spiders_config::authoring_layout::AuthoringLayoutService::new(runtime);
+        let authoring_layout_service = spiders_config::authoring_layout::AuthoringLayoutService::new(runtime);
         let config = layout_config("", "layouts/master-stack.js");
         let state = state_snapshot(800, 600);
 
         let startup = service
-            .initialize_startup_runtime(runtime_service, config, &state)
+            .initialize_startup_runtime(authoring_layout_service, config, &state)
             .unwrap();
 
         assert!(startup.startup_layout.is_some());
@@ -670,12 +670,12 @@ mod tests {
             spiders_runtime_js::loader::RuntimePathResolver::new(".", &runtime_root),
         );
         let runtime = spiders_runtime_js::runtime::BoaPreparedLayoutRuntime::with_loader(loader.clone());
-        let runtime_service = spiders_config::authoring_layout::AuthoringLayoutService::new(runtime);
+        let authoring_layout_service = spiders_config::authoring_layout::AuthoringLayoutService::new(runtime);
         let config = layout_config("", "layouts/master-stack.js");
         let state = state_snapshot(800, 600);
 
         let startup = service
-            .initialize_startup_config(runtime_service, config, state)
+            .initialize_startup_config(authoring_layout_service, config, state)
             .unwrap();
 
         assert!(startup.runtime.startup_layout.is_some());
@@ -727,12 +727,12 @@ mod tests {
             spiders_runtime_js::loader::RuntimePathResolver::new(".", &runtime_root),
         );
         let runtime = spiders_runtime_js::runtime::BoaPreparedLayoutRuntime::with_loader(loader.clone());
-        let runtime_service = spiders_config::authoring_layout::AuthoringLayoutService::new(runtime);
+        let authoring_layout_service = spiders_config::authoring_layout::AuthoringLayoutService::new(runtime);
         let config = layout_config("", "layouts/master-stack.js");
         let state = state_snapshot(800, 600);
 
         let session = service
-            .initialize_startup_session(runtime_service, config, state)
+            .initialize_startup_session(authoring_layout_service, config, state)
             .unwrap();
 
         assert_eq!(
@@ -772,12 +772,12 @@ mod tests {
             spiders_runtime_js::loader::RuntimePathResolver::new(".", &runtime_root),
         );
         let runtime = spiders_runtime_js::runtime::BoaPreparedLayoutRuntime::with_loader(loader.clone());
-        let runtime_service = spiders_config::authoring_layout::AuthoringLayoutService::new(runtime);
+        let authoring_layout_service = spiders_config::authoring_layout::AuthoringLayoutService::new(runtime);
         let config = layout_config("", "layouts/master-stack.js");
         let state = state_snapshot(800, 600);
 
         let runtime = service
-            .initialize_runtime_state(runtime_service, config, state)
+            .initialize_runtime_state(authoring_layout_service, config, state)
             .unwrap();
 
         assert_eq!(

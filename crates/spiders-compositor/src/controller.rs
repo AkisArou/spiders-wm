@@ -63,26 +63,26 @@ impl<R> CompositorController<R> {
 
 impl<R: AuthoringLayoutRuntime<Config = Config>> CompositorController<R> {
     pub fn initialize(
-        runtime_service: AuthoringLayoutService<R>,
+        authoring_layout_service: AuthoringLayoutService<R>,
         config: Config,
         state: StateSnapshot,
     ) -> Result<Self, BootstrapRunnerError> {
         Ok(Self {
-            host: CompositorHost::initialize(runtime_service, config, state)?,
+            host: CompositorHost::initialize(authoring_layout_service, config, state)?,
             phase: ControllerPhase::Pending,
             backend: BackendSessionState::default(),
         })
     }
 
     pub fn initialize_with_registration(
-        runtime_service: AuthoringLayoutService<R>,
+        authoring_layout_service: AuthoringLayoutService<R>,
         config: Config,
         state: StateSnapshot,
         startup: StartupRegistration,
     ) -> Result<Self, BootstrapRunnerError> {
         Ok(Self {
             host: CompositorHost::initialize_with_registration(
-                runtime_service,
+                authoring_layout_service,
                 config,
                 state,
                 startup,
@@ -93,14 +93,14 @@ impl<R: AuthoringLayoutRuntime<Config = Config>> CompositorController<R> {
     }
 
     pub fn initialize_with_transcript(
-        runtime_service: AuthoringLayoutService<R>,
+        authoring_layout_service: AuthoringLayoutService<R>,
         config: Config,
         state: StateSnapshot,
         transcript: &BootstrapTranscript,
     ) -> Result<Self, BootstrapRunnerError> {
         Ok(Self {
             host: CompositorHost::initialize_with_transcript(
-                runtime_service,
+                authoring_layout_service,
                 config,
                 state,
                 transcript,
@@ -111,16 +111,16 @@ impl<R: AuthoringLayoutRuntime<Config = Config>> CompositorController<R> {
     }
 
     pub fn initialize_with_script(
-        runtime_service: AuthoringLayoutService<R>,
+        authoring_layout_service: AuthoringLayoutService<R>,
         config: Config,
         state: StateSnapshot,
         script: &BootstrapScript,
     ) -> Result<Self, BootstrapRunnerError> {
         match script.startup() {
             Some(startup) => {
-                Self::initialize_with_registration(runtime_service, config, state, startup.clone())
+                Self::initialize_with_registration(authoring_layout_service, config, state, startup.clone())
             }
-            None => Self::initialize(runtime_service, config, state),
+            None => Self::initialize(authoring_layout_service, config, state),
         }
     }
 
@@ -381,7 +381,7 @@ mod tests {
         }
     }
 
-    fn runtime_service() -> AuthoringLayoutService<BoaPreparedLayoutRuntime<RuntimeProjectLayoutSourceLoader>>
+    fn authoring_layout_service() -> AuthoringLayoutService<BoaPreparedLayoutRuntime<RuntimeProjectLayoutSourceLoader>>
     {
         let temp_dir = std::env::temp_dir();
         let unique = SystemTime::now()
@@ -410,7 +410,7 @@ mod tests {
                 .register_window_surface("window-w1", "w1", Some(OutputId::from("out-1"))),
         );
         let mut controller = CompositorController::initialize_with_script(
-            runtime_service(),
+            authoring_layout_service(),
             config(),
             state(),
             &script,
@@ -441,7 +441,7 @@ mod tests {
             ),
         ));
         let mut controller = CompositorController::initialize_with_script(
-            runtime_service(),
+            authoring_layout_service(),
             config(),
             state(),
             &script,
@@ -460,7 +460,7 @@ mod tests {
     fn controller_marks_degraded_on_failed_script() {
         let script = BootstrapScript::Events(BootstrapScenario::new().remove_output("missing"));
         let mut controller = CompositorController::initialize_with_script(
-            runtime_service(),
+            authoring_layout_service(),
             config(),
             state(),
             &script,
@@ -474,7 +474,7 @@ mod tests {
     #[test]
     fn controller_accepts_backend_discovery_event() {
         let mut controller =
-            CompositorController::initialize(runtime_service(), config(), state()).unwrap();
+            CompositorController::initialize(authoring_layout_service(), config(), state()).unwrap();
 
         controller
             .apply_discovery_event(BackendDiscoveryEvent::SeatDiscovered {
@@ -497,7 +497,7 @@ mod tests {
     #[test]
     fn controller_command_returns_command_report() {
         let mut controller =
-            CompositorController::initialize(runtime_service(), config(), state()).unwrap();
+            CompositorController::initialize(authoring_layout_service(), config(), state()).unwrap();
 
         let report = controller
             .apply_command(ControllerCommand::DiscoveryEvent(
@@ -514,7 +514,7 @@ mod tests {
     #[test]
     fn controller_accepts_surface_unmapped_discovery_event() {
         let mut controller =
-            CompositorController::initialize(runtime_service(), config(), state()).unwrap();
+            CompositorController::initialize(authoring_layout_service(), config(), state()).unwrap();
 
         controller
             .apply_discovery_event(BackendDiscoveryEvent::WindowSurfaceDiscovered {
@@ -549,7 +549,7 @@ mod tests {
     #[test]
     fn controller_accepts_seat_focus_discovery_event() {
         let mut controller =
-            CompositorController::initialize(runtime_service(), config(), state()).unwrap();
+            CompositorController::initialize(authoring_layout_service(), config(), state()).unwrap();
 
         controller
             .apply_discovery_event(BackendDiscoveryEvent::SeatDiscovered {
@@ -578,7 +578,7 @@ mod tests {
     #[test]
     fn controller_cascades_parent_surface_unmap_to_popup_children() {
         let mut controller =
-            CompositorController::initialize(runtime_service(), config(), state()).unwrap();
+            CompositorController::initialize(authoring_layout_service(), config(), state()).unwrap();
 
         controller
             .apply_discovery_event(BackendDiscoveryEvent::WindowSurfaceDiscovered {
@@ -609,7 +609,7 @@ mod tests {
     #[test]
     fn controller_cascades_parent_surface_removal_to_popup_children() {
         let mut controller =
-            CompositorController::initialize(runtime_service(), config(), state()).unwrap();
+            CompositorController::initialize(authoring_layout_service(), config(), state()).unwrap();
 
         controller
             .apply_discovery_event(BackendDiscoveryEvent::WindowSurfaceDiscovered {
@@ -640,7 +640,7 @@ mod tests {
     #[test]
     fn controller_preserves_layer_output_for_popup_parented_to_layer_surface() {
         let mut controller =
-            CompositorController::initialize(runtime_service(), config(), state()).unwrap();
+            CompositorController::initialize(authoring_layout_service(), config(), state()).unwrap();
 
         controller
             .apply_discovery_event(BackendDiscoveryEvent::LayerSurfaceDiscovered {
@@ -671,7 +671,7 @@ mod tests {
     #[test]
     fn controller_accepts_backend_topology_snapshot() {
         let mut controller =
-            CompositorController::initialize(runtime_service(), config(), state()).unwrap();
+            CompositorController::initialize(authoring_layout_service(), config(), state()).unwrap();
 
         controller
             .apply_discovery_snapshot(BackendTopologySnapshot {
@@ -731,7 +731,7 @@ mod tests {
     #[test]
     fn controller_report_tracks_backend_snapshot_metadata() {
         let mut controller =
-            CompositorController::initialize(runtime_service(), config(), state()).unwrap();
+            CompositorController::initialize(authoring_layout_service(), config(), state()).unwrap();
 
         controller
             .apply_discovery_snapshot(BackendTopologySnapshot {

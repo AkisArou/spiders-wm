@@ -41,7 +41,7 @@ pub struct StartupLayoutState {
 #[derive(Debug)]
 pub struct StartupSequence<R> {
     pub service: LayoutService,
-    pub runtime_service: AuthoringLayoutService<R>,
+    pub authoring_layout_service: AuthoringLayoutService<R>,
     pub config: Config,
     pub state: StateSnapshot,
 }
@@ -76,13 +76,13 @@ impl<R> StartupSession<R> {
 impl<R: AuthoringLayoutRuntime<Config = Config>> StartupSequence<R> {
     pub fn new(
         service: LayoutService,
-        runtime_service: AuthoringLayoutService<R>,
+        authoring_layout_service: AuthoringLayoutService<R>,
         config: Config,
         state: StateSnapshot,
     ) -> Self {
         Self {
             service,
-            runtime_service,
+            authoring_layout_service,
             config,
             state,
         }
@@ -90,13 +90,13 @@ impl<R: AuthoringLayoutRuntime<Config = Config>> StartupSequence<R> {
 
     pub fn bootstrap(self) -> Result<StartupConfig<R>, CompositorLayoutError> {
         self.service
-            .initialize_startup_config(self.runtime_service, self.config, self.state)
+            .initialize_startup_config(self.authoring_layout_service, self.config, self.state)
     }
 }
 
 pub(crate) fn bootstrap_runtime<R: AuthoringLayoutRuntime<Config = Config>>(
     _service: &LayoutService,
-    runtime_service: &mut AuthoringLayoutService<R>,
+    authoring_layout_service: &mut AuthoringLayoutService<R>,
     config: &Config,
     state: &StateSnapshot,
 ) -> Result<Option<StartupLayoutState>, CompositorLayoutError> {
@@ -104,7 +104,7 @@ pub(crate) fn bootstrap_runtime<R: AuthoringLayoutRuntime<Config = Config>>(
         return Ok(None);
     };
 
-    Ok(runtime_service
+    Ok(authoring_layout_service
         .evaluate_prepared_for_workspace(config, state, workspace)?
         .map(
             |evaluated| -> Result<StartupLayoutState, CompositorLayoutError> {
@@ -135,37 +135,37 @@ pub(crate) fn bootstrap_runtime<R: AuthoringLayoutRuntime<Config = Config>>(
 
 pub(crate) fn initialize_startup_runtime<R: AuthoringLayoutRuntime<Config = Config>>(
     service: &LayoutService,
-    mut runtime_service: AuthoringLayoutService<R>,
+    mut authoring_layout_service: AuthoringLayoutService<R>,
     config: Config,
     state: &StateSnapshot,
 ) -> Result<StartupRuntime<R>, CompositorLayoutError> {
-    let startup_layout = bootstrap_runtime(service, &mut runtime_service, &config, state)?;
+    let startup_layout = bootstrap_runtime(service, &mut authoring_layout_service, &config, state)?;
 
     Ok(StartupRuntime {
         config,
-        service: runtime_service,
+        service: authoring_layout_service,
         startup_layout,
     })
 }
 
 pub(crate) fn initialize_startup_config<R: AuthoringLayoutRuntime<Config = Config>>(
     service: &LayoutService,
-    runtime_service: AuthoringLayoutService<R>,
+    authoring_layout_service: AuthoringLayoutService<R>,
     config: Config,
     state: StateSnapshot,
 ) -> Result<StartupConfig<R>, CompositorLayoutError> {
-    let runtime = initialize_startup_runtime(service, runtime_service, config, &state)?;
+    let runtime = initialize_startup_runtime(service, authoring_layout_service, config, &state)?;
 
     Ok(StartupConfig { runtime, state })
 }
 
 pub(crate) fn initialize_startup_session<R: AuthoringLayoutRuntime<Config = Config>>(
     service: &LayoutService,
-    runtime_service: AuthoringLayoutService<R>,
+    authoring_layout_service: AuthoringLayoutService<R>,
     config: Config,
     state: StateSnapshot,
 ) -> Result<StartupSession<R>, CompositorLayoutError> {
-    Ok(initialize_startup_config(service, runtime_service, config, state)?.into_session())
+    Ok(initialize_startup_config(service, authoring_layout_service, config, state)?.into_session())
 }
 
 #[cfg(test)]
@@ -245,8 +245,8 @@ mod tests {
         let loader =
             RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
         let runtime = BoaPreparedLayoutRuntime::with_loader(loader.clone());
-        let runtime_service = AuthoringLayoutService::new(runtime);
-        let sequence = StartupSequence::new(LayoutService, runtime_service, config(), state());
+        let authoring_layout_service = AuthoringLayoutService::new(runtime);
+        let sequence = StartupSequence::new(LayoutService, authoring_layout_service, config(), state());
 
         let startup = sequence.bootstrap().unwrap();
 
@@ -293,10 +293,10 @@ mod tests {
         let loader =
             RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
         let runtime = BoaPreparedLayoutRuntime::with_loader(loader.clone());
-        let runtime_service = AuthoringLayoutService::new(runtime);
+        let authoring_layout_service = AuthoringLayoutService::new(runtime);
 
         let session =
-            initialize_startup_session(&LayoutService, runtime_service, config(), state()).unwrap();
+            initialize_startup_session(&LayoutService, authoring_layout_service, config(), state()).unwrap();
 
         assert_eq!(
             session.startup_workspace_id(),
@@ -337,7 +337,7 @@ mod tests {
         let loader =
             RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
         let runtime = BoaPreparedLayoutRuntime::with_loader(loader.clone());
-        let mut runtime_service = AuthoringLayoutService::new(runtime);
+        let mut authoring_layout_service = AuthoringLayoutService::new(runtime);
         let config = config();
         let state = StateSnapshot {
             focused_window_id: Some(WindowId::from("w1")),
@@ -410,7 +410,7 @@ mod tests {
             tag_names: vec!["1".into(), "2".into()],
         };
 
-        let startup = bootstrap_runtime(&LayoutService, &mut runtime_service, &config, &state)
+        let startup = bootstrap_runtime(&LayoutService, &mut authoring_layout_service, &config, &state)
             .unwrap()
             .unwrap();
 

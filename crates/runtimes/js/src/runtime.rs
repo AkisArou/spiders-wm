@@ -504,7 +504,7 @@ mod tests {
     }
 
     #[test]
-    fn boa_runtime_service_works_with_filesystem_loader() {
+    fn boa_authoring_layout_service_works_with_filesystem_loader() {
         let temp_dir = std::env::temp_dir();
         let module_path = temp_dir.join("spiders-runtime-service-test.js");
         fs::write(

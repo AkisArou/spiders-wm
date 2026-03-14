@@ -126,12 +126,12 @@ impl<R: AuthoringLayoutRuntime<Config = Config>> CompositorRuntimeState<R> {
 
 pub(crate) fn initialize_runtime_state<R: AuthoringLayoutRuntime<Config = Config>>(
     layout_service: LayoutService,
-    runtime_service: AuthoringLayoutService<R>,
+    authoring_layout_service: AuthoringLayoutService<R>,
     config: Config,
     state: StateSnapshot,
 ) -> Result<CompositorRuntimeState<R>, CompositorLayoutError> {
     let startup =
-        startup::initialize_startup_session(&layout_service, runtime_service, config, state)?;
+        startup::initialize_startup_session(&layout_service, authoring_layout_service, config, state)?;
 
     Ok(CompositorRuntimeState::from_startup(
         layout_service,
@@ -256,10 +256,10 @@ mod tests {
         let loader =
             RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
         let runtime = BoaPreparedLayoutRuntime::with_loader(loader.clone());
-        let runtime_service = AuthoringLayoutService::new(runtime);
+        let authoring_layout_service = AuthoringLayoutService::new(runtime);
 
         let runtime =
-            initialize_runtime_state(LayoutService, runtime_service, config(), state()).unwrap();
+            initialize_runtime_state(LayoutService, authoring_layout_service, config(), state()).unwrap();
 
         assert_eq!(
             runtime.current_workspace_id(),
@@ -300,7 +300,7 @@ mod tests {
         let loader =
             RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
         let runtime = BoaPreparedLayoutRuntime::with_loader(loader.clone());
-        let runtime_service = AuthoringLayoutService::new(runtime);
+        let authoring_layout_service = AuthoringLayoutService::new(runtime);
         let mut config = config();
         config.layouts[0].effects_stylesheet =
             "window { appearance: none; } window::titlebar { background: #111; }".into();
@@ -327,7 +327,7 @@ mod tests {
         snapshot.visible_window_ids = vec![spiders_shared::ids::WindowId::from("w1")];
 
         let runtime =
-            initialize_runtime_state(LayoutService, runtime_service, config, snapshot).unwrap();
+            initialize_runtime_state(LayoutService, authoring_layout_service, config, snapshot).unwrap();
         let effects = &runtime.current_layout().unwrap().effects;
 
         assert!(effects
@@ -357,7 +357,7 @@ mod tests {
         let loader =
             RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
         let runtime = BoaPreparedLayoutRuntime::with_loader(loader.clone());
-        let runtime_service = AuthoringLayoutService::new(runtime);
+        let authoring_layout_service = AuthoringLayoutService::new(runtime);
         let mut config = config();
         config.layouts[0].effects_stylesheet =
             "window::titlebar { background: #111; height: 30px; }".into();
@@ -384,7 +384,7 @@ mod tests {
         snapshot.visible_window_ids = vec![spiders_shared::ids::WindowId::from("w1")];
 
         let runtime =
-            initialize_runtime_state(LayoutService, runtime_service, config, snapshot).unwrap();
+            initialize_runtime_state(LayoutService, authoring_layout_service, config, snapshot).unwrap();
         let plan = runtime.current_titlebar_render_plan();
 
         assert_eq!(plan.len(), 1);

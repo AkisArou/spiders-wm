@@ -209,13 +209,13 @@ impl<R> CompositorApp<R> {
 impl<R: AuthoringLayoutRuntime<Config = Config>> CompositorApp<R> {
     pub fn initialize(
         layout_service: LayoutService,
-        runtime_service: AuthoringLayoutService<R>,
+        authoring_layout_service: AuthoringLayoutService<R>,
         config: Config,
         state: StateSnapshot,
     ) -> Result<Self, CompositorLayoutError> {
         Self::initialize_with_registration(
             layout_service,
-            runtime_service,
+            authoring_layout_service,
             config,
             state.clone(),
             StartupRegistration::from_state(&state),
@@ -224,13 +224,13 @@ impl<R: AuthoringLayoutRuntime<Config = Config>> CompositorApp<R> {
 
     pub fn initialize_with_registration(
         layout_service: LayoutService,
-        runtime_service: AuthoringLayoutService<R>,
+        authoring_layout_service: AuthoringLayoutService<R>,
         config: Config,
         state: StateSnapshot,
         startup: StartupRegistration,
     ) -> Result<Self, CompositorLayoutError> {
         let mut session =
-            CompositorSession::initialize(layout_service, runtime_service, config, state)?;
+            CompositorSession::initialize(layout_service, authoring_layout_service, config, state)?;
 
         for seat in &startup.seats {
             session.register_seat(seat.clone());

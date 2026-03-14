@@ -216,13 +216,13 @@ impl<R> CompositorSession<R> {
 impl<R: AuthoringLayoutRuntime<Config = Config>> CompositorSession<R> {
     pub fn initialize(
         layout_service: LayoutService,
-        runtime_service: AuthoringLayoutService<R>,
+        authoring_layout_service: AuthoringLayoutService<R>,
         config: Config,
         state: StateSnapshot,
     ) -> Result<Self, CompositorLayoutError> {
         let runtime = crate::runtime::initialize_runtime_state(
             layout_service,
-            runtime_service,
+            authoring_layout_service,
             config,
             state.clone(),
         )?;

@@ -313,7 +313,7 @@ mod tests {
     }
 
     #[test]
-    fn runtime_service_loads_and_caches_prepared_layout() {
+    fn authoring_layout_service_loads_and_caches_prepared_layout() {
         let runtime = StubRuntime {
             loaded: Some(prepared_layout("master-stack", "layouts/master-stack.js")),
             error_message: None,
@@ -340,7 +340,7 @@ mod tests {
     }
 
     #[test]
-    fn runtime_service_evaluates_prepared_layout_for_workspace() {
+    fn authoring_layout_service_evaluates_prepared_layout_for_workspace() {
         let runtime = StubRuntime {
             loaded: Some(prepared_layout("master-stack", "layouts/master-stack.js")),
             error_message: None,
@@ -370,7 +370,7 @@ mod tests {
     }
 
     #[test]
-    fn runtime_service_loads_config_from_runtime_path() {
+    fn authoring_layout_service_loads_config_from_runtime_path() {
         let temp_dir = std::env::temp_dir();
         let runtime_config_path = temp_dir.join("spiders-runtime-config.json");
         fs::write(
@@ -393,7 +393,7 @@ mod tests {
     }
 
     #[test]
-    fn runtime_service_discovers_config_paths_from_options() {
+    fn authoring_layout_service_discovers_config_paths_from_options() {
         let temp_dir = std::env::temp_dir();
         let home_dir = temp_dir.join("spiders-service-discovery-home");
         let config_dir = home_dir.join(".config/spiders-wm");
@@ -424,7 +424,7 @@ mod tests {
     }
 
     #[test]
-    fn runtime_service_reports_missing_layout_module_sources() {
+    fn authoring_layout_service_reports_missing_layout_module_sources() {
         let service: AuthoringLayoutService<_> = AuthoringLayoutService::new(StubRuntime {
             loaded: None,
             error_message: Some("layout module `layouts/missing.js` source is unavailable".into()),
@@ -447,7 +447,7 @@ mod tests {
     }
 
     #[test]
-    fn runtime_service_loads_authored_config_when_runtime_json_is_missing() {
+    fn authoring_layout_service_loads_authored_config_when_runtime_json_is_missing() {
         let project_root = std::env::temp_dir().join("spiders-service-authored-config");
         let authored_config = Config {
             tags: vec!["1".into()],

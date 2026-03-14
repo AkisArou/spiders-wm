@@ -122,19 +122,19 @@ impl<R> BootstrapRunner<R> {
 impl<R: AuthoringLayoutRuntime<Config = Config>> BootstrapRunner<R> {
     pub fn initialize(
         layout_service: LayoutService,
-        runtime_service: AuthoringLayoutService<R>,
+        authoring_layout_service: AuthoringLayoutService<R>,
         config: Config,
         state: StateSnapshot,
     ) -> Result<Self, BootstrapRunnerError> {
         Ok(Self {
-            app: CompositorApp::initialize(layout_service, runtime_service, config, state)?,
+            app: CompositorApp::initialize(layout_service, authoring_layout_service, config, state)?,
             applied_events: Vec::new(),
         })
     }
 
     pub fn initialize_with_registration(
         layout_service: LayoutService,
-        runtime_service: AuthoringLayoutService<R>,
+        authoring_layout_service: AuthoringLayoutService<R>,
         config: Config,
         state: StateSnapshot,
         startup: StartupRegistration,
@@ -142,7 +142,7 @@ impl<R: AuthoringLayoutRuntime<Config = Config>> BootstrapRunner<R> {
         Ok(Self {
             app: CompositorApp::initialize_with_registration(
                 layout_service,
-                runtime_service,
+                authoring_layout_service,
                 config,
                 state,
                 startup,

@@ -1121,26 +1121,26 @@ mod imp {
     }
 
     pub fn initialize_winit_controller<R>(
-        runtime_service: spiders_config::authoring_layout::AuthoringLayoutService<R>,
+        authoring_layout_service: spiders_config::authoring_layout::AuthoringLayoutService<R>,
         config: spiders_config::model::Config,
         state: spiders_shared::wm::StateSnapshot,
     ) -> Result<crate::CompositorController<R>, SmithayRuntimeError>
     where
         R: AuthoringLayoutRuntime<Config = Config>,
     {
-        crate::CompositorController::initialize(runtime_service, config, state)
+        crate::CompositorController::initialize(authoring_layout_service, config, state)
             .map_err(|error| SmithayRuntimeError::Winit(error.to_string()))
     }
 
     pub fn bootstrap_winit<R>(
-        runtime_service: spiders_config::authoring_layout::AuthoringLayoutService<R>,
+        authoring_layout_service: spiders_config::authoring_layout::AuthoringLayoutService<R>,
         config: spiders_config::model::Config,
         state: spiders_shared::wm::StateSnapshot,
     ) -> Result<SmithayBootstrap<R>, SmithayRuntimeError>
     where
         R: AuthoringLayoutRuntime<Config = Config>,
     {
-        let mut controller = initialize_winit_controller(runtime_service, config, state)?;
+        let mut controller = initialize_winit_controller(authoring_layout_service, config, state)?;
         let (runtime, report) = bootstrap_winit_controller(&mut controller)?;
 
         Ok(SmithayBootstrap {
@@ -1336,7 +1336,7 @@ mod imp {
             }
         }
 
-        fn test_runtime_service() -> AuthoringLayoutService<
+        fn test_authoring_layout_service() -> AuthoringLayoutService<
             RuntimeProjectLayoutSourceLoader,
             BoaPreparedLayoutRuntime<RuntimeProjectLayoutSourceLoader>,
         > {
@@ -1387,10 +1387,10 @@ mod imp {
         }
 
         fn test_bootstrap_with_state(socket_name: &str, state: StateSnapshot) -> TestBootstrap {
-            let runtime_service = test_runtime_service();
+            let authoring_layout_service = test_authoring_layout_service();
             let config = test_config();
             let controller =
-                crate::CompositorController::initialize(runtime_service, config, state).unwrap();
+                crate::CompositorController::initialize(authoring_layout_service, config, state).unwrap();
             let runtime = test_runtime(socket_name);
             let report = SmithayStartupReport {
                 controller: controller.report(),
@@ -1610,11 +1610,11 @@ mod imp {
 
         #[test]
         fn bootstrap_snapshot_matches_runtime_snapshot() {
-            let runtime_service = test_runtime_service();
+            let authoring_layout_service = test_authoring_layout_service();
             let config = test_config();
             let state = test_state_snapshot();
             let controller =
-                crate::CompositorController::initialize(runtime_service, config, state).unwrap();
+                crate::CompositorController::initialize(authoring_layout_service, config, state).unwrap();
             let runtime = test_runtime("wayland-test-2");
             let report = SmithayStartupReport {
                 controller: controller.report(),
@@ -1639,11 +1639,11 @@ mod imp {
 
         #[test]
         fn bootstrap_applies_pending_discovery_events_to_controller() {
-            let runtime_service = test_runtime_service();
+            let authoring_layout_service = test_authoring_layout_service();
             let config = test_config();
             let state = test_state_snapshot();
             let controller =
-                crate::CompositorController::initialize(runtime_service, config, state).unwrap();
+                crate::CompositorController::initialize(authoring_layout_service, config, state).unwrap();
             let mut runtime = test_runtime("wayland-test-3");
             runtime.state_mut().track_test_surface_snapshot(
                 crate::backend::BackendSurfaceSnapshot::Window {
@@ -2880,11 +2880,11 @@ mod imp {
 
         #[test]
         fn bootstrap_unmaps_and_remaps_layer_surface_without_losing_output_attachment() {
-            let runtime_service = test_runtime_service();
+            let authoring_layout_service = test_authoring_layout_service();
             let config = test_config();
             let state = test_state_snapshot();
             let controller =
-                crate::CompositorController::initialize(runtime_service, config, state).unwrap();
+                crate::CompositorController::initialize(authoring_layout_service, config, state).unwrap();
             let mut runtime = test_runtime("wayland-test-layer-2");
             runtime
                 .state_mut()
@@ -3055,11 +3055,11 @@ mod imp {
 
         #[test]
         fn bootstrap_unmaps_and_remaps_topology_surface_when_smithay_surface_buffer_changes() {
-            let runtime_service = test_runtime_service();
+            let authoring_layout_service = test_authoring_layout_service();
             let config = test_config();
             let state = test_state_snapshot();
             let controller =
-                crate::CompositorController::initialize(runtime_service, config, state).unwrap();
+                crate::CompositorController::initialize(authoring_layout_service, config, state).unwrap();
             let mut runtime = test_runtime("wayland-test-7");
 
             runtime.state_mut().track_test_surface_snapshot(
@@ -3145,11 +3145,11 @@ mod imp {
 
         #[test]
         fn bootstrap_cascades_popup_unmap_and_removal_from_parent_surface() {
-            let runtime_service = test_runtime_service();
+            let authoring_layout_service = test_authoring_layout_service();
             let config = test_config();
             let state = test_state_snapshot();
             let controller =
-                crate::CompositorController::initialize(runtime_service, config, state).unwrap();
+                crate::CompositorController::initialize(authoring_layout_service, config, state).unwrap();
             let mut runtime = test_runtime("wayland-test-8");
 
             runtime.state_mut().track_test_surface_snapshot(
@@ -3277,11 +3277,11 @@ mod imp {
 
         #[test]
         fn bootstrap_snapshot_preserves_xdg_popup_configure_metadata() {
-            let runtime_service = test_runtime_service();
+            let authoring_layout_service = test_authoring_layout_service();
             let config = test_config();
             let state = test_state_snapshot();
             let controller =
-                crate::CompositorController::initialize(runtime_service, config, state).unwrap();
+                crate::CompositorController::initialize(authoring_layout_service, config, state).unwrap();
             let mut runtime = test_runtime("wayland-test-popup-meta-1");
 
             runtime.state_mut().track_test_surface_snapshot(
@@ -3341,11 +3341,11 @@ mod imp {
 
         #[test]
         fn bootstrap_snapshot_preserves_xdg_toplevel_size_constraints() {
-            let runtime_service = test_runtime_service();
+            let authoring_layout_service = test_authoring_layout_service();
             let config = test_config();
             let state = test_state_snapshot();
             let controller =
-                crate::CompositorController::initialize(runtime_service, config, state).unwrap();
+                crate::CompositorController::initialize(authoring_layout_service, config, state).unwrap();
             let mut runtime = test_runtime("wayland-test-xdg-size-1");
 
             runtime.state_mut().track_test_surface_snapshot(
@@ -3651,11 +3651,11 @@ mod imp {
 
         #[test]
         fn bootstrap_apply_pending_discovery_events_returns_zero_when_empty() {
-            let runtime_service = test_runtime_service();
+            let authoring_layout_service = test_authoring_layout_service();
             let config = test_config();
             let state = test_state_snapshot();
             let controller =
-                crate::CompositorController::initialize(runtime_service, config, state).unwrap();
+                crate::CompositorController::initialize(authoring_layout_service, config, state).unwrap();
             let runtime = test_runtime("wayland-test-4");
             let report = SmithayStartupReport {
                 controller: controller.report(),
@@ -3681,11 +3681,11 @@ mod imp {
 
         #[test]
         fn bootstrap_applies_pending_seat_focus_discovery_events_to_controller() {
-            let runtime_service = test_runtime_service();
+            let authoring_layout_service = test_authoring_layout_service();
             let config = test_config();
             let state = test_state_snapshot();
             let controller =
-                crate::CompositorController::initialize(runtime_service, config, state).unwrap();
+                crate::CompositorController::initialize(authoring_layout_service, config, state).unwrap();
             let runtime = test_runtime("wayland-test-seat-focus-bootstrap");
             let report = SmithayStartupReport {
                 controller: controller.report(),
@@ -3733,7 +3733,7 @@ mod imp {
 
         #[test]
         fn bootstrap_applies_pending_output_activation_discovery_events_to_controller() {
-            let runtime_service = test_runtime_service();
+            let authoring_layout_service = test_authoring_layout_service();
             let config = test_config();
             let mut state = test_state_snapshot();
             state.outputs.push(spiders_shared::wm::OutputSnapshot {
@@ -3749,7 +3749,7 @@ mod imp {
                 current_workspace_id: None,
             });
             let controller =
-                crate::CompositorController::initialize(runtime_service, config, state).unwrap();
+                crate::CompositorController::initialize(authoring_layout_service, config, state).unwrap();
             let runtime = test_runtime("wayland-test-output-activate-bootstrap");
             let report = SmithayStartupReport {
                 controller: controller.report(),
@@ -3785,7 +3785,7 @@ mod imp {
 
         #[test]
         fn bootstrap_applies_pending_output_lost_discovery_events_to_controller() {
-            let runtime_service = test_runtime_service();
+            let authoring_layout_service = test_authoring_layout_service();
             let config = test_config();
             let mut state = test_state_snapshot();
             state.outputs.push(OutputSnapshot {
@@ -3801,7 +3801,7 @@ mod imp {
                 current_workspace_id: None,
             });
             let controller =
-                crate::CompositorController::initialize(runtime_service, config, state).unwrap();
+                crate::CompositorController::initialize(authoring_layout_service, config, state).unwrap();
             let runtime = test_runtime("wayland-test-output-lost-bootstrap");
             let report = SmithayStartupReport {
                 controller: controller.report(),
@@ -3867,7 +3867,7 @@ mod imp {
 
         #[test]
         fn bootstrap_applies_pending_workspace_activate_action_to_controller_and_export() {
-            let runtime_service = test_runtime_service();
+            let authoring_layout_service = test_authoring_layout_service();
             let config = test_config();
             let mut state = test_state_snapshot();
             state
@@ -3884,7 +3884,7 @@ mod imp {
                     }),
                 });
             let controller =
-                crate::CompositorController::initialize(runtime_service, config, state).unwrap();
+                crate::CompositorController::initialize(authoring_layout_service, config, state).unwrap();
             let runtime = test_runtime("wayland-test-workspace-activate-bootstrap");
             let report = SmithayStartupReport {
                 controller: controller.report(),
@@ -3930,7 +3930,7 @@ mod imp {
 
         #[test]
         fn bootstrap_applies_pending_workspace_assign_action_to_controller_and_export() {
-            let runtime_service = test_runtime_service();
+            let authoring_layout_service = test_authoring_layout_service();
             let config = test_config();
             let mut state = test_state_snapshot();
             state.outputs.push(OutputSnapshot {
@@ -3959,7 +3959,7 @@ mod imp {
                     }),
                 });
             let controller =
-                crate::CompositorController::initialize(runtime_service, config, state).unwrap();
+                crate::CompositorController::initialize(authoring_layout_service, config, state).unwrap();
             let runtime = test_runtime("wayland-test-workspace-assign-bootstrap");
             let report = SmithayStartupReport {
                 controller: controller.report(),
@@ -4001,7 +4001,7 @@ mod imp {
 
         #[test]
         fn workspace_export_carries_window_decoration_policy_snapshot() {
-            let runtime_service = test_runtime_service();
+            let authoring_layout_service = test_authoring_layout_service();
             let mut config = test_config();
             config.layouts[0].effects_stylesheet =
                 "window { appearance: none; } window::titlebar { background: #111; }".into();
@@ -4030,7 +4030,7 @@ mod imp {
                 .push(WindowId::from("smithay-window-1"));
 
             let controller =
-                crate::CompositorController::initialize(runtime_service, config, state).unwrap();
+                crate::CompositorController::initialize(authoring_layout_service, config, state).unwrap();
             let runtime = test_runtime("wayland-test-decoration-policy-export");
             let report = SmithayStartupReport {
                 controller: controller.report(),

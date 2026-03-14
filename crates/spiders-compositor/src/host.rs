@@ -34,17 +34,17 @@ impl<R> CompositorHost<R> {
 
 impl<R: AuthoringLayoutRuntime<Config = Config>> CompositorHost<R> {
     pub fn initialize(
-        runtime_service: AuthoringLayoutService<R>,
+        authoring_layout_service: AuthoringLayoutService<R>,
         config: Config,
         state: StateSnapshot,
     ) -> Result<Self, BootstrapRunnerError> {
         Ok(Self {
-            runner: BootstrapRunner::initialize(LayoutService, runtime_service, config, state)?,
+            runner: BootstrapRunner::initialize(LayoutService, authoring_layout_service, config, state)?,
         })
     }
 
     pub fn initialize_with_registration(
-        runtime_service: AuthoringLayoutService<R>,
+        authoring_layout_service: AuthoringLayoutService<R>,
         config: Config,
         state: StateSnapshot,
         startup: StartupRegistration,
@@ -52,7 +52,7 @@ impl<R: AuthoringLayoutRuntime<Config = Config>> CompositorHost<R> {
         Ok(Self {
             runner: BootstrapRunner::initialize_with_registration(
                 LayoutService,
-                runtime_service,
+                authoring_layout_service,
                 config,
                 state,
                 startup,
@@ -61,13 +61,13 @@ impl<R: AuthoringLayoutRuntime<Config = Config>> CompositorHost<R> {
     }
 
     pub fn initialize_with_transcript(
-        runtime_service: AuthoringLayoutService<R>,
+        authoring_layout_service: AuthoringLayoutService<R>,
         config: Config,
         state: StateSnapshot,
         transcript: &BootstrapTranscript,
     ) -> Result<Self, BootstrapRunnerError> {
         Self::initialize_with_registration(
-            runtime_service,
+            authoring_layout_service,
             config,
             state,
             transcript.startup.clone(),
