@@ -313,7 +313,7 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use spiders_config::model::{Config, LayoutDefinition};
-    use spiders_config::service::ConfigRuntimeService;
+    use spiders_config::service::AuthoringLayoutService;
     use spiders_ipc::{
         recv_response, send_request, IpcClientMessage, IpcEnvelope, IpcServerMessage,
         IpcSubscriptionTopic,
@@ -411,7 +411,7 @@ mod tests {
         let loader =
             RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
         let runtime = BoaPreparedLayoutRuntime::with_loader(loader.clone());
-        let service = ConfigRuntimeService::new(runtime);
+        let service = AuthoringLayoutService::new(runtime);
 
         CompositorController::initialize(service, config(), state()).unwrap()
     }
@@ -537,7 +537,7 @@ mod tests {
         let loader =
             RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
         let runtime = BoaPreparedLayoutRuntime::with_loader(loader.clone());
-        let service = ConfigRuntimeService::new(runtime);
+        let service = AuthoringLayoutService::new(runtime);
         let mut startup_state = state();
         startup_state.outputs.push(OutputSnapshot {
             id: OutputId::from("out-2"),

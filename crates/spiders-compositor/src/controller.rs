@@ -1,5 +1,5 @@
 use spiders_config::model::Config;
-use spiders_config::service::ConfigRuntimeService;
+use spiders_config::service::AuthoringLayoutService;
 use spiders_shared::api::WmAction;
 use spiders_shared::ids::{OutputId, WorkspaceId};
 use spiders_shared::runtime::AuthoringLayoutRuntime;
@@ -63,7 +63,7 @@ impl<R> CompositorController<R> {
 
 impl<R: AuthoringLayoutRuntime<Config = Config>> CompositorController<R> {
     pub fn initialize(
-        runtime_service: ConfigRuntimeService<R>,
+        runtime_service: AuthoringLayoutService<R>,
         config: Config,
         state: StateSnapshot,
     ) -> Result<Self, BootstrapRunnerError> {
@@ -75,7 +75,7 @@ impl<R: AuthoringLayoutRuntime<Config = Config>> CompositorController<R> {
     }
 
     pub fn initialize_with_registration(
-        runtime_service: ConfigRuntimeService<R>,
+        runtime_service: AuthoringLayoutService<R>,
         config: Config,
         state: StateSnapshot,
         startup: StartupRegistration,
@@ -93,7 +93,7 @@ impl<R: AuthoringLayoutRuntime<Config = Config>> CompositorController<R> {
     }
 
     pub fn initialize_with_transcript(
-        runtime_service: ConfigRuntimeService<R>,
+        runtime_service: AuthoringLayoutService<R>,
         config: Config,
         state: StateSnapshot,
         transcript: &BootstrapTranscript,
@@ -111,7 +111,7 @@ impl<R: AuthoringLayoutRuntime<Config = Config>> CompositorController<R> {
     }
 
     pub fn initialize_with_script(
-        runtime_service: ConfigRuntimeService<R>,
+        runtime_service: AuthoringLayoutService<R>,
         config: Config,
         state: StateSnapshot,
         script: &BootstrapScript,
@@ -305,7 +305,7 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use spiders_config::model::{Config, LayoutDefinition};
-    use spiders_config::service::ConfigRuntimeService;
+    use spiders_config::service::AuthoringLayoutService;
     use spiders_runtime_js::loader::{RuntimePathResolver, RuntimeProjectLayoutSourceLoader};
     use spiders_runtime_js::runtime::BoaPreparedLayoutRuntime;
     use spiders_shared::ids::{OutputId, WindowId, WorkspaceId};
@@ -381,7 +381,7 @@ mod tests {
         }
     }
 
-    fn runtime_service() -> ConfigRuntimeService<BoaPreparedLayoutRuntime<RuntimeProjectLayoutSourceLoader>>
+    fn runtime_service() -> AuthoringLayoutService<BoaPreparedLayoutRuntime<RuntimeProjectLayoutSourceLoader>>
     {
         let temp_dir = std::env::temp_dir();
         let unique = SystemTime::now()
@@ -399,7 +399,7 @@ mod tests {
         let loader =
             RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
         let runtime = BoaPreparedLayoutRuntime::with_loader(loader.clone());
-        ConfigRuntimeService::new(runtime)
+        AuthoringLayoutService::new(runtime)
     }
 
     #[test]

@@ -1,5 +1,5 @@
 use spiders_config::model::Config;
-use spiders_config::service::ConfigRuntimeService;
+use spiders_config::service::AuthoringLayoutService;
 use spiders_layout::ast::ValidatedLayoutTree;
 use spiders_layout::pipeline::compute_layout_from_request;
 use spiders_shared::ids::WorkspaceId;
@@ -13,7 +13,7 @@ use crate::{build_request_from_context, CompositorLayoutError, LayoutService};
 #[derive(Debug)]
 pub struct StartupRuntime<R> {
     pub config: Config,
-    pub service: ConfigRuntimeService<R>,
+    pub service: AuthoringLayoutService<R>,
     pub startup_layout: Option<StartupLayoutState>,
 }
 
@@ -31,7 +31,7 @@ pub struct StartupSession<R> {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct StartupLayoutState {
-    pub evaluated: spiders_config::service::EvaluatedLayout,
+    pub evaluated: spiders_config::service::PreparedLayoutEvaluation,
     pub workspace_id: WorkspaceId,
     pub request: LayoutRequest,
     pub response: LayoutResponse,
@@ -41,7 +41,7 @@ pub struct StartupLayoutState {
 #[derive(Debug)]
 pub struct StartupSequence<R> {
     pub service: LayoutService,
-    pub runtime_service: ConfigRuntimeService<R>,
+    pub runtime_service: AuthoringLayoutService<R>,
     pub config: Config,
     pub state: StateSnapshot,
 }
@@ -76,7 +76,7 @@ impl<R> StartupSession<R> {
 impl<R: AuthoringLayoutRuntime<Config = Config>> StartupSequence<R> {
     pub fn new(
         service: LayoutService,
-        runtime_service: ConfigRuntimeService<R>,
+        runtime_service: AuthoringLayoutService<R>,
         config: Config,
         state: StateSnapshot,
     ) -> Self {
@@ -96,7 +96,7 @@ impl<R: AuthoringLayoutRuntime<Config = Config>> StartupSequence<R> {
 
 pub(crate) fn bootstrap_runtime<R: AuthoringLayoutRuntime<Config = Config>>(
     _service: &LayoutService,
-    runtime_service: &mut ConfigRuntimeService<R>,
+    runtime_service: &mut AuthoringLayoutService<R>,
     config: &Config,
     state: &StateSnapshot,
 ) -> Result<Option<StartupLayoutState>, CompositorLayoutError> {
@@ -135,7 +135,7 @@ pub(crate) fn bootstrap_runtime<R: AuthoringLayoutRuntime<Config = Config>>(
 
 pub(crate) fn initialize_startup_runtime<R: AuthoringLayoutRuntime<Config = Config>>(
     service: &LayoutService,
-    mut runtime_service: ConfigRuntimeService<R>,
+    mut runtime_service: AuthoringLayoutService<R>,
     config: Config,
     state: &StateSnapshot,
 ) -> Result<StartupRuntime<R>, CompositorLayoutError> {
@@ -150,7 +150,7 @@ pub(crate) fn initialize_startup_runtime<R: AuthoringLayoutRuntime<Config = Conf
 
 pub(crate) fn initialize_startup_config<R: AuthoringLayoutRuntime<Config = Config>>(
     service: &LayoutService,
-    runtime_service: ConfigRuntimeService<R>,
+    runtime_service: AuthoringLayoutService<R>,
     config: Config,
     state: StateSnapshot,
 ) -> Result<StartupConfig<R>, CompositorLayoutError> {
@@ -161,7 +161,7 @@ pub(crate) fn initialize_startup_config<R: AuthoringLayoutRuntime<Config = Confi
 
 pub(crate) fn initialize_startup_session<R: AuthoringLayoutRuntime<Config = Config>>(
     service: &LayoutService,
-    runtime_service: ConfigRuntimeService<R>,
+    runtime_service: AuthoringLayoutService<R>,
     config: Config,
     state: StateSnapshot,
 ) -> Result<StartupSession<R>, CompositorLayoutError> {
@@ -172,7 +172,7 @@ pub(crate) fn initialize_startup_session<R: AuthoringLayoutRuntime<Config = Conf
 mod tests {
     use std::fs;
 
-    use spiders_config::service::ConfigRuntimeService;
+    use spiders_config::service::AuthoringLayoutService;
     use spiders_runtime_js::loader::{RuntimePathResolver, RuntimeProjectLayoutSourceLoader};
     use spiders_runtime_js::runtime::BoaPreparedLayoutRuntime;
     use spiders_shared::ids::{OutputId, WindowId, WorkspaceId};
@@ -245,7 +245,7 @@ mod tests {
         let loader =
             RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
         let runtime = BoaPreparedLayoutRuntime::with_loader(loader.clone());
-        let runtime_service = ConfigRuntimeService::new(runtime);
+        let runtime_service = AuthoringLayoutService::new(runtime);
         let sequence = StartupSequence::new(LayoutService, runtime_service, config(), state());
 
         let startup = sequence.bootstrap().unwrap();
@@ -293,7 +293,7 @@ mod tests {
         let loader =
             RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
         let runtime = BoaPreparedLayoutRuntime::with_loader(loader.clone());
-        let runtime_service = ConfigRuntimeService::new(runtime);
+        let runtime_service = AuthoringLayoutService::new(runtime);
 
         let session =
             initialize_startup_session(&LayoutService, runtime_service, config(), state()).unwrap();
@@ -337,7 +337,7 @@ mod tests {
         let loader =
             RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
         let runtime = BoaPreparedLayoutRuntime::with_loader(loader.clone());
-        let mut runtime_service = ConfigRuntimeService::new(runtime);
+        let mut runtime_service = AuthoringLayoutService::new(runtime);
         let config = config();
         let state = StateSnapshot {
             focused_window_id: Some(WindowId::from("w1")),

@@ -43,7 +43,7 @@ impl DecodePath {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-struct EvaluatedLayoutModule {
+struct PreparedLayoutEvaluationModule {
     export: JsValue,
 }
 
@@ -163,7 +163,7 @@ impl<L> BoaPreparedLayoutRuntime<L> {
         selected_layout: &SelectedLayout,
         source: &str,
         js: &mut JsContext,
-    ) -> Result<EvaluatedLayoutModule, PreparedLayoutRuntimeError> {
+    ) -> Result<PreparedLayoutEvaluationModule, PreparedLayoutRuntimeError> {
         let wrapped = format!("({source})");
         let export = js.eval(Source::from_bytes(&wrapped)).map_err(|error| {
             PreparedLayoutRuntimeError::JavaScript {
@@ -178,7 +178,7 @@ impl<L> BoaPreparedLayoutRuntime<L> {
             });
         }
 
-        Ok(EvaluatedLayoutModule { export })
+        Ok(PreparedLayoutEvaluationModule { export })
     }
 
     fn context_to_js_value(
@@ -199,7 +199,7 @@ impl<L> BoaPreparedLayoutRuntime<L> {
     fn call_layout_export(
         &self,
         selected_layout: &SelectedLayout,
-        module: &EvaluatedLayoutModule,
+        module: &PreparedLayoutEvaluationModule,
         context_value: &JsValue,
         js: &mut JsContext,
     ) -> Result<SourceLayoutNode, PreparedLayoutRuntimeError> {

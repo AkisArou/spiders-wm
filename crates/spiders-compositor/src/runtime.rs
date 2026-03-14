@@ -1,5 +1,5 @@
 use spiders_config::model::Config;
-use spiders_config::service::ConfigRuntimeService;
+use spiders_config::service::AuthoringLayoutService;
 use spiders_shared::ids::{WindowId, WorkspaceId};
 use spiders_shared::layout::{LayoutRect, LayoutRequest, LayoutResponse};
 use spiders_shared::runtime::AuthoringLayoutRuntime;
@@ -126,7 +126,7 @@ impl<R: AuthoringLayoutRuntime<Config = Config>> CompositorRuntimeState<R> {
 
 pub(crate) fn initialize_runtime_state<R: AuthoringLayoutRuntime<Config = Config>>(
     layout_service: LayoutService,
-    runtime_service: ConfigRuntimeService<R>,
+    runtime_service: AuthoringLayoutService<R>,
     config: Config,
     state: StateSnapshot,
 ) -> Result<CompositorRuntimeState<R>, CompositorLayoutError> {
@@ -186,7 +186,7 @@ pub fn compute_window_placements(
 mod tests {
     use std::fs;
 
-    use spiders_config::service::ConfigRuntimeService;
+    use spiders_config::service::AuthoringLayoutService;
     use spiders_runtime_js::loader::{RuntimePathResolver, RuntimeProjectLayoutSourceLoader};
     use spiders_runtime_js::runtime::BoaPreparedLayoutRuntime;
     use spiders_shared::ids::{OutputId, WorkspaceId};
@@ -256,7 +256,7 @@ mod tests {
         let loader =
             RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
         let runtime = BoaPreparedLayoutRuntime::with_loader(loader.clone());
-        let runtime_service = ConfigRuntimeService::new(runtime);
+        let runtime_service = AuthoringLayoutService::new(runtime);
 
         let runtime =
             initialize_runtime_state(LayoutService, runtime_service, config(), state()).unwrap();
@@ -300,7 +300,7 @@ mod tests {
         let loader =
             RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
         let runtime = BoaPreparedLayoutRuntime::with_loader(loader.clone());
-        let runtime_service = ConfigRuntimeService::new(runtime);
+        let runtime_service = AuthoringLayoutService::new(runtime);
         let mut config = config();
         config.layouts[0].effects_stylesheet =
             "window { appearance: none; } window::titlebar { background: #111; }".into();
@@ -357,7 +357,7 @@ mod tests {
         let loader =
             RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
         let runtime = BoaPreparedLayoutRuntime::with_loader(loader.clone());
-        let runtime_service = ConfigRuntimeService::new(runtime);
+        let runtime_service = AuthoringLayoutService::new(runtime);
         let mut config = config();
         config.layouts[0].effects_stylesheet =
             "window::titlebar { background: #111; height: 30px; }".into();

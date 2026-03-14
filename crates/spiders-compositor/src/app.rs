@@ -1,5 +1,5 @@
 use spiders_config::model::Config;
-use spiders_config::service::ConfigRuntimeService;
+use spiders_config::service::AuthoringLayoutService;
 use spiders_shared::ids::{OutputId, WindowId};
 use spiders_shared::runtime::AuthoringLayoutRuntime;
 use spiders_shared::wm::StateSnapshot;
@@ -209,7 +209,7 @@ impl<R> CompositorApp<R> {
 impl<R: AuthoringLayoutRuntime<Config = Config>> CompositorApp<R> {
     pub fn initialize(
         layout_service: LayoutService,
-        runtime_service: ConfigRuntimeService<R>,
+        runtime_service: AuthoringLayoutService<R>,
         config: Config,
         state: StateSnapshot,
     ) -> Result<Self, CompositorLayoutError> {
@@ -224,7 +224,7 @@ impl<R: AuthoringLayoutRuntime<Config = Config>> CompositorApp<R> {
 
     pub fn initialize_with_registration(
         layout_service: LayoutService,
-        runtime_service: ConfigRuntimeService<R>,
+        runtime_service: AuthoringLayoutService<R>,
         config: Config,
         state: StateSnapshot,
         startup: StartupRegistration,
@@ -255,7 +255,7 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use spiders_config::model::{Config, LayoutDefinition};
-    use spiders_config::service::ConfigRuntimeService;
+    use spiders_config::service::AuthoringLayoutService;
     use spiders_runtime_js::loader::{RuntimePathResolver, RuntimeProjectLayoutSourceLoader};
     use spiders_runtime_js::runtime::BoaPreparedLayoutRuntime;
     use spiders_shared::ids::{OutputId, WindowId, WorkspaceId};
@@ -351,7 +351,7 @@ mod tests {
         let loader =
             RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
         let runtime = BoaPreparedLayoutRuntime::with_loader(loader.clone());
-        let service = ConfigRuntimeService::new(runtime);
+        let service = AuthoringLayoutService::new(runtime);
 
         let app = CompositorApp::initialize(LayoutService, service, config(), state()).unwrap();
 
@@ -390,7 +390,7 @@ mod tests {
         let loader =
             RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
         let runtime = BoaPreparedLayoutRuntime::with_loader(loader.clone());
-        let service = ConfigRuntimeService::new(runtime);
+        let service = AuthoringLayoutService::new(runtime);
         let mut snapshot = state();
         snapshot.outputs.push(OutputSnapshot {
             id: OutputId::from("out-2"),
@@ -444,7 +444,7 @@ mod tests {
         let loader =
             RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
         let runtime = BoaPreparedLayoutRuntime::with_loader(loader.clone());
-        let service = ConfigRuntimeService::new(runtime);
+        let service = AuthoringLayoutService::new(runtime);
 
         let mut app = CompositorApp::initialize(LayoutService, service, config(), state()).unwrap();
         app.session.register_output_snapshot(OutputSnapshot {
@@ -524,7 +524,7 @@ mod tests {
         let loader =
             RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
         let runtime = BoaPreparedLayoutRuntime::with_loader(loader.clone());
-        let service = ConfigRuntimeService::new(runtime);
+        let service = AuthoringLayoutService::new(runtime);
 
         let mut app = CompositorApp::initialize(LayoutService, service, config(), state()).unwrap();
         app.session.register_output_snapshot(OutputSnapshot {
@@ -578,7 +578,7 @@ mod tests {
         let loader =
             RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
         let runtime = BoaPreparedLayoutRuntime::with_loader(loader.clone());
-        let service = ConfigRuntimeService::new(runtime);
+        let service = AuthoringLayoutService::new(runtime);
 
         let mut app = CompositorApp::initialize(LayoutService, service, config(), state()).unwrap();
         app.session.register_output_snapshot(OutputSnapshot {
@@ -691,7 +691,7 @@ mod tests {
         let loader =
             RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
         let runtime = BoaPreparedLayoutRuntime::with_loader(loader.clone());
-        let service = ConfigRuntimeService::new(runtime);
+        let service = AuthoringLayoutService::new(runtime);
 
         let mut app = CompositorApp::initialize(LayoutService, service, config(), state()).unwrap();
         app.apply_bootstrap_event(BootstrapEvent::RegisterSeat {

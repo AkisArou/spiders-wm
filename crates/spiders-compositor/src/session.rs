@@ -1,5 +1,5 @@
 use spiders_config::model::Config;
-use spiders_config::service::ConfigRuntimeService;
+use spiders_config::service::AuthoringLayoutService;
 use spiders_shared::api::{CompositorEvent, FocusDirection, WmAction};
 use spiders_shared::ids::{OutputId, WindowId};
 use spiders_shared::runtime::AuthoringLayoutRuntime;
@@ -216,7 +216,7 @@ impl<R> CompositorSession<R> {
 impl<R: AuthoringLayoutRuntime<Config = Config>> CompositorSession<R> {
     pub fn initialize(
         layout_service: LayoutService,
-        runtime_service: ConfigRuntimeService<R>,
+        runtime_service: AuthoringLayoutService<R>,
         config: Config,
         state: StateSnapshot,
     ) -> Result<Self, CompositorLayoutError> {
@@ -386,7 +386,7 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use spiders_config::model::{Config, LayoutDefinition};
-    use spiders_config::service::ConfigRuntimeService;
+    use spiders_config::service::AuthoringLayoutService;
     use spiders_runtime_js::loader::{RuntimePathResolver, RuntimeProjectLayoutSourceLoader};
     use spiders_runtime_js::runtime::BoaPreparedLayoutRuntime;
     use spiders_shared::api::{CompositorEvent, FocusDirection, WmAction};
@@ -529,7 +529,7 @@ mod tests {
         let loader =
             RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
         let runtime = BoaPreparedLayoutRuntime::with_loader(loader.clone());
-        let service = ConfigRuntimeService::new(runtime);
+        let service = AuthoringLayoutService::new(runtime);
 
         let mut session =
             CompositorSession::initialize(LayoutService, service, config(), state()).unwrap();
@@ -807,7 +807,7 @@ mod tests {
         let loader =
             RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
         let runtime = BoaPreparedLayoutRuntime::with_loader(loader.clone());
-        let service = ConfigRuntimeService::new(runtime);
+        let service = AuthoringLayoutService::new(runtime);
         let mut session =
             CompositorSession::initialize(LayoutService, service, config, state()).unwrap();
         session.register_seat("seat-0");

@@ -6,7 +6,7 @@ use spiders_shared::wm::LayoutEvaluationContext;
 use crate::model::{Config, ConfigDiscoveryOptions, ConfigPaths, LayoutConfigError};
 
 #[derive(Debug, thiserror::Error, PartialEq)]
-pub enum ConfigRuntimeServiceError {
+pub enum AuthoringLayoutServiceError {
     #[error(transparent)]
     Runtime(#[from] RuntimeError),
     #[error(transparent)]
@@ -14,12 +14,12 @@ pub enum ConfigRuntimeServiceError {
 }
 
 #[derive(Debug)]
-pub struct ConfigRuntimeService<R> {
+pub struct AuthoringLayoutService<R> {
     runtime: R,
     cache: BTreeMap<String, PreparedLayout>,
 }
 
-impl<R> ConfigRuntimeService<R> {
+impl<R> AuthoringLayoutService<R> {
     pub fn new(runtime: R) -> Self {
         Self {
             runtime,
@@ -28,18 +28,18 @@ impl<R> ConfigRuntimeService<R> {
     }
 }
 
-impl<R> ConfigRuntimeService<R>
+impl<R> AuthoringLayoutService<R>
 where
     R: AuthoringLayoutRuntime<Config = Config>,
 {
     pub fn discover_config_paths(
         &self,
         options: ConfigDiscoveryOptions,
-    ) -> Result<ConfigPaths, ConfigRuntimeServiceError> {
+    ) -> Result<ConfigPaths, AuthoringLayoutServiceError> {
         Ok(ConfigPaths::discover(options)?)
     }
 
-    pub fn load_config(&self, paths: &ConfigPaths) -> Result<Config, ConfigRuntimeServiceError> {
+    pub fn load_config(&self, paths: &ConfigPaths) -> Result<Config, AuthoringLayoutServiceError> {
         if paths.runtime_config.exists() {
             Ok(Config::from_path(&paths.runtime_config)?)
         } else {
@@ -50,7 +50,7 @@ where
     pub fn validate_layout_modules(
         &self,
         config: &Config,
-    ) -> Result<Vec<String>, ConfigRuntimeServiceError> {
+    ) -> Result<Vec<String>, AuthoringLayoutServiceError> {
         let mut errors = Vec::new();
 
         for layout in &config.layouts {
@@ -78,7 +78,7 @@ where
         &mut self,
         config: &Config,
         workspace: &spiders_shared::wm::WorkspaceSnapshot,
-    ) -> Result<Option<&PreparedLayout>, ConfigRuntimeServiceError> {
+    ) -> Result<Option<&PreparedLayout>, AuthoringLayoutServiceError> {
         let Some(loaded) = self.runtime.prepare_layout(config, workspace)? else {
             return Ok(None);
         };
@@ -93,14 +93,14 @@ where
         config: &Config,
         state: &spiders_shared::wm::StateSnapshot,
         workspace: &spiders_shared::wm::WorkspaceSnapshot,
-    ) -> Result<Option<crate::service::EvaluatedLayout>, ConfigRuntimeServiceError> {
+    ) -> Result<Option<crate::service::PreparedLayoutEvaluation>, AuthoringLayoutServiceError> {
         let Some(loaded) = self.prepare_for_workspace(config, workspace)?.cloned() else {
             return Ok(None);
         };
         let context = self.runtime.build_context(state, workspace, Some(&loaded));
         let layout = self.runtime.evaluate_layout(&loaded, &context)?;
 
-        Ok(Some(EvaluatedLayout {
+        Ok(Some(PreparedLayoutEvaluation {
             artifact: loaded,
             context,
             layout,
@@ -113,7 +113,7 @@ where
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct EvaluatedLayout {
+pub struct PreparedLayoutEvaluation {
     pub artifact: PreparedLayout,
     pub context: LayoutEvaluationContext,
     pub layout: spiders_shared::layout::SourceLayoutNode,
@@ -318,7 +318,7 @@ mod tests {
             loaded: Some(prepared_layout("master-stack", "layouts/master-stack.js")),
             error_message: None,
         };
-        let mut service = ConfigRuntimeService::new(runtime);
+        let mut service = AuthoringLayoutService::new(runtime);
         let config = Config {
             layouts: vec![LayoutDefinition {
                 name: "master-stack".into(),
@@ -345,7 +345,7 @@ mod tests {
             loaded: Some(prepared_layout("master-stack", "layouts/master-stack.js")),
             error_message: None,
         };
-        let mut service = ConfigRuntimeService::new(runtime);
+        let mut service = AuthoringLayoutService::new(runtime);
         let config = Config {
             layouts: vec![LayoutDefinition {
                 name: "master-stack".into(),
@@ -379,7 +379,7 @@ mod tests {
         )
         .unwrap();
 
-        let service: ConfigRuntimeService<_> = ConfigRuntimeService::new(StubRuntime {
+        let service: AuthoringLayoutService<_> = AuthoringLayoutService::new(StubRuntime {
             loaded: None,
             error_message: None,
         });
@@ -402,7 +402,7 @@ mod tests {
         let _ = fs::create_dir_all(&data_dir);
         fs::write(config_dir.join("config.ts"), "export default {};").unwrap();
 
-        let service: ConfigRuntimeService<_> = ConfigRuntimeService::new(StubRuntime {
+        let service: AuthoringLayoutService<_> = AuthoringLayoutService::new(StubRuntime {
             loaded: None,
             error_message: None,
         });
@@ -425,7 +425,7 @@ mod tests {
 
     #[test]
     fn runtime_service_reports_missing_layout_module_sources() {
-        let service: ConfigRuntimeService<_> = ConfigRuntimeService::new(StubRuntime {
+        let service: AuthoringLayoutService<_> = AuthoringLayoutService::new(StubRuntime {
             loaded: None,
             error_message: Some("layout module `layouts/missing.js` source is unavailable".into()),
         });
@@ -462,7 +462,7 @@ mod tests {
             ..Config::default()
         };
 
-        let service: ConfigRuntimeService<_> = ConfigRuntimeService::new(StubAuthoredRuntime {
+        let service: AuthoringLayoutService<_> = AuthoringLayoutService::new(StubAuthoredRuntime {
             loaded: None,
             error_message: None,
             config: authored_config,

@@ -1121,7 +1121,7 @@ mod imp {
     }
 
     pub fn initialize_winit_controller<R>(
-        runtime_service: spiders_config::service::ConfigRuntimeService<R>,
+        runtime_service: spiders_config::service::AuthoringLayoutService<R>,
         config: spiders_config::model::Config,
         state: spiders_shared::wm::StateSnapshot,
     ) -> Result<crate::CompositorController<R>, SmithayRuntimeError>
@@ -1133,7 +1133,7 @@ mod imp {
     }
 
     pub fn bootstrap_winit<R>(
-        runtime_service: spiders_config::service::ConfigRuntimeService<R>,
+        runtime_service: spiders_config::service::AuthoringLayoutService<R>,
         config: spiders_config::model::Config,
         state: spiders_shared::wm::StateSnapshot,
     ) -> Result<SmithayBootstrap<R>, SmithayRuntimeError>
@@ -1271,7 +1271,7 @@ mod imp {
         use std::time::{SystemTime, UNIX_EPOCH};
 
         use spiders_config::model::{Config, LayoutDefinition};
-        use spiders_config::service::ConfigRuntimeService;
+        use spiders_config::service::AuthoringLayoutService;
         use spiders_runtime_js::loader::{RuntimePathResolver, RuntimeProjectLayoutSourceLoader};
         use spiders_runtime_js::runtime::BoaPreparedLayoutRuntime;
         use spiders_shared::ids::{OutputId, WindowId, WorkspaceId};
@@ -1336,7 +1336,7 @@ mod imp {
             }
         }
 
-        fn test_runtime_service() -> ConfigRuntimeService<
+        fn test_runtime_service() -> AuthoringLayoutService<
             RuntimeProjectLayoutSourceLoader,
             BoaPreparedLayoutRuntime<RuntimeProjectLayoutSourceLoader>,
         > {
@@ -1360,7 +1360,7 @@ mod imp {
             let loader =
                 RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
             let runtime = BoaPreparedLayoutRuntime::with_loader(loader.clone());
-            ConfigRuntimeService::new(runtime)
+            AuthoringLayoutService::new(runtime)
         }
 
         fn test_runtime(socket_name: &str) -> SmithayWinitRuntime<'static> {

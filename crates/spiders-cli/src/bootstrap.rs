@@ -1,7 +1,7 @@
 #[derive(Debug)]
 pub struct CliBootstrap {
     pub paths: spiders_config::model::ConfigPaths,
-    pub service: spiders_config::service::ConfigRuntimeService<
+    pub service: spiders_config::service::AuthoringLayoutService<
         spiders_runtime_js::runtime::BoaPreparedLayoutRuntime<
             spiders_runtime_js::loader::RuntimeProjectLayoutSourceLoader,
         >,
@@ -27,7 +27,7 @@ pub fn build_bootstrap(
     );
     let loader = spiders_runtime_js::loader::RuntimeProjectLayoutSourceLoader::new(resolver);
     let runtime = spiders_runtime_js::runtime::BoaPreparedLayoutRuntime::with_loader(loader.clone());
-    let service = spiders_config::service::ConfigRuntimeService::new(runtime);
+    let service = spiders_config::service::AuthoringLayoutService::new(runtime);
 
     Ok(CliBootstrap { paths, service })
 }
