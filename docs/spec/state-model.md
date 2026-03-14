@@ -171,6 +171,10 @@ Compositor-domain note:
 - when smithay inspection already knows about tracked surfaces, extracting a
   typed backend surface batch from that inspection state is preferable to
   duplicating equivalent test-only surface registration data
+- when smithay inspection already knows the current seat/output/surface picture,
+  extracting a typed backend topology snapshot from that state is acceptable for
+  bootstrap parity and diagnostics as long as smithay remains the owner of the
+  richer protocol-specific facts behind it
 - layer-shell configure bookkeeping also remains compositor-owned, but a small
   typed inspection snapshot for last acked serial, pending configure count, and
   configured size may cross the smithay seam for diagnostics and tests

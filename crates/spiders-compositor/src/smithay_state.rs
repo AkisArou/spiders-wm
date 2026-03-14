@@ -2,7 +2,10 @@
 mod imp {
     use std::collections::{HashMap, HashSet};
 
-    use crate::backend::{BackendDiscoveryEvent, BackendSurfaceSnapshot};
+    use crate::backend::{
+        BackendDiscoveryEvent, BackendOutputSnapshot, BackendSeatSnapshot, BackendSource,
+        BackendSurfaceSnapshot, BackendTopologySnapshot,
+    };
     use smithay::backend::renderer::utils::on_commit_buffer_handler;
     use smithay::delegate_compositor;
     use smithay::delegate_data_control;
@@ -494,6 +497,54 @@ mod imp {
             }
 
             snapshots
+        }
+
+        pub fn backend_topology_snapshot(&self, generation: u64) -> BackendTopologySnapshot {
+            let seats = vec![BackendSeatSnapshot {
+                seat_name: self.seat_name.clone(),
+                active: true,
+            }];
+
+            let outputs = self
+                .known_output_ids
+                .iter()
+                .map(|output_id| {
+                    let metadata = self.known_output_metadata.get(output_id).cloned();
+                    BackendOutputSnapshot {
+                        snapshot: spiders_shared::wm::OutputSnapshot {
+                            id: output_id.clone(),
+                            name: metadata
+                                .as_ref()
+                                .map(|output| output.name.clone())
+                                .unwrap_or_else(|| output_id.to_string()),
+                            logical_width: metadata
+                                .as_ref()
+                                .and_then(|output| output.logical_width)
+                                .unwrap_or(0),
+                            logical_height: metadata
+                                .as_ref()
+                                .and_then(|output| output.logical_height)
+                                .unwrap_or(0),
+                            scale: 1,
+                            transform: metadata
+                                .as_ref()
+                                .map(|output| output.transform)
+                                .unwrap_or(OutputTransform::Normal),
+                            enabled: true,
+                            current_workspace_id: None,
+                        },
+                        active: self.active_output_id.as_ref() == Some(output_id),
+                    }
+                })
+                .collect();
+
+            BackendTopologySnapshot {
+                source: BackendSource::Smithay,
+                generation,
+                seats,
+                outputs,
+                surfaces: self.backend_surface_snapshots(),
+            }
         }
 
         pub fn activate_output_id(&mut self, output_id: OutputId) {

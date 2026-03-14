@@ -150,6 +150,14 @@ mod imp {
             self.apply_adapter_surface_discovery_batch(generation, surfaces)
         }
 
+        pub fn apply_tracked_smithay_discovery_snapshot(
+            &mut self,
+            generation: u64,
+        ) -> Result<(), SmithayRuntimeError> {
+            let snapshot = self.runtime.state().backend_topology_snapshot(generation);
+            self.apply_controller_command(ControllerCommand::DiscoverySnapshot(snapshot))
+        }
+
         pub fn apply_adapter_discovery_batch(
             &mut self,
             generation: u64,
@@ -1363,6 +1371,80 @@ mod imp {
                 .iter()
                 .any(|surface| surface.id == "wl-bootstrap-popup-1"
                     && surface.role == SurfaceRole::Popup));
+        }
+
+        #[test]
+        fn smithay_state_extracts_backend_topology_snapshot_from_known_state() {
+            let display = Display::<SpidersSmithayState>::new().unwrap();
+            let mut state = SpidersSmithayState::new(&display, "test-seat").unwrap();
+            state.register_output_snapshot(
+                OutputId::from("out-topology-1"),
+                "DP-1",
+                Some((2560, 1440)),
+                true,
+            );
+            state.track_test_surface_snapshot(crate::backend::BackendSurfaceSnapshot::Window {
+                surface_id: "wl-topology-window-1".into(),
+                window_id: WindowId::from("w1"),
+                output_id: None,
+            });
+
+            let snapshot = state.backend_topology_snapshot(7);
+            assert_eq!(snapshot.source, crate::backend::BackendSource::Smithay);
+            assert_eq!(snapshot.generation, 7);
+            assert_eq!(snapshot.seats.len(), 1);
+            assert_eq!(snapshot.outputs.len(), 1);
+            assert_eq!(
+                snapshot.outputs[0].snapshot.id,
+                OutputId::from("out-topology-1")
+            );
+            assert_eq!(snapshot.outputs[0].snapshot.name, "DP-1");
+            assert!(snapshot.outputs[0].active);
+            assert_eq!(snapshot.surfaces.len(), 1);
+        }
+
+        #[test]
+        fn bootstrap_applies_tracked_smithay_discovery_snapshot_to_controller() {
+            let mut bootstrap = test_bootstrap("wayland-test-tracked-discovery-snapshot");
+            bootstrap.runtime.state_mut().register_output_snapshot(
+                OutputId::from("out-snapshot-1"),
+                "HDMI-A-1",
+                Some((1920, 1080)),
+                true,
+            );
+            bootstrap.runtime.state_mut().track_test_surface_snapshot(
+                crate::backend::BackendSurfaceSnapshot::Window {
+                    surface_id: "wl-snapshot-window-1".into(),
+                    window_id: WindowId::from("w1"),
+                    output_id: Some(OutputId::from("out-snapshot-1")),
+                },
+            );
+
+            let _ = bootstrap.runtime.state_mut().take_discovery_events();
+            bootstrap
+                .apply_tracked_smithay_discovery_snapshot(9)
+                .unwrap();
+
+            let snapshot = bootstrap.snapshot();
+            assert!(snapshot
+                .topology
+                .outputs
+                .iter()
+                .any(|output| output.snapshot.id == OutputId::from("out-snapshot-1")));
+            assert!(snapshot
+                .topology
+                .surfaces
+                .iter()
+                .any(|surface| surface.id == "wl-snapshot-window-1"
+                    && surface.role == SurfaceRole::Window));
+            assert_eq!(
+                snapshot
+                    .controller
+                    .backend
+                    .as_ref()
+                    .and_then(|backend| backend.last_generation),
+                Some(9)
+            );
         }
 
         #[test]

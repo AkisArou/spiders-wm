@@ -352,6 +352,10 @@ When smithay already has tracked surface knowledge in its own inspection state,
 bootstrap/runtime code may extract a typed surface discovery batch from that
 smithay-owned snapshot instead of reconstructing the same test data separately.
 
+The same idea applies to combined discovery parity checks: when smithay already
+knows the current seat/output/surface picture, bootstrap/runtime code may emit a
+typed discovery snapshot directly from that smithay-owned state.
+
 When several incremental lifecycle changes arrive together, the bootstrap owner
 may batch typed adapter events and forward them in order through the same
 controller-command path instead of rebuilding a larger discovery snapshot.
