@@ -451,7 +451,7 @@ mod imp {
                     transform: OutputTransform::Normal,
                 });
 
-            if active {
+            if active || self.active_output_id.is_none() {
                 self.active_output_id = Some(output_id);
             }
 
@@ -640,7 +640,7 @@ mod imp {
 
             let mut removed = self.known_output_ids.len() != known_before;
             if self.active_output_id.as_ref() == Some(output_id) {
-                self.active_output_id = None;
+                self.active_output_id = self.known_output_ids.first().cloned();
                 removed = true;
             }
 
@@ -1159,6 +1159,15 @@ mod imp {
             action: SmithaySurfaceLifecycleAction,
         ) {
             if self.tracked_surfaces.contains_key(&surface_id) {
+                let focus_cleared = self.focused_surface_id.as_deref() == Some(surface_id.as_str());
+                if focus_cleared {
+                    self.focused_surface_id = None;
+                }
+                if self.cursor_surface_id.as_deref() == Some(surface_id.as_str()) {
+                    self.cursor_surface_id = None;
+                    self.cursor_image = "default".into();
+                }
+
                 match action {
                     SmithaySurfaceLifecycleAction::Unmap => {
                         if self.mapped_surface_ids.remove(&surface_id) {
@@ -1180,6 +1189,15 @@ mod imp {
                         self.pending_discovery_events
                             .push(BackendDiscoveryEvent::SurfaceLost { surface_id });
                     }
+                }
+
+                if focus_cleared {
+                    self.pending_discovery_events
+                        .push(BackendDiscoveryEvent::SeatFocusChanged {
+                            seat_name: self.seat_name.clone(),
+                            window_id: None,
+                            output_id: None,
+                        });
                 }
             }
         }
@@ -3181,6 +3199,87 @@ mod imp {
         }
 
         #[test]
+        fn smithay_state_clears_focus_and_cursor_when_focused_surface_unmaps() {
+            let display = Display::<SpidersSmithayState>::new().unwrap();
+            let mut state = SpidersSmithayState::new(&display, "test-seat").unwrap();
+
+            state.track_test_surface_snapshot(BackendSurfaceSnapshot::Layer {
+                surface_id: "wl-focus-unmap-1".into(),
+                output_id: OutputId::from("out-1"),
+                metadata: LayerSurfaceMetadata {
+                    namespace: "panel".into(),
+                    tier: LayerSurfaceTier::Top,
+                    keyboard_interactivity: LayerKeyboardInteractivity::OnDemand,
+                    exclusive_zone: LayerExclusiveZone::Exclusive(8),
+                },
+            });
+            let _ = state.take_discovery_events();
+            state.set_test_focused_surface_id(Some("wl-focus-unmap-1"));
+            state.set_test_cursor_image("surface", Some("wl-focus-unmap-1"));
+
+            state.track_surface_unmap_by_id("wl-focus-unmap-1".into());
+
+            let events = state.take_discovery_events();
+            assert_eq!(events.len(), 2);
+            assert!(matches!(
+                &events[0],
+                BackendDiscoveryEvent::SurfaceUnmapped { surface_id }
+                    if surface_id == "wl-focus-unmap-1"
+            ));
+            assert!(matches!(
+                &events[1],
+                BackendDiscoveryEvent::SeatFocusChanged {
+                    seat_name,
+                    window_id,
+                    output_id,
+                } if seat_name == "test-seat" && window_id == &None && output_id == &None
+            ));
+
+            let snapshot = state.snapshot();
+            assert!(snapshot.seat.focused_surface_id.is_none());
+            assert!(snapshot.seat.cursor_surface_id.is_none());
+            assert_eq!(snapshot.seat.cursor_image, "default");
+        }
+
+        #[test]
+        fn smithay_state_clears_focus_when_focused_surface_is_lost() {
+            let display = Display::<SpidersSmithayState>::new().unwrap();
+            let mut state = SpidersSmithayState::new(&display, "test-seat").unwrap();
+
+            state.track_test_surface_snapshot(BackendSurfaceSnapshot::Layer {
+                surface_id: "wl-focus-lost-1".into(),
+                output_id: OutputId::from("out-1"),
+                metadata: LayerSurfaceMetadata {
+                    namespace: "panel".into(),
+                    tier: LayerSurfaceTier::Top,
+                    keyboard_interactivity: LayerKeyboardInteractivity::OnDemand,
+                    exclusive_zone: LayerExclusiveZone::Exclusive(8),
+                },
+            });
+            let _ = state.take_discovery_events();
+            state.set_test_focused_surface_id(Some("wl-focus-lost-1"));
+
+            state.track_surface_loss_by_id("wl-focus-lost-1".into());
+
+            let events = state.take_discovery_events();
+            assert_eq!(events.len(), 2);
+            assert!(matches!(
+                &events[0],
+                BackendDiscoveryEvent::SurfaceLost { surface_id }
+                    if surface_id == "wl-focus-lost-1"
+            ));
+            assert!(matches!(
+                &events[1],
+                BackendDiscoveryEvent::SeatFocusChanged {
+                    seat_name,
+                    window_id,
+                    output_id,
+                } if seat_name == "test-seat" && window_id == &None && output_id == &None
+            ));
+            assert!(state.snapshot().seat.focused_surface_id.is_none());
+        }
+
+        #[test]
         fn smithay_state_snapshot_reports_cursor_image() {
             let display = Display::<SpidersSmithayState>::new().unwrap();
             let mut state = SpidersSmithayState::new(&display, "test-seat").unwrap();
@@ -3287,6 +3386,7 @@ mod imp {
             let mut state = SpidersSmithayState::new(&display, "test-seat").unwrap();
 
             state.register_output_id(OutputId::from("out-1"), false);
+            state.register_output_id(OutputId::from("out-2"), true);
             let _ = state.take_discovery_events();
             state.activate_output_id(OutputId::from("out-1"));
 
@@ -3304,6 +3404,7 @@ mod imp {
             let display = Display::<SpidersSmithayState>::new().unwrap();
             let mut state = SpidersSmithayState::new(&display, "test-seat").unwrap();
 
+            state.register_output_id(OutputId::from("out-1"), false);
             state.register_output_id(OutputId::from("out-2"), true);
             state.track_test_surface_snapshot(BackendSurfaceSnapshot::Layer {
                 surface_id: "wl-layer-output-lost-1".into(),
@@ -3328,10 +3429,29 @@ mod imp {
             ));
 
             let snapshot = state.snapshot();
-            assert!(snapshot.outputs.known_output_ids.is_empty());
-            assert!(snapshot.outputs.active_output_id.is_none());
+            assert_eq!(
+                snapshot.outputs.known_output_ids,
+                vec![OutputId::from("out-1")]
+            );
+            assert_eq!(
+                snapshot.outputs.active_output_id,
+                Some(OutputId::from("out-1"))
+            );
             assert_eq!(snapshot.known_surfaces.layers.len(), 1);
             assert_eq!(snapshot.known_surfaces.layers[0].output_id, None);
+        }
+
+        #[test]
+        fn smithay_state_uses_first_output_as_default_active_output() {
+            let display = Display::<SpidersSmithayState>::new().unwrap();
+            let mut state = SpidersSmithayState::new(&display, "test-seat").unwrap();
+
+            state.register_output_id(OutputId::from("out-1"), false);
+
+            assert_eq!(
+                state.snapshot().outputs.active_output_id,
+                Some(OutputId::from("out-1"))
+            );
         }
 
         #[test]

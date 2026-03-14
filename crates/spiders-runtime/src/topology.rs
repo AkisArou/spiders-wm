@@ -139,39 +139,62 @@ impl CompositorTopologyState {
     }
 
     pub fn register_output(&mut self, output: OutputSnapshot) {
+        let should_activate = self.active_output_id.is_none() && output.enabled;
+
         if let Some(existing) = self
             .outputs
             .iter_mut()
             .find(|existing| existing.snapshot.id == output.id)
         {
             existing.snapshot = output;
-            existing.active = self.active_output_id.as_ref() == Some(&existing.snapshot.id);
+            existing.active =
+                self.active_output_id.as_ref() == Some(&existing.snapshot.id) || should_activate;
+            if should_activate {
+                self.active_output_id = Some(existing.snapshot.id.clone());
+            }
             return;
         }
 
         self.outputs.push(OutputState {
-            active: self.active_output_id.as_ref() == Some(&output.id),
+            active: self.active_output_id.as_ref() == Some(&output.id) || should_activate,
             snapshot: output,
             mapped_surface_ids: Vec::new(),
         });
+
+        if should_activate {
+            self.active_output_id = self.outputs.last().map(|output| output.snapshot.id.clone());
+        }
     }
 
     pub fn register_seat(&mut self, seat_name: impl Into<String>) -> &SeatState {
         let seat_name = seat_name.into();
+        let should_activate = self.active_seat_name.is_none();
 
         if self.seat(&seat_name).is_none() {
             self.seats.push(SeatState {
                 name: seat_name.clone(),
                 focused_output_id: None,
                 focused_window_id: None,
-                active: self.active_seat_name.as_deref() == Some(seat_name.as_str()),
+                active: self.active_seat_name.as_deref() == Some(seat_name.as_str())
+                    || should_activate,
             });
+        }
+
+        if should_activate {
+            self.active_seat_name = Some(seat_name.clone());
         }
 
         self.seat(&seat_name).expect("seat was just inserted")
     }
 
     pub fn unregister_output(&mut self, output_id: &OutputId) -> Result<(), TopologyError> {
+        let affected_window_ids: Vec<_> = self
+            .surfaces
+            .iter()
+            .filter(|surface| surface.output_id.as_ref() == Some(output_id))
+            .filter_map(|surface| surface.window_id.clone())
+            .collect();
+
         if !self
             .outputs
             .iter()
@@ -188,11 +211,25 @@ impl CompositorTopologyState {
             }
         }
         if self.active_output_id.as_ref() == Some(output_id) {
-            self.active_output_id = None;
+            self.active_output_id = self
+                .outputs
+                .iter()
+                .find(|output| output.snapshot.enabled)
+                .map(|output| output.snapshot.id.clone());
+            for output in &mut self.outputs {
+                output.active = self.active_output_id.as_ref() == Some(&output.snapshot.id);
+            }
         }
         for seat in &mut self.seats {
+            if seat
+                .focused_window_id
+                .as_ref()
+                .is_some_and(|window_id| affected_window_ids.iter().any(|id| id == window_id))
+            {
+                seat.focused_window_id = None;
+            }
             if seat.focused_output_id.as_ref() == Some(output_id) {
-                seat.focused_output_id = None;
+                seat.focused_output_id = self.active_output_id.clone();
             }
         }
         Ok(())
@@ -205,7 +242,10 @@ impl CompositorTopologyState {
 
         self.seats.retain(|seat| seat.name != seat_name);
         if self.active_seat_name.as_deref() == Some(seat_name) {
-            self.active_seat_name = None;
+            self.active_seat_name = self.seats.first().map(|seat| seat.name.clone());
+            for seat in &mut self.seats {
+                seat.active = self.active_seat_name.as_deref() == Some(seat.name.as_str());
+            }
         }
         Ok(())
     }
@@ -215,6 +255,8 @@ impl CompositorTopologyState {
             .surface(surface_id)
             .cloned()
             .ok_or_else(|| TopologyError::SurfaceNotFound(surface_id.to_owned()))?;
+
+        self.clear_focus_for_window(surface.window_id.as_ref());
 
         let child_surface_ids = self.child_surface_ids(surface_id);
         for child_surface_id in child_surface_ids {
@@ -273,7 +315,14 @@ impl CompositorTopologyState {
         output.snapshot.enabled = false;
         output.active = false;
         if self.active_output_id.as_ref() == Some(output_id) {
-            self.active_output_id = None;
+            self.active_output_id = self
+                .outputs
+                .iter()
+                .find(|output| output.snapshot.id != *output_id && output.snapshot.enabled)
+                .map(|output| output.snapshot.id.clone());
+            for output in &mut self.outputs {
+                output.active = self.active_output_id.as_ref() == Some(&output.snapshot.id);
+            }
         }
         Ok(())
     }
@@ -442,6 +491,9 @@ impl CompositorTopologyState {
             .ok_or_else(|| TopologyError::SurfaceNotFound(surface_id.to_owned()))?
             .output_id
             .clone();
+        let window_id = self
+            .surface(surface_id)
+            .and_then(|surface| surface.window_id.clone());
 
         let child_surface_ids = self.child_surface_ids(surface_id);
         for child_surface_id in child_surface_ids {
@@ -454,6 +506,8 @@ impl CompositorTopologyState {
             .find(|surface| surface.id == surface_id)
             .ok_or_else(|| TopologyError::SurfaceNotFound(surface_id.to_owned()))?;
         surface.mapped = false;
+
+        self.clear_focus_for_window(window_id.as_ref());
 
         if let Some(output_id) = output_id {
             if let Some(output) = self
@@ -554,6 +608,18 @@ impl CompositorTopologyState {
         seat.focused_window_id = window_id;
         seat.focused_output_id = output_id;
         Ok(seat)
+    }
+
+    fn clear_focus_for_window(&mut self, window_id: Option<&WindowId>) {
+        let Some(window_id) = window_id else {
+            return;
+        };
+
+        for seat in &mut self.seats {
+            if seat.focused_window_id.as_ref() == Some(window_id) {
+                seat.focused_window_id = None;
+            }
+        }
     }
 }
 
@@ -665,7 +731,7 @@ mod tests {
         topology.disable_output(&OutputId::from("out-2")).unwrap();
         topology.enable_output(&OutputId::from("out-2")).unwrap();
 
-        assert_eq!(topology.active_output_id, None);
+        assert_eq!(topology.active_output_id, Some(OutputId::from("out-1")));
         assert!(
             topology
                 .output(&OutputId::from("out-2"))
@@ -844,7 +910,7 @@ mod tests {
             .unwrap();
 
         assert!(topology.output(&OutputId::from("out-2")).is_none());
-        assert_eq!(topology.active_output_id, None);
+        assert_eq!(topology.active_output_id, Some(OutputId::from("out-1")));
         assert_eq!(topology.surface("layer-1").unwrap().output_id, None);
         assert_eq!(topology.seat("seat-0").unwrap().focused_output_id, None);
     }
@@ -873,6 +939,50 @@ mod tests {
     }
 
     #[test]
+    fn topology_registers_first_output_and_seat_as_active_defaults() {
+        let mut topology = CompositorTopologyState::from_snapshot(&StateSnapshot {
+            outputs: Vec::new(),
+            workspaces: Vec::new(),
+            windows: Vec::new(),
+            visible_window_ids: Vec::new(),
+            focused_window_id: None,
+            current_output_id: None,
+            current_workspace_id: None,
+            tag_names: Vec::new(),
+        });
+
+        topology.register_output(OutputSnapshot {
+            id: OutputId::from("out-1"),
+            name: "HDMI-A-1".into(),
+            logical_width: 1920,
+            logical_height: 1080,
+            scale: 1,
+            transform: OutputTransform::Normal,
+            enabled: true,
+            current_workspace_id: None,
+        });
+        topology.register_seat("seat-0");
+
+        assert_eq!(topology.active_output_id, Some(OutputId::from("out-1")));
+        assert_eq!(topology.active_seat_name.as_deref(), Some("seat-0"));
+        assert!(topology.output(&OutputId::from("out-1")).unwrap().active);
+        assert!(topology.seat("seat-0").unwrap().active);
+    }
+
+    #[test]
+    fn topology_reassigns_active_seat_when_active_seat_is_removed() {
+        let mut topology = CompositorTopologyState::from_snapshot(&state());
+        topology.register_seat("seat-0");
+        topology.register_seat("seat-1");
+        topology.activate_seat("seat-0").unwrap();
+
+        topology.unregister_seat("seat-0").unwrap();
+
+        assert_eq!(topology.active_seat_name.as_deref(), Some("seat-1"));
+        assert!(topology.seat("seat-1").unwrap().active);
+    }
+
+    #[test]
     fn topology_unregisters_generic_surfaces() {
         let mut topology = CompositorTopologyState::from_snapshot(&state());
         topology
@@ -892,6 +1002,76 @@ mod tests {
             .unwrap()
             .mapped_surface_ids
             .is_empty());
+    }
+
+    #[test]
+    fn topology_unmap_clears_focused_window_for_seat() {
+        let mut topology = CompositorTopologyState::from_snapshot(&state());
+        topology.register_seat("seat-0");
+        topology
+            .map_window_surface(
+                "window-w1",
+                WindowId::from("w1"),
+                Some(OutputId::from("out-1")),
+            )
+            .unwrap();
+        topology
+            .focus_seat_window(
+                "seat-0",
+                Some(WindowId::from("w1")),
+                Some(OutputId::from("out-1")),
+            )
+            .unwrap();
+
+        topology.unmap_surface("window-w1").unwrap();
+
+        assert_eq!(topology.seat("seat-0").unwrap().focused_window_id, None);
+        assert_eq!(
+            topology.seat("seat-0").unwrap().focused_output_id,
+            Some(OutputId::from("out-1"))
+        );
+    }
+
+    #[test]
+    fn topology_unregister_output_clears_seat_window_focus_and_retargets_output_focus() {
+        let mut snapshot = state();
+        snapshot.outputs.push(OutputSnapshot {
+            id: OutputId::from("out-2"),
+            name: "DP-1".into(),
+            logical_width: 2560,
+            logical_height: 1440,
+            scale: 1,
+            transform: OutputTransform::Normal,
+            enabled: true,
+            current_workspace_id: None,
+        });
+        let mut topology = CompositorTopologyState::from_snapshot(&snapshot);
+        topology.register_seat("seat-0");
+        topology.activate_output(&OutputId::from("out-2")).unwrap();
+        topology
+            .map_window_surface(
+                "window-w2",
+                WindowId::from("w2"),
+                Some(OutputId::from("out-2")),
+            )
+            .unwrap();
+        topology
+            .focus_seat_window(
+                "seat-0",
+                Some(WindowId::from("w2")),
+                Some(OutputId::from("out-2")),
+            )
+            .unwrap();
+
+        topology
+            .unregister_output(&OutputId::from("out-2"))
+            .unwrap();
+
+        assert_eq!(topology.seat("seat-0").unwrap().focused_window_id, None);
+        assert_eq!(
+            topology.seat("seat-0").unwrap().focused_output_id,
+            Some(OutputId::from("out-1"))
+        );
     }
 
     #[test]
