@@ -8,6 +8,9 @@ use spiders_shared::wm::StateSnapshot;
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum BootstrapEvent {
+    // Typed bootstrap/domain seam inputs only. Smithay/protocol-specific state
+    // should stay compositor-owned unless it reduces to one of these stable-id
+    // topology actions.
     RegisterSeat {
         seat_name: String,
         active: bool,
@@ -426,6 +429,9 @@ pub struct BackendSessionState {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum BackendDiscoveryEvent {
+    // Typed backend-to-domain seam inputs only. These carry stable-id facts that
+    // can be applied to backend-agnostic topology without exposing backend
+    // handles or protocol ownership.
     SeatDiscovered {
         seat_name: String,
         active: bool,

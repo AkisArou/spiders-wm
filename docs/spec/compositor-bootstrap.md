@@ -36,6 +36,12 @@ Ongoing bootstrap/discovery uses typed `BootstrapEvent` values for:
 - window/popup/layer/unmanaged surface registration
 - surface move/unmap/removal
 
+These `BootstrapEvent` values are seam-input commands for bootstrap replay and
+controller/application handoff. They are not a claim that every future
+compositor/backend concern belongs in `spiders-runtime`; protocol-specific and
+smithay-owned concerns should stay on the compositor side unless they reduce to
+stable-id domain actions at this boundary.
+
 ## Diagnostics
 
 `BootstrapRunner` exposes:
@@ -89,6 +95,10 @@ Backend-facing discovery now has its own typed adapter boundary:
 
 This keeps the future smithay adapter responsible only for translating backend
 notifications into typed controller commands.
+
+`BackendDiscoveryEvent` should be read the same way: it is a translation/seam
+type for backend notifications that can be expressed as stable-id topology
+changes, not a request to mirror backend protocol internals into domain state.
 
 In practice, a smithay-facing adapter should stay thin and do only three things:
 

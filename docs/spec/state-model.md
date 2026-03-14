@@ -73,6 +73,9 @@ Compositor-domain note:
   seat focus, and surface attachment state
 - that topology layer should still use stable ids and snapshot-derived values,
   not raw backend handles, as its public/domain boundary
+- bootstrap/discovery command enums that cross this boundary should be treated
+  as seam-input types for stable-id topology/domain changes, not as proof that
+  every backend or protocol concern belongs in backend-agnostic runtime state
 - registration, activation, disable/enable, move, unmap, and removal events
   should all be representable in typed backend-agnostic domain inputs
 - when backend adapters discover surfaces, the topology layer should preserve
