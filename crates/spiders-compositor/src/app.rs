@@ -289,6 +289,8 @@ mod tests {
             outputs: vec![OutputSnapshot {
                 id: OutputId::from("out-1"),
                 name: "HDMI-A-1".into(),
+                logical_x: 0,
+                logical_y: 0,
                 logical_width: 800,
                 logical_height: 600,
                 scale: 1,
@@ -393,6 +395,8 @@ mod tests {
         snapshot.outputs.push(OutputSnapshot {
             id: OutputId::from("out-2"),
             name: "DP-1".into(),
+            logical_x: 0,
+            logical_y: 0,
             logical_width: 2560,
             logical_height: 1440,
             scale: 1,
@@ -446,6 +450,8 @@ mod tests {
         app.session.register_output_snapshot(OutputSnapshot {
             id: OutputId::from("out-2"),
             name: "DP-1".into(),
+            logical_x: 0,
+            logical_y: 0,
             logical_width: 2560,
             logical_height: 1440,
             scale: 1,
@@ -524,6 +530,8 @@ mod tests {
         app.session.register_output_snapshot(OutputSnapshot {
             id: OutputId::from("out-2"),
             name: "DP-1".into(),
+            logical_x: 0,
+            logical_y: 0,
             logical_width: 2560,
             logical_height: 1440,
             scale: 1,
@@ -576,6 +584,8 @@ mod tests {
         app.session.register_output_snapshot(OutputSnapshot {
             id: OutputId::from("out-2"),
             name: "DP-1".into(),
+            logical_x: 0,
+            logical_y: 0,
             logical_width: 2560,
             logical_height: 1440,
             scale: 1,

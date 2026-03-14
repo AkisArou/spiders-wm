@@ -625,6 +625,8 @@ fn synthetic_bootstrap_state() -> spiders_shared::wm::StateSnapshot {
         outputs: vec![OutputSnapshot {
             id: OutputId::from("bootstrap-output"),
             name: "BOOT-1".into(),
+            logical_x: 0,
+            logical_y: 0,
             logical_width: 1280,
             logical_height: 720,
             scale: 1,

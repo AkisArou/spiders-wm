@@ -1022,6 +1022,8 @@ mod imp {
         OutputSnapshot {
             id: OutputId::from(output_name),
             name: output_name.into(),
+            logical_x: 0,
+            logical_y: 0,
             logical_width: size.0.max(0) as u32,
             logical_height: size.1.max(0) as u32,
             scale: 1,
@@ -1215,6 +1217,7 @@ mod imp {
         smithay_state.register_smithay_output(
             OutputId::from(output_name.as_str()),
             smithay_output,
+            None,
             Some((size.w.max(0) as u32, size.h.max(0) as u32)),
             true,
         );
@@ -1290,6 +1293,8 @@ mod imp {
                 outputs: vec![OutputSnapshot {
                     id: OutputId::from("out-1"),
                     name: "HDMI-A-1".into(),
+                    logical_x: 0,
+                    logical_y: 0,
                     logical_width: 800,
                     logical_height: 600,
                     scale: 1,
@@ -1746,6 +1751,8 @@ mod imp {
             state.outputs.push(OutputSnapshot {
                 id: OutputId::from("out-2"),
                 name: "DP-1".into(),
+                logical_x: 0,
+                logical_y: 0,
                 logical_width: 2560,
                 logical_height: 1440,
                 scale: 1,
@@ -1922,6 +1929,8 @@ mod imp {
                         snapshot: OutputSnapshot {
                             id: OutputId::from("out-3"),
                             name: "DP-2".into(),
+                            logical_x: 0,
+                            logical_y: 0,
                             logical_width: 3440,
                             logical_height: 1440,
                             scale: 1,
@@ -1955,6 +1964,8 @@ mod imp {
                 .apply_adapter_event(SmithayAdapterEvent::OutputSnapshot {
                     output_id: "out-9".into(),
                     active: true,
+                    x: 320,
+                    y: 0,
                     width: 3840,
                     height: 2160,
                 })
@@ -2027,6 +2038,7 @@ mod imp {
             state.register_smithay_output(
                 output.id.clone(),
                 smithay_output,
+                Some((output.logical_x, output.logical_y)),
                 Some((output.logical_width, output.logical_height)),
                 true,
             );
@@ -2143,6 +2155,7 @@ mod imp {
             state.register_output_snapshot(
                 OutputId::from("out-topology-1"),
                 "DP-1",
+                Some((0, 0)),
                 Some((2560, 1440)),
                 true,
             );
@@ -2172,6 +2185,7 @@ mod imp {
             bootstrap.runtime.state_mut().register_output_snapshot(
                 OutputId::from("out-snapshot-1"),
                 "HDMI-A-1",
+                Some((0, 0)),
                 Some((1920, 1080)),
                 true,
             );
@@ -2272,6 +2286,8 @@ mod imp {
             state.outputs.push(OutputSnapshot {
                 id: OutputId::from("out-2"),
                 name: "DP-1".into(),
+                logical_x: 0,
+                logical_y: 0,
                 logical_width: 2560,
                 logical_height: 1440,
                 scale: 1,
@@ -3719,6 +3735,8 @@ mod imp {
             state.outputs.push(spiders_shared::wm::OutputSnapshot {
                 id: OutputId::from("out-2"),
                 name: "DP-1".into(),
+                logical_x: 0,
+                logical_y: 0,
                 logical_width: 2560,
                 logical_height: 1440,
                 scale: 1,
@@ -3769,6 +3787,8 @@ mod imp {
             state.outputs.push(OutputSnapshot {
                 id: OutputId::from("out-2"),
                 name: "DP-1".into(),
+                logical_x: 0,
+                logical_y: 0,
                 logical_width: 2560,
                 logical_height: 1440,
                 scale: 1,
@@ -3912,6 +3932,8 @@ mod imp {
             state.outputs.push(OutputSnapshot {
                 id: OutputId::from("out-2"),
                 name: "DP-1".into(),
+                logical_x: 0,
+                logical_y: 0,
                 logical_width: 2560,
                 logical_height: 1440,
                 scale: 1,

@@ -93,6 +93,10 @@ pub struct WorkspaceSnapshot {
 pub struct OutputSnapshot {
     pub id: OutputId,
     pub name: String,
+    #[serde(default)]
+    pub logical_x: i32,
+    #[serde(default)]
+    pub logical_y: i32,
     pub logical_width: u32,
     pub logical_height: u32,
     pub scale: u32,
@@ -206,6 +210,8 @@ mod tests {
             outputs: vec![OutputSnapshot {
                 id: OutputId::from("out-1"),
                 name: "HDMI-A-1".into(),
+                logical_x: 0,
+                logical_y: 0,
                 logical_width: 1920,
                 logical_height: 1080,
                 scale: 1,
@@ -248,6 +254,8 @@ mod tests {
             outputs: vec![OutputSnapshot {
                 id: OutputId::from("out-1"),
                 name: "HDMI-A-1".into(),
+                logical_x: 0,
+                logical_y: 0,
                 logical_width: 1920,
                 logical_height: 1080,
                 scale: 1,
@@ -295,6 +303,8 @@ mod tests {
             outputs: vec![OutputSnapshot {
                 id: OutputId::from("out-1"),
                 name: "HDMI-A-1".into(),
+                logical_x: 0,
+                logical_y: 0,
                 logical_width: 1920,
                 logical_height: 1080,
                 scale: 1,

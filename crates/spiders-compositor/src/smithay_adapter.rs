@@ -27,6 +27,8 @@ pub enum SmithayAdapterEvent {
     OutputSnapshot {
         output_id: String,
         active: bool,
+        x: i32,
+        y: i32,
         width: i32,
         height: i32,
     },
@@ -54,6 +56,8 @@ pub struct SmithaySeatDescriptor {
 pub struct SmithayOutputDescriptor {
     pub output_id: String,
     pub active: bool,
+    pub x: i32,
+    pub y: i32,
     pub width: i32,
     pub height: i32,
 }
@@ -91,6 +95,8 @@ impl SmithayAdapter {
             SmithayAdapterEvent::OutputSnapshot {
                 output_id,
                 active,
+                x,
+                y,
                 width,
                 height,
             } => {
@@ -98,6 +104,8 @@ impl SmithayAdapter {
                     output: Self::translate_output_descriptor(SmithayOutputDescriptor {
                         output_id,
                         active,
+                        x,
+                        y,
                         width,
                         height,
                     })
@@ -139,6 +147,8 @@ impl SmithayAdapter {
             snapshot: spiders_shared::wm::OutputSnapshot {
                 id: output_id.clone().into(),
                 name: output_id,
+                logical_x: output.x,
+                logical_y: output.y,
                 logical_width: output.width.max(0) as u32,
                 logical_height: output.height.max(0) as u32,
                 scale: 1,
@@ -203,6 +213,8 @@ mod tests {
         let command = SmithayAdapter::translate_event(SmithayAdapterEvent::OutputSnapshot {
             output_id: "out-9".into(),
             active: true,
+            x: 320,
+            y: 0,
             width: 3840,
             height: 2160,
         });
@@ -286,6 +298,8 @@ mod tests {
         let output = SmithayAdapter::translate_output_descriptor(SmithayOutputDescriptor {
             output_id: "out-1".into(),
             active: true,
+            x: 160,
+            y: 90,
             width: 1280,
             height: 720,
         });
@@ -295,6 +309,8 @@ mod tests {
             output.snapshot.id,
             spiders_shared::ids::OutputId::from("out-1")
         );
+        assert_eq!(output.snapshot.logical_x, 160);
+        assert_eq!(output.snapshot.logical_y, 90);
     }
 
     #[test]
@@ -309,6 +325,8 @@ mod tests {
                 snapshot: spiders_shared::wm::OutputSnapshot {
                     id: spiders_shared::ids::OutputId::from("out-1"),
                     name: "HDMI-A-1".into(),
+                    logical_x: 0,
+                    logical_y: 0,
                     logical_width: 1280,
                     logical_height: 720,
                     scale: 1,

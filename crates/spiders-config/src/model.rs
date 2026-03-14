@@ -359,6 +359,8 @@ mod tests {
         OutputSnapshot {
             id: OutputId::from("out-1"),
             name: "HDMI-A-1".into(),
+            logical_x: 0,
+            logical_y: 0,
             logical_width: 1920,
             logical_height: 1080,
             scale: 1,

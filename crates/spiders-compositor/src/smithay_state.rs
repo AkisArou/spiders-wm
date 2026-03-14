@@ -302,6 +302,8 @@ mod imp {
     pub struct SmithayKnownOutput {
         pub id: OutputId,
         pub name: String,
+        pub logical_x: Option<i32>,
+        pub logical_y: Option<i32>,
         pub logical_width: Option<u32>,
         pub logical_height: Option<u32>,
         pub transform: OutputTransform,
@@ -603,6 +605,8 @@ mod imp {
                 .or_insert_with(|| SmithayKnownOutput {
                     id: output_id.clone(),
                     name: output_id.to_string(),
+                    logical_x: None,
+                    logical_y: None,
                     logical_width: None,
                     logical_height: None,
                     transform: OutputTransform::Normal,
@@ -619,6 +623,7 @@ mod imp {
             &mut self,
             output_id: OutputId,
             output_name: impl Into<String>,
+            origin: Option<(i32, i32)>,
             size: Option<(u32, u32)>,
             active: bool,
         ) {
@@ -628,6 +633,8 @@ mod imp {
                 SmithayKnownOutput {
                     id: output_id,
                     name: output_name.into(),
+                    logical_x: origin.map(|(x, _)| x),
+                    logical_y: origin.map(|(_, y)| y),
                     logical_width: size.map(|(width, _)| width),
                     logical_height: size.map(|(_, height)| height),
                     transform: OutputTransform::Normal,
@@ -639,12 +646,13 @@ mod imp {
             &mut self,
             output_id: OutputId,
             output: Output,
+            origin: Option<(i32, i32)>,
             size: Option<(u32, u32)>,
             active: bool,
         ) {
             let output_name = output.name();
             self.smithay_outputs.insert(output_id.clone(), output);
-            self.register_output_snapshot(output_id, output_name, size, active);
+            self.register_output_snapshot(output_id, output_name, origin, size, active);
             self.refresh_workspace_output_groups();
         }
 
@@ -680,6 +688,15 @@ mod imp {
         pub fn refresh_workspace_state(&mut self, snapshot: &StateSnapshot) {
             self.workspace_manager_state
                 .refresh_from_snapshot::<Self>(&self.display_handle, snapshot);
+            for output in &snapshot.outputs {
+                if let Some(metadata) = self.known_output_metadata.get_mut(&output.id) {
+                    metadata.logical_x = Some(output.logical_x);
+                    metadata.logical_y = Some(output.logical_y);
+                    metadata.logical_width = Some(output.logical_width);
+                    metadata.logical_height = Some(output.logical_height);
+                    metadata.transform = output.transform;
+                }
+            }
             self.floating_window_ids = snapshot
                 .windows
                 .iter()
@@ -814,16 +831,29 @@ mod imp {
         pub fn active_output_bounds(&self) -> Option<LayoutRect> {
             self.active_output_id
                 .as_ref()
-                .or_else(|| self.known_output_ids.first())
-                .and_then(|output_id| self.known_output_metadata.get(output_id))
-                .and_then(|output| {
-                    Some(LayoutRect {
-                        x: 0.0,
-                        y: 0.0,
-                        width: output.logical_width? as f32,
-                        height: output.logical_height? as f32,
-                    })
+                .and_then(|output_id| self.output_bounds_for_id(output_id))
+                .or_else(|| {
+                    self.known_output_ids
+                        .first()
+                        .and_then(|output_id| self.output_bounds_for_id(output_id))
                 })
+        }
+
+        pub fn output_bounds_for_point(&self, x: f32, y: f32) -> Option<LayoutRect> {
+            self.known_output_ids.iter().find_map(|output_id| {
+                let bounds = self.output_bounds_for_id(output_id)?;
+                layout_rect_contains(bounds, f64::from(x), f64::from(y)).then_some(bounds)
+            })
+        }
+
+        fn output_bounds_for_id(&self, output_id: &OutputId) -> Option<LayoutRect> {
+            let output = self.known_output_metadata.get(output_id)?;
+            Some(LayoutRect {
+                x: output.logical_x? as f32,
+                y: output.logical_y? as f32,
+                width: output.logical_width? as f32,
+                height: output.logical_height? as f32,
+            })
         }
 
         pub fn renderable_toplevel_surfaces(&self) -> Vec<SmithayRenderableToplevelSurface> {
@@ -964,7 +994,11 @@ mod imp {
 
             rect.width = rect.width.max(160.0);
             rect.height = rect.height.max(interaction.titlebar_height + 64.0);
-            if let Some(bounds) = self.active_output_bounds() {
+            let clamp_point = (rect.x + rect.width * 0.5, rect.y + rect.height * 0.5);
+            if let Some(bounds) = self
+                .output_bounds_for_point(clamp_point.0, clamp_point.1)
+                .or_else(|| self.active_output_bounds())
+            {
                 rect = clamp_floating_rect(rect, bounds, interaction.titlebar_height + 64.0);
             }
             self.floating_window_overrides
@@ -1172,6 +1206,14 @@ mod imp {
                                 .as_ref()
                                 .map(|output| output.name.clone())
                                 .unwrap_or_else(|| output_id.to_string()),
+                            logical_x: metadata
+                                .as_ref()
+                                .and_then(|output| output.logical_x)
+                                .unwrap_or(0),
+                            logical_y: metadata
+                                .as_ref()
+                                .and_then(|output| output.logical_y)
+                                .unwrap_or(0),
                             logical_width: metadata
                                 .as_ref()
                                 .and_then(|output| output.logical_width)
@@ -3808,6 +3850,8 @@ mod imp {
                 outputs: vec![OutputSnapshot {
                     id: OutputId::from("out-1"),
                     name: "HDMI-A-1".into(),
+                    logical_x: 0,
+                    logical_y: 0,
                     logical_width: 800,
                     logical_height: 600,
                     scale: 1,
@@ -3920,7 +3964,13 @@ mod imp {
                 style: TitlebarEffects::default(),
             };
 
-            state.register_output_snapshot(output_id.clone(), "HDMI-A-1", Some((800, 600)), true);
+            state.register_output_snapshot(
+                output_id.clone(),
+                "HDMI-A-1",
+                Some((0, 0)),
+                Some((800, 600)),
+                true,
+            );
             state.refresh_workspace_state(&StateSnapshot {
                 focused_window_id: Some(window_id.clone()),
                 current_output_id: Some(output_id.clone()),
@@ -3928,6 +3978,8 @@ mod imp {
                 outputs: vec![OutputSnapshot {
                     id: output_id.clone(),
                     name: "HDMI-A-1".into(),
+                    logical_x: 0,
+                    logical_y: 0,
                     logical_width: 800,
                     logical_height: 600,
                     scale: 1,
@@ -4698,6 +4750,7 @@ mod imp {
             state.register_output_snapshot(
                 OutputId::from("out-3"),
                 "DP-2",
+                Some((0, 0)),
                 Some((3440, 1440)),
                 true,
             );
