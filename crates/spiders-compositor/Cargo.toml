@@ -20,3 +20,7 @@ serde.workspace = true
 serde_json.workspace = true
 smithay = { path = "/home/akisarou/projects/smithay", default-features = false, features = ["backend_winit", "desktop", "wayland_frontend"], optional = true }
 thiserror.workspace = true
+
+[dev-dependencies]
+wayland-client = "0.31.13"
+wayland-protocols = { version = "0.32.11", features = ["client", "staging"] }

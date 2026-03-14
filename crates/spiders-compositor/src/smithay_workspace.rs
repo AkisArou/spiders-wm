@@ -866,20 +866,33 @@ mod imp {
         use std::os::unix::net::UnixStream;
         use std::sync::Arc;
 
+        use smithay::delegate_compositor;
+        use smithay::delegate_output;
         use smithay::reexports::wayland_server::backend::{ClientData, ClientId, DisconnectReason};
         use smithay::reexports::wayland_server::protocol::wl_output::WlOutput;
         use smithay::reexports::wayland_server::Display;
         use smithay::reexports::wayland_server::{
             Client, DataInit, Dispatch, DisplayHandle, Resource,
         };
+        use smithay::wayland::compositor::{
+            CompositorClientState, CompositorHandler, CompositorState,
+        };
+        use smithay::wayland::output::{OutputHandler, OutputManagerState};
         use spiders_shared::ids::{OutputId, WindowId, WorkspaceId};
         use spiders_shared::wm::{
             LayoutRef, OutputSnapshot, OutputTransform, ShellKind, WindowSnapshot,
             WorkspaceSnapshot,
         };
+        use wayland_client::protocol::{wl_output, wl_registry};
+        use wayland_client::{delegate_noop, Connection, EventQueue, QueueHandle};
+        use wayland_protocols::ext::workspace::v1::client::{
+            ext_workspace_group_handle_v1, ext_workspace_handle_v1, ext_workspace_manager_v1,
+        };
 
         #[derive(Debug, Default)]
-        struct TestClientState;
+        struct TestClientState {
+            compositor_state: CompositorClientState,
+        }
 
         impl ClientData for TestClientState {
             fn initialized(&self, _client_id: ClientId) {}
@@ -889,9 +902,28 @@ mod imp {
 
         #[derive(Debug)]
         struct TestWorkspaceState {
+            compositor_state: CompositorState,
+            #[allow(dead_code)]
+            output_manager_state: OutputManagerState,
             workspace_manager: WorkspaceManagerState,
             snapshot: StateSnapshot,
             display_handle: Option<DisplayHandle>,
+        }
+
+        #[derive(Debug, Default)]
+        struct WorkspaceClientState {
+            globals: Vec<(u32, String, u32)>,
+            groups: Vec<ext_workspace_group_handle_v1::ExtWorkspaceGroupHandleV1>,
+            workspaces: Vec<ext_workspace_handle_v1::ExtWorkspaceHandleV1>,
+            group_count: usize,
+            workspace_count: usize,
+            done_count: usize,
+            finished_count: usize,
+            output_enter_count: usize,
+            workspace_enter_count: usize,
+            workspace_names: Vec<String>,
+            workspace_ids: Vec<String>,
+            workspace_states: Vec<u32>,
         }
 
         impl WorkspaceHandler for TestWorkspaceState {
@@ -937,6 +969,32 @@ mod imp {
                             .refresh_from_snapshot::<Self>(display_handle, &self.snapshot);
                     }
                 }
+            }
+        }
+
+        impl CompositorHandler for TestWorkspaceState {
+            fn compositor_state(&mut self) -> &mut CompositorState {
+                &mut self.compositor_state
+            }
+
+            fn client_compositor_state<'a>(&self, client: &'a Client) -> &'a CompositorClientState {
+                &client
+                    .get_data::<TestClientState>()
+                    .unwrap()
+                    .compositor_state
+            }
+
+            fn commit(
+                &mut self,
+                _surface: &smithay::reexports::wayland_server::protocol::wl_surface::WlSurface,
+            ) {
+            }
+        }
+
+        impl OutputHandler for TestWorkspaceState {
+            fn output_bound(&mut self, output: smithay::output::Output, wl_output: WlOutput) {
+                self.workspace_manager
+                    .output_bound(&OutputId::from(output.name()), &wl_output);
             }
         }
 
@@ -1027,7 +1085,164 @@ mod imp {
             }
         }
 
+        delegate_compositor!(TestWorkspaceState);
+        delegate_output!(TestWorkspaceState);
+
+        impl wayland_client::Dispatch<wl_registry::WlRegistry, ()> for WorkspaceClientState {
+            fn event(
+                state: &mut Self,
+                _proxy: &wl_registry::WlRegistry,
+                event: wl_registry::Event,
+                _data: &(),
+                _conn: &Connection,
+                _qh: &QueueHandle<Self>,
+            ) {
+                if let wl_registry::Event::Global {
+                    name,
+                    interface,
+                    version,
+                } = event
+                {
+                    state.globals.push((name, interface, version));
+                }
+            }
+        }
+
+        impl wayland_client::Dispatch<wl_output::WlOutput, ()> for WorkspaceClientState {
+            fn event(
+                _state: &mut Self,
+                _proxy: &wl_output::WlOutput,
+                _event: wl_output::Event,
+                _data: &(),
+                _conn: &Connection,
+                _qh: &QueueHandle<Self>,
+            ) {
+            }
+        }
+
+        impl wayland_client::Dispatch<ext_workspace_manager_v1::ExtWorkspaceManagerV1, ()>
+            for WorkspaceClientState
+        {
+            fn event(
+                state: &mut Self,
+                _proxy: &ext_workspace_manager_v1::ExtWorkspaceManagerV1,
+                event: ext_workspace_manager_v1::Event,
+                _data: &(),
+                _conn: &Connection,
+                _qh: &QueueHandle<Self>,
+            ) {
+                match event {
+                    ext_workspace_manager_v1::Event::WorkspaceGroup { workspace_group } => {
+                        state.group_count += 1;
+                        state.groups.push(workspace_group);
+                    }
+                    ext_workspace_manager_v1::Event::Workspace { workspace } => {
+                        state.workspace_count += 1;
+                        state.workspaces.push(workspace);
+                    }
+                    ext_workspace_manager_v1::Event::Done => state.done_count += 1,
+                    ext_workspace_manager_v1::Event::Finished => state.finished_count += 1,
+                    _ => {}
+                }
+            }
+
+            fn event_created_child(
+                opcode: u16,
+                qh: &QueueHandle<Self>,
+            ) -> Arc<dyn wayland_client::backend::ObjectData> {
+                match opcode {
+                    0 => qh
+                        .make_data::<ext_workspace_group_handle_v1::ExtWorkspaceGroupHandleV1, ()>(
+                            (),
+                        ),
+                    1 => qh.make_data::<ext_workspace_handle_v1::ExtWorkspaceHandleV1, ()>(()),
+                    _ => panic!("unexpected manager child opcode {opcode}"),
+                }
+            }
+        }
+
+        impl wayland_client::Dispatch<ext_workspace_group_handle_v1::ExtWorkspaceGroupHandleV1, ()>
+            for WorkspaceClientState
+        {
+            fn event(
+                state: &mut Self,
+                _proxy: &ext_workspace_group_handle_v1::ExtWorkspaceGroupHandleV1,
+                event: ext_workspace_group_handle_v1::Event,
+                _data: &(),
+                _conn: &Connection,
+                _qh: &QueueHandle<Self>,
+            ) {
+                match event {
+                    ext_workspace_group_handle_v1::Event::OutputEnter { .. } => {
+                        state.output_enter_count += 1
+                    }
+                    ext_workspace_group_handle_v1::Event::WorkspaceEnter { .. } => {
+                        state.workspace_enter_count += 1
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        impl wayland_client::Dispatch<ext_workspace_handle_v1::ExtWorkspaceHandleV1, ()>
+            for WorkspaceClientState
+        {
+            fn event(
+                state: &mut Self,
+                _proxy: &ext_workspace_handle_v1::ExtWorkspaceHandleV1,
+                event: ext_workspace_handle_v1::Event,
+                _data: &(),
+                _conn: &Connection,
+                _qh: &QueueHandle<Self>,
+            ) {
+                match event {
+                    ext_workspace_handle_v1::Event::Id { id } => state.workspace_ids.push(id),
+                    ext_workspace_handle_v1::Event::Name { name } => {
+                        state.workspace_names.push(name)
+                    }
+                    ext_workspace_handle_v1::Event::State { state: bits } => {
+                        state.workspace_states.push(bits.into())
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        delegate_noop!(WorkspaceClientState: ignore wayland_client::protocol::wl_callback::WlCallback);
+
+        fn flush_roundtrip(
+            conn: &Connection,
+            display: &mut Display<TestWorkspaceState>,
+            server_state: &mut TestWorkspaceState,
+            queue: &mut EventQueue<WorkspaceClientState>,
+            client_state: &mut WorkspaceClientState,
+        ) {
+            conn.flush().unwrap();
+            display.dispatch_clients(server_state).unwrap();
+            display.flush_clients().unwrap();
+
+            if let Some(guard) = conn.prepare_read() {
+                let _ = guard.read();
+            } else {
+                let _ = conn.backend().dispatch_inner_queue();
+            }
+
+            queue.dispatch_pending(client_state).unwrap();
+        }
+
         crate::delegate_ext_workspace!(TestWorkspaceState);
+
+        fn make_test_state(handle: &DisplayHandle, snapshot: StateSnapshot) -> TestWorkspaceState {
+            TestWorkspaceState {
+                compositor_state: CompositorState::new::<TestWorkspaceState>(handle),
+                output_manager_state: OutputManagerState::new_with_xdg_output::<TestWorkspaceState>(
+                    handle,
+                ),
+                workspace_manager: WorkspaceManagerState::new::<TestWorkspaceState>(handle),
+                snapshot,
+                display_handle: Some(handle.clone()),
+            }
+        }
 
         fn sample_state() -> StateSnapshot {
             StateSnapshot {
@@ -1110,7 +1325,7 @@ mod imp {
 
             let (client_stream, _server_stream) = UnixStream::pair().unwrap();
             let client = handle
-                .insert_client(client_stream, Arc::new(TestClientState))
+                .insert_client(client_stream, Arc::new(TestClientState::default()))
                 .unwrap();
             let _manager_resource =
                 manager.bind_manager_for_client::<TestWorkspaceState>(&handle, &client);
@@ -1130,11 +1345,7 @@ mod imp {
         fn workspace_handler_activate_and_assign_refresh_snapshot() {
             let display = Display::<TestWorkspaceState>::new().unwrap();
             let handle = display.handle();
-            let mut state = TestWorkspaceState {
-                workspace_manager: WorkspaceManagerState::new::<TestWorkspaceState>(&handle),
-                snapshot: sample_state_two_outputs(),
-                display_handle: Some(handle.clone()),
-            };
+            let mut state = make_test_state(&handle, sample_state_two_outputs());
             state
                 .workspace_manager
                 .refresh_from_snapshot::<TestWorkspaceState>(&handle, &state.snapshot);
@@ -1226,6 +1437,154 @@ mod imp {
                 WorkspaceCapabilities::Activate | WorkspaceCapabilities::Assign
             );
             assert_eq!(WorkspaceCapabilities::empty().bits(), 0);
+        }
+
+        #[test]
+        fn workspace_protocol_client_receives_initial_events_activate_assign_and_finished() {
+            let mut display = Display::<TestWorkspaceState>::new().unwrap();
+            let mut handle = display.handle();
+            let mut server_state = make_test_state(&handle, sample_state_two_outputs());
+            server_state
+                .workspace_manager
+                .refresh_from_snapshot::<TestWorkspaceState>(&handle, &server_state.snapshot);
+
+            let smithay_output = smithay::output::Output::new(
+                "out-1".into(),
+                smithay::output::PhysicalProperties {
+                    size: (1920, 1080).into(),
+                    subpixel: smithay::output::Subpixel::Unknown,
+                    make: "Spiders".into(),
+                    model: "Test".into(),
+                    serial_number: "1".into(),
+                },
+            );
+            let mode = smithay::output::Mode {
+                size: (1920, 1080).into(),
+                refresh: 60_000,
+            };
+            smithay_output.change_current_state(
+                Some(mode),
+                Some(smithay::utils::Transform::Normal),
+                Some(smithay::output::Scale::Integer(1)),
+                Some((0, 0).into()),
+            );
+            smithay_output.set_preferred(mode);
+            let _global = smithay_output.create_global::<TestWorkspaceState>(&handle);
+
+            let (client_stream, server_stream) = UnixStream::pair().unwrap();
+            client_stream.set_nonblocking(true).unwrap();
+            server_stream.set_nonblocking(true).unwrap();
+            handle
+                .insert_client(server_stream, Arc::new(TestClientState::default()))
+                .unwrap();
+
+            let conn = Connection::from_socket(client_stream).unwrap();
+            let mut queue = conn.new_event_queue::<WorkspaceClientState>();
+            let qh = queue.handle();
+            let registry = conn.display().get_registry(&qh, ());
+            let mut client_state = WorkspaceClientState::default();
+
+            flush_roundtrip(
+                &conn,
+                &mut display,
+                &mut server_state,
+                &mut queue,
+                &mut client_state,
+            );
+
+            let manager_name = client_state
+                .globals
+                .iter()
+                .find(|(_, interface, _)| interface == "ext_workspace_manager_v1")
+                .map(|(name, _, _)| *name)
+                .unwrap();
+            let output_name = client_state
+                .globals
+                .iter()
+                .find(|(_, interface, _)| interface == "wl_output")
+                .map(|(name, _, _)| *name)
+                .unwrap();
+
+            let manager = registry.bind::<ext_workspace_manager_v1::ExtWorkspaceManagerV1, _, _>(
+                manager_name,
+                1,
+                &qh,
+                (),
+            );
+            let _output = registry.bind::<wl_output::WlOutput, _, _>(output_name, 4, &qh, ());
+
+            flush_roundtrip(
+                &conn,
+                &mut display,
+                &mut server_state,
+                &mut queue,
+                &mut client_state,
+            );
+
+            assert!(client_state.group_count >= 1);
+            assert!(client_state.workspace_count >= 1);
+            assert!(client_state.done_count >= 1);
+            assert!(client_state.output_enter_count >= 1);
+            assert!(client_state.workspace_enter_count >= 1);
+            assert!(client_state.workspace_names.iter().any(|name| name == "1"));
+            assert!(client_state.workspace_ids.iter().any(|id| id == "ws-1"));
+            let initial_done_count = client_state.done_count;
+            let initial_state_event_count = client_state.workspace_states.len();
+
+            let workspace_index = client_state
+                .workspace_ids
+                .iter()
+                .position(|id| id == "ws-2")
+                .unwrap_or(0);
+            let workspace = client_state.workspaces[workspace_index].clone();
+            workspace.activate();
+            flush_roundtrip(
+                &conn,
+                &mut display,
+                &mut server_state,
+                &mut queue,
+                &mut client_state,
+            );
+            assert_eq!(
+                server_state.snapshot.current_workspace_id,
+                Some(WorkspaceId::from("ws-2"))
+            );
+            assert!(client_state.done_count > initial_done_count);
+            assert!(client_state.workspace_states.len() > initial_state_event_count);
+            assert!(client_state
+                .workspace_states
+                .iter()
+                .rev()
+                .take(2)
+                .any(|bits| *bits == WorkspaceState::Active.bits()));
+
+            let group = client_state.groups.first().cloned().unwrap();
+            let assign_done_count = client_state.done_count;
+            workspace.assign(&group);
+            flush_roundtrip(
+                &conn,
+                &mut display,
+                &mut server_state,
+                &mut queue,
+                &mut client_state,
+            );
+            assert!(server_state
+                .workspace_manager
+                .debug_snapshot()
+                .workspace_group_output_ids
+                .iter()
+                .any(|output_id| output_id.as_ref() == Some(&OutputId::from("out-1"))));
+            assert!(client_state.done_count > assign_done_count);
+
+            manager.stop();
+            flush_roundtrip(
+                &conn,
+                &mut display,
+                &mut server_state,
+                &mut queue,
+                &mut client_state,
+            );
+            assert_eq!(client_state.finished_count, 1);
         }
     }
 }

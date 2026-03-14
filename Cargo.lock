@@ -2012,6 +2012,8 @@ dependencies = [
  "spiders-runtime",
  "spiders-shared",
  "thiserror 2.0.18",
+ "wayland-client",
+ "wayland-protocols",
 ]
 
 [[package]]

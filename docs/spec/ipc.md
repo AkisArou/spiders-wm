@@ -153,7 +153,8 @@ deactivate and remove remain unsupported and should stay disabled in client UI.
 
 The CLI and IPC action surface should expose the same controller-backed actions
 as the Wayland protocol path so behavior stays testable without a Wayland
-client.
+client. `ext-workspace-v1` should also keep wire-level test coverage for the
+initial export, activate/assign requests, and manager shutdown sequencing.
 
 ## CLI Expectation
 
