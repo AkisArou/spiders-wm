@@ -68,6 +68,11 @@ Recommended default:
 - request/response for commands and queries
 - long-lived subscription stream for events
 
+V1 may use a small JSON envelope with an optional `request_id` plus a tagged
+message payload. Client messages may distinguish `query`, `action`,
+`subscribe`, and `unsubscribe`, while server messages may distinguish `query`,
+`event`, `action-accepted`, `subscribed`, `unsubscribed`, and `error`.
+
 Agents may implement this unless the repository later defines a stricter wire
 format.
 
@@ -77,6 +82,11 @@ format.
 - keep payloads serializable and versionable
 - avoid leaking backend-specific raw handles
 - make event payloads composable with JS runtime payloads where practical
+- subscription messages may carry coarse topics such as `focus`, `windows`,
+  `tags`, `layout`, `config`, and `all`
+- topic lists should be normalized before subscription state is stored or
+  compared: duplicate topics should collapse, and `all` should dominate any
+  more specific topics
 
 ## Workspace Export
 
