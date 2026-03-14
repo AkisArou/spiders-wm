@@ -159,6 +159,12 @@ impl BootstrapScenario {
         self
     }
 
+    pub fn register_output_snapshot(mut self, output: OutputSnapshot, active: bool) -> Self {
+        self.events
+            .push(BootstrapEvent::RegisterOutputSnapshot { output, active });
+        self
+    }
+
     pub fn register_window_surface(
         mut self,
         surface_id: impl Into<String>,
@@ -746,6 +752,28 @@ mod tests {
         let parsed = BootstrapTranscript::from_json_str(&json).unwrap();
 
         assert_eq!(parsed, transcript);
+    }
+
+    #[test]
+    fn scenario_registers_output_snapshot_event() {
+        let scenario = BootstrapScenario::new().register_output_snapshot(
+            OutputSnapshot {
+                id: OutputId::from("out-2"),
+                name: "DP-1".into(),
+                logical_width: 2560,
+                logical_height: 1440,
+                scale: 1,
+                transform: spiders_shared::wm::OutputTransform::Normal,
+                enabled: true,
+                current_workspace_id: None,
+            },
+            true,
+        );
+
+        assert!(matches!(
+            scenario.events(),
+            [BootstrapEvent::RegisterOutputSnapshot { active: true, .. }]
+        ));
     }
 
     #[test]

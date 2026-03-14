@@ -377,6 +377,10 @@ that were already seeded by startup state and only need activation/enablement to
 cross the seam; new backend-created outputs should prefer the typed snapshot
 path.
 
+Scenario/script helpers should expose that same distinction so fixture authors
+can choose explicitly between startup-seeded output activation and typed
+backend-created output registration.
+
 That same typed snapshot should also be usable for incremental single-output
 discovery events when the adapter is reporting one newly known output rather
 than a larger discovery batch.

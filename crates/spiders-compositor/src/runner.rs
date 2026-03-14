@@ -457,21 +457,21 @@ mod tests {
     #[test]
     fn runner_applies_in_memory_scenario() {
         let mut runner = runner();
-        runner
-            .app_mut()
-            .session
-            .register_output_snapshot(OutputSnapshot {
-                id: OutputId::from("out-2"),
-                name: "DP-1".into(),
-                logical_width: 2560,
-                logical_height: 1440,
-                scale: 1,
-                transform: OutputTransform::Normal,
-                enabled: true,
-                current_workspace_id: None,
-            });
 
         let scenario = BootstrapScenario::new()
+            .register_output_snapshot(
+                OutputSnapshot {
+                    id: OutputId::from("out-2"),
+                    name: "DP-1".into(),
+                    logical_width: 2560,
+                    logical_height: 1440,
+                    scale: 1,
+                    transform: OutputTransform::Normal,
+                    enabled: true,
+                    current_workspace_id: None,
+                },
+                false,
+            )
             .register_seat("seat-1", true)
             .register_window_surface("window-w1", "w1", Some(OutputId::from("out-1")))
             .register_popup_surface("popup-1", Some(OutputId::from("out-1")), "window-w1")
@@ -481,7 +481,7 @@ mod tests {
         runner.apply_scenario(scenario).unwrap();
 
         let trace = runner.trace();
-        assert_eq!(trace.applied_events.len(), 5);
+        assert_eq!(trace.applied_events.len(), 6);
         assert!(trace.diagnostics.seat_names.contains(&"seat-1".to_string()));
         assert!(trace
             .diagnostics
