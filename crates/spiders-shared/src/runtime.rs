@@ -42,6 +42,30 @@ pub enum RuntimeError {
     Other { message: String },
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RuntimeArtifact {
+    pub selected: SelectedLayout,
+    pub runtime_source: String,
+}
+
+impl From<LoadedLayout> for RuntimeArtifact {
+    fn from(value: LoadedLayout) -> Self {
+        Self {
+            selected: value.selected,
+            runtime_source: value.runtime_source,
+        }
+    }
+}
+
+impl From<RuntimeArtifact> for LoadedLayout {
+    fn from(value: RuntimeArtifact) -> Self {
+        Self {
+            selected: value.selected,
+            runtime_source: value.runtime_source,
+        }
+    }
+}
+
 pub trait LayoutRuntime: std::fmt::Debug {
     type Config;
 
@@ -55,7 +79,7 @@ pub trait LayoutRuntime: std::fmt::Debug {
         &self,
         config: &Self::Config,
         workspace: &WorkspaceSnapshot,
-    ) -> Result<Option<LoadedLayout>, RuntimeError>;
+    ) -> Result<Option<RuntimeArtifact>, RuntimeError>;
 
     fn build_context(
         &self,
@@ -66,16 +90,14 @@ pub trait LayoutRuntime: std::fmt::Debug {
 
     fn evaluate_layout(
         &self,
-        loaded_layout: &LoadedLayout,
+        artifact: &RuntimeArtifact,
         context: &LayoutEvaluationContext,
     ) -> Result<SourceLayoutNode, RuntimeError>;
 
     fn contract(&self) -> LayoutModuleContract;
 }
 
-pub trait AuthoredConfigRuntime: std::fmt::Debug {
-    type Config;
-
+pub trait AuthoringRuntime: LayoutRuntime {
     fn load_authored_config(&self, path: &Path) -> Result<Self::Config, RuntimeError>;
 }
 
@@ -84,7 +106,7 @@ pub trait LayoutSourceLoader<C>: std::fmt::Debug {
         &self,
         config: &C,
         workspace: &WorkspaceSnapshot,
-    ) -> Result<Option<LoadedLayout>, RuntimeError>;
+    ) -> Result<Option<RuntimeArtifact>, RuntimeError>;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

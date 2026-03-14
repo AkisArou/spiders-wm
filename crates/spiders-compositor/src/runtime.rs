@@ -2,7 +2,7 @@ use spiders_config::model::Config;
 use spiders_config::service::ConfigRuntimeService;
 use spiders_shared::ids::{WindowId, WorkspaceId};
 use spiders_shared::layout::{LayoutRect, LayoutRequest, LayoutResponse};
-use spiders_shared::runtime::{LayoutRuntime, LayoutSourceLoader};
+use spiders_shared::runtime::{AuthoringRuntime, LayoutSourceLoader};
 use spiders_shared::wm::StateSnapshot;
 
 use crate::effects::EffectsRuntimeState;
@@ -98,7 +98,7 @@ impl<L, R> CompositorRuntimeState<L, R> {
     }
 }
 
-impl<L: LayoutSourceLoader<Config>, R: LayoutRuntime<Config = Config>>
+impl<L: LayoutSourceLoader<Config>, R: AuthoringRuntime<Config = Config>>
     CompositorRuntimeState<L, R>
 {
     pub fn recompute_current_layout(&mut self) -> Result<(), CompositorLayoutError> {
@@ -128,7 +128,7 @@ impl<L: LayoutSourceLoader<Config>, R: LayoutRuntime<Config = Config>>
 
 pub(crate) fn initialize_runtime_state<
     L: LayoutSourceLoader<Config>,
-    R: LayoutRuntime<Config = Config>,
+    R: AuthoringRuntime<Config = Config>,
 >(
     layout_service: LayoutService,
     runtime_service: ConfigRuntimeService<L, R>,
@@ -261,11 +261,7 @@ mod tests {
         let loader =
             RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
         let runtime = BoaLayoutRuntime::with_loader(loader.clone());
-        let runtime_service = ConfigRuntimeService::new(
-            loader,
-            runtime,
-            spiders_runtime_js::authored::JsAuthoredConfigRuntime,
-        );
+        let runtime_service = ConfigRuntimeService::new(loader, runtime);
 
         let runtime =
             initialize_runtime_state(LayoutService, runtime_service, config(), state()).unwrap();
@@ -309,11 +305,7 @@ mod tests {
         let loader =
             RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
         let runtime = BoaLayoutRuntime::with_loader(loader.clone());
-        let runtime_service = ConfigRuntimeService::new(
-            loader,
-            runtime,
-            spiders_runtime_js::authored::JsAuthoredConfigRuntime,
-        );
+        let runtime_service = ConfigRuntimeService::new(loader, runtime);
         let mut config = config();
         config.layouts[0].effects_stylesheet =
             "window { appearance: none; } window::titlebar { background: #111; }".into();
@@ -370,11 +362,7 @@ mod tests {
         let loader =
             RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
         let runtime = BoaLayoutRuntime::with_loader(loader.clone());
-        let runtime_service = ConfigRuntimeService::new(
-            loader,
-            runtime,
-            spiders_runtime_js::authored::JsAuthoredConfigRuntime,
-        );
+        let runtime_service = ConfigRuntimeService::new(loader, runtime);
         let mut config = config();
         config.layouts[0].effects_stylesheet =
             "window::titlebar { background: #111; height: 30px; }".into();

@@ -4,7 +4,7 @@ use spiders_layout::ast::ValidatedLayoutTree;
 use spiders_layout::pipeline::compute_layout_from_request;
 use spiders_shared::ids::WorkspaceId;
 use spiders_shared::layout::{LayoutRequest, LayoutResponse};
-use spiders_shared::runtime::{LayoutRuntime, LayoutSourceLoader};
+use spiders_shared::runtime::{AuthoringRuntime, LayoutSourceLoader};
 use spiders_shared::wm::StateSnapshot;
 
 use crate::effects::EffectsRuntimeState;
@@ -73,7 +73,7 @@ impl<L, R> StartupSession<L, R> {
     }
 }
 
-impl<L: LayoutSourceLoader<Config>, R: LayoutRuntime<Config = Config>> StartupSequence<L, R> {
+impl<L: LayoutSourceLoader<Config>, R: AuthoringRuntime<Config = Config>> StartupSequence<L, R> {
     pub fn new(
         service: LayoutService,
         runtime_service: ConfigRuntimeService<L, R>,
@@ -96,7 +96,7 @@ impl<L: LayoutSourceLoader<Config>, R: LayoutRuntime<Config = Config>> StartupSe
 
 pub(crate) fn bootstrap_runtime<
     L: LayoutSourceLoader<Config>,
-    R: LayoutRuntime<Config = Config>,
+    R: AuthoringRuntime<Config = Config>,
 >(
     _service: &LayoutService,
     runtime_service: &mut ConfigRuntimeService<L, R>,
@@ -138,7 +138,7 @@ pub(crate) fn bootstrap_runtime<
 
 pub(crate) fn initialize_startup_runtime<
     L: LayoutSourceLoader<Config>,
-    R: LayoutRuntime<Config = Config>,
+    R: AuthoringRuntime<Config = Config>,
 >(
     service: &LayoutService,
     mut runtime_service: ConfigRuntimeService<L, R>,
@@ -156,7 +156,7 @@ pub(crate) fn initialize_startup_runtime<
 
 pub(crate) fn initialize_startup_config<
     L: LayoutSourceLoader<Config>,
-    R: LayoutRuntime<Config = Config>,
+    R: AuthoringRuntime<Config = Config>,
 >(
     service: &LayoutService,
     runtime_service: ConfigRuntimeService<L, R>,
@@ -170,7 +170,7 @@ pub(crate) fn initialize_startup_config<
 
 pub(crate) fn initialize_startup_session<
     L: LayoutSourceLoader<Config>,
-    R: LayoutRuntime<Config = Config>,
+    R: AuthoringRuntime<Config = Config>,
 >(
     service: &LayoutService,
     runtime_service: ConfigRuntimeService<L, R>,
@@ -257,11 +257,7 @@ mod tests {
         let loader =
             RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
         let runtime = BoaLayoutRuntime::with_loader(loader.clone());
-        let runtime_service = ConfigRuntimeService::new(
-            loader,
-            runtime,
-            spiders_runtime_js::authored::JsAuthoredConfigRuntime,
-        );
+        let runtime_service = ConfigRuntimeService::new(loader, runtime);
         let sequence = StartupSequence::new(LayoutService, runtime_service, config(), state());
 
         let startup = sequence.bootstrap().unwrap();
@@ -309,11 +305,7 @@ mod tests {
         let loader =
             RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
         let runtime = BoaLayoutRuntime::with_loader(loader.clone());
-        let runtime_service = ConfigRuntimeService::new(
-            loader,
-            runtime,
-            spiders_runtime_js::authored::JsAuthoredConfigRuntime,
-        );
+        let runtime_service = ConfigRuntimeService::new(loader, runtime);
 
         let session =
             initialize_startup_session(&LayoutService, runtime_service, config(), state()).unwrap();
@@ -357,11 +349,7 @@ mod tests {
         let loader =
             RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
         let runtime = BoaLayoutRuntime::with_loader(loader.clone());
-        let mut runtime_service = ConfigRuntimeService::new(
-            loader,
-            runtime,
-            spiders_runtime_js::authored::JsAuthoredConfigRuntime,
-        );
+        let mut runtime_service = ConfigRuntimeService::new(loader, runtime);
         let config = config();
         let state = StateSnapshot {
             focused_window_id: Some(WindowId::from("w1")),

@@ -1,5 +1,5 @@
-use spiders_shared::runtime::{LayoutSourceLoader, RuntimeError};
-use spiders_shared::wm::{LoadedLayout, SelectedLayout};
+use spiders_shared::runtime::{LayoutSourceLoader, RuntimeArtifact, RuntimeError};
+use spiders_shared::wm::SelectedLayout;
 
 use spiders_config::model::{Config, LayoutConfigError, LayoutDefinition};
 
@@ -62,7 +62,7 @@ impl RuntimeProjectLayoutSourceLoader {
     pub fn load_definition(
         &self,
         layout: &LayoutDefinition,
-    ) -> Result<LoadedLayout, LayoutLoadError> {
+    ) -> Result<RuntimeArtifact, LayoutLoadError> {
         let module_path = self.resolver.resolve_module_path(&layout.module);
         if let Some(runtime_source) = layout.runtime_source.clone() {
             return Ok(loaded_layout_definition(
@@ -90,7 +90,7 @@ impl LayoutSourceLoader<Config> for InlineLayoutSourceLoader {
         &self,
         config: &Config,
         workspace: &spiders_shared::wm::WorkspaceSnapshot,
-    ) -> Result<Option<LoadedLayout>, RuntimeError> {
+    ) -> Result<Option<RuntimeArtifact>, RuntimeError> {
         let Some(selected_layout) =
             config
                 .resolve_selected_layout(workspace)
@@ -111,7 +111,7 @@ impl FsLayoutSourceLoader {
     pub fn load_definition(
         &self,
         layout: &LayoutDefinition,
-    ) -> Result<LoadedLayout, LayoutLoadError> {
+    ) -> Result<RuntimeArtifact, LayoutLoadError> {
         if let Some(runtime_source) = layout.runtime_source.clone() {
             return Ok(loaded_layout_definition(
                 layout,
@@ -138,7 +138,7 @@ impl LayoutSourceLoader<Config> for FsLayoutSourceLoader {
         &self,
         config: &Config,
         workspace: &spiders_shared::wm::WorkspaceSnapshot,
-    ) -> Result<Option<LoadedLayout>, RuntimeError> {
+    ) -> Result<Option<RuntimeArtifact>, RuntimeError> {
         let Some(layout) = config.selected_layout(workspace) else {
             return Ok(None);
         };
@@ -156,7 +156,7 @@ impl LayoutSourceLoader<Config> for RuntimeProjectLayoutSourceLoader {
         &self,
         config: &Config,
         workspace: &spiders_shared::wm::WorkspaceSnapshot,
-    ) -> Result<Option<LoadedLayout>, RuntimeError> {
+    ) -> Result<Option<RuntimeArtifact>, RuntimeError> {
         let Some(layout) = config.selected_layout(workspace) else {
             return Ok(None);
         };
@@ -173,10 +173,10 @@ pub fn loaded_layout_definition(
     layout: &LayoutDefinition,
     module: String,
     runtime_source: String,
-) -> LoadedLayout {
+) -> RuntimeArtifact {
     let runtime_source = layout.runtime_source.clone().unwrap_or(runtime_source);
 
-    LoadedLayout {
+    RuntimeArtifact {
         selected: SelectedLayout {
             name: layout.name.clone(),
             module,

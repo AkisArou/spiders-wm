@@ -26,7 +26,7 @@ use spiders_effects::EffectsCssParseError;
 use spiders_layout::ast::{LayoutValidationError, ValidatedLayoutTree};
 use spiders_layout::pipeline::{compute_layout_from_request, LayoutPipelineError};
 use spiders_shared::layout::{LayoutRequest, LayoutResponse, LayoutSpace, ResolvedLayoutNode};
-use spiders_shared::runtime::{LayoutRuntime, LayoutSourceLoader, RuntimeError};
+use spiders_shared::runtime::{AuthoringRuntime, LayoutSourceLoader, RuntimeError};
 use spiders_shared::wm::{
     LayoutEvaluationContext, LayoutRef, OutputSnapshot, SelectedLayout, StateSnapshot,
     WindowSnapshot, WorkspaceSnapshot,
@@ -121,7 +121,7 @@ pub struct WorkspaceLayoutSource<'a> {
 impl LayoutService {
     pub fn initialize_startup_runtime<
         L: LayoutSourceLoader<Config>,
-        R: LayoutRuntime<Config = Config>,
+        R: AuthoringRuntime<Config = Config>,
     >(
         &self,
         service: ConfigRuntimeService<L, R>,
@@ -133,7 +133,7 @@ impl LayoutService {
 
     pub fn initialize_startup_config<
         L: LayoutSourceLoader<Config>,
-        R: LayoutRuntime<Config = Config>,
+        R: AuthoringRuntime<Config = Config>,
     >(
         &self,
         service: ConfigRuntimeService<L, R>,
@@ -145,7 +145,7 @@ impl LayoutService {
 
     pub fn initialize_startup_session<
         L: LayoutSourceLoader<Config>,
-        R: LayoutRuntime<Config = Config>,
+        R: AuthoringRuntime<Config = Config>,
     >(
         &self,
         service: ConfigRuntimeService<L, R>,
@@ -157,7 +157,7 @@ impl LayoutService {
 
     pub fn initialize_runtime_state<
         L: LayoutSourceLoader<Config>,
-        R: LayoutRuntime<Config = Config>,
+        R: AuthoringRuntime<Config = Config>,
     >(
         &self,
         service: ConfigRuntimeService<L, R>,
@@ -167,7 +167,10 @@ impl LayoutService {
         runtime::initialize_runtime_state(*self, service, config, state)
     }
 
-    pub fn bootstrap_runtime<L: LayoutSourceLoader<Config>, R: LayoutRuntime<Config = Config>>(
+    pub fn bootstrap_runtime<
+        L: LayoutSourceLoader<Config>,
+        R: AuthoringRuntime<Config = Config>,
+    >(
         &self,
         service: &mut ConfigRuntimeService<L, R>,
         config: &Config,
@@ -228,7 +231,7 @@ impl LayoutService {
         Ok(config.resolve_selected_layout(workspace)?)
     }
 
-    pub fn evaluate_and_layout_current_workspace<R: LayoutRuntime<Config = Config>>(
+    pub fn evaluate_and_layout_current_workspace<R: AuthoringRuntime<Config = Config>>(
         &self,
         runtime: &R,
         config: &Config,
@@ -592,11 +595,8 @@ mod tests {
             spiders_runtime_js::loader::RuntimePathResolver::new(".", &runtime_root),
         );
         let runtime = spiders_runtime_js::runtime::BoaLayoutRuntime::with_loader(loader.clone());
-        let mut runtime_service = spiders_config::service::ConfigRuntimeService::new(
-            loader,
-            runtime,
-            spiders_runtime_js::authored::JsAuthoredConfigRuntime,
-        );
+        let mut runtime_service =
+            spiders_config::service::ConfigRuntimeService::new(loader, runtime);
         let config = layout_config("", "layouts/master-stack.js");
         let state = state_snapshot(800, 600);
 
@@ -637,11 +637,7 @@ mod tests {
             spiders_runtime_js::loader::RuntimePathResolver::new(".", &runtime_root),
         );
         let runtime = spiders_runtime_js::runtime::BoaLayoutRuntime::with_loader(loader.clone());
-        let runtime_service = spiders_config::service::ConfigRuntimeService::new(
-            loader,
-            runtime,
-            spiders_runtime_js::authored::JsAuthoredConfigRuntime,
-        );
+        let runtime_service = spiders_config::service::ConfigRuntimeService::new(loader, runtime);
         let config = layout_config("", "layouts/master-stack.js");
         let state = state_snapshot(800, 600);
 
@@ -693,11 +689,7 @@ mod tests {
             spiders_runtime_js::loader::RuntimePathResolver::new(".", &runtime_root),
         );
         let runtime = spiders_runtime_js::runtime::BoaLayoutRuntime::with_loader(loader.clone());
-        let runtime_service = spiders_config::service::ConfigRuntimeService::new(
-            loader,
-            runtime,
-            spiders_runtime_js::authored::JsAuthoredConfigRuntime,
-        );
+        let runtime_service = spiders_config::service::ConfigRuntimeService::new(loader, runtime);
         let config = layout_config("", "layouts/master-stack.js");
         let state = state_snapshot(800, 600);
 
@@ -754,11 +746,7 @@ mod tests {
             spiders_runtime_js::loader::RuntimePathResolver::new(".", &runtime_root),
         );
         let runtime = spiders_runtime_js::runtime::BoaLayoutRuntime::with_loader(loader.clone());
-        let runtime_service = spiders_config::service::ConfigRuntimeService::new(
-            loader,
-            runtime,
-            spiders_runtime_js::authored::JsAuthoredConfigRuntime,
-        );
+        let runtime_service = spiders_config::service::ConfigRuntimeService::new(loader, runtime);
         let config = layout_config("", "layouts/master-stack.js");
         let state = state_snapshot(800, 600);
 
@@ -803,11 +791,7 @@ mod tests {
             spiders_runtime_js::loader::RuntimePathResolver::new(".", &runtime_root),
         );
         let runtime = spiders_runtime_js::runtime::BoaLayoutRuntime::with_loader(loader.clone());
-        let runtime_service = spiders_config::service::ConfigRuntimeService::new(
-            loader,
-            runtime,
-            spiders_runtime_js::authored::JsAuthoredConfigRuntime,
-        );
+        let runtime_service = spiders_config::service::ConfigRuntimeService::new(loader, runtime);
         let config = layout_config("", "layouts/master-stack.js");
         let state = state_snapshot(800, 600);
 

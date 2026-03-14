@@ -1,6 +1,6 @@
 use spiders_config::model::Config;
 use spiders_shared::api::{CompositorEvent, LayoutCycleDirection, WmAction};
-use spiders_shared::runtime::{LayoutRuntime, LayoutSourceLoader};
+use spiders_shared::runtime::{AuthoringRuntime, LayoutSourceLoader};
 
 use crate::runtime::CompositorRuntimeState;
 use crate::wm::{WmState, WmStateError};
@@ -36,7 +36,7 @@ pub fn apply_action<L, R>(
 ) -> Result<ActionOutcome, ActionError>
 where
     L: LayoutSourceLoader<Config>,
-    R: LayoutRuntime<Config = Config>,
+    R: AuthoringRuntime<Config = Config>,
 {
     let mut recompute = false;
 
@@ -342,11 +342,7 @@ mod tests {
         let loader =
             RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
         let runtime = BoaLayoutRuntime::with_loader(loader.clone());
-        let service = ConfigRuntimeService::new(
-            loader,
-            runtime,
-            spiders_runtime_js::authored::JsAuthoredConfigRuntime,
-        );
+        let service = ConfigRuntimeService::new(loader, runtime);
 
         LayoutService
             .initialize_runtime_state(service, config(), state())

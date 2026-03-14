@@ -40,6 +40,7 @@ mod imp {
     use smithay::wayland::presentation::Refresh;
     use spiders_shared::api::WmAction;
     use spiders_shared::ids::OutputId;
+    use spiders_shared::runtime::{AuthoringRuntime, LayoutSourceLoader};
     use spiders_shared::wm::OutputSnapshot;
     use spiders_wm::{
         CompositorTopologyState, ControllerCommand, ControllerReport, OutputState, SeatState,
@@ -149,7 +150,7 @@ mod imp {
     impl<L, R> SmithayBootstrap<L, R>
     where
         L: LayoutSourceLoader<Config>,
-        R: spiders_config::runtime::LayoutRuntime,
+        R: AuthoringRuntime<Config = Config>,
     {
         pub fn run_startup_cycle(&mut self) -> Result<(), SmithayRuntimeError> {
             self.runtime.run_startup_cycle()?;
@@ -1063,7 +1064,7 @@ mod imp {
         state: &mut SpidersSmithayState,
     ) where
         L: LayoutSourceLoader<Config>,
-        R: spiders_config::runtime::LayoutRuntime,
+        R: AuthoringRuntime<Config = Config>,
     {
         let snapshot = controller.state_snapshot();
         let window_placements = controller.app().session().current_window_placements();
@@ -1117,7 +1118,7 @@ mod imp {
         state: &mut SpidersSmithayState,
     ) where
         L: LayoutSourceLoader<Config>,
-        R: spiders_config::runtime::LayoutRuntime,
+        R: AuthoringRuntime<Config = Config>,
     {
         refresh_workspace_export_from_controller(controller, state);
     }
@@ -1129,7 +1130,7 @@ mod imp {
     ) -> Result<crate::CompositorController<L, R>, SmithayRuntimeError>
     where
         L: LayoutSourceLoader<Config>,
-        R: spiders_config::runtime::LayoutRuntime,
+        R: AuthoringRuntime<Config = Config>,
     {
         crate::CompositorController::initialize(runtime_service, config, state)
             .map_err(|error| SmithayRuntimeError::Winit(error.to_string()))
@@ -1142,7 +1143,7 @@ mod imp {
     ) -> Result<SmithayBootstrap<L, R>, SmithayRuntimeError>
     where
         L: LayoutSourceLoader<Config>,
-        R: spiders_config::runtime::LayoutRuntime,
+        R: AuthoringRuntime<Config = Config>,
     {
         let mut controller = initialize_winit_controller(runtime_service, config, state)?;
         let (runtime, report) = bootstrap_winit_controller(&mut controller)?;
@@ -1159,7 +1160,7 @@ mod imp {
     ) -> Result<(SmithayWinitRuntime<'static>, SmithayStartupReport), SmithayRuntimeError>
     where
         L: LayoutSourceLoader<Config>,
-        R: spiders_config::runtime::LayoutRuntime,
+        R: AuthoringRuntime<Config = Config>,
     {
         let event_loop = EventLoop::<SpidersSmithayState>::try_new()
             .map_err(|error| SmithayRuntimeError::Winit(error.to_string()))?;

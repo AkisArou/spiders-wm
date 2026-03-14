@@ -4,7 +4,6 @@ use std::path::Path;
 use boa_engine::{Context as JsContext, Source};
 use serde_json::Value;
 use spiders_shared::api::{FocusDirection, WmAction};
-use spiders_shared::runtime::{AuthoredConfigRuntime, RuntimeError};
 
 use crate::compile::{bundle_app, compile_app, AppBuildPlan};
 use crate::graph::{discover_project_apps, ModuleGraphBuilder};
@@ -85,19 +84,6 @@ pub fn load_authored_config(path: impl AsRef<Path>) -> Result<Config, LayoutConf
 
     config.layouts = layout_defs;
     Ok(config)
-}
-
-#[derive(Debug, Default, Clone, Copy)]
-pub struct JsAuthoredConfigRuntime;
-
-impl AuthoredConfigRuntime for JsAuthoredConfigRuntime {
-    type Config = Config;
-
-    fn load_authored_config(&self, path: &Path) -> Result<Self::Config, RuntimeError> {
-        load_authored_config(path).map_err(|error| RuntimeError::Config {
-            message: error.to_string(),
-        })
-    }
 }
 
 fn evaluate_bundled_config(path: &Path, source: &str) -> Result<Value, LayoutConfigError> {

@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use spiders_shared::runtime::{
-    AuthoredConfigRuntime, LayoutRuntime, LayoutSourceLoader, RuntimeError,
+    AuthoringRuntime, LayoutSourceLoader, RuntimeArtifact, RuntimeError,
 };
 use spiders_shared::wm::{LayoutEvaluationContext, LoadedLayout};
 
@@ -19,19 +19,14 @@ pub enum ConfigRuntimeServiceError {
 pub struct ConfigRuntimeService<L, R> {
     loader: L,
     runtime: R,
-    authored_runtime: Box<dyn AuthoredConfigRuntime<Config = Config>>,
-    cache: BTreeMap<String, LoadedLayout>,
+    cache: BTreeMap<String, RuntimeArtifact>,
 }
 
 impl<L, R> ConfigRuntimeService<L, R> {
-    pub fn new<A>(loader: L, runtime: R, authored_runtime: A) -> Self
-    where
-        A: AuthoredConfigRuntime<Config = Config> + 'static,
-    {
+    pub fn new(loader: L, runtime: R) -> Self {
         Self {
             loader,
             runtime,
-            authored_runtime: Box::new(authored_runtime),
             cache: BTreeMap::new(),
         }
     }
@@ -40,7 +35,7 @@ impl<L, R> ConfigRuntimeService<L, R> {
 impl<L, R> ConfigRuntimeService<L, R>
 where
     L: LayoutSourceLoader<Config>,
-    R: LayoutRuntime<Config = Config>,
+    R: AuthoringRuntime<Config = Config>,
 {
     pub fn discover_config_paths(
         &self,
@@ -53,9 +48,7 @@ where
         if paths.runtime_config.exists() {
             Ok(Config::from_path(&paths.runtime_config)?)
         } else {
-            Ok(self
-                .authored_runtime
-                .load_authored_config(&paths.authored_config)?)
+            Ok(self.runtime.load_authored_config(&paths.authored_config)?)
         }
     }
 
@@ -90,7 +83,7 @@ where
         &mut self,
         config: &Config,
         workspace: &spiders_shared::wm::WorkspaceSnapshot,
-    ) -> Result<Option<&LoadedLayout>, ConfigRuntimeServiceError> {
+    ) -> Result<Option<&RuntimeArtifact>, ConfigRuntimeServiceError> {
         let Some(loaded) = self.loader.load_runtime_source(config, workspace)? else {
             return Ok(None);
         };
@@ -116,13 +109,13 @@ where
         let layout = self.runtime.evaluate_layout(&loaded, &context)?;
 
         Ok(Some(EvaluatedLayout {
-            loaded,
+            loaded: loaded.into(),
             context,
             layout,
         }))
     }
 
-    pub fn cache(&self) -> &BTreeMap<String, LoadedLayout> {
+    pub fn cache(&self) -> &BTreeMap<String, RuntimeArtifact> {
         &self.cache
     }
 }
@@ -141,11 +134,11 @@ mod tests {
     use spiders_shared::ids::{OutputId, WorkspaceId};
     use spiders_shared::layout::SourceLayoutNode;
     use spiders_shared::runtime::{
-        AuthoredConfigRuntime, LayoutModuleContract, LayoutRuntime, LayoutSourceLoader,
+        AuthoringRuntime, LayoutModuleContract, LayoutRuntime, LayoutSourceLoader, RuntimeArtifact,
         RuntimeError,
     };
     use spiders_shared::wm::{
-        LayoutRef, LoadedLayout, OutputSnapshot, OutputTransform, SelectedLayout, StateSnapshot,
+        LayoutRef, OutputSnapshot, OutputTransform, SelectedLayout, StateSnapshot,
         WorkspaceSnapshot,
     };
 
@@ -154,7 +147,7 @@ mod tests {
 
     #[derive(Debug, Clone)]
     struct StubLoader {
-        loaded: Option<LoadedLayout>,
+        loaded: Option<RuntimeArtifact>,
         error_message: Option<String>,
     }
 
@@ -163,7 +156,7 @@ mod tests {
             &self,
             _config: &Config,
             _workspace: &WorkspaceSnapshot,
-        ) -> Result<Option<LoadedLayout>, RuntimeError> {
+        ) -> Result<Option<RuntimeArtifact>, RuntimeError> {
             if let Some(message) = &self.error_message {
                 return Err(RuntimeError::Other {
                     message: message.clone(),
@@ -196,7 +189,7 @@ mod tests {
             &self,
             _config: &Self::Config,
             _workspace: &WorkspaceSnapshot,
-        ) -> Result<Option<LoadedLayout>, RuntimeError> {
+        ) -> Result<Option<RuntimeArtifact>, RuntimeError> {
             Ok(None)
         }
 
@@ -211,7 +204,7 @@ mod tests {
 
         fn evaluate_layout(
             &self,
-            _loaded_layout: &LoadedLayout,
+            _loaded_layout: &RuntimeArtifact,
             _context: &spiders_shared::wm::LayoutEvaluationContext,
         ) -> Result<SourceLayoutNode, RuntimeError> {
             Ok(SourceLayoutNode::Workspace {
@@ -225,14 +218,64 @@ mod tests {
         }
     }
 
+    impl AuthoringRuntime for StubRuntime {
+        fn load_authored_config(
+            &self,
+            _path: &std::path::Path,
+        ) -> Result<Self::Config, RuntimeError> {
+            Err(RuntimeError::NotImplemented(
+                "authored config loading".into(),
+            ))
+        }
+    }
+
     #[derive(Debug, Clone, Default)]
     struct StubAuthoredRuntime {
         config: Config,
     }
 
-    impl AuthoredConfigRuntime for StubAuthoredRuntime {
+    impl LayoutRuntime for StubAuthoredRuntime {
         type Config = Config;
 
+        fn selected_layout(
+            &self,
+            config: &Self::Config,
+            workspace: &WorkspaceSnapshot,
+        ) -> Result<Option<SelectedLayout>, RuntimeError> {
+            StubRuntime.selected_layout(config, workspace)
+        }
+
+        fn load_selected_layout(
+            &self,
+            _config: &Self::Config,
+            _workspace: &WorkspaceSnapshot,
+        ) -> Result<Option<RuntimeArtifact>, RuntimeError> {
+            Ok(None)
+        }
+
+        fn build_context(
+            &self,
+            state: &StateSnapshot,
+            workspace: &WorkspaceSnapshot,
+            selected_layout: Option<SelectedLayout>,
+        ) -> spiders_shared::wm::LayoutEvaluationContext {
+            StubRuntime.build_context(state, workspace, selected_layout)
+        }
+
+        fn evaluate_layout(
+            &self,
+            loaded_layout: &RuntimeArtifact,
+            context: &spiders_shared::wm::LayoutEvaluationContext,
+        ) -> Result<SourceLayoutNode, RuntimeError> {
+            StubRuntime.evaluate_layout(loaded_layout, context)
+        }
+
+        fn contract(&self) -> LayoutModuleContract {
+            LayoutModuleContract::default()
+        }
+    }
+
+    impl AuthoringRuntime for StubAuthoredRuntime {
         fn load_authored_config(
             &self,
             _path: &std::path::Path,
@@ -241,8 +284,8 @@ mod tests {
         }
     }
 
-    fn loaded_layout(name: &str, module: &str) -> LoadedLayout {
-        LoadedLayout {
+    fn loaded_layout(name: &str, module: &str) -> RuntimeArtifact {
+        RuntimeArtifact {
             selected: SelectedLayout {
                 name: name.into(),
                 module: module.into(),
@@ -297,8 +340,7 @@ mod tests {
             loaded: Some(loaded_layout("master-stack", "layouts/master-stack.js")),
             error_message: None,
         };
-        let mut service =
-            ConfigRuntimeService::new(loader, StubRuntime, StubAuthoredRuntime::default());
+        let mut service = ConfigRuntimeService::new(loader, StubRuntime);
         let config = Config {
             layouts: vec![LayoutDefinition {
                 name: "master-stack".into(),
@@ -325,8 +367,7 @@ mod tests {
             loaded: Some(loaded_layout("master-stack", "layouts/master-stack.js")),
             error_message: None,
         };
-        let mut service =
-            ConfigRuntimeService::new(loader, StubRuntime, StubAuthoredRuntime::default());
+        let mut service = ConfigRuntimeService::new(loader, StubRuntime);
         let config = Config {
             layouts: vec![LayoutDefinition {
                 name: "master-stack".into(),
@@ -366,7 +407,6 @@ mod tests {
                 error_message: None,
             },
             StubRuntime,
-            StubAuthoredRuntime::default(),
         );
         let config = service
             .load_config(&ConfigPaths::new("unused", &runtime_config_path))
@@ -393,7 +433,6 @@ mod tests {
                 error_message: None,
             },
             StubRuntime,
-            StubAuthoredRuntime::default(),
         );
         let paths = service
             .discover_config_paths(ConfigDiscoveryOptions {
@@ -422,7 +461,6 @@ mod tests {
                 ),
             },
             StubRuntime,
-            StubAuthoredRuntime::default(),
         );
         let config = Config {
             layouts: vec![LayoutDefinition {
@@ -462,7 +500,6 @@ mod tests {
                 loaded: None,
                 error_message: None,
             },
-            StubRuntime,
             StubAuthoredRuntime {
                 config: authored_config,
             },

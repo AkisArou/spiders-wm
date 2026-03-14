@@ -8,9 +8,10 @@ use spiders_layout::ast::{
 };
 use spiders_shared::layout::{SlotTake, SourceLayoutNode};
 use spiders_shared::runtime::{
-    LayoutModuleContract, LayoutRuntime, LayoutSourceLoader, RuntimeError,
+    AuthoringRuntime, LayoutModuleContract, LayoutRuntime, LayoutSourceLoader, RuntimeArtifact,
+    RuntimeError,
 };
-use spiders_shared::wm::{LayoutEvaluationContext, LoadedLayout, SelectedLayout};
+use spiders_shared::wm::{LayoutEvaluationContext, SelectedLayout};
 
 use crate::loader::InlineLayoutSourceLoader;
 
@@ -270,7 +271,7 @@ impl<L: LayoutSourceLoader<Config>> BoaLayoutRuntime<L> {
         &self,
         config: &Config,
         workspace: &spiders_shared::wm::WorkspaceSnapshot,
-    ) -> Result<Option<LoadedLayout>, RuntimeError> {
+    ) -> Result<Option<RuntimeArtifact>, RuntimeError> {
         self.loader.load_runtime_source(config, workspace)
     }
 }
@@ -294,10 +295,10 @@ impl LayoutRuntime for StubLayoutRuntime {
         &self,
         config: &Self::Config,
         workspace: &spiders_shared::wm::WorkspaceSnapshot,
-    ) -> Result<Option<LoadedLayout>, RuntimeError> {
+    ) -> Result<Option<RuntimeArtifact>, RuntimeError> {
         Ok(self
             .selected_layout(config, workspace)?
-            .map(|selected| LoadedLayout {
+            .map(|selected| RuntimeArtifact {
                 selected,
                 runtime_source: String::new(),
             }))
@@ -314,7 +315,7 @@ impl LayoutRuntime for StubLayoutRuntime {
 
     fn evaluate_layout(
         &self,
-        loaded_layout: &LoadedLayout,
+        loaded_layout: &RuntimeArtifact,
         _context: &LayoutEvaluationContext,
     ) -> Result<SourceLayoutNode, RuntimeError> {
         Err(RuntimeError::NotImplemented(format!(
@@ -343,7 +344,7 @@ impl<L: LayoutSourceLoader<Config>> LayoutRuntime for BoaLayoutRuntime<L> {
         &self,
         config: &Self::Config,
         workspace: &spiders_shared::wm::WorkspaceSnapshot,
-    ) -> Result<Option<LoadedLayout>, RuntimeError> {
+    ) -> Result<Option<RuntimeArtifact>, RuntimeError> {
         BoaLayoutRuntime::load_selected_layout(self, config, workspace)
     }
 
@@ -358,7 +359,7 @@ impl<L: LayoutSourceLoader<Config>> LayoutRuntime for BoaLayoutRuntime<L> {
 
     fn evaluate_layout(
         &self,
-        loaded_layout: &LoadedLayout,
+        loaded_layout: &RuntimeArtifact,
         context: &LayoutEvaluationContext,
     ) -> Result<SourceLayoutNode, RuntimeError> {
         self.evaluate_module_source(
@@ -373,6 +374,22 @@ impl<L: LayoutSourceLoader<Config>> LayoutRuntime for BoaLayoutRuntime<L> {
 
     fn contract(&self) -> LayoutModuleContract {
         self.contract.clone()
+    }
+}
+
+impl<L: LayoutSourceLoader<Config>> AuthoringRuntime for BoaLayoutRuntime<L> {
+    fn load_authored_config(&self, path: &std::path::Path) -> Result<Self::Config, RuntimeError> {
+        crate::authored::load_authored_config(path).map_err(|error| RuntimeError::Config {
+            message: error.to_string(),
+        })
+    }
+}
+
+impl AuthoringRuntime for StubLayoutRuntime {
+    fn load_authored_config(&self, _path: &std::path::Path) -> Result<Self::Config, RuntimeError> {
+        Err(RuntimeError::NotImplemented(
+            "authored config loading".into(),
+        ))
     }
 }
 

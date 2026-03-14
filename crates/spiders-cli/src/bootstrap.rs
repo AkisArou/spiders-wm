@@ -28,9 +28,8 @@ pub fn build_bootstrap(
     );
     let loader = spiders_runtime_js::loader::RuntimeProjectLayoutSourceLoader::new(resolver);
     let runtime = spiders_runtime_js::runtime::BoaLayoutRuntime::with_loader(loader.clone());
-    let authored_runtime = spiders_runtime_js::authored::JsAuthoredConfigRuntime;
     let service =
-        spiders_config::service::ConfigRuntimeService::new(loader, runtime, authored_runtime);
+        spiders_config::service::ConfigRuntimeService::new(loader, runtime);
 
     Ok(CliBootstrap { paths, service })
 }

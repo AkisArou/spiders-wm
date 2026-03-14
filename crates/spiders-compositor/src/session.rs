@@ -2,7 +2,7 @@ use spiders_config::model::Config;
 use spiders_config::service::ConfigRuntimeService;
 use spiders_shared::api::{CompositorEvent, FocusDirection, WmAction};
 use spiders_shared::ids::{OutputId, WindowId};
-use spiders_shared::runtime::{LayoutRuntime, LayoutSourceLoader};
+use spiders_shared::runtime::{AuthoringRuntime, LayoutSourceLoader};
 use spiders_shared::wm::{StateSnapshot, WindowSnapshot};
 use spiders_wm::{
     CompositorTopologyState, DomainSession, DomainUpdate, LayerSurfaceMetadata, SurfaceState,
@@ -213,7 +213,7 @@ impl<L, R> CompositorSession<L, R> {
     }
 }
 
-impl<L: LayoutSourceLoader<Config>, R: LayoutRuntime<Config = Config>> CompositorSession<L, R> {
+impl<L: LayoutSourceLoader<Config>, R: AuthoringRuntime<Config = Config>> CompositorSession<L, R> {
     pub fn initialize(
         layout_service: LayoutService,
         runtime_service: ConfigRuntimeService<L, R>,
@@ -532,11 +532,7 @@ mod tests {
         let loader =
             RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
         let runtime = BoaLayoutRuntime::with_loader(loader.clone());
-        let service = ConfigRuntimeService::new(
-            loader,
-            runtime,
-            spiders_runtime_js::authored::JsAuthoredConfigRuntime,
-        );
+        let service = ConfigRuntimeService::new(loader, runtime);
 
         let mut session =
             CompositorSession::initialize(LayoutService, service, config(), state()).unwrap();
@@ -814,11 +810,7 @@ mod tests {
         let loader =
             RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
         let runtime = BoaLayoutRuntime::with_loader(loader.clone());
-        let service = ConfigRuntimeService::new(
-            loader,
-            runtime,
-            spiders_runtime_js::authored::JsAuthoredConfigRuntime,
-        );
+        let service = ConfigRuntimeService::new(loader, runtime);
         let mut session =
             CompositorSession::initialize(LayoutService, service, config, state()).unwrap();
         session.register_seat("seat-0");

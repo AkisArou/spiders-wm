@@ -1,6 +1,6 @@
 use spiders_config::model::Config;
 use spiders_config::service::ConfigRuntimeService;
-use spiders_shared::runtime::{LayoutRuntime, LayoutSourceLoader};
+use spiders_shared::runtime::{AuthoringRuntime, LayoutSourceLoader};
 use spiders_shared::wm::StateSnapshot;
 use spiders_wm::{
     BootstrapDiagnostics, BootstrapEvent, BootstrapFailureTrace, BootstrapRunTrace,
@@ -119,7 +119,7 @@ impl<L, R> BootstrapRunner<L, R> {
     }
 }
 
-impl<L: LayoutSourceLoader<Config>, R: LayoutRuntime<Config = Config>> BootstrapRunner<L, R> {
+impl<L: LayoutSourceLoader<Config>, R: AuthoringRuntime<Config = Config>> BootstrapRunner<L, R> {
     pub fn initialize(
         layout_service: LayoutService,
         runtime_service: ConfigRuntimeService<L, R>,
@@ -302,11 +302,7 @@ mod tests {
         let loader =
             RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
         let runtime = BoaLayoutRuntime::with_loader(loader.clone());
-        let service = ConfigRuntimeService::new(
-            loader,
-            runtime,
-            spiders_runtime_js::authored::JsAuthoredConfigRuntime,
-        );
+        let service = ConfigRuntimeService::new(loader, runtime);
 
         BootstrapRunner::initialize(LayoutService, service, config(), state()).unwrap()
     }
@@ -393,11 +389,7 @@ mod tests {
         let loader =
             RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
         let runtime = BoaLayoutRuntime::with_loader(loader.clone());
-        let service = ConfigRuntimeService::new(
-            loader,
-            runtime,
-            spiders_runtime_js::authored::JsAuthoredConfigRuntime,
-        );
+        let service = ConfigRuntimeService::new(loader, runtime);
         let mut snapshot = state();
         snapshot.outputs.push(OutputSnapshot {
             id: OutputId::from("out-2"),

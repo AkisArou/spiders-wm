@@ -8,7 +8,7 @@ use spiders_ipc::{
     IpcTransportError, UnknownClientError,
 };
 use spiders_shared::api::{QueryRequest, QueryResponse};
-use spiders_shared::runtime::{LayoutRuntime, LayoutSourceLoader};
+use spiders_shared::runtime::{AuthoringRuntime, LayoutSourceLoader};
 
 use crate::actions::ActionError;
 use crate::controller::CompositorController;
@@ -95,7 +95,7 @@ impl CompositorIpcHost {
     ) -> Result<spiders_ipc::IpcResponse, CompositorIpcError>
     where
         L: LayoutSourceLoader<Config>,
-        R: LayoutRuntime<Config = Config>,
+        R: AuthoringRuntime<Config = Config>,
     {
         let request = {
             let stream = self
@@ -194,7 +194,7 @@ impl CompositorIpcHost {
     ) -> Result<IpcPumpReport, CompositorIpcError>
     where
         L: LayoutSourceLoader<Config>,
-        R: LayoutRuntime<Config = Config>,
+        R: AuthoringRuntime<Config = Config>,
     {
         let mut accepted_clients = 0;
 
@@ -419,11 +419,7 @@ mod tests {
         let loader =
             RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
         let runtime = BoaLayoutRuntime::with_loader(loader.clone());
-        let service = ConfigRuntimeService::new(
-            loader,
-            runtime,
-            spiders_runtime_js::authored::JsAuthoredConfigRuntime,
-        );
+        let service = ConfigRuntimeService::new(loader, runtime);
 
         CompositorController::initialize(service, config(), state()).unwrap()
     }
@@ -549,11 +545,7 @@ mod tests {
         let loader =
             RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
         let runtime = BoaLayoutRuntime::with_loader(loader.clone());
-        let service = ConfigRuntimeService::new(
-            loader,
-            runtime,
-            spiders_runtime_js::authored::JsAuthoredConfigRuntime,
-        );
+        let service = ConfigRuntimeService::new(loader, runtime);
         let mut startup_state = state();
         startup_state.outputs.push(OutputSnapshot {
             id: OutputId::from("out-2"),

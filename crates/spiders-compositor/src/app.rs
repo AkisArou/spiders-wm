@@ -1,7 +1,7 @@
 use spiders_config::model::Config;
 use spiders_config::service::ConfigRuntimeService;
 use spiders_shared::ids::{OutputId, WindowId};
-use spiders_shared::runtime::{LayoutRuntime, LayoutSourceLoader};
+use spiders_shared::runtime::{AuthoringRuntime, LayoutSourceLoader};
 use spiders_shared::wm::StateSnapshot;
 use spiders_wm::{BootstrapEvent, LayerSurfaceMetadata, StartupRegistration};
 
@@ -206,7 +206,7 @@ impl<L, R> CompositorApp<L, R> {
     }
 }
 
-impl<L: LayoutSourceLoader<Config>, R: LayoutRuntime<Config = Config>> CompositorApp<L, R> {
+impl<L: LayoutSourceLoader<Config>, R: AuthoringRuntime<Config = Config>> CompositorApp<L, R> {
     pub fn initialize(
         layout_service: LayoutService,
         runtime_service: ConfigRuntimeService<L, R>,
@@ -351,11 +351,7 @@ mod tests {
         let loader =
             RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
         let runtime = BoaLayoutRuntime::with_loader(loader.clone());
-        let service = ConfigRuntimeService::new(
-            loader,
-            runtime,
-            spiders_runtime_js::authored::JsAuthoredConfigRuntime,
-        );
+        let service = ConfigRuntimeService::new(loader, runtime);
 
         let app = CompositorApp::initialize(LayoutService, service, config(), state()).unwrap();
 
@@ -394,11 +390,7 @@ mod tests {
         let loader =
             RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
         let runtime = BoaLayoutRuntime::with_loader(loader.clone());
-        let service = ConfigRuntimeService::new(
-            loader,
-            runtime,
-            spiders_runtime_js::authored::JsAuthoredConfigRuntime,
-        );
+        let service = ConfigRuntimeService::new(loader, runtime);
         let mut snapshot = state();
         snapshot.outputs.push(OutputSnapshot {
             id: OutputId::from("out-2"),
@@ -452,11 +444,7 @@ mod tests {
         let loader =
             RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
         let runtime = BoaLayoutRuntime::with_loader(loader.clone());
-        let service = ConfigRuntimeService::new(
-            loader,
-            runtime,
-            spiders_runtime_js::authored::JsAuthoredConfigRuntime,
-        );
+        let service = ConfigRuntimeService::new(loader, runtime);
 
         let mut app = CompositorApp::initialize(LayoutService, service, config(), state()).unwrap();
         app.session.register_output_snapshot(OutputSnapshot {
@@ -536,11 +524,7 @@ mod tests {
         let loader =
             RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
         let runtime = BoaLayoutRuntime::with_loader(loader.clone());
-        let service = ConfigRuntimeService::new(
-            loader,
-            runtime,
-            spiders_runtime_js::authored::JsAuthoredConfigRuntime,
-        );
+        let service = ConfigRuntimeService::new(loader, runtime);
 
         let mut app = CompositorApp::initialize(LayoutService, service, config(), state()).unwrap();
         app.session.register_output_snapshot(OutputSnapshot {
@@ -594,11 +578,7 @@ mod tests {
         let loader =
             RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
         let runtime = BoaLayoutRuntime::with_loader(loader.clone());
-        let service = ConfigRuntimeService::new(
-            loader,
-            runtime,
-            spiders_runtime_js::authored::JsAuthoredConfigRuntime,
-        );
+        let service = ConfigRuntimeService::new(loader, runtime);
 
         let mut app = CompositorApp::initialize(LayoutService, service, config(), state()).unwrap();
         app.session.register_output_snapshot(OutputSnapshot {
@@ -711,11 +691,7 @@ mod tests {
         let loader =
             RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
         let runtime = BoaLayoutRuntime::with_loader(loader.clone());
-        let service = ConfigRuntimeService::new(
-            loader,
-            runtime,
-            spiders_runtime_js::authored::JsAuthoredConfigRuntime,
-        );
+        let service = ConfigRuntimeService::new(loader, runtime);
 
         let mut app = CompositorApp::initialize(LayoutService, service, config(), state()).unwrap();
         app.apply_bootstrap_event(BootstrapEvent::RegisterSeat {
