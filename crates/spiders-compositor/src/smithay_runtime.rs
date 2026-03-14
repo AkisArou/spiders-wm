@@ -449,7 +449,7 @@ mod imp {
             .map_err(|error| SmithayRuntimeError::Winit(error.to_string()))?;
         let display =
             Display::new().map_err(|error| SmithayRuntimeError::Winit(error.to_string()))?;
-        let smithay_state = SpidersSmithayState::new(&display, "smithay-winit")?;
+        let mut smithay_state = SpidersSmithayState::new(&display, "smithay-winit")?;
         let socket = smithay_state.bind_auto_socket_source()?;
         let socket_name = socket.socket_name().to_string_lossy().into_owned();
 
@@ -496,6 +496,13 @@ mod imp {
             size: (size.w, size.h).into(),
             refresh: 60_000,
         };
+
+        smithay_state.register_output_snapshot(
+            OutputId::from(output_name.as_str()),
+            output_name.clone(),
+            Some((size.w.max(0) as u32, size.h.max(0) as u32)),
+            true,
+        );
 
         let command = initial_winit_discovery_command(&seat_name, &output_name, (size.w, size.h));
 
@@ -1230,6 +1237,37 @@ mod imp {
 
             assert_eq!(descriptor.seat_name, "smithay-winit");
             assert!(descriptor.active);
+        }
+
+        #[test]
+        fn smithay_output_snapshot_matches_state_output_registration_metadata() {
+            let display = Display::<SpidersSmithayState>::new().unwrap();
+            let mut state = SpidersSmithayState::new(&display, "smithay-winit").unwrap();
+            let output = super::smithay_output_snapshot("smithay-winit-output", (1280, 720));
+
+            state.register_output_snapshot(
+                output.id.clone(),
+                output.name.clone(),
+                Some((output.logical_width, output.logical_height)),
+                true,
+            );
+
+            let snapshot = state.snapshot();
+            assert_eq!(snapshot.outputs.known_outputs.len(), 1);
+            assert_eq!(snapshot.outputs.known_outputs[0].id, output.id);
+            assert_eq!(snapshot.outputs.known_outputs[0].name, output.name);
+            assert_eq!(
+                snapshot.outputs.known_outputs[0].logical_width,
+                Some(output.logical_width)
+            );
+            assert_eq!(
+                snapshot.outputs.known_outputs[0].logical_height,
+                Some(output.logical_height)
+            );
+            assert_eq!(
+                snapshot.outputs.active_output_id,
+                Some(OutputId::from("smithay-winit-output"))
+            );
         }
 
         #[test]

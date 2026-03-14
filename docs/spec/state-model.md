@@ -165,6 +165,9 @@ Compositor-domain note:
 - smithay-side inspection may keep a lighter typed output summary for
   diagnostics, but that should remain inspection-oriented and not become a
   second domain registration path
+- when the real smithay bootstrap path constructs a backend-created output
+  snapshot, smithay-side inspection should record matching lightweight metadata
+  so diagnostics and bootstrap reports describe the same initial output
 - layer-shell configure bookkeeping also remains compositor-owned, but a small
   typed inspection snapshot for last acked serial, pending configure count, and
   configured size may cross the smithay seam for diagnostics and tests
