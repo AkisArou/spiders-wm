@@ -63,6 +63,7 @@ mod imp {
     use spiders_runtime::{
         LayerExclusiveZone, LayerKeyboardInteractivity, LayerSurfaceMetadata, LayerSurfaceTier,
     };
+    use spiders_shared::api::WmAction;
     use spiders_shared::ids::{OutputId, WindowId};
     use spiders_shared::wm::{OutputTransform, StateSnapshot};
 
@@ -319,6 +320,7 @@ mod imp {
         mapped_surface_ids: HashSet<String>,
         popup_parent_links: HashMap<String, SmithayPopupParentLink>,
         pending_discovery_events: Vec<BackendDiscoveryEvent>,
+        pending_workspace_actions: Vec<WmAction>,
     }
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -410,6 +412,7 @@ mod imp {
                 mapped_surface_ids: HashSet::new(),
                 popup_parent_links: HashMap::new(),
                 pending_discovery_events: Vec::new(),
+                pending_workspace_actions: Vec::new(),
             })
         }
 
@@ -419,6 +422,14 @@ mod imp {
 
         pub fn take_discovery_events(&mut self) -> Vec<BackendDiscoveryEvent> {
             std::mem::take(&mut self.pending_discovery_events)
+        }
+
+        pub fn take_workspace_actions(&mut self) -> Vec<WmAction> {
+            std::mem::take(&mut self.pending_workspace_actions)
+        }
+
+        pub fn queue_workspace_action(&mut self, action: WmAction) {
+            self.pending_workspace_actions.push(action);
         }
 
         pub fn register_output_id(&mut self, output_id: OutputId, active: bool) {
@@ -443,6 +454,8 @@ mod imp {
             if active {
                 self.active_output_id = Some(output_id);
             }
+
+            self.refresh_workspace_output_groups();
         }
 
         pub fn register_output_snapshot(
@@ -2125,6 +2138,23 @@ mod imp {
     impl WorkspaceHandler for SpidersSmithayState {
         fn workspace_manager_state(&mut self) -> &mut WorkspaceManagerState {
             &mut self.workspace_manager_state
+        }
+
+        fn activate_workspace(&mut self, workspace_id: &spiders_shared::ids::WorkspaceId) {
+            self.queue_workspace_action(WmAction::ActivateWorkspace {
+                workspace_id: workspace_id.clone(),
+            });
+        }
+
+        fn assign_workspace(
+            &mut self,
+            workspace_id: &spiders_shared::ids::WorkspaceId,
+            output_id: &OutputId,
+        ) {
+            self.queue_workspace_action(WmAction::AssignWorkspace {
+                workspace_id: workspace_id.clone(),
+                output_id: output_id.clone(),
+            });
         }
     }
 

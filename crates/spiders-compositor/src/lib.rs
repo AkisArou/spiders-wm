@@ -70,9 +70,9 @@ pub use smithay_adapter::{
     SmithayAdapter, SmithayAdapterEvent, SmithayOutputDescriptor, SmithaySeatDescriptor,
 };
 #[cfg(feature = "smithay-winit")]
-pub use smithay_runtime::initialize_winit_controller;
-#[cfg(feature = "smithay-winit")]
 pub use smithay_runtime::{bootstrap_winit, SmithayBootstrap, SmithayWinitRuntime};
+#[cfg(feature = "smithay-winit")]
+pub use smithay_runtime::{initialize_smithay_workspace_export, initialize_winit_controller};
 pub use smithay_runtime::{
     SmithayBootstrapSnapshot, SmithayRuntimeError, SmithayRuntimeSnapshot, SmithayStartupReport,
 };

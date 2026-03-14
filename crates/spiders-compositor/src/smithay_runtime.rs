@@ -108,7 +108,28 @@ mod imp {
 
         pub fn apply_pending_discovery_events(&mut self) -> Result<usize, SmithayRuntimeError> {
             let commands = self.runtime.drain_pending_discovery_commands();
-            self.apply_pending_discovery_commands(commands)
+            let applied = self.apply_pending_discovery_commands(commands)?;
+            self.apply_pending_workspace_actions()?;
+            Ok(applied)
+        }
+
+        pub fn apply_pending_workspace_actions(&mut self) -> Result<usize, SmithayRuntimeError> {
+            let actions = self.runtime.take_workspace_actions();
+            let mut applied = 0;
+
+            for action in actions {
+                self.controller.apply_ipc_action(&action).map_err(|error| {
+                    SmithayRuntimeError::Winit(format!("workspace action failed: {error}"))
+                })?;
+                refresh_workspace_export_from_controller(
+                    &self.controller,
+                    self.runtime.state_mut(),
+                );
+                self.report.controller = self.controller.report();
+                applied += 1;
+            }
+
+            Ok(applied)
         }
 
         pub fn apply_adapter_event(
@@ -189,8 +210,7 @@ mod imp {
             command: ControllerCommand,
         ) -> Result<(), SmithayRuntimeError> {
             self.controller.apply_command(command)?;
-            let snapshot = self.controller.state_snapshot();
-            self.runtime.state_mut().refresh_workspace_state(&snapshot);
+            refresh_workspace_export_from_controller(&self.controller, self.runtime.state_mut());
             self.report.controller = self.controller.report();
             Ok(())
         }
@@ -266,6 +286,10 @@ mod imp {
                 .into_iter()
                 .map(ControllerCommand::DiscoveryEvent)
                 .collect()
+        }
+
+        pub fn take_workspace_actions(&mut self) -> Vec<spiders_shared::api::WmAction> {
+            self.state_mut().take_workspace_actions()
         }
 
         fn dispatch_winit_events(&mut self) -> Result<(), SmithayRuntimeError> {
@@ -425,6 +449,28 @@ mod imp {
         }
     }
 
+    pub fn refresh_workspace_export_from_controller<L, R>(
+        controller: &crate::CompositorController<L, R>,
+        state: &mut SpidersSmithayState,
+    ) where
+        L: spiders_config::loader::LayoutSourceLoader,
+        R: spiders_config::runtime::LayoutRuntime,
+    {
+        let snapshot = controller.state_snapshot();
+        state.refresh_workspace_state(&snapshot);
+        state.refresh_workspace_output_groups();
+    }
+
+    pub fn initialize_smithay_workspace_export<L, R>(
+        controller: &crate::CompositorController<L, R>,
+        state: &mut SpidersSmithayState,
+    ) where
+        L: spiders_config::loader::LayoutSourceLoader,
+        R: spiders_config::runtime::LayoutRuntime,
+    {
+        refresh_workspace_export_from_controller(controller, state);
+    }
+
     pub fn initialize_winit_controller<L, R>(
         runtime_service: spiders_config::service::ConfigRuntimeService<L, R>,
         config: spiders_config::model::Config,
@@ -545,9 +591,7 @@ mod imp {
             }
         }
 
-        let state_snapshot = controller.state_snapshot();
-        smithay_state.refresh_workspace_state(&state_snapshot);
-        smithay_state.refresh_workspace_output_groups();
+        initialize_smithay_workspace_export(controller, &mut smithay_state);
 
         let runtime = SmithayWinitRuntime {
             display_handle: smithay_state.display_handle.clone(),
@@ -3089,14 +3133,147 @@ mod imp {
                 .unwrap();
             assert_eq!(layer.output_id, None);
         }
+
+        #[test]
+        fn bootstrap_applies_pending_workspace_activate_action_to_controller_and_export() {
+            let runtime_service = test_runtime_service();
+            let config = test_config();
+            let mut state = test_state_snapshot();
+            state
+                .workspaces
+                .push(spiders_shared::wm::WorkspaceSnapshot {
+                    id: spiders_shared::ids::WorkspaceId::from("ws-2"),
+                    name: "2".into(),
+                    output_id: Some(OutputId::from("out-1")),
+                    active_tags: vec!["2".into()],
+                    focused: false,
+                    visible: false,
+                    effective_layout: Some(spiders_shared::wm::LayoutRef {
+                        name: "master-stack".into(),
+                    }),
+                });
+            let controller =
+                crate::CompositorController::initialize(runtime_service, config, state).unwrap();
+            let runtime = test_runtime("wayland-test-workspace-activate-bootstrap");
+            let report = SmithayStartupReport {
+                controller: controller.report(),
+                output_name: "smithay-test-output".into(),
+                seat_name: "smithay-test-seat".into(),
+                logical_size: (1280, 720),
+                socket_name: Some("wayland-test-workspace-activate-bootstrap".into()),
+            };
+            let mut bootstrap = SmithayBootstrap {
+                controller,
+                runtime,
+                report,
+            };
+
+            initialize_smithay_workspace_export(
+                &bootstrap.controller,
+                bootstrap.runtime.state_mut(),
+            );
+            bootstrap.runtime.state_mut().queue_workspace_action(
+                spiders_shared::api::WmAction::ActivateWorkspace {
+                    workspace_id: spiders_shared::ids::WorkspaceId::from("ws-2"),
+                },
+            );
+
+            let applied = bootstrap.apply_pending_workspace_actions().unwrap();
+            let snapshot = bootstrap.snapshot();
+
+            assert_eq!(applied, 1);
+            assert_eq!(
+                bootstrap.controller.state_snapshot().current_workspace_id,
+                Some(spiders_shared::ids::WorkspaceId::from("ws-2"))
+            );
+            assert!(
+                snapshot
+                    .runtime
+                    .state
+                    .outputs
+                    .known_output_ids
+                    .contains(&OutputId::from("out-1"))
+                    || snapshot.runtime.state.outputs.active_output_id.is_none()
+            );
+        }
+
+        #[test]
+        fn bootstrap_applies_pending_workspace_assign_action_to_controller_and_export() {
+            let runtime_service = test_runtime_service();
+            let config = test_config();
+            let mut state = test_state_snapshot();
+            state.outputs.push(OutputSnapshot {
+                id: OutputId::from("out-2"),
+                name: "DP-1".into(),
+                logical_width: 2560,
+                logical_height: 1440,
+                scale: 1,
+                transform: OutputTransform::Normal,
+                enabled: true,
+                current_workspace_id: None,
+            });
+            state
+                .workspaces
+                .push(spiders_shared::wm::WorkspaceSnapshot {
+                    id: spiders_shared::ids::WorkspaceId::from("ws-2"),
+                    name: "2".into(),
+                    output_id: Some(OutputId::from("out-1")),
+                    active_tags: vec!["2".into()],
+                    focused: false,
+                    visible: false,
+                    effective_layout: Some(spiders_shared::wm::LayoutRef {
+                        name: "master-stack".into(),
+                    }),
+                });
+            let controller =
+                crate::CompositorController::initialize(runtime_service, config, state).unwrap();
+            let runtime = test_runtime("wayland-test-workspace-assign-bootstrap");
+            let report = SmithayStartupReport {
+                controller: controller.report(),
+                output_name: "smithay-test-output".into(),
+                seat_name: "smithay-test-seat".into(),
+                logical_size: (1280, 720),
+                socket_name: Some("wayland-test-workspace-assign-bootstrap".into()),
+            };
+            let mut bootstrap = SmithayBootstrap {
+                controller,
+                runtime,
+                report,
+            };
+
+            initialize_smithay_workspace_export(
+                &bootstrap.controller,
+                bootstrap.runtime.state_mut(),
+            );
+            bootstrap.runtime.state_mut().queue_workspace_action(
+                spiders_shared::api::WmAction::AssignWorkspace {
+                    workspace_id: spiders_shared::ids::WorkspaceId::from("ws-2"),
+                    output_id: OutputId::from("out-2"),
+                },
+            );
+
+            let applied = bootstrap.apply_pending_workspace_actions().unwrap();
+
+            assert_eq!(applied, 1);
+            assert_eq!(
+                bootstrap
+                    .controller
+                    .state_snapshot()
+                    .workspace_by_id(&spiders_shared::ids::WorkspaceId::from("ws-2"))
+                    .unwrap()
+                    .output_id,
+                Some(OutputId::from("out-2"))
+            );
+        }
     }
 }
 
 #[cfg(feature = "smithay-winit")]
 pub use imp::{
-    bootstrap_winit, bootstrap_winit_controller, initialize_winit_controller, SmithayBootstrap,
-    SmithayBootstrapSnapshot, SmithayBootstrapTopologySnapshot, SmithayRuntimeError,
-    SmithayRuntimeSnapshot, SmithayStartupReport, SmithayWinitRuntime,
+    bootstrap_winit, bootstrap_winit_controller, initialize_smithay_workspace_export,
+    initialize_winit_controller, SmithayBootstrap, SmithayBootstrapSnapshot,
+    SmithayBootstrapTopologySnapshot, SmithayRuntimeError, SmithayRuntimeSnapshot,
+    SmithayStartupReport, SmithayWinitRuntime,
 };
 
 #[cfg(not(feature = "smithay-winit"))]

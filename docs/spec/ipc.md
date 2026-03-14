@@ -144,8 +144,12 @@ The export should reflect:
 - monitor/output association where meaningful
 - changes over time as WM state updates
 
-The initial smithay-backed export may be read-only and map one workspace group
-per enabled output, with workspace state derived from the Rust `StateSnapshot`.
+The initial smithay-backed export maps one workspace group per enabled output,
+with workspace state derived from the Rust `StateSnapshot`.
+
+The current action surface is intentionally narrow: clients may request
+workspace activation and assignment when those capabilities are advertised, but
+deactivate and remove remain unsupported and should stay disabled in client UI.
 
 ## CLI Expectation
 

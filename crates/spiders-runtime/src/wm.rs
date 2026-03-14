@@ -20,6 +20,11 @@ pub enum WmStateError {
     WindowNotFound(WindowId),
     #[error("tag '{tag}' not found on output {output_id}")]
     TagNotFound { output_id: OutputId, tag: String },
+    #[error("workspace {workspace_id} cannot be assigned to missing output {output_id}")]
+    InvalidWorkspaceAssignment {
+        workspace_id: WorkspaceId,
+        output_id: OutputId,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -253,6 +258,95 @@ impl WmState {
         Ok(events)
     }
 
+    pub fn activate_workspace(
+        &mut self,
+        workspace_id: &WorkspaceId,
+    ) -> Result<Vec<CompositorEvent>, WmStateError> {
+        self.select_workspace(workspace_id)?;
+
+        let workspace = self.workspace_by_id(workspace_id)?.clone();
+        let mut events = vec![CompositorEvent::TagChange {
+            workspace_id: Some(workspace.id.clone()),
+            active_tags: workspace.active_tags.clone(),
+        }];
+
+        events.push(self.focus_change_event());
+        Ok(events)
+    }
+
+    pub fn assign_workspace_to_output(
+        &mut self,
+        workspace_id: &WorkspaceId,
+        output_id: &OutputId,
+    ) -> Result<Vec<CompositorEvent>, WmStateError> {
+        if !self
+            .snapshot
+            .outputs
+            .iter()
+            .any(|output| &output.id == output_id)
+        {
+            return Err(WmStateError::InvalidWorkspaceAssignment {
+                workspace_id: workspace_id.clone(),
+                output_id: output_id.clone(),
+            });
+        }
+
+        let previous_output_id = self
+            .snapshot
+            .workspaces
+            .iter()
+            .find(|workspace| &workspace.id == workspace_id)
+            .and_then(|workspace| workspace.output_id.clone());
+
+        let workspace = self
+            .snapshot
+            .workspaces
+            .iter_mut()
+            .find(|workspace| &workspace.id == workspace_id)
+            .ok_or_else(|| WmStateError::WorkspaceNotFound(workspace_id.clone()))?;
+        workspace.output_id = Some(output_id.clone());
+
+        let should_activate = self.snapshot.current_workspace_id.as_ref() == Some(workspace_id)
+            || self
+                .snapshot
+                .workspaces
+                .iter()
+                .find(|workspace| &workspace.id == workspace_id)
+                .is_some_and(|workspace| workspace.visible);
+
+        if should_activate {
+            self.select_workspace(workspace_id)?;
+        } else if let Some(output) = self
+            .snapshot
+            .outputs
+            .iter_mut()
+            .find(|output| &output.id == output_id)
+        {
+            if output.current_workspace_id.is_none() {
+                output.current_workspace_id = Some(workspace_id.clone());
+            }
+        }
+
+        if let Some(previous_output_id) = previous_output_id {
+            self.ensure_output_has_visible_workspace(&previous_output_id);
+        }
+
+        self.refresh_visible_windows();
+        self.reconcile_focus();
+
+        let workspace = self.workspace_by_id(workspace_id)?.clone();
+        let mut events = vec![CompositorEvent::TagChange {
+            workspace_id: Some(workspace.id.clone()),
+            active_tags: workspace.active_tags.clone(),
+        }];
+
+        if should_activate {
+            events.push(self.focus_change_event());
+        }
+
+        Ok(events)
+    }
+
     pub fn toggle_focused_floating(&mut self) -> Result<CompositorEvent, WmStateError> {
         let window_id = self.focused_window_id()?.clone();
         let window = self
@@ -412,6 +506,65 @@ impl WmState {
             for window in &mut self.snapshot.windows {
                 window.focused = false;
             }
+        }
+    }
+
+    fn ensure_output_has_visible_workspace(&mut self, output_id: &OutputId) {
+        let has_visible =
+            self.snapshot.workspaces.iter().any(|workspace| {
+                workspace.output_id.as_ref() == Some(output_id) && workspace.visible
+            });
+
+        if has_visible {
+            if let Some(output) = self
+                .snapshot
+                .outputs
+                .iter_mut()
+                .find(|output| &output.id == output_id)
+            {
+                output.current_workspace_id = self
+                    .snapshot
+                    .workspaces
+                    .iter()
+                    .find(|workspace| {
+                        workspace.output_id.as_ref() == Some(output_id) && workspace.visible
+                    })
+                    .map(|workspace| workspace.id.clone());
+            }
+            return;
+        }
+
+        if let Some(workspace_id) = self
+            .snapshot
+            .workspaces
+            .iter()
+            .find(|workspace| workspace.output_id.as_ref() == Some(output_id))
+            .map(|workspace| workspace.id.clone())
+        {
+            for workspace in &mut self.snapshot.workspaces {
+                if workspace.output_id.as_ref() == Some(output_id) {
+                    workspace.visible = workspace.id == workspace_id;
+                    if self.snapshot.current_workspace_id.as_ref() != Some(&workspace.id) {
+                        workspace.focused = false;
+                    }
+                }
+            }
+
+            if let Some(output) = self
+                .snapshot
+                .outputs
+                .iter_mut()
+                .find(|output| &output.id == output_id)
+            {
+                output.current_workspace_id = Some(workspace_id);
+            }
+        } else if let Some(output) = self
+            .snapshot
+            .outputs
+            .iter_mut()
+            .find(|output| &output.id == output_id)
+        {
+            output.current_workspace_id = None;
         }
     }
 
@@ -682,6 +835,67 @@ mod tests {
             state.snapshot().current_workspace_id,
             Some(WorkspaceId::from("ws-2"))
         );
+    }
+
+    #[test]
+    fn wm_state_activates_workspace_by_id() {
+        let mut state = WmState::from_snapshot(state());
+
+        let events = state
+            .activate_workspace(&WorkspaceId::from("ws-2"))
+            .unwrap();
+
+        assert_eq!(
+            state.snapshot().current_workspace_id,
+            Some(WorkspaceId::from("ws-2"))
+        );
+        assert_eq!(
+            state.snapshot().visible_window_ids,
+            vec![WindowId::from("w2")]
+        );
+        assert!(events.iter().any(|event| matches!(
+            event,
+            CompositorEvent::FocusChange {
+                current_workspace_id: Some(id),
+                ..
+            } if id == &WorkspaceId::from("ws-2")
+        )));
+    }
+
+    #[test]
+    fn wm_state_assigns_workspace_to_new_output() {
+        let mut snapshot = state();
+        snapshot.outputs.push(OutputSnapshot {
+            id: OutputId::from("out-2"),
+            name: "DP-1".into(),
+            logical_width: 2560,
+            logical_height: 1440,
+            scale: 1,
+            transform: OutputTransform::Normal,
+            enabled: true,
+            current_workspace_id: None,
+        });
+        let mut state = WmState::from_snapshot(snapshot);
+
+        let events = state
+            .assign_workspace_to_output(&WorkspaceId::from("ws-2"), &OutputId::from("out-2"))
+            .unwrap();
+
+        assert_eq!(
+            state
+                .snapshot()
+                .workspace_by_id(&WorkspaceId::from("ws-2"))
+                .unwrap()
+                .output_id,
+            Some(OutputId::from("out-2"))
+        );
+        assert!(events.iter().any(|event| matches!(
+            event,
+            CompositorEvent::TagChange {
+                workspace_id: Some(id),
+                ..
+            } if id == &WorkspaceId::from("ws-2")
+        )));
     }
 
     #[test]

@@ -26,6 +26,8 @@ mod imp {
         + 'static
     {
         fn workspace_manager_state(&mut self) -> &mut WorkspaceManagerState;
+        fn activate_workspace(&mut self, workspace_id: &WorkspaceId);
+        fn assign_workspace(&mut self, workspace_id: &WorkspaceId, output_id: &OutputId);
     }
 
     #[derive(Debug, Clone, PartialEq, Eq)]
@@ -557,7 +559,7 @@ mod imp {
             resource.id(inner.stable_id.clone());
             resource.name(inner.name.clone());
             resource.state(inner.state);
-            resource.capabilities(WorkspaceCapabilities::empty());
+            resource.capabilities(WorkspaceCapabilities::Activate | WorkspaceCapabilities::Assign);
             drop(inner);
             self.inner
                 .lock()
@@ -771,19 +773,25 @@ mod imp {
         D: WorkspaceHandler,
     {
         fn request(
-            _state: &mut D,
+            state: &mut D,
             _client: &Client,
             _resource: &ExtWorkspaceHandleV1,
             request: ext_workspace_handle_v1::Request,
-            _data: &WorkspaceHandle,
+            data: &WorkspaceHandle,
             _dh: &DisplayHandle,
             _data_init: &mut DataInit<'_, D>,
         ) {
             match request {
                 ext_workspace_handle_v1::Request::Destroy => {}
-                ext_workspace_handle_v1::Request::Activate => {}
+                ext_workspace_handle_v1::Request::Activate => {
+                    state.activate_workspace(&data.workspace_id());
+                }
                 ext_workspace_handle_v1::Request::Deactivate => {}
-                ext_workspace_handle_v1::Request::Assign { .. } => {}
+                ext_workspace_handle_v1::Request::Assign { workspace_group } => {
+                    if let Some(group) = workspace_group.data::<WorkspaceGroupHandle>() {
+                        state.assign_workspace(&data.workspace_id(), &group.output_id());
+                    }
+                }
                 ext_workspace_handle_v1::Request::Remove => {}
                 _ => unreachable!(),
             }
@@ -864,7 +872,7 @@ mod imp {
         use smithay::reexports::wayland_server::{
             Client, DataInit, Dispatch, DisplayHandle, Resource,
         };
-        use spiders_shared::ids::WindowId;
+        use spiders_shared::ids::{OutputId, WindowId, WorkspaceId};
         use spiders_shared::wm::{
             LayoutRef, OutputSnapshot, OutputTransform, ShellKind, WindowSnapshot,
             WorkspaceSnapshot,
@@ -882,11 +890,127 @@ mod imp {
         #[derive(Debug)]
         struct TestWorkspaceState {
             workspace_manager: WorkspaceManagerState,
+            snapshot: StateSnapshot,
+            display_handle: Option<DisplayHandle>,
         }
 
         impl WorkspaceHandler for TestWorkspaceState {
             fn workspace_manager_state(&mut self) -> &mut WorkspaceManagerState {
                 &mut self.workspace_manager
+            }
+
+            fn activate_workspace(&mut self, workspace_id: &WorkspaceId) {
+                let target = self
+                    .snapshot
+                    .workspaces
+                    .iter()
+                    .find(|workspace| &workspace.id == workspace_id)
+                    .cloned();
+
+                if let Some(workspace) = target {
+                    for entry in &mut self.snapshot.workspaces {
+                        if entry.output_id == workspace.output_id {
+                            let selected = entry.id == workspace.id;
+                            entry.visible = selected;
+                            entry.focused = selected;
+                        }
+                    }
+                    self.snapshot.current_workspace_id = Some(workspace.id.clone());
+                    self.snapshot.current_output_id = workspace.output_id.clone();
+                    if let Some(display_handle) = self.display_handle.as_ref() {
+                        self.workspace_manager
+                            .refresh_from_snapshot::<Self>(display_handle, &self.snapshot);
+                    }
+                }
+            }
+
+            fn assign_workspace(&mut self, workspace_id: &WorkspaceId, output_id: &OutputId) {
+                if let Some(workspace) = self
+                    .snapshot
+                    .workspaces
+                    .iter_mut()
+                    .find(|workspace| &workspace.id == workspace_id)
+                {
+                    workspace.output_id = Some(output_id.clone());
+                    if let Some(display_handle) = self.display_handle.as_ref() {
+                        self.workspace_manager
+                            .refresh_from_snapshot::<Self>(display_handle, &self.snapshot);
+                    }
+                }
+            }
+        }
+
+        fn sample_state_two_outputs() -> StateSnapshot {
+            StateSnapshot {
+                focused_window_id: Some(WindowId::from("w1")),
+                current_output_id: Some(OutputId::from("out-1")),
+                current_workspace_id: Some(WorkspaceId::from("ws-1")),
+                outputs: vec![
+                    OutputSnapshot {
+                        id: OutputId::from("out-1"),
+                        name: "HDMI-A-1".into(),
+                        logical_width: 1920,
+                        logical_height: 1080,
+                        scale: 1,
+                        transform: OutputTransform::Normal,
+                        enabled: true,
+                        current_workspace_id: Some(WorkspaceId::from("ws-1")),
+                    },
+                    OutputSnapshot {
+                        id: OutputId::from("out-2"),
+                        name: "DP-1".into(),
+                        logical_width: 2560,
+                        logical_height: 1440,
+                        scale: 1,
+                        transform: OutputTransform::Normal,
+                        enabled: true,
+                        current_workspace_id: Some(WorkspaceId::from("ws-2")),
+                    },
+                ],
+                workspaces: vec![
+                    WorkspaceSnapshot {
+                        id: WorkspaceId::from("ws-1"),
+                        name: "1".into(),
+                        output_id: Some(OutputId::from("out-1")),
+                        active_tags: vec!["1".into()],
+                        focused: true,
+                        visible: true,
+                        effective_layout: Some(LayoutRef {
+                            name: "master-stack".into(),
+                        }),
+                    },
+                    WorkspaceSnapshot {
+                        id: WorkspaceId::from("ws-2"),
+                        name: "2".into(),
+                        output_id: Some(OutputId::from("out-2")),
+                        active_tags: vec!["2".into()],
+                        focused: false,
+                        visible: false,
+                        effective_layout: Some(LayoutRef {
+                            name: "master-stack".into(),
+                        }),
+                    },
+                ],
+                windows: vec![WindowSnapshot {
+                    id: WindowId::from("w1"),
+                    shell: ShellKind::XdgToplevel,
+                    app_id: Some("firefox".into()),
+                    title: Some("Firefox".into()),
+                    class: None,
+                    instance: None,
+                    role: None,
+                    window_type: None,
+                    mapped: true,
+                    floating: false,
+                    fullscreen: false,
+                    focused: true,
+                    urgent: true,
+                    output_id: Some(OutputId::from("out-1")),
+                    workspace_id: Some(WorkspaceId::from("ws-1")),
+                    tags: vec!["1".into()],
+                }],
+                visible_window_ids: vec![WindowId::from("w1")],
+                tag_names: vec!["1".into(), "2".into()],
             }
         }
 
@@ -1000,6 +1124,108 @@ mod imp {
             assert_eq!(snapshot.group_instance_counts, vec![1]);
             assert_eq!(snapshot.workspace_instance_counts, vec![1]);
             assert_eq!(snapshot.output_binding_counts, vec![1]);
+        }
+
+        #[test]
+        fn workspace_handler_activate_and_assign_refresh_snapshot() {
+            let display = Display::<TestWorkspaceState>::new().unwrap();
+            let handle = display.handle();
+            let mut state = TestWorkspaceState {
+                workspace_manager: WorkspaceManagerState::new::<TestWorkspaceState>(&handle),
+                snapshot: sample_state_two_outputs(),
+                display_handle: Some(handle.clone()),
+            };
+            state
+                .workspace_manager
+                .refresh_from_snapshot::<TestWorkspaceState>(&handle, &state.snapshot);
+
+            state.activate_workspace(&WorkspaceId::from("ws-2"));
+            assert_eq!(
+                state.workspace_manager.debug_snapshot().workspace_states,
+                vec![
+                    (WorkspaceState::Active | WorkspaceState::Urgent).bits(),
+                    WorkspaceState::Active.bits(),
+                ]
+            );
+
+            state.assign_workspace(&WorkspaceId::from("ws-1"), &OutputId::from("out-2"));
+            assert_eq!(
+                state
+                    .workspace_manager
+                    .debug_snapshot()
+                    .workspace_group_output_ids,
+                vec![Some(OutputId::from("out-2")), Some(OutputId::from("out-2"))]
+            );
+        }
+
+        #[test]
+        fn workspace_manager_refresh_emits_leave_and_removed_for_workspace_move_and_output_loss() {
+            let display = Display::<TestWorkspaceState>::new().unwrap();
+            let handle = display.handle();
+            let mut manager = WorkspaceManagerState::new::<TestWorkspaceState>(&handle);
+            manager
+                .refresh_from_snapshot::<TestWorkspaceState>(&handle, &sample_state_two_outputs());
+
+            let mut changed = sample_state_two_outputs();
+            changed
+                .outputs
+                .retain(|output| output.id != OutputId::from("out-1"));
+            changed
+                .workspaces
+                .retain(|workspace| workspace.id != WorkspaceId::from("ws-1"));
+            changed.workspaces[0].output_id = Some(OutputId::from("out-2"));
+            changed.workspaces[0].visible = true;
+
+            manager.refresh_from_snapshot::<TestWorkspaceState>(&handle, &changed);
+
+            let snapshot = manager.debug_snapshot();
+            assert_eq!(snapshot.group_output_ids, vec![OutputId::from("out-2")]);
+            assert_eq!(snapshot.workspace_names, vec!["2".to_string()]);
+            assert_eq!(
+                snapshot.workspace_group_output_ids,
+                vec![Some(OutputId::from("out-2"))]
+            );
+            assert_eq!(
+                snapshot.workspace_states,
+                vec![WorkspaceState::Active.bits()]
+            );
+        }
+
+        #[test]
+        fn workspace_manager_refresh_moves_workspace_between_output_groups() {
+            let display = Display::<TestWorkspaceState>::new().unwrap();
+            let handle = display.handle();
+            let mut manager = WorkspaceManagerState::new::<TestWorkspaceState>(&handle);
+            manager
+                .refresh_from_snapshot::<TestWorkspaceState>(&handle, &sample_state_two_outputs());
+
+            let mut changed = sample_state_two_outputs();
+            changed.workspaces[0].output_id = Some(OutputId::from("out-2"));
+            changed.workspaces[0].visible = false;
+
+            manager.refresh_from_snapshot::<TestWorkspaceState>(&handle, &changed);
+
+            let snapshot = manager.debug_snapshot();
+            assert_eq!(
+                snapshot.workspace_group_output_ids,
+                vec![Some(OutputId::from("out-2")), Some(OutputId::from("out-2"))]
+            );
+            assert_eq!(
+                snapshot.workspace_states,
+                vec![
+                    (WorkspaceState::Hidden | WorkspaceState::Urgent).bits(),
+                    WorkspaceState::Hidden.bits(),
+                ]
+            );
+        }
+
+        #[test]
+        fn workspace_handle_advertises_activate_and_assign_capabilities() {
+            assert_eq!(
+                WorkspaceCapabilities::Activate | WorkspaceCapabilities::Assign,
+                WorkspaceCapabilities::Activate | WorkspaceCapabilities::Assign
+            );
+            assert_eq!(WorkspaceCapabilities::empty().bits(), 0);
         }
     }
 }

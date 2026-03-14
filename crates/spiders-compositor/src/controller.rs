@@ -7,6 +7,7 @@ use spiders_runtime::{
     ControllerReport, StartupRegistration,
 };
 use spiders_shared::api::WmAction;
+use spiders_shared::ids::{OutputId, WorkspaceId};
 use spiders_shared::wm::StateSnapshot;
 
 use crate::backend::{
@@ -267,6 +268,26 @@ impl<L: spiders_config::loader::LayoutSourceLoader, R: LayoutRuntime> Compositor
             .apply_action(action)?;
         self.phase = ControllerPhase::Running;
         Ok(update)
+    }
+
+    pub fn activate_workspace(
+        &mut self,
+        workspace_id: &WorkspaceId,
+    ) -> Result<crate::session::SessionUpdate, crate::actions::ActionError> {
+        self.apply_ipc_action(&WmAction::ActivateWorkspace {
+            workspace_id: workspace_id.clone(),
+        })
+    }
+
+    pub fn assign_workspace(
+        &mut self,
+        workspace_id: &WorkspaceId,
+        output_id: &OutputId,
+    ) -> Result<crate::session::SessionUpdate, crate::actions::ActionError> {
+        self.apply_ipc_action(&WmAction::AssignWorkspace {
+            workspace_id: workspace_id.clone(),
+            output_id: output_id.clone(),
+        })
     }
 }
 

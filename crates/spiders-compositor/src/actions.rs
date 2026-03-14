@@ -73,6 +73,17 @@ where
             recompute = !events.is_empty();
             events
         }
+        WmAction::ActivateWorkspace { workspace_id } => {
+            recompute = true;
+            wm_state.activate_workspace(workspace_id)?
+        }
+        WmAction::AssignWorkspace {
+            workspace_id,
+            output_id,
+        } => {
+            recompute = true;
+            wm_state.assign_workspace_to_output(workspace_id, output_id)?
+        }
         WmAction::ToggleFloating => {
             let event = wm_state.toggle_focused_floating()?;
             vec![event]
@@ -385,6 +396,65 @@ mod tests {
         assert_eq!(
             wm_state.snapshot().current_workspace_id,
             Some(WorkspaceId::from("ws-1"))
+        );
+    }
+
+    #[test]
+    fn activate_workspace_action_updates_current_workspace() {
+        let mut runtime = runtime_state();
+        let mut wm_state = WmState::from_snapshot(state());
+
+        let outcome = apply_action(
+            &mut runtime,
+            &mut wm_state,
+            &WmAction::ActivateWorkspace {
+                workspace_id: WorkspaceId::from("ws-2"),
+            },
+        )
+        .unwrap();
+
+        assert!(outcome.recomputed_layout);
+        assert_eq!(
+            wm_state.snapshot().current_workspace_id,
+            Some(WorkspaceId::from("ws-2"))
+        );
+    }
+
+    #[test]
+    fn assign_workspace_action_moves_workspace_to_output() {
+        let mut snapshot = state();
+        snapshot.outputs.push(OutputSnapshot {
+            id: OutputId::from("out-2"),
+            name: "DP-1".into(),
+            logical_width: 2560,
+            logical_height: 1440,
+            scale: 1,
+            transform: OutputTransform::Normal,
+            enabled: true,
+            current_workspace_id: None,
+        });
+        let mut runtime = runtime_state();
+        runtime.update_from_wm_state(snapshot.clone());
+        let mut wm_state = WmState::from_snapshot(snapshot);
+
+        let outcome = apply_action(
+            &mut runtime,
+            &mut wm_state,
+            &WmAction::AssignWorkspace {
+                workspace_id: WorkspaceId::from("ws-2"),
+                output_id: OutputId::from("out-2"),
+            },
+        )
+        .unwrap();
+
+        assert!(outcome.recomputed_layout);
+        assert_eq!(
+            wm_state
+                .snapshot()
+                .workspace_by_id(&WorkspaceId::from("ws-2"))
+                .unwrap()
+                .output_id,
+            Some(OutputId::from("out-2"))
         );
     }
 

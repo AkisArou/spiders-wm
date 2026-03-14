@@ -39,6 +39,13 @@ pub enum WmAction {
     ToggleViewTag {
         tag: String,
     },
+    ActivateWorkspace {
+        workspace_id: WorkspaceId,
+    },
+    AssignWorkspace {
+        workspace_id: WorkspaceId,
+        output_id: OutputId,
+    },
     ToggleFloating,
     ToggleFullscreen,
     FocusDirection {
