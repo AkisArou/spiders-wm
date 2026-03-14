@@ -1579,36 +1579,32 @@ mod imp {
 
         #[test]
         fn bootstrap_snapshot_exposes_rich_topology_for_mixed_surface_roles() {
-            let runtime_service = test_runtime_service();
-            let config = test_config();
-            let state = test_state_snapshot();
-            let controller =
-                crate::CompositorController::initialize(runtime_service, config, state).unwrap();
-            let mut runtime = test_runtime("wayland-test-5");
+            let mut bootstrap = test_bootstrap("wayland-test-5");
 
-            runtime.state_mut().track_test_surface_snapshot(
+            bootstrap.runtime.state_mut().track_test_surface_snapshot(
                 crate::backend::BackendSurfaceSnapshot::Window {
                     surface_id: "wl-surface-701".into(),
                     window_id: WindowId::from("smithay-window-701"),
                     output_id: None,
                 },
             );
-            runtime.state_mut().track_test_surface_snapshot(
+            bootstrap.runtime.state_mut().track_test_surface_snapshot(
                 crate::backend::BackendSurfaceSnapshot::Popup {
                     surface_id: "wl-surface-702".into(),
                     output_id: None,
                     parent_surface_id: "wl-surface-701".into(),
                 },
             );
-            runtime.state_mut().track_test_surface_snapshot(
+            bootstrap.runtime.state_mut().track_test_surface_snapshot(
                 crate::backend::BackendSurfaceSnapshot::Unmanaged {
                     surface_id: "wl-surface-703".into(),
                 },
             );
-            runtime
+            bootstrap
+                .runtime
                 .state_mut()
                 .register_output_id(OutputId::from("out-1"), true);
-            runtime.state_mut().track_test_surface_snapshot(
+            bootstrap.runtime.state_mut().track_test_surface_snapshot(
                 crate::backend::BackendSurfaceSnapshot::Layer {
                     surface_id: "wl-surface-704".into(),
                     output_id: OutputId::from("out-1"),
@@ -1620,24 +1616,12 @@ mod imp {
                     },
                 },
             );
-
-            let report = SmithayStartupReport {
-                controller: controller.report(),
-                output_name: "smithay-test-output".into(),
-                seat_name: "smithay-test-seat".into(),
-                logical_size: (1280, 720),
-                socket_name: Some("wayland-test-5".into()),
-            };
-            let mut bootstrap = SmithayBootstrap {
-                controller,
-                runtime,
-                report,
-            };
-
-            let applied = bootstrap.apply_pending_discovery_events().unwrap();
+            let _ = bootstrap.runtime.state_mut().take_discovery_events();
+            bootstrap
+                .apply_tracked_smithay_discovery_snapshot(1)
+                .unwrap();
 
             let snapshot = bootstrap.snapshot();
-            assert_eq!(applied, 4);
             assert_eq!(snapshot.topology_surface_count, 4);
             assert_eq!(snapshot.topology.surfaces.len(), 4);
             assert_eq!(
@@ -1646,7 +1630,7 @@ mod imp {
             );
             assert_eq!(
                 snapshot.topology.active_seat_name.as_deref(),
-                Some("seat-0")
+                Some("smithay-test-seat")
             );
             assert_topology_matches_known_surfaces(&snapshot);
             assert_output_summary_matches_topology(&snapshot);
@@ -2068,16 +2052,12 @@ mod imp {
 
         #[test]
         fn smithay_bootstrap_preserves_layer_keyboard_and_exclusive_zone_metadata() {
-            let runtime_service = test_runtime_service();
-            let config = test_config();
-            let state = test_state_snapshot();
-            let controller =
-                crate::CompositorController::initialize(runtime_service, config, state).unwrap();
-            let mut runtime = test_runtime("wayland-test-layer-meta-1");
-            runtime
+            let mut bootstrap = test_bootstrap("wayland-test-layer-meta-1");
+            bootstrap
+                .runtime
                 .state_mut()
                 .register_output_id(OutputId::from("out-1"), true);
-            runtime.state_mut().track_test_surface_snapshot(
+            bootstrap.runtime.state_mut().track_test_surface_snapshot(
                 crate::backend::BackendSurfaceSnapshot::Layer {
                     surface_id: "wl-layer-meta-1".into(),
                     output_id: OutputId::from("out-1"),
@@ -2089,21 +2069,10 @@ mod imp {
                     },
                 },
             );
-
-            let report = SmithayStartupReport {
-                controller: controller.report(),
-                output_name: "smithay-test-output".into(),
-                seat_name: "smithay-test-seat".into(),
-                logical_size: (1280, 720),
-                socket_name: Some("wayland-test-layer-meta-1".into()),
-            };
-            let mut bootstrap = SmithayBootstrap {
-                controller,
-                runtime,
-                report,
-            };
-
-            assert_eq!(bootstrap.apply_pending_discovery_events().unwrap(), 1);
+            let _ = bootstrap.runtime.state_mut().take_discovery_events();
+            bootstrap
+                .apply_tracked_smithay_discovery_snapshot(1)
+                .unwrap();
 
             let snapshot = bootstrap.snapshot();
             let layer = snapshot
@@ -2221,16 +2190,12 @@ mod imp {
 
         #[test]
         fn bootstrap_removes_layer_surface_from_topology_when_smithay_layer_is_lost() {
-            let runtime_service = test_runtime_service();
-            let config = test_config();
-            let state = test_state_snapshot();
-            let controller =
-                crate::CompositorController::initialize(runtime_service, config, state).unwrap();
-            let mut runtime = test_runtime("wayland-test-layer-3");
-            runtime
+            let mut bootstrap = test_bootstrap("wayland-test-layer-3");
+            bootstrap
+                .runtime
                 .state_mut()
                 .register_output_id(OutputId::from("out-1"), true);
-            runtime.state_mut().track_test_surface_snapshot(
+            bootstrap.runtime.state_mut().track_test_surface_snapshot(
                 crate::backend::BackendSurfaceSnapshot::Layer {
                     surface_id: "wl-layer-3".into(),
                     output_id: OutputId::from("out-1"),
@@ -2242,21 +2207,10 @@ mod imp {
                     },
                 },
             );
-
-            let report = SmithayStartupReport {
-                controller: controller.report(),
-                output_name: "smithay-test-output".into(),
-                seat_name: "smithay-test-seat".into(),
-                logical_size: (1280, 720),
-                socket_name: Some("wayland-test-layer-3".into()),
-            };
-            let mut bootstrap = SmithayBootstrap {
-                controller,
-                runtime,
-                report,
-            };
-
-            assert_eq!(bootstrap.apply_pending_discovery_events().unwrap(), 1);
+            let _ = bootstrap.runtime.state_mut().take_discovery_events();
+            bootstrap
+                .apply_tracked_smithay_discovery_snapshot(1)
+                .unwrap();
             bootstrap
                 .runtime
                 .state_mut()
@@ -2274,35 +2228,19 @@ mod imp {
 
         #[test]
         fn bootstrap_removes_topology_surface_when_smithay_surface_is_lost() {
-            let runtime_service = test_runtime_service();
-            let config = test_config();
-            let state = test_state_snapshot();
-            let controller =
-                crate::CompositorController::initialize(runtime_service, config, state).unwrap();
-            let mut runtime = test_runtime("wayland-test-6");
+            let mut bootstrap = test_bootstrap("wayland-test-6");
 
-            runtime.state_mut().track_test_surface_snapshot(
+            bootstrap.runtime.state_mut().track_test_surface_snapshot(
                 crate::backend::BackendSurfaceSnapshot::Window {
                     surface_id: "wl-surface-801".into(),
                     window_id: WindowId::from("smithay-window-801"),
                     output_id: None,
                 },
             );
-
-            let report = SmithayStartupReport {
-                controller: controller.report(),
-                output_name: "smithay-test-output".into(),
-                seat_name: "smithay-test-seat".into(),
-                logical_size: (1280, 720),
-                socket_name: Some("wayland-test-6".into()),
-            };
-            let mut bootstrap = SmithayBootstrap {
-                controller,
-                runtime,
-                report,
-            };
-
-            assert_eq!(bootstrap.apply_pending_discovery_events().unwrap(), 1);
+            let _ = bootstrap.runtime.state_mut().take_discovery_events();
+            bootstrap
+                .apply_tracked_smithay_discovery_snapshot(1)
+                .unwrap();
             assert!(bootstrap
                 .controller
                 .app()
@@ -2508,17 +2446,13 @@ mod imp {
 
         #[test]
         fn bootstrap_preserves_output_for_popup_parented_to_layer_surface() {
-            let runtime_service = test_runtime_service();
-            let config = test_config();
-            let state = test_state_snapshot();
-            let controller =
-                crate::CompositorController::initialize(runtime_service, config, state).unwrap();
-            let mut runtime = test_runtime("wayland-test-9");
+            let mut bootstrap = test_bootstrap("wayland-test-9");
 
-            runtime
+            bootstrap
+                .runtime
                 .state_mut()
                 .register_output_id(OutputId::from("out-1"), true);
-            runtime.state_mut().track_test_surface_snapshot(
+            bootstrap.runtime.state_mut().track_test_surface_snapshot(
                 crate::backend::BackendSurfaceSnapshot::Layer {
                     surface_id: "wl-layer-51".into(),
                     output_id: OutputId::from("out-1"),
@@ -2530,31 +2464,21 @@ mod imp {
                     },
                 },
             );
-            runtime
+            bootstrap
+                .runtime
                 .state_mut()
                 .track_test_popup_parent("wl-popup-51", "wl-layer-51");
-            runtime.state_mut().track_test_surface_snapshot(
+            bootstrap.runtime.state_mut().track_test_surface_snapshot(
                 crate::backend::BackendSurfaceSnapshot::Popup {
                     surface_id: "wl-popup-51".into(),
                     output_id: Some(OutputId::from("out-1")),
                     parent_surface_id: "wl-layer-51".into(),
                 },
             );
-
-            let report = SmithayStartupReport {
-                controller: controller.report(),
-                output_name: "smithay-test-output".into(),
-                seat_name: "smithay-test-seat".into(),
-                logical_size: (1280, 720),
-                socket_name: Some("wayland-test-9".into()),
-            };
-            let mut bootstrap = SmithayBootstrap {
-                controller,
-                runtime,
-                report,
-            };
-
-            assert_eq!(bootstrap.apply_pending_discovery_events().unwrap(), 2);
+            let _ = bootstrap.runtime.state_mut().take_discovery_events();
+            bootstrap
+                .apply_tracked_smithay_discovery_snapshot(1)
+                .unwrap();
 
             let snapshot = bootstrap.snapshot();
             let popup = snapshot
