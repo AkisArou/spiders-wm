@@ -3,8 +3,8 @@ mod report;
 
 use bootstrap::CliBootstrap;
 use report::{
-    emit, BootstrapFailureReport, BootstrapReport, DiscoveryReport, ErrorReport, IpcSmokeReport,
-    OutputMode, SuccessCheckReport,
+    emit, BootstrapFailureReport, BootstrapReport, DiscoveryReport, ErrorReport, IpcActionReport,
+    IpcQueryReport, IpcSmokeReport, OutputMode, SuccessCheckReport,
 };
 
 #[derive(Debug, Clone)]
@@ -41,6 +41,8 @@ fn main() -> std::process::ExitCode {
     let check_config = args.iter().any(|arg| arg == "check-config");
     let bootstrap_trace = args.iter().any(|arg| arg == "bootstrap-trace");
     let ipc_smoke = args.iter().any(|arg| arg == "ipc-smoke");
+    let ipc_query = args.iter().any(|arg| arg == "ipc-query");
+    let ipc_action = args.iter().any(|arg| arg == "ipc-action");
     let output_mode = if args.iter().any(|arg| arg == "--json") {
         OutputMode::Json
     } else {
@@ -48,17 +50,96 @@ fn main() -> std::process::ExitCode {
     };
     let events_path = arg_value(&args, "--events");
     let transcript_path = arg_value(&args, "--transcript");
+    let socket_path = arg_value(&args, "--socket")
+        .map(std::path::PathBuf::from)
+        .or_else(default_ipc_socket_path);
+    let query_name = arg_value(&args, "--query");
+    let action_name = arg_value(&args, "--action");
 
     let cli = CliContext::new();
 
     if ipc_smoke {
         ipc_smoke_command(output_mode)
+    } else if ipc_query {
+        ipc_query_command(output_mode, socket_path, query_name)
+    } else if ipc_action {
+        ipc_action_command(output_mode, socket_path, action_name)
     } else if bootstrap_trace {
         bootstrap_trace_command(&cli, output_mode, events_path, transcript_path)
     } else if check_config {
         check_config_command(&cli, output_mode)
     } else {
         print_discovery(&cli, output_mode)
+    }
+}
+
+fn ipc_query_command(
+    output_mode: OutputMode,
+    socket_path: Option<std::path::PathBuf>,
+    query_name: Option<&str>,
+) -> std::process::ExitCode {
+    match run_ipc_query(socket_path, query_name.unwrap_or("state")) {
+        Ok(report) => {
+            emit(output_mode, &report, || {
+                format!(
+                    "ipc query ok (socket: {}, query: {}, request: {})",
+                    report.socket_path,
+                    query_label(&report.query),
+                    report.request_id
+                )
+            });
+            std::process::ExitCode::SUCCESS
+        }
+        Err(error) => {
+            emit(
+                output_mode,
+                &ErrorReport {
+                    status: "error",
+                    phase: "ipc-query",
+                    runtime_ready: spiders_ipc::crate_ready(),
+                    runtime_config: None,
+                    errors: None,
+                    message: Some(error),
+                },
+                || "ipc query error".into(),
+            );
+            std::process::ExitCode::from(1)
+        }
+    }
+}
+
+fn ipc_action_command(
+    output_mode: OutputMode,
+    socket_path: Option<std::path::PathBuf>,
+    action_name: Option<&str>,
+) -> std::process::ExitCode {
+    match run_ipc_action(socket_path, action_name.unwrap_or("reload-config")) {
+        Ok(report) => {
+            emit(output_mode, &report, || {
+                format!(
+                    "ipc action ok (socket: {}, action: {}, request: {})",
+                    report.socket_path,
+                    action_label(&report.action),
+                    report.request_id
+                )
+            });
+            std::process::ExitCode::SUCCESS
+        }
+        Err(error) => {
+            emit(
+                output_mode,
+                &ErrorReport {
+                    status: "error",
+                    phase: "ipc-action",
+                    runtime_ready: spiders_ipc::crate_ready(),
+                    runtime_config: None,
+                    errors: None,
+                    message: Some(error),
+                },
+                || "ipc action error".into(),
+            );
+            std::process::ExitCode::from(1)
+        }
     }
 }
 
@@ -600,6 +681,125 @@ fn run_ipc_smoke() -> Result<IpcSmokeReport, String> {
     })
 }
 
+fn run_ipc_query(
+    socket_path: Option<std::path::PathBuf>,
+    query_name: &str,
+) -> Result<IpcQueryReport, String> {
+    use spiders_ipc::{connect, recv_response, send_request, IpcClientMessage, IpcEnvelope};
+
+    let socket_path = socket_path.ok_or_else(|| "missing IPC socket path".to_string())?;
+    let query = parse_query_request(query_name)?;
+    let request_id = "cli-query-1".to_string();
+    let request = IpcEnvelope::new(IpcClientMessage::Query(query)).with_request_id(&request_id);
+    let mut stream = connect(&socket_path).map_err(|error| error.to_string())?;
+
+    send_request(&mut stream, &request).map_err(|error| error.to_string())?;
+
+    match recv_response(&stream)
+        .map_err(|error| error.to_string())?
+        .message
+    {
+        spiders_ipc::IpcServerMessage::Query(response) => Ok(IpcQueryReport {
+            status: "ok",
+            socket_path: socket_path.display().to_string(),
+            request_id,
+            query,
+            response,
+        }),
+        message => Err(format!("unexpected IPC query response: {message:?}")),
+    }
+}
+
+fn run_ipc_action(
+    socket_path: Option<std::path::PathBuf>,
+    action_name: &str,
+) -> Result<IpcActionReport, String> {
+    use spiders_ipc::{connect, recv_response, send_request, IpcClientMessage, IpcEnvelope};
+
+    let socket_path = socket_path.ok_or_else(|| "missing IPC socket path".to_string())?;
+    let action = parse_action_request(action_name)?;
+    let request_id = "cli-action-1".to_string();
+    let request =
+        IpcEnvelope::new(IpcClientMessage::Action(action.clone())).with_request_id(&request_id);
+    let mut stream = connect(&socket_path).map_err(|error| error.to_string())?;
+
+    send_request(&mut stream, &request).map_err(|error| error.to_string())?;
+
+    match recv_response(&stream)
+        .map_err(|error| error.to_string())?
+        .message
+    {
+        spiders_ipc::IpcServerMessage::ActionAccepted => Ok(IpcActionReport {
+            status: "ok",
+            socket_path: socket_path.display().to_string(),
+            request_id,
+            action,
+            response_kind: "action-accepted",
+        }),
+        message => Err(format!("unexpected IPC action response: {message:?}")),
+    }
+}
+
+fn default_ipc_socket_path() -> Option<std::path::PathBuf> {
+    std::env::var_os("SPIDERS_WM_IPC_SOCKET").map(std::path::PathBuf::from)
+}
+
+fn parse_query_request(name: &str) -> Result<spiders_shared::api::QueryRequest, String> {
+    use spiders_shared::api::QueryRequest;
+
+    match name {
+        "state" => Ok(QueryRequest::State),
+        "focused-window" => Ok(QueryRequest::FocusedWindow),
+        "current-output" => Ok(QueryRequest::CurrentOutput),
+        "current-workspace" => Ok(QueryRequest::CurrentWorkspace),
+        "monitor-list" => Ok(QueryRequest::MonitorList),
+        "tag-names" => Ok(QueryRequest::TagNames),
+        _ => Err(format!("unsupported IPC query '{name}'")),
+    }
+}
+
+fn parse_action_request(name: &str) -> Result<spiders_shared::api::WmAction, String> {
+    use spiders_shared::api::WmAction;
+
+    match name {
+        "reload-config" => Ok(WmAction::ReloadConfig),
+        "toggle-floating" => Ok(WmAction::ToggleFloating),
+        "toggle-fullscreen" => Ok(WmAction::ToggleFullscreen),
+        "close-focused-window" => Ok(WmAction::CloseFocusedWindow),
+        _ => Err(format!("unsupported IPC action '{name}'")),
+    }
+}
+
+fn query_label(query: &spiders_shared::api::QueryRequest) -> &'static str {
+    use spiders_shared::api::QueryRequest;
+
+    match query {
+        QueryRequest::State => "state",
+        QueryRequest::FocusedWindow => "focused-window",
+        QueryRequest::CurrentOutput => "current-output",
+        QueryRequest::CurrentWorkspace => "current-workspace",
+        QueryRequest::MonitorList => "monitor-list",
+        QueryRequest::TagNames => "tag-names",
+    }
+}
+
+fn action_label(action: &spiders_shared::api::WmAction) -> &'static str {
+    use spiders_shared::api::WmAction;
+
+    match action {
+        WmAction::ReloadConfig => "reload-config",
+        WmAction::ToggleFloating => "toggle-floating",
+        WmAction::ToggleFullscreen => "toggle-fullscreen",
+        WmAction::CloseFocusedWindow => "close-focused-window",
+        WmAction::Spawn { .. }
+        | WmAction::SetLayout { .. }
+        | WmAction::CycleLayout { .. }
+        | WmAction::ViewTag { .. }
+        | WmAction::ToggleViewTag { .. }
+        | WmAction::FocusDirection { .. } => "custom",
+    }
+}
+
 fn fallback_query_response(
     query: spiders_shared::api::QueryRequest,
 ) -> spiders_shared::api::QueryResponse {
@@ -631,6 +831,11 @@ fn fallback_query_response(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
+    use std::os::unix::net::UnixListener;
+
+    use spiders_ipc::{encode_response_line, IpcEnvelope, IpcServerMessage};
+    use spiders_shared::api::QueryResponse;
 
     #[test]
     fn ipc_smoke_report_contains_subscription_and_event_lines() {
@@ -642,5 +847,71 @@ mod tests {
         assert!(report.request_line.ends_with('\n'));
         assert!(report.response_line.ends_with('\n'));
         assert!(report.event_line.is_some());
+    }
+
+    #[test]
+    fn ipc_query_uses_real_socket_transport() {
+        let socket_path = unique_socket_path("ipc-query");
+        let listener = UnixListener::bind(&socket_path).unwrap();
+
+        let handle = std::thread::spawn({
+            let socket_path = socket_path.clone();
+            move || {
+                let (mut stream, _) = listener.accept().unwrap();
+                let line = encode_response_line(&IpcEnvelope::new(IpcServerMessage::Query(
+                    QueryResponse::TagNames(vec!["1".into(), "2".into()]),
+                )))
+                .unwrap();
+                stream.write_all(line.as_bytes()).unwrap();
+                drop(stream);
+                socket_path
+            }
+        });
+
+        let report = run_ipc_query(Some(socket_path.clone()), "tag-names").unwrap();
+
+        assert_eq!(report.query, spiders_shared::api::QueryRequest::TagNames);
+        assert_eq!(
+            report.response,
+            QueryResponse::TagNames(vec!["1".into(), "2".into()])
+        );
+
+        let path = handle.join().unwrap();
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn ipc_action_uses_real_socket_transport() {
+        let socket_path = unique_socket_path("ipc-action");
+        let listener = UnixListener::bind(&socket_path).unwrap();
+
+        let handle = std::thread::spawn({
+            let socket_path = socket_path.clone();
+            move || {
+                let (mut stream, _) = listener.accept().unwrap();
+                let line =
+                    encode_response_line(&IpcEnvelope::new(IpcServerMessage::ActionAccepted))
+                        .unwrap();
+                stream.write_all(line.as_bytes()).unwrap();
+                drop(stream);
+                socket_path
+            }
+        });
+
+        let report = run_ipc_action(Some(socket_path.clone()), "reload-config").unwrap();
+
+        assert_eq!(report.action, spiders_shared::api::WmAction::ReloadConfig);
+        assert_eq!(report.response_kind, "action-accepted");
+
+        let path = handle.join().unwrap();
+        let _ = std::fs::remove_file(path);
+    }
+
+    fn unique_socket_path(label: &str) -> std::path::PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!("spiders-cli-{label}-{nanos}.sock"))
     }
 }

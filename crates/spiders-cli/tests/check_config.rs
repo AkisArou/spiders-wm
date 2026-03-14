@@ -1,4 +1,8 @@
 use std::process::Command;
+use std::{io::Write, os::unix::net::UnixListener};
+
+use spiders_ipc::{encode_response_line, IpcEnvelope, IpcServerMessage};
+use spiders_shared::api::QueryResponse;
 
 fn cli_bin() -> String {
     env!("CARGO_BIN_EXE_spiders-cli").to_string()
@@ -269,4 +273,91 @@ fn cli_bootstrap_trace_accepts_transcript_fixture_via_events_flag() {
     assert_eq!(json["startup"]["active_seat"], "seat-1");
 
     let _ = std::fs::remove_file(runtime_config);
+}
+
+#[test]
+fn cli_ipc_query_reports_socket_response_in_json_mode() {
+    let socket_path = unique_socket_path("cli-ipc-query");
+    let listener = UnixListener::bind(&socket_path).unwrap();
+
+    let handle = std::thread::spawn({
+        let socket_path = socket_path.clone();
+        move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let line = encode_response_line(&IpcEnvelope::new(IpcServerMessage::Query(
+                QueryResponse::TagNames(vec!["1".into(), "2".into()]),
+            )))
+            .unwrap();
+            stream.write_all(line.as_bytes()).unwrap();
+            socket_path
+        }
+    });
+
+    let output = Command::new(cli_bin())
+        .arg("ipc-query")
+        .arg("--json")
+        .arg("--socket")
+        .arg(&socket_path)
+        .arg("--query")
+        .arg("tag-names")
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    assert_eq!(json["status"], "ok");
+    assert_eq!(json["query"], "tag-names");
+    assert_eq!(json["response"]["type"], "tag-names");
+    assert_eq!(json["response"]["payload"][0], "1");
+
+    let path = handle.join().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn cli_ipc_action_reports_socket_response_in_json_mode() {
+    let socket_path = unique_socket_path("cli-ipc-action");
+    let listener = UnixListener::bind(&socket_path).unwrap();
+
+    let handle = std::thread::spawn({
+        let socket_path = socket_path.clone();
+        move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let line =
+                encode_response_line(&IpcEnvelope::new(IpcServerMessage::ActionAccepted)).unwrap();
+            stream.write_all(line.as_bytes()).unwrap();
+            socket_path
+        }
+    });
+
+    let output = Command::new(cli_bin())
+        .arg("ipc-action")
+        .arg("--json")
+        .arg("--socket")
+        .arg(&socket_path)
+        .arg("--action")
+        .arg("reload-config")
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    assert_eq!(json["status"], "ok");
+    assert_eq!(json["action"]["type"], "reload-config");
+    assert_eq!(json["response_kind"], "action-accepted");
+
+    let path = handle.join().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+fn unique_socket_path(label: &str) -> std::path::PathBuf {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    std::env::temp_dir().join(format!("spiders-cli-test-{label}-{nanos}.sock"))
 }

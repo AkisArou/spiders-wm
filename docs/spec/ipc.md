@@ -139,6 +139,10 @@ Before a real socket transport lands, the CLI may also ship a small in-memory
 IPC smoke path that exercises request framing, session/server handling, and
 response/event framing without talking to a live compositor.
 
+Once a small Unix socket helper exists, the CLI may also offer narrow
+socket-backed commands that connect to a caller-provided socket path or an
+environment-provided default such as `SPIDERS_WM_IPC_SOCKET`.
+
 This can share the same IPC protocol as third-party clients.
 
 ## Acceptance Criteria

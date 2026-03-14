@@ -1,5 +1,6 @@
 use serde::Serialize;
 use spiders_runtime::{BootstrapDiagnostics, BootstrapEvent, ControllerPhase, StartupRegistration};
+use spiders_shared::api::{QueryRequest, QueryResponse, WmAction};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum OutputMode {
@@ -83,6 +84,24 @@ pub struct IpcSmokeReport {
     pub response_line: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub event_line: Option<String>,
+}
+
+#[derive(Debug, Serialize, PartialEq, Eq)]
+pub struct IpcQueryReport {
+    pub status: &'static str,
+    pub socket_path: String,
+    pub request_id: String,
+    pub query: QueryRequest,
+    pub response: QueryResponse,
+}
+
+#[derive(Debug, Serialize, PartialEq, Eq)]
+pub struct IpcActionReport {
+    pub status: &'static str,
+    pub socket_path: String,
+    pub request_id: String,
+    pub action: WmAction,
+    pub response_kind: &'static str,
 }
 
 pub fn emit<T: Serialize>(mode: OutputMode, report: &T, text: impl FnOnce() -> String) {
