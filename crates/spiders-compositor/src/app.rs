@@ -116,14 +116,14 @@ impl<L, R> CompositorApp<L, R> {
                 }
             }
             BootstrapEvent::RegisterOutput { output_id, active } => {
-                self.session.register_output_by_id(&output_id)?;
+                self.session.register_startup_seeded_output(&output_id)?;
                 if active {
                     self.activate_output(&output_id)?;
                 }
             }
             BootstrapEvent::RegisterOutputSnapshot { output, active } => {
                 let output_id = output.id.clone();
-                self.session.register_output_snapshot(output);
+                self.session.register_backend_output_snapshot(output);
                 if active {
                     self.activate_output(&output_id)?;
                 }

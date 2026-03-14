@@ -102,6 +102,10 @@ impl DomainSession {
         self.topology.register_output(output);
     }
 
+    pub fn register_backend_output_snapshot(&mut self, output: OutputSnapshot) {
+        self.register_output_snapshot(output);
+    }
+
     pub fn register_output_by_id(&mut self, output_id: &OutputId) -> Result<(), TopologyError> {
         let output = self
             .state()
@@ -110,6 +114,13 @@ impl DomainSession {
             .ok_or_else(|| TopologyError::OutputNotFound(output_id.clone()))?;
         self.topology.register_output(output);
         Ok(())
+    }
+
+    pub fn register_startup_seeded_output(
+        &mut self,
+        output_id: &OutputId,
+    ) -> Result<(), TopologyError> {
+        self.register_output_by_id(output_id)
     }
 
     pub fn unregister_output(&mut self, output_id: &OutputId) -> Result<(), TopologyError> {

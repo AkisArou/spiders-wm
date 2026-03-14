@@ -98,8 +98,19 @@ impl<L, R> CompositorSession<L, R> {
         self.domain.register_output_snapshot(output);
     }
 
+    pub fn register_backend_output_snapshot(&mut self, output: spiders_shared::wm::OutputSnapshot) {
+        self.domain.register_backend_output_snapshot(output);
+    }
+
     pub fn register_output_by_id(&mut self, output_id: &OutputId) -> Result<(), TopologyError> {
         self.domain.register_output_by_id(output_id)
+    }
+
+    pub fn register_startup_seeded_output(
+        &mut self,
+        output_id: &OutputId,
+    ) -> Result<(), TopologyError> {
+        self.domain.register_startup_seeded_output(output_id)
     }
 
     pub fn unregister_output(&mut self, output_id: &OutputId) -> Result<(), TopologyError> {

@@ -162,6 +162,8 @@ Compositor-domain note:
 - id-only output discovery/bootstrap variants still make sense for outputs that
   already exist in startup state, but they are no longer the preferred path for
   introducing new backend-created outputs
+- helper naming should reflect that split where practical: startup-seeded output
+  registration is distinct from backend-created output snapshot registration
 - the real smithay bootstrap/runtime path should also introduce its initial
   output through that typed snapshot shape when the output is backend-created
   rather than startup-config-derived
