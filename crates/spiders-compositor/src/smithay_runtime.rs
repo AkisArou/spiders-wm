@@ -23,10 +23,9 @@ mod imp {
         SurfaceState,
     };
     use spiders_shared::ids::OutputId;
+    use spiders_shared::wm::OutputSnapshot;
 
-    use crate::smithay_adapter::{
-        SmithayAdapter, SmithayAdapterEvent, SmithayOutputDescriptor, SmithaySeatDescriptor,
-    };
+    use crate::smithay_adapter::{SmithayAdapter, SmithayAdapterEvent, SmithaySeatDescriptor};
     use crate::smithay_state::{
         SmithayClientState, SmithayStateError, SmithayStateSnapshot, SpidersSmithayState,
     };
@@ -369,6 +368,44 @@ mod imp {
         }
     }
 
+    fn smithay_output_snapshot(output_name: &str, size: (i32, i32)) -> OutputSnapshot {
+        OutputSnapshot {
+            id: OutputId::from(output_name),
+            name: output_name.into(),
+            logical_width: size.0.max(0) as u32,
+            logical_height: size.1.max(0) as u32,
+            scale: 1,
+            transform: spiders_shared::wm::OutputTransform::Normal,
+            enabled: true,
+            current_workspace_id: None,
+        }
+    }
+
+    fn initial_winit_discovery_command(
+        seat_name: &str,
+        output_name: &str,
+        size: (i32, i32),
+    ) -> ControllerCommand {
+        SmithayAdapter::translate_snapshot(
+            1,
+            vec![SmithayAdapter::translate_seat_descriptor(
+                initial_winit_seat_descriptor(seat_name),
+            )],
+            vec![crate::backend::BackendOutputSnapshot {
+                snapshot: smithay_output_snapshot(output_name, size),
+                active: true,
+            }],
+            Vec::new(),
+        )
+    }
+
+    fn initial_winit_seat_descriptor(seat_name: &str) -> SmithaySeatDescriptor {
+        SmithaySeatDescriptor {
+            seat_name: seat_name.into(),
+            active: true,
+        }
+    }
+
     pub fn initialize_winit_controller<L, R>(
         runtime_service: spiders_config::service::ConfigRuntimeService<L, R>,
         config: spiders_config::model::Config,
@@ -445,8 +482,6 @@ mod imp {
 
         let seat_name = String::from("smithay-winit");
         let output_name = String::from("smithay-winit-output");
-        let output_id = OutputId::from(output_name.as_str());
-
         let _smithay_output = Output::new(
             output_name.clone(),
             PhysicalProperties {
@@ -462,24 +497,7 @@ mod imp {
             refresh: 60_000,
         };
 
-        let command = SmithayAdapter::translate_snapshot(
-            1,
-            vec![SmithayAdapter::translate_seat_descriptor(
-                SmithaySeatDescriptor {
-                    seat_name: seat_name.clone(),
-                    active: true,
-                },
-            )],
-            vec![SmithayAdapter::translate_output_descriptor(
-                SmithayOutputDescriptor {
-                    output_id: output_id.to_string(),
-                    active: true,
-                    width: size.w,
-                    height: size.h,
-                },
-            )],
-            Vec::new(),
-        );
+        let command = initial_winit_discovery_command(&seat_name, &output_name, (size.w, size.h));
 
         match command {
             ControllerCommand::DiscoverySnapshot(snapshot) => {
@@ -1180,6 +1198,38 @@ mod imp {
                 snapshot.topology.active_output_id,
                 Some(OutputId::from("out-9"))
             );
+        }
+
+        #[test]
+        fn smithay_initial_winit_discovery_command_uses_typed_output_snapshot() {
+            let command = super::initial_winit_discovery_command(
+                "smithay-winit",
+                "smithay-winit-output",
+                (1280, 720),
+            );
+
+            let ControllerCommand::DiscoverySnapshot(snapshot) = command else {
+                panic!("expected discovery snapshot command");
+            };
+
+            assert_eq!(snapshot.seats.len(), 1);
+            assert_eq!(snapshot.outputs.len(), 1);
+            assert_eq!(
+                snapshot.outputs[0].snapshot.id,
+                OutputId::from("smithay-winit-output")
+            );
+            assert_eq!(snapshot.outputs[0].snapshot.name, "smithay-winit-output");
+            assert_eq!(snapshot.outputs[0].snapshot.logical_width, 1280);
+            assert_eq!(snapshot.outputs[0].snapshot.logical_height, 720);
+            assert!(snapshot.outputs[0].active);
+        }
+
+        #[test]
+        fn smithay_initial_winit_seat_descriptor_marks_active_seat() {
+            let descriptor = super::initial_winit_seat_descriptor("smithay-winit");
+
+            assert_eq!(descriptor.seat_name, "smithay-winit");
+            assert!(descriptor.active);
         }
 
         #[test]

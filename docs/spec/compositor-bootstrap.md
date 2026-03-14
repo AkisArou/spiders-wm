@@ -368,6 +368,10 @@ That same typed snapshot should also be usable for incremental single-output
 discovery events when the adapter is reporting one newly known output rather
 than a larger discovery batch.
 
+The real smithay bootstrap path should use that same typed output snapshot shape
+when introducing the initial winit/smithay output, rather than relying on a
+preexisting startup-state output id.
+
 That slice is only a startup/discovery proof, not full surface or rendering
 integration.
 
