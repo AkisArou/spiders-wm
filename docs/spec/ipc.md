@@ -94,6 +94,13 @@ If a transport codec helper exists, it may treat each IPC message as one JSON
 value per line, append a trailing newline on encode, and ignore surrounding
 whitespace when decoding, while rejecting fully empty frames.
 
+If a Unix socket transport helper exists, it may:
+
+- bind a listener at a caller-provided socket path
+- remove a stale socket file before binding when safe to do so
+- expose small send/receive helpers for request and response envelopes
+- delegate framing and parse behavior to the JSON line codec layer
+
 Agents may implement this unless the repository later defines a stricter wire
 format.
 
