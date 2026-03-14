@@ -2,7 +2,7 @@ use spiders_config::model::Config;
 use spiders_config::service::ConfigRuntimeService;
 use spiders_shared::api::WmAction;
 use spiders_shared::ids::{OutputId, WorkspaceId};
-use spiders_shared::runtime::AuthoringRuntime;
+use spiders_shared::runtime::AuthoringLayoutRuntime;
 use spiders_shared::wm::StateSnapshot;
 use spiders_wm::{
     BootstrapEvent, BootstrapFailureTrace, BootstrapRunTrace, BootstrapScenario, BootstrapScript,
@@ -61,7 +61,7 @@ impl<R> CompositorController<R> {
     }
 }
 
-impl<R: AuthoringRuntime<Config = Config>> CompositorController<R> {
+impl<R: AuthoringLayoutRuntime<Config = Config>> CompositorController<R> {
     pub fn initialize(
         runtime_service: ConfigRuntimeService<R>,
         config: Config,

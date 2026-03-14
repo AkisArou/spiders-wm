@@ -1,6 +1,6 @@
 use spiders_config::model::Config;
 use spiders_config::service::ConfigRuntimeService;
-use spiders_shared::runtime::AuthoringRuntime;
+use spiders_shared::runtime::AuthoringLayoutRuntime;
 use spiders_shared::wm::StateSnapshot;
 use spiders_wm::{
     BootstrapDiagnostics, BootstrapEvent, BootstrapFailureTrace, BootstrapRunTrace,
@@ -119,7 +119,7 @@ impl<R> BootstrapRunner<R> {
     }
 }
 
-impl<R: AuthoringRuntime<Config = Config>> BootstrapRunner<R> {
+impl<R: AuthoringLayoutRuntime<Config = Config>> BootstrapRunner<R> {
     pub fn initialize(
         layout_service: LayoutService,
         runtime_service: ConfigRuntimeService<R>,

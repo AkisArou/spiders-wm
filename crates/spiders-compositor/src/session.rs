@@ -2,7 +2,7 @@ use spiders_config::model::Config;
 use spiders_config::service::ConfigRuntimeService;
 use spiders_shared::api::{CompositorEvent, FocusDirection, WmAction};
 use spiders_shared::ids::{OutputId, WindowId};
-use spiders_shared::runtime::AuthoringRuntime;
+use spiders_shared::runtime::AuthoringLayoutRuntime;
 use spiders_shared::wm::{StateSnapshot, WindowSnapshot};
 use spiders_wm::{
     CompositorTopologyState, DomainSession, DomainUpdate, LayerSurfaceMetadata, SurfaceState,
@@ -213,7 +213,7 @@ impl<R> CompositorSession<R> {
     }
 }
 
-impl<R: AuthoringRuntime<Config = Config>> CompositorSession<R> {
+impl<R: AuthoringLayoutRuntime<Config = Config>> CompositorSession<R> {
     pub fn initialize(
         layout_service: LayoutService,
         runtime_service: ConfigRuntimeService<R>,

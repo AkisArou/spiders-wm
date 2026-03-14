@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use spiders_shared::runtime::{AuthoringRuntime, PreparedLayout, RuntimeError};
+use spiders_shared::runtime::{AuthoringLayoutRuntime, PreparedLayout, RuntimeError};
 use spiders_shared::wm::LayoutEvaluationContext;
 
 use crate::model::{Config, ConfigDiscoveryOptions, ConfigPaths, LayoutConfigError};
@@ -30,7 +30,7 @@ impl<R> ConfigRuntimeService<R> {
 
 impl<R> ConfigRuntimeService<R>
 where
-    R: AuthoringRuntime<Config = Config>,
+    R: AuthoringLayoutRuntime<Config = Config>,
 {
     pub fn discover_config_paths(
         &self,
@@ -126,7 +126,7 @@ mod tests {
     use spiders_shared::ids::{OutputId, WorkspaceId};
     use spiders_shared::layout::SourceLayoutNode;
     use spiders_shared::runtime::{
-        AuthoringRuntime, LayoutModuleContract, PreparedLayoutRuntime, PreparedLayout, RuntimeError,
+        AuthoringLayoutRuntime, LayoutModuleContract, PreparedLayoutRuntime, PreparedLayout, RuntimeError,
     };
     use spiders_shared::wm::{
         LayoutRef, OutputSnapshot, OutputTransform, SelectedLayout, StateSnapshot,
@@ -187,7 +187,7 @@ mod tests {
         }
     }
 
-    impl AuthoringRuntime for StubRuntime {
+    impl AuthoringLayoutRuntime for StubRuntime {
         fn load_authored_config(
             &self,
             _path: &std::path::Path,
@@ -252,7 +252,7 @@ mod tests {
         }
     }
 
-    impl AuthoringRuntime for StubAuthoredRuntime {
+    impl AuthoringLayoutRuntime for StubAuthoredRuntime {
         fn load_authored_config(
             &self,
             _path: &std::path::Path,

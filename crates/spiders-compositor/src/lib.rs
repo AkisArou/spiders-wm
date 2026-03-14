@@ -26,7 +26,7 @@ use spiders_effects::EffectsCssParseError;
 use spiders_layout::ast::{LayoutValidationError, ValidatedLayoutTree};
 use spiders_layout::pipeline::{compute_layout_from_request, LayoutPipelineError};
 use spiders_shared::layout::{LayoutRequest, LayoutResponse, LayoutSpace, ResolvedLayoutNode};
-use spiders_shared::runtime::{AuthoringRuntime, RuntimeError};
+use spiders_shared::runtime::{AuthoringLayoutRuntime, RuntimeError};
 use spiders_shared::wm::{
     LayoutEvaluationContext, LayoutRef, OutputSnapshot, SelectedLayout, StateSnapshot,
     WindowSnapshot, WorkspaceSnapshot,
@@ -119,7 +119,7 @@ pub struct WorkspaceLayoutSource<'a> {
 }
 
 impl LayoutService {
-    pub fn initialize_startup_runtime<R: AuthoringRuntime<Config = Config>>(
+    pub fn initialize_startup_runtime<R: AuthoringLayoutRuntime<Config = Config>>(
         &self,
         service: ConfigRuntimeService<R>,
         config: Config,
@@ -128,7 +128,7 @@ impl LayoutService {
         startup::initialize_startup_runtime(self, service, config, state)
     }
 
-    pub fn initialize_startup_config<R: AuthoringRuntime<Config = Config>>(
+    pub fn initialize_startup_config<R: AuthoringLayoutRuntime<Config = Config>>(
         &self,
         service: ConfigRuntimeService<R>,
         config: Config,
@@ -137,7 +137,7 @@ impl LayoutService {
         startup::initialize_startup_config(self, service, config, state)
     }
 
-    pub fn initialize_startup_session<R: AuthoringRuntime<Config = Config>>(
+    pub fn initialize_startup_session<R: AuthoringLayoutRuntime<Config = Config>>(
         &self,
         service: ConfigRuntimeService<R>,
         config: Config,
@@ -146,7 +146,7 @@ impl LayoutService {
         startup::initialize_startup_session(self, service, config, state)
     }
 
-    pub fn initialize_runtime_state<R: AuthoringRuntime<Config = Config>>(
+    pub fn initialize_runtime_state<R: AuthoringLayoutRuntime<Config = Config>>(
         &self,
         service: ConfigRuntimeService<R>,
         config: Config,
@@ -155,7 +155,7 @@ impl LayoutService {
         runtime::initialize_runtime_state(*self, service, config, state)
     }
 
-    pub fn bootstrap_runtime<R: AuthoringRuntime<Config = Config>>(
+    pub fn bootstrap_runtime<R: AuthoringLayoutRuntime<Config = Config>>(
         &self,
         service: &mut ConfigRuntimeService<R>,
         config: &Config,
@@ -216,7 +216,7 @@ impl LayoutService {
         Ok(config.resolve_selected_layout(workspace)?)
     }
 
-    pub fn evaluate_and_layout_current_workspace<R: AuthoringRuntime<Config = Config>>(
+    pub fn evaluate_and_layout_current_workspace<R: AuthoringLayoutRuntime<Config = Config>>(
         &self,
         runtime: &R,
         config: &Config,

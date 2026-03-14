@@ -8,7 +8,7 @@ use spiders_ipc::{
     IpcTransportError, UnknownClientError,
 };
 use spiders_shared::api::{QueryRequest, QueryResponse};
-use spiders_shared::runtime::AuthoringRuntime;
+use spiders_shared::runtime::AuthoringLayoutRuntime;
 
 use crate::actions::ActionError;
 use crate::controller::CompositorController;
@@ -94,7 +94,7 @@ impl CompositorIpcHost {
         controller: &mut CompositorController<R>,
     ) -> Result<spiders_ipc::IpcResponse, CompositorIpcError>
     where
-        R: AuthoringRuntime<Config = Config>,
+        R: AuthoringLayoutRuntime<Config = Config>,
     {
         let request = {
             let stream = self
@@ -192,7 +192,7 @@ impl CompositorIpcHost {
         controller: &mut CompositorController<R>,
     ) -> Result<IpcPumpReport, CompositorIpcError>
     where
-        R: AuthoringRuntime<Config = Config>,
+        R: AuthoringLayoutRuntime<Config = Config>,
     {
         let mut accepted_clients = 0;
 

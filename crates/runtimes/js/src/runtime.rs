@@ -8,7 +8,7 @@ use spiders_layout::ast::{
 };
 use spiders_shared::layout::{SlotTake, SourceLayoutNode};
 use spiders_shared::runtime::{
-    AuthoringRuntime, LayoutModuleContract, PreparedLayoutRuntime, PreparedLayout, RuntimeError,
+    AuthoringLayoutRuntime, LayoutModuleContract, PreparedLayoutRuntime, PreparedLayout, RuntimeError,
 };
 use spiders_shared::wm::{LayoutEvaluationContext, SelectedLayout};
 
@@ -353,7 +353,7 @@ impl<L: JsLayoutSourceLoader> PreparedLayoutRuntime for BoaLayoutRuntime<L> {
     }
 }
 
-impl<L: JsLayoutSourceLoader> AuthoringRuntime for BoaLayoutRuntime<L> {
+impl<L: JsLayoutSourceLoader> AuthoringLayoutRuntime for BoaLayoutRuntime<L> {
     fn load_authored_config(&self, path: &std::path::Path) -> Result<Self::Config, RuntimeError> {
         crate::authored::load_authored_config(path).map_err(|error| RuntimeError::Config {
             message: error.to_string(),
@@ -361,7 +361,7 @@ impl<L: JsLayoutSourceLoader> AuthoringRuntime for BoaLayoutRuntime<L> {
     }
 }
 
-impl AuthoringRuntime for StubLayoutRuntime {
+impl AuthoringLayoutRuntime for StubLayoutRuntime {
     fn load_authored_config(&self, _path: &std::path::Path) -> Result<Self::Config, RuntimeError> {
         Err(RuntimeError::NotImplemented(
             "authored config loading".into(),

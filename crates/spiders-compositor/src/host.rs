@@ -1,6 +1,6 @@
 use spiders_config::model::Config;
 use spiders_config::service::ConfigRuntimeService;
-use spiders_shared::runtime::AuthoringRuntime;
+use spiders_shared::runtime::AuthoringLayoutRuntime;
 use spiders_shared::wm::StateSnapshot;
 use spiders_wm::{BootstrapEvent, BootstrapFailureTrace, BootstrapRunTrace, StartupRegistration};
 
@@ -32,7 +32,7 @@ impl<R> CompositorHost<R> {
     }
 }
 
-impl<R: AuthoringRuntime<Config = Config>> CompositorHost<R> {
+impl<R: AuthoringLayoutRuntime<Config = Config>> CompositorHost<R> {
     pub fn initialize(
         runtime_service: ConfigRuntimeService<R>,
         config: Config,

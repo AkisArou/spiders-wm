@@ -1,7 +1,7 @@
 use spiders_config::model::Config;
 use spiders_config::service::ConfigRuntimeService;
 use spiders_shared::ids::{OutputId, WindowId};
-use spiders_shared::runtime::AuthoringRuntime;
+use spiders_shared::runtime::AuthoringLayoutRuntime;
 use spiders_shared::wm::StateSnapshot;
 use spiders_wm::{BootstrapEvent, LayerSurfaceMetadata, StartupRegistration};
 
@@ -206,7 +206,7 @@ impl<R> CompositorApp<R> {
     }
 }
 
-impl<R: AuthoringRuntime<Config = Config>> CompositorApp<R> {
+impl<R: AuthoringLayoutRuntime<Config = Config>> CompositorApp<R> {
     pub fn initialize(
         layout_service: LayoutService,
         runtime_service: ConfigRuntimeService<R>,

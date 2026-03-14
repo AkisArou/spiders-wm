@@ -71,7 +71,7 @@ pub trait PreparedLayoutRuntime: std::fmt::Debug {
     fn contract(&self) -> LayoutModuleContract;
 }
 
-pub trait AuthoringRuntime: PreparedLayoutRuntime {
+pub trait AuthoringLayoutRuntime: PreparedLayoutRuntime {
     fn load_authored_config(&self, path: &Path) -> Result<Self::Config, RuntimeError>;
 }
 

@@ -1,6 +1,6 @@
 use spiders_config::model::Config;
 use spiders_shared::api::{CompositorEvent, LayoutCycleDirection, WmAction};
-use spiders_shared::runtime::AuthoringRuntime;
+use spiders_shared::runtime::AuthoringLayoutRuntime;
 
 use crate::runtime::CompositorRuntimeState;
 use crate::wm::{WmState, WmStateError};
@@ -35,7 +35,7 @@ pub fn apply_action<R>(
     action: &WmAction,
 ) -> Result<ActionOutcome, ActionError>
 where
-    R: AuthoringRuntime<Config = Config>,
+    R: AuthoringLayoutRuntime<Config = Config>,
 {
     let mut recompute = false;
 

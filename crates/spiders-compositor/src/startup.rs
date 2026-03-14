@@ -4,7 +4,7 @@ use spiders_layout::ast::ValidatedLayoutTree;
 use spiders_layout::pipeline::compute_layout_from_request;
 use spiders_shared::ids::WorkspaceId;
 use spiders_shared::layout::{LayoutRequest, LayoutResponse};
-use spiders_shared::runtime::AuthoringRuntime;
+use spiders_shared::runtime::AuthoringLayoutRuntime;
 use spiders_shared::wm::StateSnapshot;
 
 use crate::effects::EffectsRuntimeState;
@@ -73,7 +73,7 @@ impl<R> StartupSession<R> {
     }
 }
 
-impl<R: AuthoringRuntime<Config = Config>> StartupSequence<R> {
+impl<R: AuthoringLayoutRuntime<Config = Config>> StartupSequence<R> {
     pub fn new(
         service: LayoutService,
         runtime_service: ConfigRuntimeService<R>,
@@ -94,7 +94,7 @@ impl<R: AuthoringRuntime<Config = Config>> StartupSequence<R> {
     }
 }
 
-pub(crate) fn bootstrap_runtime<R: AuthoringRuntime<Config = Config>>(
+pub(crate) fn bootstrap_runtime<R: AuthoringLayoutRuntime<Config = Config>>(
     _service: &LayoutService,
     runtime_service: &mut ConfigRuntimeService<R>,
     config: &Config,
@@ -133,7 +133,7 @@ pub(crate) fn bootstrap_runtime<R: AuthoringRuntime<Config = Config>>(
         .transpose()?)
 }
 
-pub(crate) fn initialize_startup_runtime<R: AuthoringRuntime<Config = Config>>(
+pub(crate) fn initialize_startup_runtime<R: AuthoringLayoutRuntime<Config = Config>>(
     service: &LayoutService,
     mut runtime_service: ConfigRuntimeService<R>,
     config: Config,
@@ -148,7 +148,7 @@ pub(crate) fn initialize_startup_runtime<R: AuthoringRuntime<Config = Config>>(
     })
 }
 
-pub(crate) fn initialize_startup_config<R: AuthoringRuntime<Config = Config>>(
+pub(crate) fn initialize_startup_config<R: AuthoringLayoutRuntime<Config = Config>>(
     service: &LayoutService,
     runtime_service: ConfigRuntimeService<R>,
     config: Config,
@@ -159,7 +159,7 @@ pub(crate) fn initialize_startup_config<R: AuthoringRuntime<Config = Config>>(
     Ok(StartupConfig { runtime, state })
 }
 
-pub(crate) fn initialize_startup_session<R: AuthoringRuntime<Config = Config>>(
+pub(crate) fn initialize_startup_session<R: AuthoringLayoutRuntime<Config = Config>>(
     service: &LayoutService,
     runtime_service: ConfigRuntimeService<R>,
     config: Config,

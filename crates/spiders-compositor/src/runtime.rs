@@ -2,7 +2,7 @@ use spiders_config::model::Config;
 use spiders_config::service::ConfigRuntimeService;
 use spiders_shared::ids::{WindowId, WorkspaceId};
 use spiders_shared::layout::{LayoutRect, LayoutRequest, LayoutResponse};
-use spiders_shared::runtime::AuthoringRuntime;
+use spiders_shared::runtime::AuthoringLayoutRuntime;
 use spiders_shared::wm::StateSnapshot;
 
 use crate::effects::EffectsRuntimeState;
@@ -98,7 +98,7 @@ impl<R> CompositorRuntimeState<R> {
     }
 }
 
-impl<R: AuthoringRuntime<Config = Config>> CompositorRuntimeState<R> {
+impl<R: AuthoringLayoutRuntime<Config = Config>> CompositorRuntimeState<R> {
     pub fn recompute_current_layout(&mut self) -> Result<(), CompositorLayoutError> {
         let startup_layout = startup::bootstrap_runtime(
             &self.layout_service,
@@ -124,7 +124,7 @@ impl<R: AuthoringRuntime<Config = Config>> CompositorRuntimeState<R> {
     }
 }
 
-pub(crate) fn initialize_runtime_state<R: AuthoringRuntime<Config = Config>>(
+pub(crate) fn initialize_runtime_state<R: AuthoringLayoutRuntime<Config = Config>>(
     layout_service: LayoutService,
     runtime_service: ConfigRuntimeService<R>,
     config: Config,
