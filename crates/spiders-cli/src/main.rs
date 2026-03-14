@@ -4,7 +4,7 @@ mod report;
 use bootstrap::CliBootstrap;
 use report::{
     emit, BootstrapFailureReport, BootstrapReport, DiscoveryReport, ErrorReport, IpcActionReport,
-    IpcQueryReport, IpcSmokeReport, OutputMode, SuccessCheckReport,
+    IpcMonitorReport, IpcQueryReport, IpcSmokeReport, OutputMode, SuccessCheckReport,
 };
 
 #[derive(Debug, Clone)]
@@ -43,6 +43,7 @@ fn main() -> std::process::ExitCode {
     let ipc_smoke = args.iter().any(|arg| arg == "ipc-smoke");
     let ipc_query = args.iter().any(|arg| arg == "ipc-query");
     let ipc_action = args.iter().any(|arg| arg == "ipc-action");
+    let ipc_monitor = args.iter().any(|arg| arg == "ipc-monitor");
     let output_mode = if args.iter().any(|arg| arg == "--json") {
         OutputMode::Json
     } else {
@@ -55,6 +56,7 @@ fn main() -> std::process::ExitCode {
         .or_else(default_ipc_socket_path);
     let query_name = arg_value(&args, "--query");
     let action_name = arg_value(&args, "--action");
+    let topic_names = arg_values(&args, "--topic");
 
     let cli = CliContext::new();
 
@@ -64,12 +66,49 @@ fn main() -> std::process::ExitCode {
         ipc_query_command(output_mode, socket_path, query_name)
     } else if ipc_action {
         ipc_action_command(output_mode, socket_path, action_name)
+    } else if ipc_monitor {
+        ipc_monitor_command(output_mode, socket_path, topic_names)
     } else if bootstrap_trace {
         bootstrap_trace_command(&cli, output_mode, events_path, transcript_path)
     } else if check_config {
         check_config_command(&cli, output_mode)
     } else {
         print_discovery(&cli, output_mode)
+    }
+}
+
+fn ipc_monitor_command(
+    output_mode: OutputMode,
+    socket_path: Option<std::path::PathBuf>,
+    topic_names: Vec<&str>,
+) -> std::process::ExitCode {
+    match run_ipc_monitor(socket_path, topic_names) {
+        Ok(report) => {
+            emit(output_mode, &report, || {
+                format!(
+                    "ipc monitor ok (socket: {}, topics: {}, events: {})",
+                    report.socket_path,
+                    report.topics.join(","),
+                    report.events.len()
+                )
+            });
+            std::process::ExitCode::SUCCESS
+        }
+        Err(error) => {
+            emit(
+                output_mode,
+                &ErrorReport {
+                    status: "error",
+                    phase: "ipc-monitor",
+                    runtime_ready: spiders_ipc::crate_ready(),
+                    runtime_config: None,
+                    errors: None,
+                    message: Some(error),
+                },
+                || "ipc monitor error".into(),
+            );
+            std::process::ExitCode::from(1)
+        }
     }
 }
 
@@ -181,6 +220,13 @@ fn arg_value<'a>(args: &'a [String], flag: &str) -> Option<&'a str> {
     args.windows(2)
         .find(|window| window[0] == flag)
         .map(|window| window[1].as_str())
+}
+
+fn arg_values<'a>(args: &'a [String], flag: &str) -> Vec<&'a str> {
+    args.windows(2)
+        .filter(|window| window[0] == flag)
+        .map(|window| window[1].as_str())
+        .collect()
 }
 
 fn print_discovery(cli: &CliContext, output_mode: OutputMode) -> std::process::ExitCode {
@@ -740,6 +786,81 @@ fn run_ipc_action(
     }
 }
 
+fn run_ipc_monitor(
+    socket_path: Option<std::path::PathBuf>,
+    topic_names: Vec<&str>,
+) -> Result<IpcMonitorReport, String> {
+    use spiders_ipc::{
+        connect, decode_response_line, send_request, IpcClientMessage, IpcEnvelope,
+        IpcServerMessage,
+    };
+    use std::io::BufRead;
+
+    let socket_path = socket_path.ok_or_else(|| "missing IPC socket path".to_string())?;
+    let topics = parse_subscription_topics(&topic_names)?;
+    let request_id = "cli-monitor-1".to_string();
+    let request =
+        IpcEnvelope::new(IpcClientMessage::subscribe(topics.clone())).with_request_id(&request_id);
+    let mut stream = connect(&socket_path).map_err(|error| error.to_string())?;
+    let mut reader =
+        std::io::BufReader::new(stream.try_clone().map_err(|error| error.to_string())?);
+
+    send_request(&mut stream, &request).map_err(|error| error.to_string())?;
+
+    let mut first_line = String::new();
+    reader
+        .read_line(&mut first_line)
+        .map_err(|error| error.to_string())?;
+    let subscribed = decode_response_line(&first_line).map_err(|error| error.to_string())?;
+    let subscribed_topics = match subscribed.message {
+        IpcServerMessage::Subscribed { topics } => topics,
+        message => return Err(format!("unexpected IPC monitor response: {message:?}")),
+    };
+
+    let mut events = Vec::new();
+
+    loop {
+        let mut line = String::new();
+
+        match reader.read_line(&mut line) {
+            Ok(0) => break,
+            Ok(_) => match decode_response_line(&line)
+                .map_err(|error| error.to_string())?
+                .message
+            {
+                IpcServerMessage::Event { event, .. } => events.push(event),
+                IpcServerMessage::Error { message } => return Err(message),
+                _ => {}
+            },
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::WouldBlock
+                        | std::io::ErrorKind::UnexpectedEof
+                        | std::io::ErrorKind::ConnectionReset
+                        | std::io::ErrorKind::BrokenPipe
+                ) =>
+            {
+                break;
+            }
+            Err(error) => return Err(error.to_string()),
+        }
+    }
+
+    Ok(IpcMonitorReport {
+        status: "ok",
+        socket_path: socket_path.display().to_string(),
+        request_id,
+        topics: topics.iter().map(topic_label).map(str::to_string).collect(),
+        subscribed_topics: subscribed_topics
+            .iter()
+            .map(topic_label)
+            .map(str::to_string)
+            .collect(),
+        events,
+    })
+}
+
 fn default_ipc_socket_path() -> Option<std::path::PathBuf> {
     std::env::var_os("SPIDERS_WM_IPC_SOCKET").map(std::path::PathBuf::from)
 }
@@ -761,12 +882,76 @@ fn parse_query_request(name: &str) -> Result<spiders_shared::api::QueryRequest, 
 fn parse_action_request(name: &str) -> Result<spiders_shared::api::WmAction, String> {
     use spiders_shared::api::WmAction;
 
+    if let Some(value) = name.strip_prefix("set-layout:") {
+        return Ok(WmAction::SetLayout {
+            name: value.to_string(),
+        });
+    }
+    if let Some(value) = name.strip_prefix("view-tag:") {
+        return Ok(WmAction::ViewTag {
+            tag: value.to_string(),
+        });
+    }
+    if let Some(value) = name.strip_prefix("toggle-view-tag:") {
+        return Ok(WmAction::ToggleViewTag {
+            tag: value.to_string(),
+        });
+    }
+    if let Some(value) = name.strip_prefix("spawn:") {
+        return Ok(WmAction::Spawn {
+            command: value.to_string(),
+        });
+    }
+
     match name {
         "reload-config" => Ok(WmAction::ReloadConfig),
+        "cycle-layout-next" => Ok(WmAction::CycleLayout {
+            direction: Some(spiders_shared::api::LayoutCycleDirection::Next),
+        }),
+        "cycle-layout-previous" => Ok(WmAction::CycleLayout {
+            direction: Some(spiders_shared::api::LayoutCycleDirection::Previous),
+        }),
         "toggle-floating" => Ok(WmAction::ToggleFloating),
         "toggle-fullscreen" => Ok(WmAction::ToggleFullscreen),
+        "focus-left" => Ok(WmAction::FocusDirection {
+            direction: spiders_shared::api::FocusDirection::Left,
+        }),
+        "focus-right" => Ok(WmAction::FocusDirection {
+            direction: spiders_shared::api::FocusDirection::Right,
+        }),
+        "focus-up" => Ok(WmAction::FocusDirection {
+            direction: spiders_shared::api::FocusDirection::Up,
+        }),
+        "focus-down" => Ok(WmAction::FocusDirection {
+            direction: spiders_shared::api::FocusDirection::Down,
+        }),
         "close-focused-window" => Ok(WmAction::CloseFocusedWindow),
         _ => Err(format!("unsupported IPC action '{name}'")),
+    }
+}
+
+fn parse_subscription_topics(
+    names: &[&str],
+) -> Result<Vec<spiders_ipc::IpcSubscriptionTopic>, String> {
+    if names.is_empty() {
+        return Ok(vec![spiders_ipc::IpcSubscriptionTopic::All]);
+    }
+
+    names
+        .iter()
+        .map(|name| parse_subscription_topic(name))
+        .collect()
+}
+
+fn parse_subscription_topic(name: &str) -> Result<spiders_ipc::IpcSubscriptionTopic, String> {
+    match name {
+        "all" => Ok(spiders_ipc::IpcSubscriptionTopic::All),
+        "focus" => Ok(spiders_ipc::IpcSubscriptionTopic::Focus),
+        "windows" => Ok(spiders_ipc::IpcSubscriptionTopic::Windows),
+        "tags" => Ok(spiders_ipc::IpcSubscriptionTopic::Tags),
+        "layout" => Ok(spiders_ipc::IpcSubscriptionTopic::Layout),
+        "config" => Ok(spiders_ipc::IpcSubscriptionTopic::Config),
+        _ => Err(format!("unsupported IPC topic '{name}'")),
     }
 }
 
@@ -791,12 +976,23 @@ fn action_label(action: &spiders_shared::api::WmAction) -> &'static str {
         WmAction::ToggleFloating => "toggle-floating",
         WmAction::ToggleFullscreen => "toggle-fullscreen",
         WmAction::CloseFocusedWindow => "close-focused-window",
-        WmAction::Spawn { .. }
-        | WmAction::SetLayout { .. }
-        | WmAction::CycleLayout { .. }
-        | WmAction::ViewTag { .. }
-        | WmAction::ToggleViewTag { .. }
-        | WmAction::FocusDirection { .. } => "custom",
+        WmAction::Spawn { .. } => "spawn",
+        WmAction::SetLayout { .. } => "set-layout",
+        WmAction::CycleLayout { .. } => "cycle-layout",
+        WmAction::ViewTag { .. } => "view-tag",
+        WmAction::ToggleViewTag { .. } => "toggle-view-tag",
+        WmAction::FocusDirection { .. } => "focus-direction",
+    }
+}
+
+fn topic_label(topic: &spiders_ipc::IpcSubscriptionTopic) -> &'static str {
+    match topic {
+        spiders_ipc::IpcSubscriptionTopic::All => "all",
+        spiders_ipc::IpcSubscriptionTopic::Focus => "focus",
+        spiders_ipc::IpcSubscriptionTopic::Windows => "windows",
+        spiders_ipc::IpcSubscriptionTopic::Tags => "tags",
+        spiders_ipc::IpcSubscriptionTopic::Layout => "layout",
+        spiders_ipc::IpcSubscriptionTopic::Config => "config",
     }
 }
 
@@ -835,7 +1031,7 @@ mod tests {
     use std::os::unix::net::UnixListener;
 
     use spiders_ipc::{encode_response_line, IpcEnvelope, IpcServerMessage};
-    use spiders_shared::api::QueryResponse;
+    use spiders_shared::api::{CompositorEvent, QueryResponse};
 
     #[test]
     fn ipc_smoke_report_contains_subscription_and_event_lines() {
@@ -910,6 +1106,49 @@ mod tests {
 
         assert_eq!(report.action, spiders_shared::api::WmAction::ReloadConfig);
         assert_eq!(report.response_kind, "action-accepted");
+
+        let path = handle.join().unwrap();
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn ipc_monitor_reads_subscribed_events_until_socket_closes() {
+        let socket_path = unique_socket_path("ipc-monitor");
+        let listener = UnixListener::bind(&socket_path).unwrap();
+
+        let handle = std::thread::spawn({
+            let socket_path = socket_path.clone();
+            move || {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut request = String::new();
+                let mut reader = std::io::BufReader::new(stream.try_clone().unwrap());
+                use std::io::BufRead;
+                reader.read_line(&mut request).unwrap();
+                let subscribed =
+                    encode_response_line(&IpcEnvelope::new(IpcServerMessage::Subscribed {
+                        topics: vec![spiders_ipc::IpcSubscriptionTopic::Focus],
+                    }))
+                    .unwrap();
+                let event = encode_response_line(&IpcEnvelope::new(IpcServerMessage::event(
+                    CompositorEvent::FocusChange {
+                        focused_window_id: synthetic_bootstrap_state().focused_window_id,
+                        current_output_id: synthetic_bootstrap_state().current_output_id,
+                        current_workspace_id: synthetic_bootstrap_state().current_workspace_id,
+                    },
+                )))
+                .unwrap();
+                stream.write_all(subscribed.as_bytes()).unwrap();
+                stream.write_all(event.as_bytes()).unwrap();
+                drop(stream);
+                socket_path
+            }
+        });
+
+        let report = run_ipc_monitor(Some(socket_path.clone()), vec!["focus"]).unwrap();
+
+        assert_eq!(report.topics, vec!["focus"]);
+        assert_eq!(report.subscribed_topics, vec!["focus"]);
+        assert_eq!(report.events.len(), 1);
 
         let path = handle.join().unwrap();
         let _ = std::fs::remove_file(path);

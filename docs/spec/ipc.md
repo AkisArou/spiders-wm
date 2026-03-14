@@ -160,6 +160,14 @@ Once a small Unix socket helper exists, the CLI may also offer narrow
 socket-backed commands that connect to a caller-provided socket path or an
 environment-provided default such as `SPIDERS_WM_IPC_SOCKET`.
 
+The CLI may also offer a small `ipc-monitor` command that subscribes to one or
+more coarse topics, waits for streamed event messages, and reports the events it
+observed once the socket closes or the stream ends.
+
+Action coverage for the CLI should include the full V1 action set, even if some
+commands use compact string encodings such as `set-layout:<name>`,
+`view-tag:<tag>`, `toggle-view-tag:<tag>`, or `spawn:<command>`.
+
 This can share the same IPC protocol as third-party clients.
 
 ## Acceptance Criteria
@@ -169,4 +177,6 @@ V1 is acceptable when:
 - an external client can request current state
 - an external client can issue a WM command
 - an external client can subscribe to event updates
+- the compositor can poll/accept/dispatch pending IPC clients through a small
+  nonblocking pump helper without requiring a full dedicated runtime thread
 - workspace export is visible through `ext-workspace-v1`

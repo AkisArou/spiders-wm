@@ -61,7 +61,7 @@ pub use backend::{
 };
 pub use controller::CompositorController;
 pub use host::CompositorHost;
-pub use ipc::{CompositorIpcError, CompositorIpcHost};
+pub use ipc::{CompositorIpcError, CompositorIpcHost, IpcPumpReport};
 pub use runner::{BootstrapRunner, BootstrapRunnerError};
 pub use runtime::{CompositorRuntimeState, WorkspaceLayoutState};
 pub use session::{CompositorSession, SessionUpdate};

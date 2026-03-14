@@ -1,8 +1,8 @@
 use std::process::Command;
 use std::{io::Write, os::unix::net::UnixListener};
 
-use spiders_ipc::{encode_response_line, IpcEnvelope, IpcServerMessage};
-use spiders_shared::api::QueryResponse;
+use spiders_ipc::{encode_response_line, IpcEnvelope, IpcServerMessage, IpcSubscriptionTopic};
+use spiders_shared::api::{CompositorEvent, QueryResponse};
 
 fn cli_bin() -> String {
     env!("CARGO_BIN_EXE_spiders-cli").to_string()
@@ -357,6 +357,60 @@ fn cli_ipc_action_reports_socket_response_in_json_mode() {
     assert_eq!(json["status"], "ok");
     assert_eq!(json["action"]["type"], "reload-config");
     assert_eq!(json["response_kind"], "action-accepted");
+
+    let path = handle.join().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn cli_ipc_monitor_reports_streamed_events_in_json_mode() {
+    let socket_path = unique_socket_path("cli-ipc-monitor");
+    let listener = UnixListener::bind(&socket_path).unwrap();
+
+    let handle = std::thread::spawn({
+        let socket_path = socket_path.clone();
+        move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = String::new();
+            let mut reader = std::io::BufReader::new(stream.try_clone().unwrap());
+            use std::io::BufRead;
+            reader.read_line(&mut request).unwrap();
+            let subscribed =
+                encode_response_line(&IpcEnvelope::new(IpcServerMessage::Subscribed {
+                    topics: vec![IpcSubscriptionTopic::Layout],
+                }))
+                .unwrap();
+            let event = encode_response_line(&IpcEnvelope::new(IpcServerMessage::event(
+                CompositorEvent::LayoutChange {
+                    workspace_id: None,
+                    layout: None,
+                },
+            )))
+            .unwrap();
+            stream.write_all(subscribed.as_bytes()).unwrap();
+            stream.write_all(event.as_bytes()).unwrap();
+            socket_path
+        }
+    });
+
+    let output = Command::new(cli_bin())
+        .arg("ipc-monitor")
+        .arg("--json")
+        .arg("--socket")
+        .arg(&socket_path)
+        .arg("--topic")
+        .arg("layout")
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    assert_eq!(json["status"], "ok");
+    assert_eq!(json["topics"][0], "layout");
+    assert_eq!(json["subscribed_topics"][0], "layout");
+    assert_eq!(json["events"][0]["type"], "layout-change");
 
     let path = handle.join().unwrap();
     let _ = std::fs::remove_file(path);

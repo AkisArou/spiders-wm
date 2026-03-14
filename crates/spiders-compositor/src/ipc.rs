@@ -1,10 +1,11 @@
 use std::collections::BTreeMap;
+use std::io::ErrorKind;
 use std::os::unix::net::UnixStream;
 
 use spiders_config::runtime::LayoutRuntime;
 use spiders_ipc::{
-    bind_listener, IpcServeError, IpcServerHandleResult, IpcServerState, IpcTransportError,
-    UnknownClientError,
+    bind_listener, IpcCodecError, IpcServeError, IpcServerHandleResult, IpcServerState,
+    IpcTransportError, UnknownClientError,
 };
 use spiders_shared::api::{QueryRequest, QueryResponse};
 
@@ -23,6 +24,13 @@ pub enum CompositorIpcError {
     Action(#[from] ActionError),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IpcPumpReport {
+    pub accepted_clients: usize,
+    pub serviced_clients: usize,
+    pub dropped_clients: usize,
+}
+
 #[derive(Debug)]
 pub struct CompositorIpcHost {
     server: IpcServerState,
@@ -32,9 +40,14 @@ pub struct CompositorIpcHost {
 
 impl CompositorIpcHost {
     pub fn bind(path: impl AsRef<std::path::Path>) -> Result<Self, CompositorIpcError> {
+        let listener = bind_listener(path)?;
+        listener
+            .set_nonblocking(true)
+            .map_err(|error| CompositorIpcError::Transport(IpcTransportError::Io(error)))?;
+
         Ok(Self {
             server: IpcServerState::new(),
-            listener: bind_listener(path)?,
+            listener,
             clients: BTreeMap::new(),
         })
     }
@@ -52,6 +65,7 @@ impl CompositorIpcHost {
     }
 
     pub fn attach_client_stream(&mut self, stream: UnixStream) -> spiders_ipc::IpcClientId {
+        let _ = stream.set_nonblocking(true);
         let client_id = self.server.add_client();
         self.clients.insert(client_id, stream);
         client_id
@@ -172,6 +186,100 @@ impl CompositorIpcHost {
 
         Ok(delivered)
     }
+
+    pub fn pump_once<L, R>(
+        &mut self,
+        controller: &mut CompositorController<L, R>,
+    ) -> Result<IpcPumpReport, CompositorIpcError>
+    where
+        L: spiders_config::loader::LayoutSourceLoader,
+        R: LayoutRuntime,
+    {
+        let mut accepted_clients = 0;
+
+        loop {
+            match self.accept_client() {
+                Ok(_) => accepted_clients += 1,
+                Err(CompositorIpcError::Transport(IpcTransportError::Io(error)))
+                    if error.kind() == ErrorKind::WouldBlock =>
+                {
+                    break;
+                }
+                Err(error) => return Err(error),
+            }
+        }
+
+        let client_ids: Vec<_> = self.clients.keys().copied().collect();
+        let mut serviced_clients = 0;
+        let mut dropped_clients = Vec::new();
+
+        for client_id in client_ids {
+            match self.serve_client_once(client_id, controller) {
+                Ok(_) => serviced_clients += 1,
+                Err(error) if ipc_error_is_would_block(&error) => {}
+                Err(error) if ipc_error_is_empty_frame(&error) => dropped_clients.push(client_id),
+                Err(CompositorIpcError::Transport(IpcTransportError::Codec(
+                    IpcCodecError::InvalidJson(message),
+                ))) => {
+                    if self.send_error_to_client(client_id, message).is_err() {
+                        dropped_clients.push(client_id);
+                    }
+                }
+                Err(CompositorIpcError::Transport(IpcTransportError::Io(error)))
+                    if matches!(
+                        error.kind(),
+                        ErrorKind::BrokenPipe
+                            | ErrorKind::ConnectionReset
+                            | ErrorKind::ConnectionAborted
+                            | ErrorKind::UnexpectedEof
+                    ) =>
+                {
+                    dropped_clients.push(client_id);
+                }
+                Err(CompositorIpcError::UnknownClient(_)) => dropped_clients.push(client_id),
+                Err(error) => return Err(error),
+            }
+        }
+
+        for client_id in &dropped_clients {
+            self.remove_client(*client_id);
+        }
+
+        Ok(IpcPumpReport {
+            accepted_clients,
+            serviced_clients,
+            dropped_clients: dropped_clients.len(),
+        })
+    }
+
+    fn send_error_to_client(
+        &mut self,
+        client_id: spiders_ipc::IpcClientId,
+        message: impl Into<String>,
+    ) -> Result<(), CompositorIpcError> {
+        let response = self.server.error_response(client_id, None, message)?;
+        let stream = self
+            .clients
+            .get_mut(&client_id)
+            .ok_or(UnknownClientError { client_id })?;
+        spiders_ipc::send_response(stream, &response)?;
+        Ok(())
+    }
+}
+
+fn ipc_error_is_would_block(error: &CompositorIpcError) -> bool {
+    matches!(
+        error,
+        CompositorIpcError::Transport(IpcTransportError::Io(io_error))
+            if io_error.kind() == ErrorKind::WouldBlock
+    )
+}
+
+fn ipc_error_is_empty_frame(error: &CompositorIpcError) -> bool {
+    matches!(
+        error,
+        CompositorIpcError::Transport(IpcTransportError::Codec(IpcCodecError::EmptyFrame))
+    )
 }
 
 fn query_response<L, R>(
@@ -204,6 +312,7 @@ fn query_response<L, R>(
 #[cfg(test)]
 mod tests {
     use std::fs;
+    use std::io::Write;
     use std::os::unix::net::UnixStream;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -468,6 +577,53 @@ mod tests {
         drop(focus_client);
         let _ = host.remove_client(layout_client_id);
         let _ = host.remove_client(focus_client_id);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn ipc_host_pump_once_accepts_and_services_pending_clients() {
+        let path = unique_socket_path("pump-once");
+        let mut host = CompositorIpcHost::bind(&path).unwrap();
+        let mut controller = controller();
+
+        let mut client = UnixStream::connect(&path).unwrap();
+        send_request(
+            &mut client,
+            &IpcEnvelope::new(IpcClientMessage::Query(QueryRequest::TagNames)),
+        )
+        .unwrap();
+
+        let report = host.pump_once(&mut controller).unwrap();
+        let response = recv_response(&client).unwrap();
+
+        assert_eq!(report.accepted_clients, 1);
+        assert_eq!(report.serviced_clients, 1);
+        assert_eq!(report.dropped_clients, 0);
+        assert!(matches!(
+            response.message,
+            IpcServerMessage::Query(QueryResponse::TagNames(_))
+        ));
+
+        drop(client);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn ipc_host_pump_once_drops_empty_frame_clients() {
+        let path = unique_socket_path("pump-drop-empty");
+        let mut host = CompositorIpcHost::bind(&path).unwrap();
+        let mut controller = controller();
+
+        let mut client = UnixStream::connect(&path).unwrap();
+        client.write_all(b"\n").unwrap();
+
+        let report = host.pump_once(&mut controller).unwrap();
+
+        assert_eq!(report.accepted_clients, 1);
+        assert_eq!(report.serviced_clients, 0);
+        assert_eq!(report.dropped_clients, 1);
+
+        drop(client);
         std::fs::remove_file(path).unwrap();
     }
 
