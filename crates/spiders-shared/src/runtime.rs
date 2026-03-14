@@ -3,9 +3,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use crate::layout::SourceLayoutNode;
-use crate::wm::{
-    LayoutEvaluationContext, LoadedLayout, SelectedLayout, StateSnapshot, WorkspaceSnapshot,
-};
+use crate::wm::{LayoutEvaluationContext, SelectedLayout, StateSnapshot, WorkspaceSnapshot};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LayoutModuleContract {
@@ -46,24 +44,6 @@ pub enum RuntimeError {
 pub struct RuntimeArtifact {
     pub selected: SelectedLayout,
     pub runtime_source: String,
-}
-
-impl From<LoadedLayout> for RuntimeArtifact {
-    fn from(value: LoadedLayout) -> Self {
-        Self {
-            selected: value.selected,
-            runtime_source: value.runtime_source,
-        }
-    }
-}
-
-impl From<RuntimeArtifact> for LoadedLayout {
-    fn from(value: RuntimeArtifact) -> Self {
-        Self {
-            selected: value.selected,
-            runtime_source: value.runtime_source,
-        }
-    }
 }
 
 pub trait LayoutRuntime: std::fmt::Debug {

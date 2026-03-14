@@ -39,12 +39,6 @@ pub struct SelectedLayout {
     pub effects_stylesheet: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct LoadedLayout {
-    pub selected: SelectedLayout,
-    pub runtime_source: String,
-}
-
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct LayoutEvaluationContext {
     pub monitor: LayoutMonitorContext,
