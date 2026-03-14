@@ -144,6 +144,9 @@ The export should reflect:
 - monitor/output association where meaningful
 - changes over time as WM state updates
 
+The initial smithay-backed export may be read-only and map one workspace group
+per enabled output, with workspace state derived from the Rust `StateSnapshot`.
+
 ## CLI Expectation
 
 The rewrite should eventually ship a small CLI or helper commands for:

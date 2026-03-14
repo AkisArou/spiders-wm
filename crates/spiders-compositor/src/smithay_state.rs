@@ -12,6 +12,7 @@ mod imp {
     use smithay::delegate_data_device;
     use smithay::delegate_ext_data_control;
     use smithay::delegate_layer_shell;
+    use smithay::delegate_output;
     use smithay::delegate_primary_selection;
     use smithay::delegate_seat;
     use smithay::delegate_shm;
@@ -34,6 +35,7 @@ mod imp {
         get_parent, get_role, is_sync_subsurface, with_states, BufferAssignment,
     };
     use smithay::wayland::compositor::{CompositorClientState, CompositorHandler, CompositorState};
+    use smithay::wayland::output::{OutputHandler, OutputManagerState};
     use smithay::wayland::selection::data_device::{
         DataDeviceHandler, DataDeviceState, WaylandDndGrabHandler,
     };
@@ -62,7 +64,9 @@ mod imp {
         LayerExclusiveZone, LayerKeyboardInteractivity, LayerSurfaceMetadata, LayerSurfaceTier,
     };
     use spiders_shared::ids::{OutputId, WindowId};
-    use spiders_shared::wm::OutputTransform;
+    use spiders_shared::wm::{OutputTransform, StateSnapshot};
+
+    use crate::smithay_workspace::{WorkspaceHandler, WorkspaceManagerState};
 
     #[derive(Debug, thiserror::Error)]
     pub enum SmithayStateError {
@@ -282,14 +286,17 @@ mod imp {
         pub shm_state: ShmState,
         pub xdg_shell_state: XdgShellState,
         pub layer_shell_state: WlrLayerShellState,
+        pub output_manager_state: OutputManagerState,
         pub data_device_state: DataDeviceState,
         pub primary_selection_state: PrimarySelectionState,
         pub wlr_data_control_state: WlrDataControlState,
         pub ext_data_control_state: ExtDataControlState,
+        pub workspace_manager_state: WorkspaceManagerState,
         pub seat_state: SeatState<Self>,
         pub seat: Seat<Self>,
         pub seat_name: String,
         next_window_serial: u64,
+        smithay_outputs: HashMap<OutputId, Output>,
         toplevel_window_ids: HashMap<String, WindowId>,
         known_output_ids: Vec<OutputId>,
         known_output_metadata: HashMap<OutputId, SmithayKnownOutput>,
@@ -343,6 +350,8 @@ mod imp {
             let shm_state = ShmState::new::<Self>(&display_handle, vec![]);
             let xdg_shell_state = XdgShellState::new::<Self>(&display_handle);
             let layer_shell_state = WlrLayerShellState::new::<Self>(&display_handle);
+            let output_manager_state =
+                OutputManagerState::new_with_xdg_output::<Self>(&display_handle);
             let data_device_state = DataDeviceState::new::<Self>(&display_handle);
             let primary_selection_state = PrimarySelectionState::new::<Self>(&display_handle);
             let wlr_data_control_state = WlrDataControlState::new::<Self, _>(
@@ -355,6 +364,7 @@ mod imp {
                 Some(&primary_selection_state),
                 |_| true,
             );
+            let workspace_manager_state = WorkspaceManagerState::new::<Self>(&display_handle);
             let mut seat_state = SeatState::new();
             let seat_name = seat_name.into();
             let mut seat = seat_state.new_wl_seat(&display_handle, seat_name.clone());
@@ -367,14 +377,17 @@ mod imp {
                 shm_state,
                 xdg_shell_state,
                 layer_shell_state,
+                output_manager_state,
                 data_device_state,
                 primary_selection_state,
                 wlr_data_control_state,
                 ext_data_control_state,
+                workspace_manager_state,
                 seat_state,
                 seat,
                 seat_name,
                 next_window_serial: 1,
+                smithay_outputs: HashMap::new(),
                 toplevel_window_ids: HashMap::new(),
                 known_output_ids: Vec::new(),
                 known_output_metadata: HashMap::new(),
@@ -450,6 +463,56 @@ mod imp {
                     transform: OutputTransform::Normal,
                 },
             );
+        }
+
+        pub fn register_smithay_output(
+            &mut self,
+            output_id: OutputId,
+            output: Output,
+            size: Option<(u32, u32)>,
+            active: bool,
+        ) {
+            let output_name = output.name();
+            self.smithay_outputs.insert(output_id.clone(), output);
+            self.register_output_snapshot(output_id, output_name, size, active);
+            self.refresh_workspace_output_groups();
+        }
+
+        pub fn update_output_size(&mut self, output_id: &OutputId, size: (u32, u32)) {
+            if let Some(output) = self.smithay_outputs.get(output_id) {
+                let mode = smithay::output::Mode {
+                    size: (size.0 as i32, size.1 as i32).into(),
+                    refresh: 60_000,
+                };
+                output.change_current_state(Some(mode), None, None, None);
+                output.set_preferred(mode);
+            }
+
+            if let Some(metadata) = self.known_output_metadata.get_mut(output_id) {
+                metadata.logical_width = Some(size.0);
+                metadata.logical_height = Some(size.1);
+            }
+        }
+
+        pub fn update_active_output_size(&mut self, size: (u32, u32)) {
+            let output_id = self
+                .active_output_id
+                .clone()
+                .or_else(|| self.known_output_ids.first().cloned());
+
+            if let Some(output_id) = output_id {
+                self.update_output_size(&output_id, size);
+            }
+        }
+
+        pub fn refresh_workspace_state(&mut self, snapshot: &StateSnapshot) {
+            self.workspace_manager_state
+                .refresh_from_snapshot::<Self>(&self.display_handle, snapshot);
+        }
+
+        pub fn refresh_workspace_output_groups(&mut self) {
+            self.workspace_manager_state
+                .refresh_output_groups::<Self>(&self.display_handle, &self.known_output_ids);
         }
 
         pub fn backend_surface_snapshots(&self) -> Vec<BackendSurfaceSnapshot> {
@@ -553,6 +616,7 @@ mod imp {
             }
 
             self.active_output_id = Some(output_id.clone());
+            self.refresh_workspace_output_groups();
             self.pending_discovery_events
                 .push(BackendDiscoveryEvent::OutputActivated { output_id });
         }
@@ -573,6 +637,8 @@ mod imp {
                 .retain(|_, attached| attached != output_id);
 
             if removed {
+                self.smithay_outputs.remove(output_id);
+                self.refresh_workspace_output_groups();
                 self.pending_discovery_events
                     .push(BackendDiscoveryEvent::OutputLost {
                         output_id: output_id.clone(),
@@ -2048,6 +2114,20 @@ mod imp {
         fn buffer_destroyed(&mut self, _buffer: &wl_buffer::WlBuffer) {}
     }
 
+    impl OutputHandler for SpidersSmithayState {
+        fn output_bound(&mut self, output: Output, wl_output: WlOutput) {
+            let output_id = OutputId::from(output.name());
+            self.workspace_manager_state
+                .output_bound(&output_id, &wl_output);
+        }
+    }
+
+    impl WorkspaceHandler for SpidersSmithayState {
+        fn workspace_manager_state(&mut self) -> &mut WorkspaceManagerState {
+            &mut self.workspace_manager_state
+        }
+    }
+
     impl CompositorHandler for SpidersSmithayState {
         fn compositor_state(&mut self) -> &mut CompositorState {
             &mut self.compositor_state
@@ -2532,10 +2612,12 @@ mod imp {
     delegate_seat!(SpidersSmithayState);
     delegate_xdg_shell!(SpidersSmithayState);
     delegate_layer_shell!(SpidersSmithayState);
+    delegate_output!(SpidersSmithayState);
     delegate_data_device!(SpidersSmithayState);
     delegate_primary_selection!(SpidersSmithayState);
     delegate_data_control!(SpidersSmithayState);
     delegate_ext_data_control!(SpidersSmithayState);
+    crate::delegate_ext_workspace!(SpidersSmithayState);
 
     #[cfg(test)]
     mod tests {

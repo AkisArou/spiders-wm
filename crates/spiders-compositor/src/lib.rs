@@ -12,6 +12,7 @@ pub mod session;
 pub mod smithay_adapter;
 pub mod smithay_runtime;
 pub mod smithay_state;
+pub mod smithay_workspace;
 pub mod startup;
 pub mod topology;
 pub mod transcript;
@@ -81,6 +82,10 @@ pub use smithay_state::{
     SmithayKnownSurfacesSnapshot, SmithayKnownToplevelSurface, SmithayKnownUnmanagedSurface,
     SmithayPopupParentSnapshot, SmithayStateError, SmithayStateSnapshot, SmithaySurfaceRoleCounts,
     SpidersSmithayState,
+};
+#[cfg(feature = "smithay-winit")]
+pub use smithay_workspace::{
+    WorkspaceHandler, WorkspaceManagerDebugSnapshot, WorkspaceManagerState,
 };
 pub use spiders_runtime::{
     BootstrapDiagnostics, BootstrapEvent, BootstrapFailureTrace, BootstrapRunTrace,

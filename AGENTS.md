@@ -56,6 +56,11 @@ Drop if convenient:
 - Prefer multiple focused crates over a monolith once subsystem boundaries are
   clear.
 - Keep unsafe Rust isolated and justified.
+- For Wayland protocol-facing work, check `smithay` first and prefer its
+  existing `State`/`Handler` helpers, delegate macros, and protocol utilities
+  before implementing local protocol handling. Only implement protocol glue
+  directly when `smithay` does not provide the needed helper or when
+  `spiders-wm` needs app-specific state/export behavior on top of smithay.
 - Do not expose raw `smithay` state directly to JS.
 - Treat JS layout functions as pure functions of context.
 - Keep layout validation on the Rust side.

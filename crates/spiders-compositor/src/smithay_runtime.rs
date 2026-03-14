@@ -10,14 +10,14 @@ mod imp {
     use smithay::backend::winit::{self, WinitEvent, WinitEventLoop};
     use smithay::input::keyboard::FilterResult;
     use smithay::input::pointer::{ButtonEvent, MotionEvent};
-    use smithay::output::{Mode, Output, PhysicalProperties, Subpixel};
+    use smithay::output::{Mode, Output, PhysicalProperties, Scale, Subpixel};
     use smithay::reexports::calloop::generic::Generic;
     use smithay::reexports::calloop::{
         EventLoop, Interest, LoopSignal, Mode as CalloopMode, PostAction,
     };
     use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
     use smithay::reexports::wayland_server::Display;
-    use smithay::utils::{Point, SERIAL_COUNTER};
+    use smithay::utils::{Point, Transform, SERIAL_COUNTER};
     use spiders_runtime::{
         CompositorTopologyState, ControllerCommand, ControllerReport, OutputState, SeatState,
         SurfaceState,
@@ -189,6 +189,8 @@ mod imp {
             command: ControllerCommand,
         ) -> Result<(), SmithayRuntimeError> {
             self.controller.apply_command(command)?;
+            let snapshot = self.controller.state_snapshot();
+            self.runtime.state_mut().refresh_workspace_state(&snapshot);
             self.report.controller = self.controller.report();
             Ok(())
         }
@@ -299,6 +301,7 @@ mod imp {
             WinitEvent::CloseRequested => Ok(()),
             WinitEvent::Resized { size, .. } => {
                 *window_size = (size.w, size.h);
+                state.update_active_output_size((size.w.max(0) as u32, size.h.max(0) as u32));
                 Ok(())
             }
             WinitEvent::Focus(_) | WinitEvent::Redraw => Ok(()),
@@ -498,7 +501,7 @@ mod imp {
 
         let seat_name = String::from("smithay-winit");
         let output_name = String::from("smithay-winit-output");
-        let _smithay_output = Output::new(
+        let smithay_output = Output::new(
             output_name.clone(),
             PhysicalProperties {
                 size: (size.w, size.h).into(),
@@ -508,14 +511,24 @@ mod imp {
                 serial_number: "Bootstrap".into(),
             },
         );
-        let _mode = Mode {
+        let mode = Mode {
             size: (size.w, size.h).into(),
             refresh: 60_000,
         };
 
-        smithay_state.register_output_snapshot(
+        smithay_output.change_current_state(
+            Some(mode),
+            Some(Transform::Normal),
+            Some(Scale::Integer(1)),
+            Some((0, 0).into()),
+        );
+        smithay_output.set_preferred(mode);
+        let _global =
+            smithay_output.create_global::<SpidersSmithayState>(&smithay_state.display_handle);
+
+        smithay_state.register_smithay_output(
             OutputId::from(output_name.as_str()),
-            output_name.clone(),
+            smithay_output,
             Some((size.w.max(0) as u32, size.h.max(0) as u32)),
             true,
         );
@@ -531,6 +544,10 @@ mod imp {
                 controller.apply_command(other)?;
             }
         }
+
+        let state_snapshot = controller.state_snapshot();
+        smithay_state.refresh_workspace_state(&state_snapshot);
+        smithay_state.refresh_workspace_output_groups();
 
         let runtime = SmithayWinitRuntime {
             display_handle: smithay_state.display_handle.clone(),
@@ -1260,10 +1277,20 @@ mod imp {
             let display = Display::<SpidersSmithayState>::new().unwrap();
             let mut state = SpidersSmithayState::new(&display, "smithay-winit").unwrap();
             let output = super::smithay_output_snapshot("smithay-winit-output", (1280, 720));
-
-            state.register_output_snapshot(
-                output.id.clone(),
+            let smithay_output = Output::new(
                 output.name.clone(),
+                PhysicalProperties {
+                    size: (1280, 720).into(),
+                    subpixel: Subpixel::Unknown,
+                    make: "Spiders".into(),
+                    model: "Winit".into(),
+                    serial_number: "Test".into(),
+                },
+            );
+
+            state.register_smithay_output(
+                output.id.clone(),
+                smithay_output,
                 Some((output.logical_width, output.logical_height)),
                 true,
             );
