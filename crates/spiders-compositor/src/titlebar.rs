@@ -3,7 +3,7 @@ use spiders_shared::ids::WindowId;
 use spiders_shared::layout::LayoutRect;
 use spiders_shared::wm::{StateSnapshot, WindowSnapshot};
 
-use crate::runtime::WorkspaceLayoutState;
+use crate::runtime::{WindowPlacement, WorkspaceLayoutState};
 
 const DEFAULT_TITLEBAR_HEIGHT_PX: f32 = 24.0;
 
@@ -21,6 +21,7 @@ pub struct TitlebarRenderItem {
 pub fn compute_titlebar_render_plan(
     state: &StateSnapshot,
     layout: &WorkspaceLayoutState,
+    placements: &[WindowPlacement],
 ) -> Vec<TitlebarRenderItem> {
     layout
         .response
@@ -45,11 +46,11 @@ pub fn compute_titlebar_render_plan(
                 .windows
                 .iter()
                 .find(|window| &window.id == window_id)?;
-            let window_rect = if window.floating {
-                window.floating_rect.unwrap_or_else(|| node.rect())
-            } else {
-                node.rect()
-            };
+            let window_rect = placements
+                .iter()
+                .find(|placement| &placement.window_id == window_id)
+                .map(|placement| placement.rect)
+                .unwrap_or_else(|| node.rect());
             let titlebar_height = parse_titlebar_height_px(policy.titlebar_style.height.as_deref())
                 .unwrap_or(DEFAULT_TITLEBAR_HEIGHT_PX)
                 .min(window_rect.height.max(0.0));
@@ -100,7 +101,7 @@ mod tests {
     };
 
     use crate::effects::EffectsRuntimeState;
-    use crate::runtime::WorkspaceLayoutState;
+    use crate::runtime::{compute_window_placements, WorkspaceLayoutState};
 
     use super::*;
 
@@ -212,7 +213,8 @@ mod tests {
         let state = state();
         let layout = layout_with_effects("window::titlebar { background: #222; height: 28px; }");
 
-        let plan = compute_titlebar_render_plan(&state, &layout);
+        let placements = compute_window_placements(&state, &layout);
+        let plan = compute_titlebar_render_plan(&state, &layout, &placements);
         assert_eq!(plan.len(), 1);
         assert_eq!(plan[0].window_id, WindowId::from("w1"));
         assert_eq!(plan[0].title, "Terminal");
@@ -232,7 +234,8 @@ mod tests {
             "window { appearance: none; } window::titlebar { background: #222; }",
         );
 
-        assert!(compute_titlebar_render_plan(&state, &layout).is_empty());
+        let placements = compute_window_placements(&state, &layout);
+        assert!(compute_titlebar_render_plan(&state, &layout, &placements).is_empty());
     }
 
     #[test]
@@ -240,7 +243,8 @@ mod tests {
         let state = state();
         let layout = layout_with_effects("window::titlebar { background: #222; }");
 
-        let plan = compute_titlebar_render_plan(&state, &layout);
+        let placements = compute_window_placements(&state, &layout);
+        let plan = compute_titlebar_render_plan(&state, &layout, &placements);
         assert_eq!(plan[0].titlebar_rect.height, DEFAULT_TITLEBAR_HEIGHT_PX);
     }
 
@@ -250,7 +254,8 @@ mod tests {
         state.windows[0].title = None;
         let layout = layout_with_effects("window::titlebar { background: #222; }");
 
-        let plan = compute_titlebar_render_plan(&state, &layout);
+        let placements = compute_window_placements(&state, &layout);
+        let plan = compute_titlebar_render_plan(&state, &layout, &placements);
         assert_eq!(plan[0].title, "foot");
     }
 }

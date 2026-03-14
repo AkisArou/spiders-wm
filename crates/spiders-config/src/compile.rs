@@ -78,6 +78,7 @@ impl AppBuildPlan {
         let mut stylesheet_modules = Vec::new();
         let mut virtual_modules = Vec::new();
         let mut seen_stylesheets = BTreeSet::new();
+        let mut needs_jsx_runtime = false;
 
         if let Some(stylesheet_path) = graph.app.stylesheet_path.as_ref() {
             if seen_stylesheets.insert(stylesheet_path.clone()) {
@@ -91,7 +92,15 @@ impl AppBuildPlan {
             };
 
             match (&module.id, module.kind) {
-                (ModuleId::File(path), ModuleKind::Script) => script_modules.push(path.clone()),
+                (ModuleId::File(path), ModuleKind::Script) => {
+                    if matches!(
+                        path.extension().and_then(|extension| extension.to_str()),
+                        Some("tsx" | "jsx")
+                    ) {
+                        needs_jsx_runtime = true;
+                    }
+                    script_modules.push(path.clone())
+                }
                 (ModuleId::File(path), ModuleKind::Stylesheet) => {
                     if seen_stylesheets.insert(path.clone()) {
                         stylesheet_modules.push(path.clone());
@@ -102,6 +111,14 @@ impl AppBuildPlan {
                 }
                 _ => {}
             }
+        }
+
+        if needs_jsx_runtime
+            && !virtual_modules
+                .iter()
+                .any(|name| name == "spider-wm/jsx-runtime")
+        {
+            virtual_modules.push("spider-wm/jsx-runtime".into());
         }
 
         Self {
@@ -244,6 +261,23 @@ pub fn bundle_app(graph: &ModuleGraph, compiled: &CompiledApp) -> Result<Bundled
         ));
     }
 
+    for (module_id, code) in &compiled_virtuals {
+        if graph.modules.contains_key(module_id) {
+            continue;
+        }
+        let record = ModuleRecord {
+            id: module_id.clone(),
+            kind: ModuleKind::Virtual,
+            imports: Vec::new(),
+            resolved_imports: Vec::new(),
+        };
+        let rewritten = rewrite_module_code(code, module_id, &record, &graph.app.root_dir)?;
+        let key = serde_json::to_string(&module_key(&graph.app.root_dir, module_id)).unwrap();
+        module_factories.push(format!(
+            "{key}: (module, exports, __require) => {{\n{rewritten}\n}}"
+        ));
+    }
+
     let entry_key = serde_json::to_string(&module_key(
         &graph.app.root_dir,
         &ModuleId::File(graph.app.entry_path.clone()),
@@ -266,6 +300,7 @@ fn read_virtual_module_source(specifier: &str) -> Result<String, CompileError> {
         "spider-wm/actions" => PathBuf::from("../../spwm-js/actions.js"),
         "spider-wm/config" => PathBuf::from("src/virtual/config.js"),
         "spider-wm/jsx-runtime" => PathBuf::from("../../spwm-js/jsx-runtime.js"),
+        "spider-wm/layout" => PathBuf::from("src/virtual/layout.js"),
         "spider-wm/api" => PathBuf::from("src/virtual/api.js"),
         _ => {
             return Err(CompileError::UnsupportedVirtualModule {
@@ -483,14 +518,24 @@ fn rewrite_export_all_declaration(
     ))
 }
 
-fn resolve_import_module<'a>(
-    record: &'a ModuleRecord,
+fn resolve_import_module(
+    record: &ModuleRecord,
     specifier: &str,
-) -> Option<&'a crate::graph::ResolvedImport> {
+) -> Option<crate::graph::ResolvedImport> {
     record
         .resolved_imports
         .iter()
         .find(|import| import.specifier == specifier)
+        .cloned()
+        .or_else(|| {
+            specifier
+                .starts_with("spider-wm/")
+                .then(|| crate::graph::ResolvedImport {
+                    specifier: specifier.to_owned(),
+                    kind: ImportedModuleKind::Virtual,
+                    module_id: ModuleId::Virtual(specifier.to_owned()),
+                })
+        })
 }
 
 fn declaration_binding_names(declaration: &Declaration<'_>) -> Vec<String> {

@@ -84,6 +84,24 @@ where
             recompute = true;
             wm_state.assign_workspace_to_output(workspace_id, output_id)?
         }
+        WmAction::FocusMonitorLeft => {
+            let event = wm_state.focus_monitor_left()?;
+            vec![event]
+        }
+        WmAction::FocusMonitorRight => {
+            let event = wm_state.focus_monitor_right()?;
+            vec![event]
+        }
+        WmAction::SendMonitorLeft => {
+            let event = wm_state.send_monitor_left()?;
+            recompute = true;
+            vec![event]
+        }
+        WmAction::SendMonitorRight => {
+            let event = wm_state.send_monitor_right()?;
+            recompute = true;
+            vec![event]
+        }
         WmAction::ToggleFloating => {
             let event = wm_state.toggle_focused_floating()?;
             vec![event]
@@ -102,6 +120,36 @@ where
         }
         WmAction::FocusDirection { direction } => {
             let event = wm_state.focus_direction(*direction)?;
+            vec![event]
+        }
+        WmAction::SwapDirection { direction } => {
+            wm_state.swap_direction(*direction)?;
+            recompute = true;
+            Vec::new()
+        }
+        WmAction::ResizeDirection { direction } => {
+            let event = wm_state.resize_direction(*direction)?;
+            recompute = true;
+            vec![event]
+        }
+        WmAction::ResizeTiledDirection { direction } => {
+            wm_state.resize_tiled_direction(*direction)?;
+            recompute = true;
+            Vec::new()
+        }
+        WmAction::MoveDirection { direction } => {
+            let event = wm_state.move_direction(*direction)?;
+            recompute = true;
+            vec![event]
+        }
+        WmAction::TagFocusedWindow { tag } => {
+            let event = wm_state.tag_focused_window(tag)?;
+            recompute = true;
+            vec![event]
+        }
+        WmAction::ToggleTagFocusedWindow { tag } => {
+            let event = wm_state.toggle_tag_focused_window(tag)?;
+            recompute = true;
             vec![event]
         }
         WmAction::CloseFocusedWindow => {

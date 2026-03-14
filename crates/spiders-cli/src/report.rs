@@ -86,7 +86,7 @@ pub struct IpcSmokeReport {
     pub event_line: Option<String>,
 }
 
-#[derive(Debug, Serialize, PartialEq, Eq)]
+#[derive(Debug, Serialize, PartialEq)]
 pub struct IpcQueryReport {
     pub status: &'static str,
     pub socket_path: String,
@@ -95,7 +95,7 @@ pub struct IpcQueryReport {
     pub response: QueryResponse,
 }
 
-#[derive(Debug, Serialize, PartialEq, Eq)]
+#[derive(Debug, Serialize, PartialEq)]
 pub struct IpcActionReport {
     pub status: &'static str,
     pub socket_path: String,
@@ -104,7 +104,7 @@ pub struct IpcActionReport {
     pub response_kind: &'static str,
 }
 
-#[derive(Debug, Serialize, PartialEq, Eq)]
+#[derive(Debug, Serialize, PartialEq)]
 pub struct IpcMonitorReport {
     pub status: &'static str,
     pub socket_path: String,

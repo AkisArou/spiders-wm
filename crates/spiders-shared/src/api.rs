@@ -47,8 +47,18 @@ pub enum WmAction {
         workspace_id: WorkspaceId,
         output_id: OutputId,
     },
+    FocusMonitorLeft,
+    FocusMonitorRight,
+    SendMonitorLeft,
+    SendMonitorRight,
     ToggleFloating,
     ToggleFullscreen,
+    TagFocusedWindow {
+        tag: String,
+    },
+    ToggleTagFocusedWindow {
+        tag: String,
+    },
     FocusWindow {
         window_id: WindowId,
     },
@@ -57,6 +67,18 @@ pub enum WmAction {
         rect: LayoutRect,
     },
     FocusDirection {
+        direction: FocusDirection,
+    },
+    SwapDirection {
+        direction: FocusDirection,
+    },
+    ResizeDirection {
+        direction: FocusDirection,
+    },
+    ResizeTiledDirection {
+        direction: FocusDirection,
+    },
+    MoveDirection {
         direction: FocusDirection,
     },
     CloseFocusedWindow,
@@ -113,6 +135,10 @@ pub enum CompositorEvent {
         window_id: WindowId,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         floating_rect: Option<LayoutRect>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        output_id: Option<OutputId>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        workspace_id: Option<WorkspaceId>,
     },
     WindowFullscreenChange {
         window_id: WindowId,

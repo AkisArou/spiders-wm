@@ -11,6 +11,7 @@ use spiders_shared::wm::{StateSnapshot, WindowSnapshot};
 
 use crate::actions::{apply_action, ActionError};
 use crate::effects::WindowDecorationPolicy;
+use crate::runtime::WindowPlacement;
 use crate::runtime::{CompositorRuntimeState, WorkspaceLayoutState};
 use crate::titlebar::TitlebarRenderItem;
 use crate::{CompositorLayoutError, LayoutService};
@@ -84,6 +85,10 @@ impl<L, R> CompositorSession<L, R> {
 
     pub fn current_titlebar_render_plan(&self) -> Vec<TitlebarRenderItem> {
         self.runtime.current_titlebar_render_plan()
+    }
+
+    pub fn current_window_placements(&self) -> Vec<WindowPlacement> {
+        self.runtime.current_window_placements()
     }
 
     pub fn register_popup_surface(

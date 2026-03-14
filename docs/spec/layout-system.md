@@ -201,6 +201,9 @@ If a window is marked floating and has a persisted `floating_rect`, that rect
 overrides the tiled layout geometry for compositor rendering and interaction
 until the floating placement is changed or cleared.
 
+The rationale and ownership split are defined in
+`docs/decisions/floating-window-placement.md`.
+
 Current implementation note: floating drag/resize clamps against the active
 output bounds. True multi-output floating moves will require explicit output
 origin metadata in shared output snapshots.

@@ -651,8 +651,15 @@ mod imp {
             active: bool,
         ) {
             let output_name = output.name();
+            let smithay_origin = output.current_location();
             self.smithay_outputs.insert(output_id.clone(), output);
-            self.register_output_snapshot(output_id, output_name, origin, size, active);
+            self.register_output_snapshot(
+                output_id,
+                output_name,
+                origin.or(Some((smithay_origin.x, smithay_origin.y))),
+                size,
+                active,
+            );
             self.refresh_workspace_output_groups();
         }
 

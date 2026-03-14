@@ -1000,7 +1000,19 @@ fn action_label(action: &spiders_shared::api::WmAction) -> &'static str {
         WmAction::ToggleViewTag { .. } => "toggle-view-tag",
         WmAction::ActivateWorkspace { .. } => "activate-workspace",
         WmAction::AssignWorkspace { .. } => "assign-workspace",
+        WmAction::FocusMonitorLeft => "focus-monitor-left",
+        WmAction::FocusMonitorRight => "focus-monitor-right",
+        WmAction::SendMonitorLeft => "send-monitor-left",
+        WmAction::SendMonitorRight => "send-monitor-right",
+        WmAction::TagFocusedWindow { .. } => "tag-focused-window",
+        WmAction::ToggleTagFocusedWindow { .. } => "toggle-tag-focused-window",
+        WmAction::FocusWindow { .. } => "focus-window",
+        WmAction::SetFloatingWindowGeometry { .. } => "set-floating-window-geometry",
         WmAction::FocusDirection { .. } => "focus-direction",
+        WmAction::SwapDirection { .. } => "swap-direction",
+        WmAction::ResizeDirection { .. } => "resize-direction",
+        WmAction::ResizeTiledDirection { .. } => "resize-tiled-direction",
+        WmAction::MoveDirection { .. } => "move-direction",
     }
 }
 

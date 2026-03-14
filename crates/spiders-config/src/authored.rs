@@ -353,6 +353,12 @@ fn decode_action_descriptor(
             command: expect_string(path, arg, field)?.to_owned(),
         }),
         "reload_config" => Ok(WmAction::ReloadConfig),
+        "focus_next" => Ok(WmAction::FocusDirection {
+            direction: FocusDirection::Right,
+        }),
+        "focus_prev" => Ok(WmAction::FocusDirection {
+            direction: FocusDirection::Left,
+        }),
         "set_layout" => Ok(WmAction::SetLayout {
             name: expect_string(path, arg, field)?.to_owned(),
         }),
@@ -363,10 +369,35 @@ fn decode_action_descriptor(
         "toggle_view_tag" => Ok(WmAction::ToggleViewTag {
             tag: decode_tag_string(path, arg, field)?,
         }),
+        "focus_mon_left" => Ok(WmAction::FocusMonitorLeft),
+        "focus_mon_right" => Ok(WmAction::FocusMonitorRight),
+        "send_mon_left" => Ok(WmAction::SendMonitorLeft),
+        "send_mon_right" => Ok(WmAction::SendMonitorRight),
         "toggle_floating" => Ok(WmAction::ToggleFloating),
         "toggle_fullscreen" => Ok(WmAction::ToggleFullscreen),
         "focus_dir" => Ok(WmAction::FocusDirection {
             direction: decode_focus_direction(path, arg, field)?,
+        }),
+        "swap_dir" => Ok(WmAction::SwapDirection {
+            direction: decode_focus_direction(path, arg, field)?,
+        }),
+        "resize_dir" => Ok(WmAction::ResizeDirection {
+            direction: decode_focus_direction(path, arg, field)?,
+        }),
+        "resize_tiled" => Ok(WmAction::ResizeTiledDirection {
+            direction: decode_focus_direction(path, arg, field)?,
+        }),
+        "move" => Ok(WmAction::MoveDirection {
+            direction: decode_focus_direction(path, arg, field)?,
+        }),
+        "resize" => Ok(WmAction::ResizeDirection {
+            direction: decode_focus_direction(path, arg, field)?,
+        }),
+        "tag" => Ok(WmAction::TagFocusedWindow {
+            tag: decode_tag_string(path, arg, field)?,
+        }),
+        "toggle_tag" => Ok(WmAction::ToggleTagFocusedWindow {
+            tag: decode_tag_string(path, arg, field)?,
         }),
         "kill_client" => Ok(WmAction::CloseFocusedWindow),
         other => Err(LayoutConfigError::DecodeAuthoredConfig {
@@ -621,6 +652,11 @@ mod tests {
                   entries: [
                     { bind: ["mod", "Return"], action: actions.spawn("foot") },
                     { bind: ["mod", "h"], action: actions.focus_dir("left") },
+                    { bind: ["mod", "shift", "h"], action: actions.swap_dir("left") },
+                    { bind: ["mod", "ctrl", "h"], action: actions.resize_dir("left") },
+                    { bind: ["mod", "ctrl", "shift", "h"], action: actions.resize_tiled("left") },
+                    { bind: ["mod", "comma"], action: actions.focus_mon_left() },
+                    { bind: ["mod", "period"], action: actions.focus_mon_right() },
                     { bind: ["mod", "f"], action: actions.toggle_fullscreen() },
                   ],
                 };
@@ -663,7 +699,7 @@ mod tests {
 
         assert_eq!(config.tags, vec!["1", "2"]);
         assert_eq!(config.options.sloppyfocus, Some(true));
-        assert_eq!(config.bindings.len(), 3);
+        assert_eq!(config.bindings.len(), 8);
         assert_eq!(config.bindings[0].trigger, "alt+Return");
         assert_eq!(
             config.bindings[0].action,
@@ -677,7 +713,27 @@ mod tests {
                 direction: FocusDirection::Left,
             }
         );
-        assert_eq!(config.bindings[2].action, WmAction::ToggleFullscreen);
+        assert_eq!(
+            config.bindings[2].action,
+            WmAction::SwapDirection {
+                direction: FocusDirection::Left,
+            }
+        );
+        assert_eq!(
+            config.bindings[3].action,
+            WmAction::ResizeDirection {
+                direction: FocusDirection::Left,
+            }
+        );
+        assert_eq!(
+            config.bindings[4].action,
+            WmAction::ResizeTiledDirection {
+                direction: FocusDirection::Left,
+            }
+        );
+        assert_eq!(config.bindings[5].action, WmAction::FocusMonitorLeft);
+        assert_eq!(config.bindings[6].action, WmAction::FocusMonitorRight);
+        assert_eq!(config.bindings[7].action, WmAction::ToggleFullscreen);
         assert_eq!(config.inputs.len(), 1);
         assert_eq!(
             config.layout_selection.default.as_deref(),

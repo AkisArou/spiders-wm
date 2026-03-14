@@ -373,6 +373,28 @@ impl WmState {
         window_id: &WindowId,
         rect: LayoutRect,
     ) -> Result<CompositorEvent, WmStateError> {
+        let center = (rect.x + rect.width * 0.5, rect.y + rect.height * 0.5);
+        let target_output_id = self
+            .snapshot
+            .outputs
+            .iter()
+            .find(|output| output_rect_contains(output, center.0, center.1))
+            .map(|output| output.id.clone());
+        let target_workspace_id = target_output_id.as_ref().and_then(|output_id| {
+            self.snapshot
+                .workspaces
+                .iter()
+                .find(|workspace| {
+                    workspace.output_id.as_ref() == Some(output_id) && workspace.visible
+                })
+                .or_else(|| {
+                    self.snapshot
+                        .workspaces
+                        .iter()
+                        .find(|workspace| workspace.output_id.as_ref() == Some(output_id))
+                })
+                .map(|workspace| workspace.id.clone())
+        });
         let window = self
             .snapshot
             .windows
@@ -381,9 +403,26 @@ impl WmState {
             .ok_or_else(|| WmStateError::WindowNotFound(window_id.clone()))?;
 
         window.floating_rect = Some(rect);
+        if let Some(output_id) = target_output_id.clone() {
+            window.output_id = Some(output_id.clone());
+            if window.focused {
+                self.snapshot.current_output_id = Some(output_id);
+            }
+        }
+        if let Some(workspace_id) = target_workspace_id.clone() {
+            window.workspace_id = Some(workspace_id.clone());
+            if window.focused {
+                self.select_workspace(&workspace_id)?;
+            } else {
+                self.refresh_visible_windows();
+            }
+        }
+
         Ok(CompositorEvent::WindowGeometryChange {
             window_id: window_id.clone(),
             floating_rect: Some(rect),
+            output_id: target_output_id,
+            workspace_id: target_workspace_id,
         })
     }
 
@@ -450,6 +489,287 @@ impl WmState {
         };
 
         self.focus_window(&visible_windows[next_index])
+    }
+
+    pub fn swap_direction(&mut self, direction: FocusDirection) -> Result<(), WmStateError> {
+        let current_workspace_id = self.current_workspace_id()?.clone();
+        let visible_windows: Vec<_> = self
+            .snapshot
+            .windows
+            .iter()
+            .filter(|window| {
+                window.mapped
+                    && window.workspace_id.as_ref() == Some(&current_workspace_id)
+                    && self
+                        .snapshot
+                        .visible_window_ids
+                        .iter()
+                        .any(|id| id == &window.id)
+            })
+            .map(|window| window.id.clone())
+            .collect();
+
+        if visible_windows.len() < 2 {
+            return Ok(());
+        }
+
+        let current_index = self
+            .snapshot
+            .focused_window_id
+            .as_ref()
+            .and_then(|focused| {
+                visible_windows
+                    .iter()
+                    .position(|window_id| window_id == focused)
+            })
+            .ok_or(WmStateError::NoFocusedWindow)?;
+
+        let swap_index = match direction {
+            FocusDirection::Left | FocusDirection::Up => {
+                (current_index + visible_windows.len() - 1) % visible_windows.len()
+            }
+            FocusDirection::Right | FocusDirection::Down => {
+                (current_index + 1) % visible_windows.len()
+            }
+        };
+
+        let current_window_id = &visible_windows[current_index];
+        let target_window_id = &visible_windows[swap_index];
+        let current_slot = self
+            .snapshot
+            .windows
+            .iter()
+            .position(|window| &window.id == current_window_id)
+            .ok_or_else(|| WmStateError::WindowNotFound(current_window_id.clone()))?;
+        let target_slot = self
+            .snapshot
+            .windows
+            .iter()
+            .position(|window| &window.id == target_window_id)
+            .ok_or_else(|| WmStateError::WindowNotFound(target_window_id.clone()))?;
+
+        self.snapshot.windows.swap(current_slot, target_slot);
+        Ok(())
+    }
+
+    pub fn resize_direction(
+        &mut self,
+        direction: FocusDirection,
+    ) -> Result<CompositorEvent, WmStateError> {
+        let window_id = self.focused_window_id()?.clone();
+        let window = self
+            .snapshot
+            .windows
+            .iter()
+            .find(|window| window.id == window_id)
+            .cloned()
+            .ok_or_else(|| WmStateError::WindowNotFound(window_id.clone()))?;
+
+        let Some(mut rect) = window.floating_rect else {
+            return Ok(CompositorEvent::WindowGeometryChange {
+                window_id,
+                floating_rect: None,
+                output_id: window.output_id,
+                workspace_id: window.workspace_id,
+            });
+        };
+
+        let delta = 32.0;
+        match direction {
+            FocusDirection::Left => rect.width -= delta,
+            FocusDirection::Right => rect.width += delta,
+            FocusDirection::Up => rect.height -= delta,
+            FocusDirection::Down => rect.height += delta,
+        }
+
+        rect.width = rect.width.max(160.0);
+        rect.height = rect.height.max(96.0);
+        self.set_floating_window_geometry(&window_id, rect)
+    }
+
+    pub fn resize_tiled_direction(
+        &mut self,
+        _direction: FocusDirection,
+    ) -> Result<(), WmStateError> {
+        Ok(())
+    }
+
+    pub fn focus_monitor_left(&mut self) -> Result<CompositorEvent, WmStateError> {
+        self.focus_monitor_relative(-1)
+    }
+
+    pub fn focus_monitor_right(&mut self) -> Result<CompositorEvent, WmStateError> {
+        self.focus_monitor_relative(1)
+    }
+
+    pub fn send_monitor_left(&mut self) -> Result<CompositorEvent, WmStateError> {
+        self.send_monitor_relative(-1)
+    }
+
+    pub fn send_monitor_right(&mut self) -> Result<CompositorEvent, WmStateError> {
+        self.send_monitor_relative(1)
+    }
+
+    fn focus_monitor_relative(&mut self, step: isize) -> Result<CompositorEvent, WmStateError> {
+        let target_workspace_id = self.target_workspace_for_relative_output(step)?;
+        self.select_workspace(&target_workspace_id)?;
+        Ok(self.focus_change_event())
+    }
+
+    fn send_monitor_relative(&mut self, step: isize) -> Result<CompositorEvent, WmStateError> {
+        let window_id = self.focused_window_id()?.clone();
+        let target_workspace_id = self.target_workspace_for_relative_output(step)?;
+        let target_workspace = self
+            .snapshot
+            .workspaces
+            .iter()
+            .find(|workspace| workspace.id == target_workspace_id)
+            .cloned()
+            .ok_or_else(|| WmStateError::WorkspaceNotFound(target_workspace_id.clone()))?;
+        let target_output_id = target_workspace
+            .output_id
+            .clone()
+            .ok_or_else(|| WmStateError::WorkspaceNotFound(target_workspace_id.clone()))?;
+        let target_output = self
+            .snapshot
+            .outputs
+            .iter()
+            .find(|output| output.id == target_output_id)
+            .cloned()
+            .ok_or_else(|| WmStateError::OutputNotFound(target_output_id.clone()))?;
+        let current_output_id = self.current_output_id()?.clone();
+        let current_output = self
+            .snapshot
+            .outputs
+            .iter()
+            .find(|output| output.id == current_output_id)
+            .cloned();
+
+        let (floating_rect, focused) = {
+            let window = self
+                .snapshot
+                .windows
+                .iter_mut()
+                .find(|window| window.id == window_id)
+                .ok_or_else(|| WmStateError::WindowNotFound(window_id.clone()))?;
+            if let (Some(current_output), Some(rect)) =
+                (current_output, window.floating_rect.as_mut())
+            {
+                rect.x += (target_output.logical_x - current_output.logical_x) as f32;
+                rect.y += (target_output.logical_y - current_output.logical_y) as f32;
+            }
+            window.output_id = Some(target_output_id.clone());
+            window.workspace_id = Some(target_workspace_id.clone());
+            (window.floating_rect, window.focused)
+        };
+        if focused {
+            self.select_workspace(&target_workspace_id)?;
+        } else {
+            self.refresh_visible_windows();
+        }
+        Ok(CompositorEvent::WindowGeometryChange {
+            window_id,
+            floating_rect,
+            output_id: Some(target_output_id),
+            workspace_id: Some(target_workspace_id),
+        })
+    }
+
+    fn target_workspace_for_relative_output(
+        &self,
+        step: isize,
+    ) -> Result<WorkspaceId, WmStateError> {
+        let current_output_id = self.current_output_id()?.clone();
+        let mut outputs = self.snapshot.outputs.clone();
+        outputs.sort_by_key(|output| (output.logical_x, output.logical_y, output.name.clone()));
+
+        let current_index = outputs
+            .iter()
+            .position(|output| output.id == current_output_id)
+            .ok_or_else(|| WmStateError::OutputNotFound(current_output_id.clone()))?;
+        let target_index =
+            (current_index as isize + step).rem_euclid(outputs.len() as isize) as usize;
+        let target_output_id = outputs[target_index].id.clone();
+        let target_workspace_id = self
+            .snapshot
+            .outputs
+            .iter()
+            .find(|output| output.id == target_output_id)
+            .and_then(|output| output.current_workspace_id.clone())
+            .or_else(|| {
+                self.snapshot
+                    .workspaces
+                    .iter()
+                    .find(|workspace| workspace.output_id.as_ref() == Some(&target_output_id))
+                    .map(|workspace| workspace.id.clone())
+            })
+            .ok_or_else(|| WmStateError::OutputNotFound(target_output_id.clone()))?;
+
+        Ok(target_workspace_id)
+    }
+
+    pub fn move_direction(
+        &mut self,
+        direction: FocusDirection,
+    ) -> Result<CompositorEvent, WmStateError> {
+        let window_id = self.focused_window_id()?.clone();
+        let window = self
+            .snapshot
+            .windows
+            .iter()
+            .find(|window| window.id == window_id)
+            .cloned()
+            .ok_or_else(|| WmStateError::WindowNotFound(window_id.clone()))?;
+        if let Some(mut rect) = window.floating_rect {
+            let delta = 32.0;
+            match direction {
+                FocusDirection::Left => rect.x -= delta,
+                FocusDirection::Right => rect.x += delta,
+                FocusDirection::Up => rect.y -= delta,
+                FocusDirection::Down => rect.y += delta,
+            }
+            self.set_floating_window_geometry(&window_id, rect)
+        } else {
+            self.swap_direction(direction)?;
+            Ok(self.focus_change_event())
+        }
+    }
+
+    pub fn tag_focused_window(&mut self, tag: &str) -> Result<CompositorEvent, WmStateError> {
+        let window_id = self.focused_window_id()?.clone();
+        let window = self
+            .snapshot
+            .windows
+            .iter_mut()
+            .find(|window| window.id == window_id)
+            .ok_or_else(|| WmStateError::WindowNotFound(window_id.clone()))?;
+        window.tags = vec![tag.to_owned()];
+        Ok(CompositorEvent::WindowTagChange {
+            window_id,
+            tags: window.tags.clone(),
+        })
+    }
+
+    pub fn toggle_tag_focused_window(
+        &mut self,
+        tag: &str,
+    ) -> Result<CompositorEvent, WmStateError> {
+        let window_id = self.focused_window_id()?.clone();
+        let window = self
+            .snapshot
+            .windows
+            .iter_mut()
+            .find(|window| window.id == window_id)
+            .ok_or_else(|| WmStateError::WindowNotFound(window_id.clone()))?;
+        if let Some(index) = window.tags.iter().position(|candidate| candidate == tag) {
+            window.tags.remove(index);
+        } else {
+            window.tags.push(tag.to_owned());
+        }
+        Ok(CompositorEvent::WindowTagChange {
+            window_id,
+            tags: window.tags.clone(),
+        })
     }
 
     fn select_workspace(&mut self, workspace_id: &WorkspaceId) -> Result<(), WmStateError> {
@@ -612,6 +932,14 @@ where
     } else {
         entries.push(value);
     }
+}
+
+fn output_rect_contains(output: &OutputSnapshot, x: f32, y: f32) -> bool {
+    let left = output.logical_x as f32;
+    let top = output.logical_y as f32;
+    let right = left + output.logical_width as f32;
+    let bottom = top + output.logical_height as f32;
+    x >= left && x < right && y >= top && y < bottom
 }
 
 #[cfg(test)]
@@ -928,6 +1256,147 @@ mod tests {
                 ..
             } if id == &WorkspaceId::from("ws-2")
         )));
+    }
+
+    #[test]
+    fn wm_state_reassigns_floating_window_when_geometry_crosses_output() {
+        let mut snapshot = state();
+        snapshot.outputs.push(OutputSnapshot {
+            id: OutputId::from("out-2"),
+            name: "DP-1".into(),
+            logical_x: 1920,
+            logical_y: 0,
+            logical_width: 2560,
+            logical_height: 1440,
+            scale: 1,
+            transform: OutputTransform::Normal,
+            enabled: true,
+            current_workspace_id: Some(WorkspaceId::from("ws-2")),
+        });
+        snapshot.workspaces[1].output_id = Some(OutputId::from("out-2"));
+        snapshot.workspaces[1].visible = true;
+        snapshot.windows[0].floating = true;
+        snapshot.windows[0].floating_rect = Some(LayoutRect {
+            x: 50.0,
+            y: 60.0,
+            width: 800.0,
+            height: 600.0,
+        });
+
+        let mut state = WmState::from_snapshot(snapshot);
+        let event = state
+            .set_floating_window_geometry(
+                &WindowId::from("w1"),
+                LayoutRect {
+                    x: 2200.0,
+                    y: 120.0,
+                    width: 800.0,
+                    height: 600.0,
+                },
+            )
+            .unwrap();
+
+        assert_eq!(
+            state.snapshot().windows[0].output_id,
+            Some(OutputId::from("out-2"))
+        );
+        assert_eq!(
+            state.snapshot().windows[0].workspace_id,
+            Some(WorkspaceId::from("ws-2"))
+        );
+        assert_eq!(
+            state.snapshot().current_output_id,
+            Some(OutputId::from("out-2"))
+        );
+        assert_eq!(
+            state.snapshot().current_workspace_id,
+            Some(WorkspaceId::from("ws-2"))
+        );
+        assert_eq!(
+            event,
+            CompositorEvent::WindowGeometryChange {
+                window_id: WindowId::from("w1"),
+                floating_rect: Some(LayoutRect {
+                    x: 2200.0,
+                    y: 120.0,
+                    width: 800.0,
+                    height: 600.0,
+                }),
+                output_id: Some(OutputId::from("out-2")),
+                workspace_id: Some(WorkspaceId::from("ws-2")),
+            }
+        );
+    }
+
+    #[test]
+    fn wm_state_focus_monitor_right_selects_adjacent_output_workspace() {
+        let mut snapshot = state();
+        snapshot.outputs.push(OutputSnapshot {
+            id: OutputId::from("out-2"),
+            name: "DP-1".into(),
+            logical_x: 1920,
+            logical_y: 0,
+            logical_width: 2560,
+            logical_height: 1440,
+            scale: 1,
+            transform: OutputTransform::Normal,
+            enabled: true,
+            current_workspace_id: Some(WorkspaceId::from("ws-2")),
+        });
+        snapshot.workspaces[1].output_id = Some(OutputId::from("out-2"));
+        snapshot.workspaces[1].visible = true;
+
+        let mut state = WmState::from_snapshot(snapshot);
+        let event = state.focus_monitor_right().unwrap();
+
+        assert_eq!(
+            state.snapshot().current_output_id,
+            Some(OutputId::from("out-2"))
+        );
+        assert_eq!(
+            state.snapshot().current_workspace_id,
+            Some(WorkspaceId::from("ws-2"))
+        );
+        assert!(matches!(
+            event,
+            CompositorEvent::FocusChange {
+                current_output_id: Some(_),
+                current_workspace_id: Some(_),
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn wm_state_resize_direction_updates_focused_floating_geometry() {
+        let mut snapshot = state();
+        snapshot.windows[0].floating = true;
+        snapshot.windows[0].floating_rect = Some(LayoutRect {
+            x: 20.0,
+            y: 30.0,
+            width: 400.0,
+            height: 300.0,
+        });
+
+        let mut state = WmState::from_snapshot(snapshot);
+        let event = state.resize_direction(FocusDirection::Right).unwrap();
+
+        assert_eq!(
+            state.snapshot().windows[0].floating_rect,
+            Some(LayoutRect {
+                x: 20.0,
+                y: 30.0,
+                width: 432.0,
+                height: 300.0,
+            })
+        );
+        assert!(matches!(
+            event,
+            CompositorEvent::WindowGeometryChange {
+                floating_rect: Some(_),
+                ..
+            }
+        ));
     }
 
     #[test]

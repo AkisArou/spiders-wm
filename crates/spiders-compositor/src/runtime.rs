@@ -1,8 +1,8 @@
 use spiders_config::model::Config;
 use spiders_config::runtime::LayoutRuntime;
 use spiders_config::service::ConfigRuntimeService;
-use spiders_shared::ids::WorkspaceId;
-use spiders_shared::layout::{LayoutRequest, LayoutResponse};
+use spiders_shared::ids::{WindowId, WorkspaceId};
+use spiders_shared::layout::{LayoutRect, LayoutRequest, LayoutResponse};
 use spiders_shared::wm::StateSnapshot;
 
 use crate::effects::EffectsRuntimeState;
@@ -16,6 +16,19 @@ pub struct WorkspaceLayoutState {
     pub request: LayoutRequest,
     pub response: LayoutResponse,
     pub effects: EffectsRuntimeState,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WindowPlacementMode {
+    Tiled,
+    Floating,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct WindowPlacement {
+    pub window_id: WindowId,
+    pub mode: WindowPlacementMode,
+    pub rect: LayoutRect,
 }
 
 #[derive(Debug)]
@@ -59,7 +72,16 @@ impl<L, R> CompositorRuntimeState<L, R> {
 
     pub fn current_titlebar_render_plan(&self) -> Vec<TitlebarRenderItem> {
         self.current_layout()
-            .map(|layout| compute_titlebar_render_plan(self.state(), layout))
+            .map(|layout| {
+                let placements = self.current_window_placements();
+                compute_titlebar_render_plan(self.state(), layout, &placements)
+            })
+            .unwrap_or_default()
+    }
+
+    pub fn current_window_placements(&self) -> Vec<WindowPlacement> {
+        self.current_layout()
+            .map(|layout| compute_window_placements(self.state(), layout))
             .unwrap_or_default()
     }
 
@@ -118,6 +140,49 @@ pub(crate) fn initialize_runtime_state<
         layout_service,
         startup,
     ))
+}
+
+pub fn compute_window_placements(
+    state: &StateSnapshot,
+    layout: &WorkspaceLayoutState,
+) -> Vec<WindowPlacement> {
+    layout
+        .response
+        .root
+        .window_nodes()
+        .into_iter()
+        .filter_map(|node| {
+            let spiders_shared::layout::LayoutSnapshotNode::Window {
+                window_id: Some(window_id),
+                ..
+            } = node
+            else {
+                return None;
+            };
+
+            let window = state
+                .windows
+                .iter()
+                .find(|window| window.id == *window_id)?;
+            let mode = if window.floating {
+                WindowPlacementMode::Floating
+            } else {
+                WindowPlacementMode::Tiled
+            };
+            let rect = match mode {
+                WindowPlacementMode::Tiled => node.rect(),
+                WindowPlacementMode::Floating => {
+                    window.floating_rect.unwrap_or_else(|| node.rect())
+                }
+            };
+
+            Some(WindowPlacement {
+                window_id: window_id.clone(),
+                mode,
+                rect,
+            })
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -330,5 +395,84 @@ mod tests {
         assert_eq!(plan[0].style.background.as_deref(), Some("#111"));
 
         let _ = fs::remove_file(module_path);
+    }
+
+    #[test]
+    fn compute_window_placements_uses_floating_geometry_as_first_class_mode() {
+        let mut snapshot = state();
+        snapshot.windows.push(spiders_shared::wm::WindowSnapshot {
+            id: spiders_shared::ids::WindowId::from("w1"),
+            shell: spiders_shared::wm::ShellKind::XdgToplevel,
+            app_id: Some("foot".into()),
+            title: Some("shell".into()),
+            class: None,
+            instance: None,
+            role: None,
+            window_type: None,
+            mapped: true,
+            floating: true,
+            floating_rect: Some(spiders_shared::layout::LayoutRect {
+                x: 220.0,
+                y: 140.0,
+                width: 640.0,
+                height: 480.0,
+            }),
+            fullscreen: false,
+            focused: true,
+            urgent: false,
+            output_id: Some(OutputId::from("out-1")),
+            workspace_id: Some(WorkspaceId::from("ws-1")),
+            tags: vec!["1".into()],
+        });
+        let layout = WorkspaceLayoutState {
+            workspace_id: WorkspaceId::from("ws-1"),
+            request: LayoutRequest {
+                workspace_id: WorkspaceId::from("ws-1"),
+                output_id: Some(OutputId::from("out-1")),
+                layout_name: Some("master-stack".into()),
+                root: spiders_shared::layout::ResolvedLayoutNode::Workspace {
+                    meta: spiders_shared::layout::LayoutNodeMeta::default(),
+                    children: vec![spiders_shared::layout::ResolvedLayoutNode::Window {
+                        meta: spiders_shared::layout::LayoutNodeMeta::default(),
+                        window_id: Some(spiders_shared::ids::WindowId::from("w1")),
+                    }],
+                },
+                stylesheet: String::new(),
+                effects_stylesheet: String::new(),
+                space: spiders_shared::layout::LayoutSpace {
+                    width: 800.0,
+                    height: 600.0,
+                },
+            },
+            response: LayoutResponse {
+                root: spiders_shared::layout::LayoutSnapshotNode::Workspace {
+                    meta: spiders_shared::layout::LayoutNodeMeta::default(),
+                    rect: spiders_shared::layout::LayoutRect {
+                        x: 0.0,
+                        y: 0.0,
+                        width: 800.0,
+                        height: 600.0,
+                    },
+                    children: vec![spiders_shared::layout::LayoutSnapshotNode::Window {
+                        meta: spiders_shared::layout::LayoutNodeMeta::default(),
+                        rect: spiders_shared::layout::LayoutRect {
+                            x: 10.0,
+                            y: 20.0,
+                            width: 400.0,
+                            height: 300.0,
+                        },
+                        window_id: Some(spiders_shared::ids::WindowId::from("w1")),
+                    }],
+                },
+            },
+            effects: EffectsRuntimeState::default(),
+        };
+
+        let placements = compute_window_placements(&snapshot, &layout);
+
+        assert_eq!(placements.len(), 1);
+        assert_eq!(placements[0].mode, WindowPlacementMode::Floating);
+        assert_eq!(placements[0].rect.x, 220.0);
+        assert_eq!(placements[0].rect.y, 140.0);
     }
 }

@@ -71,6 +71,13 @@ impl RuntimeProjectLayoutSourceLoader {
         layout: &LayoutDefinition,
     ) -> Result<LoadedLayout, LayoutLoadError> {
         let module_path = self.resolver.resolve_module_path(&layout.module);
+        if let Some(runtime_source) = layout.runtime_source.clone() {
+            return Ok(loaded_layout_definition(
+                layout,
+                module_path.to_string_lossy().into_owned(),
+                runtime_source,
+            ));
+        }
         let runtime_source = std::fs::read_to_string(&module_path).map_err(|_| {
             LayoutLoadError::MissingRuntimeSource {
                 module: module_path.to_string_lossy().into_owned(),
@@ -106,6 +113,13 @@ impl FsLayoutSourceLoader {
         &self,
         layout: &LayoutDefinition,
     ) -> Result<LoadedLayout, LayoutLoadError> {
+        if let Some(runtime_source) = layout.runtime_source.clone() {
+            return Ok(loaded_layout_definition(
+                layout,
+                layout.module.clone(),
+                runtime_source,
+            ));
+        }
         let runtime_source = std::fs::read_to_string(&layout.module).map_err(|_| {
             LayoutLoadError::MissingRuntimeSource {
                 module: layout.module.clone(),

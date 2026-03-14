@@ -1066,11 +1066,15 @@ mod imp {
         R: spiders_config::runtime::LayoutRuntime,
     {
         let snapshot = controller.state_snapshot();
+        let window_placements = controller.app().session().current_window_placements();
         let titlebar_plan = controller.app().session().current_titlebar_render_plan();
         state.refresh_workspace_state(&snapshot);
         state.refresh_workspace_output_groups();
         state.refresh_titlebar_render_plan(&titlebar_plan);
-        state.refresh_window_render_plan(&build_window_render_plan(&titlebar_plan));
+        state.refresh_window_render_plan(&build_window_render_plan(
+            &window_placements,
+            &titlebar_plan,
+        ));
 
         let decoration_policies = controller.app().window_decoration_policies();
         state.refresh_window_decoration_policies(
@@ -1091,14 +1095,19 @@ mod imp {
     }
 
     fn build_window_render_plan(
+        window_placements: &[crate::runtime::WindowPlacement],
         titlebar_plan: &[TitlebarRenderItem],
     ) -> Vec<SmithayWindowRenderSnapshot> {
-        titlebar_plan
+        window_placements
             .iter()
-            .map(|item| SmithayWindowRenderSnapshot {
-                window_id: item.window_id.clone(),
-                window_rect: item.window_rect,
-                content_offset_y: item.titlebar_rect.height,
+            .map(|placement| SmithayWindowRenderSnapshot {
+                window_id: placement.window_id.clone(),
+                window_rect: placement.rect,
+                content_offset_y: titlebar_plan
+                    .iter()
+                    .find(|item| item.window_id == placement.window_id)
+                    .map(|item| item.titlebar_rect.height)
+                    .unwrap_or(0.0),
             })
             .collect()
     }
