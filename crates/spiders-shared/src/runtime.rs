@@ -101,14 +101,6 @@ pub trait AuthoringRuntime: LayoutRuntime {
     fn load_authored_config(&self, path: &Path) -> Result<Self::Config, RuntimeError>;
 }
 
-pub trait LayoutSourceLoader<C>: std::fmt::Debug {
-    fn load_runtime_source(
-        &self,
-        config: &C,
-        workspace: &WorkspaceSnapshot,
-    ) -> Result<Option<RuntimeArtifact>, RuntimeError>;
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RuntimeInfo {
     pub name: String,

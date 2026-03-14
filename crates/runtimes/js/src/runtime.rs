@@ -8,12 +8,11 @@ use spiders_layout::ast::{
 };
 use spiders_shared::layout::{SlotTake, SourceLayoutNode};
 use spiders_shared::runtime::{
-    AuthoringRuntime, LayoutModuleContract, LayoutRuntime, LayoutSourceLoader, RuntimeArtifact,
-    RuntimeError,
+    AuthoringRuntime, LayoutModuleContract, LayoutRuntime, RuntimeArtifact, RuntimeError,
 };
 use spiders_shared::wm::{LayoutEvaluationContext, SelectedLayout};
 
-use crate::loader::InlineLayoutSourceLoader;
+use crate::loader::{InlineLayoutSourceLoader, JsLayoutSourceLoader};
 
 #[cfg(test)]
 use crate::loader::FsLayoutSourceLoader;
@@ -254,7 +253,7 @@ impl<L> BoaLayoutRuntime<L> {
     }
 }
 
-impl<L: LayoutSourceLoader<Config>> BoaLayoutRuntime<L> {
+impl<L: JsLayoutSourceLoader> BoaLayoutRuntime<L> {
     pub fn selected_layout(
         &self,
         config: &Config,
@@ -329,7 +328,7 @@ impl LayoutRuntime for StubLayoutRuntime {
     }
 }
 
-impl<L: LayoutSourceLoader<Config>> LayoutRuntime for BoaLayoutRuntime<L> {
+impl<L: JsLayoutSourceLoader> LayoutRuntime for BoaLayoutRuntime<L> {
     type Config = Config;
 
     fn selected_layout(
@@ -377,7 +376,7 @@ impl<L: LayoutSourceLoader<Config>> LayoutRuntime for BoaLayoutRuntime<L> {
     }
 }
 
-impl<L: LayoutSourceLoader<Config>> AuthoringRuntime for BoaLayoutRuntime<L> {
+impl<L: JsLayoutSourceLoader> AuthoringRuntime for BoaLayoutRuntime<L> {
     fn load_authored_config(&self, path: &std::path::Path) -> Result<Self::Config, RuntimeError> {
         crate::authored::load_authored_config(path).map_err(|error| RuntimeError::Config {
             message: error.to_string(),

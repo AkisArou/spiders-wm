@@ -1,4 +1,4 @@
-use spiders_shared::runtime::{LayoutSourceLoader, RuntimeArtifact, RuntimeError};
+use spiders_shared::runtime::{RuntimeArtifact, RuntimeError};
 use spiders_shared::wm::SelectedLayout;
 
 use spiders_config::model::{Config, LayoutConfigError, LayoutDefinition};
@@ -54,6 +54,14 @@ pub struct RuntimeProjectLayoutSourceLoader {
     resolver: RuntimePathResolver,
 }
 
+pub trait JsLayoutSourceLoader: std::fmt::Debug {
+    fn load_runtime_source(
+        &self,
+        config: &Config,
+        workspace: &spiders_shared::wm::WorkspaceSnapshot,
+    ) -> Result<Option<RuntimeArtifact>, RuntimeError>;
+}
+
 impl RuntimeProjectLayoutSourceLoader {
     pub fn new(resolver: RuntimePathResolver) -> Self {
         Self { resolver }
@@ -85,7 +93,7 @@ impl RuntimeProjectLayoutSourceLoader {
     }
 }
 
-impl LayoutSourceLoader<Config> for InlineLayoutSourceLoader {
+impl JsLayoutSourceLoader for InlineLayoutSourceLoader {
     fn load_runtime_source(
         &self,
         config: &Config,
@@ -133,7 +141,7 @@ impl FsLayoutSourceLoader {
     }
 }
 
-impl LayoutSourceLoader<Config> for FsLayoutSourceLoader {
+impl JsLayoutSourceLoader for FsLayoutSourceLoader {
     fn load_runtime_source(
         &self,
         config: &Config,
@@ -151,7 +159,7 @@ impl LayoutSourceLoader<Config> for FsLayoutSourceLoader {
     }
 }
 
-impl LayoutSourceLoader<Config> for RuntimeProjectLayoutSourceLoader {
+impl JsLayoutSourceLoader for RuntimeProjectLayoutSourceLoader {
     fn load_runtime_source(
         &self,
         config: &Config,
