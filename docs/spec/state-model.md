@@ -151,6 +151,9 @@ Compositor-domain note:
 - for initial adapter-driven surface discovery, a surface-only typed batch is
   acceptable when it carries only stable surface facts already represented by
   backend topology snapshots
+- the same adapter-driven batch approach is acceptable for initial seat/output
+  discovery when it carries only stable registration facts already representable
+  in backend topology snapshots
 - layer-shell configure bookkeeping also remains compositor-owned, but a small
   typed inspection snapshot for last acked serial, pending configure count, and
   configured size may cross the smithay seam for diagnostics and tests

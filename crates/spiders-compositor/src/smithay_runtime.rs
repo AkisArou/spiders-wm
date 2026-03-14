@@ -143,6 +143,18 @@ mod imp {
             ))
         }
 
+        pub fn apply_adapter_discovery_batch(
+            &mut self,
+            generation: u64,
+            seats: Vec<crate::backend::BackendSeatSnapshot>,
+            outputs: Vec<crate::backend::BackendOutputSnapshot>,
+            surfaces: Vec<crate::backend::BackendSurfaceSnapshot>,
+        ) -> Result<(), SmithayRuntimeError> {
+            self.apply_controller_command(SmithayAdapter::translate_snapshot(
+                generation, seats, outputs, surfaces,
+            ))
+        }
+
         pub fn apply_pending_discovery_commands(
             &mut self,
             commands: Vec<ControllerCommand>,
@@ -1057,10 +1069,15 @@ mod imp {
             let mut bootstrap = test_bootstrap("wayland-test-adapter-seat-lifecycle");
 
             bootstrap
-                .apply_adapter_event(SmithayAdapterEvent::Seat {
-                    seat_name: "seat-adapter".into(),
-                    active: true,
-                })
+                .apply_adapter_discovery_batch(
+                    1,
+                    vec![crate::backend::BackendSeatSnapshot {
+                        seat_name: "seat-adapter".into(),
+                        active: true,
+                    }],
+                    Vec::new(),
+                    Vec::new(),
+                )
                 .unwrap();
             bootstrap
                 .apply_adapter_event(SmithayAdapterEvent::SeatFocusChanged {
@@ -1097,6 +1114,46 @@ mod imp {
                 .iter()
                 .all(|seat| seat.name != "seat-adapter"));
             assert_eq!(snapshot.topology.active_seat_name, None);
+        }
+
+        #[test]
+        fn bootstrap_applies_adapter_output_discovery_batch_to_controller() {
+            let mut state = test_state_snapshot();
+            state.outputs.push(OutputSnapshot {
+                id: OutputId::from("out-3"),
+                name: "DP-2".into(),
+                logical_width: 3440,
+                logical_height: 1440,
+                scale: 1,
+                transform: OutputTransform::Normal,
+                enabled: true,
+                current_workspace_id: None,
+            });
+            let mut bootstrap =
+                test_bootstrap_with_state("wayland-test-adapter-output-discovery", state);
+
+            bootstrap
+                .apply_adapter_discovery_batch(
+                    1,
+                    Vec::new(),
+                    vec![crate::backend::BackendOutputSnapshot {
+                        output_id: OutputId::from("out-3"),
+                        active: true,
+                    }],
+                    Vec::new(),
+                )
+                .unwrap();
+
+            let snapshot = bootstrap.snapshot();
+            assert!(snapshot
+                .topology
+                .outputs
+                .iter()
+                .any(|output| output.snapshot.id == OutputId::from("out-3")));
+            assert_eq!(
+                snapshot.topology.active_output_id,
+                Some(OutputId::from("out-3"))
+            );
         }
 
         #[test]

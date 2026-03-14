@@ -356,6 +356,10 @@ For initial surface discovery in adapter-driven tests, a small surface-only
 discovery batch is also acceptable when it keeps the seam focused on stable
 surface facts without reaching into smithay test-state mutation helpers.
 
+The same rule applies to seat/output discovery: small typed discovery batches
+are acceptable when they register stable topology facts through the adapter seam
+instead of constructing those facts by mutating smithay-owned test state.
+
 That slice is only a startup/discovery proof, not full surface or rendering
 integration.
 
