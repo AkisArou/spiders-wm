@@ -73,6 +73,22 @@ message payload. Client messages may distinguish `query`, `action`,
 `subscribe`, and `unsubscribe`, while server messages may distinguish `query`,
 `event`, `action-accepted`, `subscribed`, `unsubscribed`, and `error`.
 
+The IPC layer may also keep a small per-connection session object that:
+
+- stores the normalized subscription topic set for that client
+- forwards `query` and `action` requests upward with their `request_id`
+- builds matching `query`, `action-accepted`, and `error` responses
+- filters compositor events into outbound `event` messages based on the stored
+  topic set
+
+If a dedicated server helper exists, it may own multiple such sessions keyed by
+connection-local client ids and:
+
+- register and remove clients without exposing transport-specific handles
+- route `query` and `action` work upward tagged with the originating client id
+- return immediate subscription acknowledgements from the session layer
+- broadcast compositor events only to clients whose stored subscriptions match
+
 Agents may implement this unless the repository later defines a stricter wire
 format.
 
