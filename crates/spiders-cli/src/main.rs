@@ -3,8 +3,8 @@ mod report;
 
 use bootstrap::CliBootstrap;
 use report::{
-    emit, BootstrapFailureReport, BootstrapReport, DiscoveryReport, ErrorReport, OutputMode,
-    SuccessCheckReport,
+    emit, BootstrapFailureReport, BootstrapReport, DiscoveryReport, ErrorReport, IpcSmokeReport,
+    OutputMode, SuccessCheckReport,
 };
 
 #[derive(Debug, Clone)]
@@ -40,6 +40,7 @@ fn main() -> std::process::ExitCode {
     let args: Vec<String> = std::env::args().collect();
     let check_config = args.iter().any(|arg| arg == "check-config");
     let bootstrap_trace = args.iter().any(|arg| arg == "bootstrap-trace");
+    let ipc_smoke = args.iter().any(|arg| arg == "ipc-smoke");
     let output_mode = if args.iter().any(|arg| arg == "--json") {
         OutputMode::Json
     } else {
@@ -50,12 +51,48 @@ fn main() -> std::process::ExitCode {
 
     let cli = CliContext::new();
 
-    if bootstrap_trace {
+    if ipc_smoke {
+        ipc_smoke_command(output_mode)
+    } else if bootstrap_trace {
         bootstrap_trace_command(&cli, output_mode, events_path, transcript_path)
     } else if check_config {
         check_config_command(&cli, output_mode)
     } else {
         print_discovery(&cli, output_mode)
+    }
+}
+
+fn ipc_smoke_command(output_mode: OutputMode) -> std::process::ExitCode {
+    match run_ipc_smoke() {
+        Ok(report) => {
+            let event_suffix = report
+                .event_line
+                .as_ref()
+                .map(|_| ", event: yes")
+                .unwrap_or("");
+            emit(output_mode, &report, || {
+                format!(
+                    "ipc smoke ok (client: {}, request: {}, response: {}{})",
+                    report.client_id, report.request_kind, report.response_kind, event_suffix
+                )
+            });
+            std::process::ExitCode::SUCCESS
+        }
+        Err(error) => {
+            emit(
+                output_mode,
+                &ErrorReport {
+                    status: "error",
+                    phase: "ipc-smoke",
+                    runtime_ready: spiders_ipc::crate_ready(),
+                    runtime_config: None,
+                    errors: None,
+                    message: Some(error.to_string()),
+                },
+                || format!("ipc smoke error: {error}"),
+            );
+            std::process::ExitCode::from(1)
+        }
     }
 }
 
@@ -499,5 +536,111 @@ fn synthetic_bootstrap_state() -> spiders_shared::wm::StateSnapshot {
         }],
         visible_window_ids: vec![WindowId::from("bootstrap-window")],
         tag_names: vec!["bootstrap".into()],
+    }
+}
+
+fn run_ipc_smoke() -> Result<IpcSmokeReport, String> {
+    use spiders_ipc::{
+        decode_request_line, encode_request_line, encode_response_line, IpcClientMessage,
+        IpcEnvelope, IpcServerHandleResult, IpcServerState, IpcSubscriptionTopic,
+    };
+    use spiders_shared::api::CompositorEvent;
+
+    let mut server = IpcServerState::new();
+    let client_id = server.add_client();
+    let state = synthetic_bootstrap_state();
+
+    let request = IpcEnvelope::new(IpcClientMessage::subscribe([IpcSubscriptionTopic::Focus]))
+        .with_request_id("smoke-1");
+    let request_line = encode_request_line(&request).map_err(|error| error.to_string())?;
+    let decoded_request = decode_request_line(&request_line).map_err(|error| error.to_string())?;
+
+    let response = match server
+        .handle_request(client_id, decoded_request)
+        .map_err(|error| error.to_string())?
+    {
+        IpcServerHandleResult::Response { response, .. } => response,
+        IpcServerHandleResult::Query {
+            request_id, query, ..
+        } => server
+            .query_response(client_id, request_id, fallback_query_response(query))
+            .map_err(|error| error.to_string())?,
+        IpcServerHandleResult::Action { request_id, .. } => server
+            .action_accepted(client_id, request_id)
+            .map_err(|error| error.to_string())?,
+    };
+
+    let response_line = encode_response_line(&response).map_err(|error| error.to_string())?;
+    let event_line = server
+        .broadcast_event(CompositorEvent::FocusChange {
+            focused_window_id: state.focused_window_id.clone(),
+            current_output_id: state.current_output_id.clone(),
+            current_workspace_id: state.current_workspace_id.clone(),
+        })
+        .into_iter()
+        .find(|(id, _)| *id == client_id)
+        .map(|(_, response)| encode_response_line(&response).map_err(|error| error.to_string()))
+        .transpose()?;
+
+    Ok(IpcSmokeReport {
+        status: "ok",
+        client_id,
+        request_kind: "subscribe",
+        response_kind: match response.message {
+            spiders_ipc::IpcServerMessage::Subscribed { .. } => "subscribed",
+            spiders_ipc::IpcServerMessage::Query(_) => "query",
+            spiders_ipc::IpcServerMessage::ActionAccepted => "action-accepted",
+            spiders_ipc::IpcServerMessage::Event { .. } => "event",
+            spiders_ipc::IpcServerMessage::Unsubscribed { .. } => "unsubscribed",
+            spiders_ipc::IpcServerMessage::Error { .. } => "error",
+        },
+        request_line,
+        response_line,
+        event_line,
+    })
+}
+
+fn fallback_query_response(
+    query: spiders_shared::api::QueryRequest,
+) -> spiders_shared::api::QueryResponse {
+    use spiders_shared::api::{QueryRequest, QueryResponse};
+
+    let state = synthetic_bootstrap_state();
+    let focused_window = state.focused_window_id.as_ref().and_then(|window_id| {
+        state
+            .windows
+            .iter()
+            .find(|window| &window.id == window_id)
+            .cloned()
+    });
+
+    match query {
+        QueryRequest::State => QueryResponse::State(state),
+        QueryRequest::FocusedWindow => QueryResponse::FocusedWindow(focused_window),
+        QueryRequest::CurrentOutput => {
+            QueryResponse::CurrentOutput(state.current_output().cloned())
+        }
+        QueryRequest::CurrentWorkspace => {
+            QueryResponse::CurrentWorkspace(state.current_workspace().cloned())
+        }
+        QueryRequest::MonitorList => QueryResponse::MonitorList(state.outputs),
+        QueryRequest::TagNames => QueryResponse::TagNames(state.tag_names),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ipc_smoke_report_contains_subscription_and_event_lines() {
+        let report = run_ipc_smoke().unwrap();
+
+        assert_eq!(report.status, "ok");
+        assert_eq!(report.request_kind, "subscribe");
+        assert_eq!(report.response_kind, "subscribed");
+        assert!(report.request_line.ends_with('\n'));
+        assert!(report.response_line.ends_with('\n'));
+        assert!(report.event_line.is_some());
     }
 }

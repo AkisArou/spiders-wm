@@ -128,6 +128,10 @@ The rewrite should eventually ship a small CLI or helper commands for:
 - sending actions
 - monitoring events
 
+Before a real socket transport lands, the CLI may also ship a small in-memory
+IPC smoke path that exercises request framing, session/server handling, and
+response/event framing without talking to a live compositor.
+
 This can share the same IPC protocol as third-party clients.
 
 ## Acceptance Criteria

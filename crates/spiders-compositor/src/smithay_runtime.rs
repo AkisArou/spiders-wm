@@ -3082,3 +3082,11 @@ pub enum SmithayRuntimeError {
 #[cfg(not(feature = "smithay-winit"))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SmithayStartupReport;
+
+#[cfg(not(feature = "smithay-winit"))]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SmithayRuntimeSnapshot;
+
+#[cfg(not(feature = "smithay-winit"))]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SmithayBootstrapSnapshot;

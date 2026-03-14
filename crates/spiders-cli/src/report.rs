@@ -73,6 +73,18 @@ pub struct BootstrapFailureReport {
     pub diagnostics: Option<BootstrapDiagnostics>,
 }
 
+#[derive(Debug, Serialize, PartialEq, Eq)]
+pub struct IpcSmokeReport {
+    pub status: &'static str,
+    pub client_id: u64,
+    pub request_kind: &'static str,
+    pub response_kind: &'static str,
+    pub request_line: String,
+    pub response_line: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub event_line: Option<String>,
+}
+
 pub fn emit<T: Serialize>(mode: OutputMode, report: &T, text: impl FnOnce() -> String) {
     match mode {
         OutputMode::Text => println!("{}", text()),
