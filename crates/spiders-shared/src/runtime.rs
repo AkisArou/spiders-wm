@@ -46,7 +46,7 @@ pub struct PreparedLayout {
     pub runtime_source: String,
 }
 
-pub trait LayoutRuntime: std::fmt::Debug {
+pub trait PreparedLayoutRuntime: std::fmt::Debug {
     type Config;
 
     fn prepare_layout(
@@ -71,7 +71,7 @@ pub trait LayoutRuntime: std::fmt::Debug {
     fn contract(&self) -> LayoutModuleContract;
 }
 
-pub trait AuthoringRuntime: LayoutRuntime {
+pub trait AuthoringRuntime: PreparedLayoutRuntime {
     fn load_authored_config(&self, path: &Path) -> Result<Self::Config, RuntimeError>;
 }
 

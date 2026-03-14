@@ -126,7 +126,7 @@ mod tests {
     use spiders_shared::ids::{OutputId, WorkspaceId};
     use spiders_shared::layout::SourceLayoutNode;
     use spiders_shared::runtime::{
-        AuthoringRuntime, LayoutModuleContract, LayoutRuntime, PreparedLayout, RuntimeError,
+        AuthoringRuntime, LayoutModuleContract, PreparedLayoutRuntime, PreparedLayout, RuntimeError,
     };
     use spiders_shared::wm::{
         LayoutRef, OutputSnapshot, OutputTransform, SelectedLayout, StateSnapshot,
@@ -142,7 +142,7 @@ mod tests {
         error_message: Option<String>,
     }
 
-    impl LayoutRuntime for StubRuntime {
+    impl PreparedLayoutRuntime for StubRuntime {
         type Config = Config;
 
         fn prepare_layout(
@@ -205,7 +205,7 @@ mod tests {
         config: Config,
     }
 
-    impl LayoutRuntime for StubAuthoredRuntime {
+    impl PreparedLayoutRuntime for StubAuthoredRuntime {
         type Config = Config;
 
         fn prepare_layout(

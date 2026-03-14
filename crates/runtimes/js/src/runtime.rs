@@ -8,7 +8,7 @@ use spiders_layout::ast::{
 };
 use spiders_shared::layout::{SlotTake, SourceLayoutNode};
 use spiders_shared::runtime::{
-    AuthoringRuntime, LayoutModuleContract, LayoutRuntime, PreparedLayout, RuntimeError,
+    AuthoringRuntime, LayoutModuleContract, PreparedLayoutRuntime, PreparedLayout, RuntimeError,
 };
 use spiders_shared::wm::{LayoutEvaluationContext, SelectedLayout};
 
@@ -263,7 +263,7 @@ impl<L: JsLayoutSourceLoader> BoaLayoutRuntime<L> {
     }
 }
 
-impl LayoutRuntime for StubLayoutRuntime {
+impl PreparedLayoutRuntime for StubLayoutRuntime {
     type Config = Config;
 
     fn prepare_layout(
@@ -310,7 +310,7 @@ impl LayoutRuntime for StubLayoutRuntime {
     }
 }
 
-impl<L: JsLayoutSourceLoader> LayoutRuntime for BoaLayoutRuntime<L> {
+impl<L: JsLayoutSourceLoader> PreparedLayoutRuntime for BoaLayoutRuntime<L> {
     type Config = Config;
 
     fn prepare_layout(
