@@ -1,5 +1,5 @@
 use spiders_config::model::Config;
-use spiders_config::service::AuthoringLayoutService;
+use spiders_config::authoring_layout::AuthoringLayoutService;
 use spiders_shared::ids::{WindowId, WorkspaceId};
 use spiders_shared::layout::{LayoutRect, LayoutRequest, LayoutResponse};
 use spiders_shared::runtime::AuthoringLayoutRuntime;
@@ -186,7 +186,7 @@ pub fn compute_window_placements(
 mod tests {
     use std::fs;
 
-    use spiders_config::service::AuthoringLayoutService;
+    use spiders_config::authoring_layout::AuthoringLayoutService;
     use spiders_runtime_js::loader::{RuntimePathResolver, RuntimeProjectLayoutSourceLoader};
     use spiders_runtime_js::runtime::BoaPreparedLayoutRuntime;
     use spiders_shared::ids::{OutputId, WorkspaceId};

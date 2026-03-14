@@ -93,7 +93,7 @@ where
         config: &Config,
         state: &spiders_shared::wm::StateSnapshot,
         workspace: &spiders_shared::wm::WorkspaceSnapshot,
-    ) -> Result<Option<crate::service::PreparedLayoutEvaluation>, AuthoringLayoutServiceError> {
+    ) -> Result<Option<crate::authoring_layout::PreparedLayoutEvaluation>, AuthoringLayoutServiceError> {
         let Some(loaded) = self.prepare_for_workspace(config, workspace)?.cloned() else {
             return Ok(None);
         };

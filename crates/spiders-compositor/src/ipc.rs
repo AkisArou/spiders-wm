@@ -313,7 +313,7 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use spiders_config::model::{Config, LayoutDefinition};
-    use spiders_config::service::AuthoringLayoutService;
+    use spiders_config::authoring_layout::AuthoringLayoutService;
     use spiders_ipc::{
         recv_response, send_request, IpcClientMessage, IpcEnvelope, IpcServerMessage,
         IpcSubscriptionTopic,

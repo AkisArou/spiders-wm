@@ -1121,7 +1121,7 @@ mod imp {
     }
 
     pub fn initialize_winit_controller<R>(
-        runtime_service: spiders_config::service::AuthoringLayoutService<R>,
+        runtime_service: spiders_config::authoring_layout::AuthoringLayoutService<R>,
         config: spiders_config::model::Config,
         state: spiders_shared::wm::StateSnapshot,
     ) -> Result<crate::CompositorController<R>, SmithayRuntimeError>
@@ -1133,7 +1133,7 @@ mod imp {
     }
 
     pub fn bootstrap_winit<R>(
-        runtime_service: spiders_config::service::AuthoringLayoutService<R>,
+        runtime_service: spiders_config::authoring_layout::AuthoringLayoutService<R>,
         config: spiders_config::model::Config,
         state: spiders_shared::wm::StateSnapshot,
     ) -> Result<SmithayBootstrap<R>, SmithayRuntimeError>
@@ -1271,7 +1271,7 @@ mod imp {
         use std::time::{SystemTime, UNIX_EPOCH};
 
         use spiders_config::model::{Config, LayoutDefinition};
-        use spiders_config::service::AuthoringLayoutService;
+        use spiders_config::authoring_layout::AuthoringLayoutService;
         use spiders_runtime_js::loader::{RuntimePathResolver, RuntimeProjectLayoutSourceLoader};
         use spiders_runtime_js::runtime::BoaPreparedLayoutRuntime;
         use spiders_shared::ids::{OutputId, WindowId, WorkspaceId};

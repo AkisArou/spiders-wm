@@ -1,5 +1,5 @@
 use spiders_config::model::Config;
-use spiders_config::service::AuthoringLayoutService;
+use spiders_config::authoring_layout::AuthoringLayoutService;
 use spiders_layout::ast::ValidatedLayoutTree;
 use spiders_layout::pipeline::compute_layout_from_request;
 use spiders_shared::ids::WorkspaceId;
@@ -31,7 +31,7 @@ pub struct StartupSession<R> {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct StartupLayoutState {
-    pub evaluated: spiders_config::service::PreparedLayoutEvaluation,
+    pub evaluated: spiders_config::authoring_layout::PreparedLayoutEvaluation,
     pub workspace_id: WorkspaceId,
     pub request: LayoutRequest,
     pub response: LayoutResponse,
@@ -172,7 +172,7 @@ pub(crate) fn initialize_startup_session<R: AuthoringLayoutRuntime<Config = Conf
 mod tests {
     use std::fs;
 
-    use spiders_config::service::AuthoringLayoutService;
+    use spiders_config::authoring_layout::AuthoringLayoutService;
     use spiders_runtime_js::loader::{RuntimePathResolver, RuntimeProjectLayoutSourceLoader};
     use spiders_runtime_js::runtime::BoaPreparedLayoutRuntime;
     use spiders_shared::ids::{OutputId, WindowId, WorkspaceId};
