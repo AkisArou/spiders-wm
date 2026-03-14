@@ -508,6 +508,10 @@ mod imp {
 
         use super::*;
 
+        type TestLoader = RuntimeProjectLayoutSourceLoader;
+        type TestLayoutRuntime = BoaLayoutRuntime<TestLoader>;
+        type TestBootstrap = SmithayBootstrap<TestLoader, TestLayoutRuntime>;
+
         fn test_state_snapshot() -> StateSnapshot {
             StateSnapshot {
                 focused_window_id: None,
@@ -591,6 +595,31 @@ mod imp {
                 window_size: (1280, 720),
                 state: Some(state),
                 winit: None,
+            }
+        }
+
+        fn test_bootstrap(socket_name: &str) -> TestBootstrap {
+            test_bootstrap_with_state(socket_name, test_state_snapshot())
+        }
+
+        fn test_bootstrap_with_state(socket_name: &str, state: StateSnapshot) -> TestBootstrap {
+            let runtime_service = test_runtime_service();
+            let config = test_config();
+            let controller =
+                crate::CompositorController::initialize(runtime_service, config, state).unwrap();
+            let runtime = test_runtime(socket_name);
+            let report = SmithayStartupReport {
+                controller: controller.report(),
+                output_name: "smithay-test-output".into(),
+                seat_name: "smithay-test-seat".into(),
+                logical_size: (1280, 720),
+                socket_name: Some(socket_name.into()),
+            };
+
+            SmithayBootstrap {
+                controller,
+                runtime,
+                report,
             }
         }
 
@@ -944,8 +973,6 @@ mod imp {
 
         #[test]
         fn bootstrap_applies_adapter_output_lifecycle_events_to_controller() {
-            let runtime_service = test_runtime_service();
-            let config = test_config();
             let mut state = test_state_snapshot();
             state.outputs.push(OutputSnapshot {
                 id: OutputId::from("out-2"),
@@ -957,21 +984,8 @@ mod imp {
                 enabled: true,
                 current_workspace_id: None,
             });
-            let controller =
-                crate::CompositorController::initialize(runtime_service, config, state).unwrap();
-            let runtime = test_runtime("wayland-test-adapter-output-lifecycle");
-            let report = SmithayStartupReport {
-                controller: controller.report(),
-                output_name: "smithay-test-output".into(),
-                seat_name: "smithay-test-seat".into(),
-                logical_size: (1280, 720),
-                socket_name: Some("wayland-test-adapter-output-lifecycle".into()),
-            };
-            let mut bootstrap = SmithayBootstrap {
-                controller,
-                runtime,
-                report,
-            };
+            let mut bootstrap =
+                test_bootstrap_with_state("wayland-test-adapter-output-lifecycle", state);
 
             bootstrap
                 .apply_adapter_event(SmithayAdapterEvent::OutputActivated {
@@ -1025,24 +1039,7 @@ mod imp {
 
         #[test]
         fn bootstrap_applies_adapter_seat_lifecycle_and_focus_events_to_controller() {
-            let runtime_service = test_runtime_service();
-            let config = test_config();
-            let state = test_state_snapshot();
-            let controller =
-                crate::CompositorController::initialize(runtime_service, config, state).unwrap();
-            let runtime = test_runtime("wayland-test-adapter-seat-lifecycle");
-            let report = SmithayStartupReport {
-                controller: controller.report(),
-                output_name: "smithay-test-output".into(),
-                seat_name: "smithay-test-seat".into(),
-                logical_size: (1280, 720),
-                socket_name: Some("wayland-test-adapter-seat-lifecycle".into()),
-            };
-            let mut bootstrap = SmithayBootstrap {
-                controller,
-                runtime,
-                report,
-            };
+            let mut bootstrap = test_bootstrap("wayland-test-adapter-seat-lifecycle");
 
             bootstrap
                 .apply_adapter_event(SmithayAdapterEvent::Seat {
@@ -1089,24 +1086,7 @@ mod imp {
 
         #[test]
         fn bootstrap_applies_adapter_surface_unmap_and_loss_events_to_controller() {
-            let runtime_service = test_runtime_service();
-            let config = test_config();
-            let state = test_state_snapshot();
-            let controller =
-                crate::CompositorController::initialize(runtime_service, config, state).unwrap();
-            let runtime = test_runtime("wayland-test-adapter-surface-lifecycle");
-            let report = SmithayStartupReport {
-                controller: controller.report(),
-                output_name: "smithay-test-output".into(),
-                seat_name: "smithay-test-seat".into(),
-                logical_size: (1280, 720),
-                socket_name: Some("wayland-test-adapter-surface-lifecycle".into()),
-            };
-            let mut bootstrap = SmithayBootstrap {
-                controller,
-                runtime,
-                report,
-            };
+            let mut bootstrap = test_bootstrap("wayland-test-adapter-surface-lifecycle");
 
             bootstrap.runtime.state_mut().track_test_surface_snapshot(
                 crate::backend::BackendSurfaceSnapshot::Window {
@@ -1160,8 +1140,6 @@ mod imp {
 
         #[test]
         fn bootstrap_applies_batched_adapter_lifecycle_events_to_controller() {
-            let runtime_service = test_runtime_service();
-            let config = test_config();
             let mut state = test_state_snapshot();
             state.outputs.push(OutputSnapshot {
                 id: OutputId::from("out-2"),
@@ -1173,21 +1151,7 @@ mod imp {
                 enabled: true,
                 current_workspace_id: None,
             });
-            let controller =
-                crate::CompositorController::initialize(runtime_service, config, state).unwrap();
-            let runtime = test_runtime("wayland-test-adapter-batch");
-            let report = SmithayStartupReport {
-                controller: controller.report(),
-                output_name: "smithay-test-output".into(),
-                seat_name: "smithay-test-seat".into(),
-                logical_size: (1280, 720),
-                socket_name: Some("wayland-test-adapter-batch".into()),
-            };
-            let mut bootstrap = SmithayBootstrap {
-                controller,
-                runtime,
-                report,
-            };
+            let mut bootstrap = test_bootstrap_with_state("wayland-test-adapter-batch", state);
 
             bootstrap.runtime.state_mut().track_test_surface_snapshot(
                 crate::backend::BackendSurfaceSnapshot::Window {
