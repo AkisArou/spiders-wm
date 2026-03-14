@@ -113,7 +113,7 @@ pub(crate) fn bootstrap_runtime<R: AuthoringRuntime<Config = Config>>(
                 let resolved = validated.resolve(&workspace_windows)?;
                 let request = build_request_from_context(
                     evaluated.context.clone(),
-                    evaluated.loaded.selected.clone(),
+                    evaluated.artifact.selected.clone(),
                     resolved.root,
                 );
                 let response = compute_layout_from_request(&request)?;

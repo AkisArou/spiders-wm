@@ -587,7 +587,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(evaluated.workspace_id, WorkspaceId::from("ws-1"));
-        assert_eq!(evaluated.evaluated.loaded.selected.name, "master-stack");
+        assert_eq!(evaluated.evaluated.artifact.selected.name, "master-stack");
         assert_eq!(
             evaluated.request.layout_name.as_deref(),
             Some("master-stack")

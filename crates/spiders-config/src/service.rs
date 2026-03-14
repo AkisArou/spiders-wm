@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use spiders_shared::runtime::{AuthoringRuntime, RuntimeArtifact, RuntimeError};
-use spiders_shared::wm::{LayoutEvaluationContext, LoadedLayout};
+use spiders_shared::wm::LayoutEvaluationContext;
 
 use crate::model::{Config, ConfigDiscoveryOptions, ConfigPaths, LayoutConfigError};
 
@@ -101,7 +101,7 @@ where
         let layout = self.runtime.evaluate_layout(&loaded, &context)?;
 
         Ok(Some(EvaluatedLayout {
-            loaded: loaded.into(),
+            artifact: loaded,
             context,
             layout,
         }))
@@ -114,7 +114,7 @@ where
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct EvaluatedLayout {
-    pub loaded: LoadedLayout,
+    pub artifact: RuntimeArtifact,
     pub context: LayoutEvaluationContext,
     pub layout: spiders_shared::layout::SourceLayoutNode,
 }
@@ -361,7 +361,7 @@ mod tests {
             .unwrap()
             .unwrap();
 
-        assert_eq!(evaluated.loaded.selected.name, "master-stack");
+        assert_eq!(evaluated.artifact.selected.name, "master-stack");
         assert!(matches!(
             evaluated.layout,
             spiders_shared::layout::SourceLayoutNode::Workspace { .. }
