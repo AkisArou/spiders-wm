@@ -126,7 +126,8 @@ mod tests {
     use spiders_shared::ids::{OutputId, WorkspaceId};
     use spiders_shared::layout::SourceLayoutNode;
     use spiders_shared::runtime::{
-        AuthoringLayoutRuntime, LayoutModuleContract, PreparedLayoutRuntime, PreparedLayout, RuntimeError,
+        AuthoringLayoutRuntime, LayoutModuleContract, PreparedLayout, PreparedLayoutRuntime,
+        RuntimeError,
     };
     use spiders_shared::wm::{
         LayoutRef, OutputSnapshot, OutputTransform, SelectedLayout, StateSnapshot,
@@ -173,7 +174,7 @@ mod tests {
 
         fn evaluate_layout(
             &self,
-            _loaded_layout: &PreparedLayout,
+            _prepared_layout: &PreparedLayout,
             _context: &spiders_shared::wm::LayoutEvaluationContext,
         ) -> Result<SourceLayoutNode, RuntimeError> {
             Ok(SourceLayoutNode::Workspace {
@@ -237,14 +238,14 @@ mod tests {
 
         fn evaluate_layout(
             &self,
-            loaded_layout: &PreparedLayout,
+            prepared_layout: &PreparedLayout,
             context: &spiders_shared::wm::LayoutEvaluationContext,
         ) -> Result<SourceLayoutNode, RuntimeError> {
             StubRuntime {
                 loaded: None,
                 error_message: None,
             }
-            .evaluate_layout(loaded_layout, context)
+            .evaluate_layout(prepared_layout, context)
         }
 
         fn contract(&self) -> LayoutModuleContract {
@@ -261,7 +262,7 @@ mod tests {
         }
     }
 
-    fn loaded_layout(name: &str, module: &str) -> PreparedLayout {
+    fn prepared_layout(name: &str, module: &str) -> PreparedLayout {
         PreparedLayout {
             selected: SelectedLayout {
                 name: name.into(),
@@ -312,9 +313,9 @@ mod tests {
     }
 
     #[test]
-    fn runtime_service_loads_and_caches_runtime_artifact() {
+    fn runtime_service_loads_and_caches_prepared_layout() {
         let runtime = StubRuntime {
-            loaded: Some(loaded_layout("master-stack", "layouts/master-stack.js")),
+            loaded: Some(prepared_layout("master-stack", "layouts/master-stack.js")),
             error_message: None,
         };
         let mut service = ConfigRuntimeService::new(runtime);
@@ -339,9 +340,9 @@ mod tests {
     }
 
     #[test]
-    fn runtime_service_evaluates_loaded_layout_for_workspace() {
+    fn runtime_service_evaluates_prepared_layout_for_workspace() {
         let runtime = StubRuntime {
-            loaded: Some(loaded_layout("master-stack", "layouts/master-stack.js")),
+            loaded: Some(prepared_layout("master-stack", "layouts/master-stack.js")),
             error_message: None,
         };
         let mut service = ConfigRuntimeService::new(runtime);
