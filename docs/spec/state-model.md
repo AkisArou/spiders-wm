@@ -162,6 +162,9 @@ Compositor-domain note:
 - the real smithay bootstrap/runtime path should also introduce its initial
   output through that typed snapshot shape when the output is backend-created
   rather than startup-config-derived
+- smithay-side inspection may keep a lighter typed output summary for
+  diagnostics, but that should remain inspection-oriented and not become a
+  second domain registration path
 - layer-shell configure bookkeeping also remains compositor-owned, but a small
   typed inspection snapshot for last acked serial, pending configure count, and
   configured size may cross the smithay seam for diagnostics and tests

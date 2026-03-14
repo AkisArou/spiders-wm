@@ -59,6 +59,7 @@ mod imp {
         LayerExclusiveZone, LayerKeyboardInteractivity, LayerSurfaceMetadata, LayerSurfaceTier,
     };
     use spiders_shared::ids::{OutputId, WindowId};
+    use spiders_shared::wm::OutputTransform;
 
     #[derive(Debug, thiserror::Error)]
     pub enum SmithayStateError {
@@ -215,8 +216,18 @@ mod imp {
     }
 
     #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct SmithayKnownOutput {
+        pub id: OutputId,
+        pub name: String,
+        pub logical_width: Option<u32>,
+        pub logical_height: Option<u32>,
+        pub transform: OutputTransform,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
     pub struct SmithayOutputSnapshot {
         pub known_output_ids: Vec<OutputId>,
+        pub known_outputs: Vec<SmithayKnownOutput>,
         pub active_output_id: Option<OutputId>,
         pub layer_surface_output_count: usize,
         pub active_output_attached_surface_count: usize,
@@ -278,6 +289,7 @@ mod imp {
         next_window_serial: u64,
         toplevel_window_ids: HashMap<String, WindowId>,
         known_output_ids: Vec<OutputId>,
+        known_output_metadata: HashMap<OutputId, SmithayKnownOutput>,
         active_output_id: Option<OutputId>,
         layer_output_ids: HashMap<String, OutputId>,
         layer_metadata: HashMap<String, LayerSurfaceMetadata>,
@@ -362,6 +374,7 @@ mod imp {
                 next_window_serial: 1,
                 toplevel_window_ids: HashMap::new(),
                 known_output_ids: Vec::new(),
+                known_output_metadata: HashMap::new(),
                 active_output_id: None,
                 layer_output_ids: HashMap::new(),
                 layer_metadata: HashMap::new(),
@@ -401,9 +414,39 @@ mod imp {
                 self.known_output_ids.push(output_id.clone());
             }
 
+            self.known_output_metadata
+                .entry(output_id.clone())
+                .or_insert_with(|| SmithayKnownOutput {
+                    id: output_id.clone(),
+                    name: output_id.to_string(),
+                    logical_width: None,
+                    logical_height: None,
+                    transform: OutputTransform::Normal,
+                });
+
             if active {
                 self.active_output_id = Some(output_id);
             }
+        }
+
+        pub fn register_output_snapshot(
+            &mut self,
+            output_id: OutputId,
+            output_name: impl Into<String>,
+            size: Option<(u32, u32)>,
+            active: bool,
+        ) {
+            self.register_output_id(output_id.clone(), active);
+            self.known_output_metadata.insert(
+                output_id.clone(),
+                SmithayKnownOutput {
+                    id: output_id,
+                    name: output_name.into(),
+                    logical_width: size.map(|(width, _)| width),
+                    logical_height: size.map(|(_, height)| height),
+                    transform: OutputTransform::Normal,
+                },
+            );
         }
 
         pub fn activate_output_id(&mut self, output_id: OutputId) {
@@ -425,6 +468,8 @@ mod imp {
                 self.active_output_id = None;
                 removed = true;
             }
+
+            self.known_output_metadata.remove(output_id);
 
             self.layer_output_ids
                 .retain(|_, attached| attached != output_id);
@@ -821,6 +866,11 @@ mod imp {
                 },
                 outputs: SmithayOutputSnapshot {
                     known_output_ids: self.known_output_ids.clone(),
+                    known_outputs: self
+                        .known_output_ids
+                        .iter()
+                        .filter_map(|output_id| self.known_output_metadata.get(output_id).cloned())
+                        .collect(),
                     active_output_id: self.active_output_id.clone(),
                     layer_surface_output_count: self.layer_output_ids.len(),
                     active_output_attached_surface_count: self
@@ -2950,7 +3000,36 @@ mod imp {
                 snapshot.outputs.active_output_id,
                 Some(OutputId::from("out-1"))
             );
+            assert_eq!(snapshot.outputs.known_outputs.len(), 2);
+            assert_eq!(snapshot.outputs.known_outputs[0].name, "out-1");
             assert_eq!(snapshot.outputs.active_output_attached_surface_count, 0);
+        }
+
+        #[test]
+        fn smithay_state_snapshot_reports_typed_output_metadata_when_registered() {
+            let display = Display::<SpidersSmithayState>::new().unwrap();
+            let mut state = SpidersSmithayState::new(&display, "test-seat").unwrap();
+
+            state.register_output_snapshot(
+                OutputId::from("out-3"),
+                "DP-2",
+                Some((3440, 1440)),
+                true,
+            );
+
+            let snapshot = state.snapshot();
+            assert_eq!(
+                snapshot.outputs.known_output_ids,
+                vec![OutputId::from("out-3")]
+            );
+            assert_eq!(snapshot.outputs.known_outputs.len(), 1);
+            assert_eq!(snapshot.outputs.known_outputs[0].name, "DP-2");
+            assert_eq!(snapshot.outputs.known_outputs[0].logical_width, Some(3440));
+            assert_eq!(snapshot.outputs.known_outputs[0].logical_height, Some(1440));
+            assert_eq!(
+                snapshot.outputs.active_output_id,
+                Some(OutputId::from("out-3"))
+            );
         }
 
         #[test]
