@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::ids::{OutputId, WindowId, WorkspaceId};
+use crate::layout::LayoutRect;
 use crate::wm::{LayoutRef, OutputSnapshot, StateSnapshot, WindowSnapshot, WorkspaceSnapshot};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -19,7 +20,7 @@ pub enum LayoutCycleDirection {
     Previous,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub enum WmAction {
     Spawn {
@@ -48,6 +49,13 @@ pub enum WmAction {
     },
     ToggleFloating,
     ToggleFullscreen,
+    FocusWindow {
+        window_id: WindowId,
+    },
+    SetFloatingWindowGeometry {
+        window_id: WindowId,
+        rect: LayoutRect,
+    },
     FocusDirection {
         direction: FocusDirection,
     },
@@ -65,7 +73,7 @@ pub enum QueryRequest {
     TagNames,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", content = "payload", rename_all = "kebab-case")]
 pub enum QueryResponse {
     State(StateSnapshot),
@@ -76,7 +84,7 @@ pub enum QueryResponse {
     TagNames(Vec<String>),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub enum CompositorEvent {
     FocusChange {
@@ -100,6 +108,11 @@ pub enum CompositorEvent {
     WindowFloatingChange {
         window_id: WindowId,
         floating: bool,
+    },
+    WindowGeometryChange {
+        window_id: WindowId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        floating_rect: Option<LayoutRect>,
     },
     WindowFullscreenChange {
         window_id: WindowId,

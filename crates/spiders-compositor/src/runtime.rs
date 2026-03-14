@@ -5,7 +5,9 @@ use spiders_shared::ids::WorkspaceId;
 use spiders_shared::layout::{LayoutRequest, LayoutResponse};
 use spiders_shared::wm::StateSnapshot;
 
+use crate::effects::EffectsRuntimeState;
 use crate::startup::{self, StartupLayoutState, StartupSession};
+use crate::titlebar::{compute_titlebar_render_plan, TitlebarRenderItem};
 use crate::{CompositorLayoutError, LayoutService};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -13,6 +15,7 @@ pub struct WorkspaceLayoutState {
     pub workspace_id: WorkspaceId,
     pub request: LayoutRequest,
     pub response: LayoutResponse,
+    pub effects: EffectsRuntimeState,
 }
 
 #[derive(Debug)]
@@ -28,6 +31,7 @@ impl WorkspaceLayoutState {
             workspace_id: layout.workspace_id.clone(),
             request: layout.request.clone(),
             response: layout.response.clone(),
+            effects: layout.effects.clone(),
         }
     }
 }
@@ -51,6 +55,12 @@ impl<L, R> CompositorRuntimeState<L, R> {
 
     pub fn current_workspace_id(&self) -> Option<&WorkspaceId> {
         self.current_layout().map(|layout| &layout.workspace_id)
+    }
+
+    pub fn current_titlebar_render_plan(&self) -> Vec<TitlebarRenderItem> {
+        self.current_layout()
+            .map(|layout| compute_titlebar_render_plan(self.state(), layout))
+            .unwrap_or_default()
     }
 
     pub fn state(&self) -> &StateSnapshot {
@@ -80,6 +90,15 @@ impl<L: spiders_config::loader::LayoutSourceLoader, R: LayoutRuntime> Compositor
             .map(WorkspaceLayoutState::from_startup);
         self.startup.runtime.startup_layout = startup_layout;
         Ok(())
+    }
+
+    pub fn window_decoration_policy(
+        &self,
+        window_id: &spiders_shared::ids::WindowId,
+    ) -> Option<crate::effects::WindowDecorationPolicy> {
+        self.current_layout
+            .as_ref()
+            .and_then(|layout| layout.effects.window_decoration_policy(window_id))
     }
 }
 
@@ -151,6 +170,8 @@ mod tests {
                 name: "master-stack".into(),
                 module: "layouts/master-stack.js".into(),
                 stylesheet: String::new(),
+                effects_stylesheet: String::new(),
+                runtime_source: None,
             }],
             ..Config::default()
         }
@@ -196,6 +217,115 @@ mod tests {
             runtime.state().current_workspace_id,
             Some(WorkspaceId::from("ws-1"))
         );
+
+        let _ = fs::remove_file(module_path);
+    }
+
+    #[test]
+    fn runtime_state_carries_effects_for_current_layout() {
+        let temp_dir = std::env::temp_dir();
+        let runtime_root = temp_dir.join("spiders-compositor-runtime-effects-state");
+        let _ = fs::create_dir_all(runtime_root.join("layouts"));
+        let module_path = runtime_root.join("layouts/master-stack.js");
+        fs::write(
+            &module_path,
+            "ctx => ({ type: 'workspace', children: [{ type: 'window', id: 'main' }] })",
+        )
+        .unwrap();
+
+        let loader =
+            RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
+        let runtime = BoaLayoutRuntime::with_loader(loader.clone());
+        let runtime_service = ConfigRuntimeService::new(loader, runtime);
+        let mut config = config();
+        config.layouts[0].effects_stylesheet =
+            "window { appearance: none; } window::titlebar { background: #111; }".into();
+        let mut snapshot = state();
+        snapshot.windows.push(spiders_shared::wm::WindowSnapshot {
+            id: spiders_shared::ids::WindowId::from("w1"),
+            shell: spiders_shared::wm::ShellKind::XdgToplevel,
+            app_id: Some("foot".into()),
+            title: Some("shell".into()),
+            class: None,
+            instance: None,
+            role: None,
+            window_type: None,
+            mapped: true,
+            floating: false,
+            floating_rect: None,
+            fullscreen: false,
+            focused: true,
+            urgent: false,
+            output_id: Some(OutputId::from("out-1")),
+            workspace_id: Some(WorkspaceId::from("ws-1")),
+            tags: vec!["1".into()],
+        });
+        snapshot.visible_window_ids = vec![spiders_shared::ids::WindowId::from("w1")];
+
+        let runtime =
+            initialize_runtime_state(LayoutService, runtime_service, config, snapshot).unwrap();
+        let effects = &runtime.current_layout().unwrap().effects;
+
+        assert!(effects
+            .window_style(&spiders_shared::ids::WindowId::from("w1"))
+            .is_some());
+
+        let policy = runtime
+            .window_decoration_policy(&spiders_shared::ids::WindowId::from("w1"))
+            .unwrap();
+        assert!(!policy.decorations_visible);
+
+        let _ = fs::remove_file(module_path);
+    }
+
+    #[test]
+    fn runtime_state_exposes_current_titlebar_render_plan() {
+        let temp_dir = std::env::temp_dir();
+        let runtime_root = temp_dir.join("spiders-compositor-runtime-titlebar-plan");
+        let _ = fs::create_dir_all(runtime_root.join("layouts"));
+        let module_path = runtime_root.join("layouts/master-stack.js");
+        fs::write(
+            &module_path,
+            "ctx => ({ type: 'workspace', children: [{ type: 'window', id: 'main' }] })",
+        )
+        .unwrap();
+
+        let loader =
+            RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
+        let runtime = BoaLayoutRuntime::with_loader(loader.clone());
+        let runtime_service = ConfigRuntimeService::new(loader, runtime);
+        let mut config = config();
+        config.layouts[0].effects_stylesheet =
+            "window::titlebar { background: #111; height: 30px; }".into();
+        let mut snapshot = state();
+        snapshot.windows.push(spiders_shared::wm::WindowSnapshot {
+            id: spiders_shared::ids::WindowId::from("w1"),
+            shell: spiders_shared::wm::ShellKind::XdgToplevel,
+            app_id: Some("foot".into()),
+            title: Some("shell".into()),
+            class: None,
+            instance: None,
+            role: None,
+            window_type: None,
+            mapped: true,
+            floating: false,
+            floating_rect: None,
+            fullscreen: false,
+            focused: true,
+            urgent: false,
+            output_id: Some(OutputId::from("out-1")),
+            workspace_id: Some(WorkspaceId::from("ws-1")),
+            tags: vec!["1".into()],
+        });
+        snapshot.visible_window_ids = vec![spiders_shared::ids::WindowId::from("w1")];
+
+        let runtime =
+            initialize_runtime_state(LayoutService, runtime_service, config, snapshot).unwrap();
+        let plan = runtime.current_titlebar_render_plan();
+
+        assert_eq!(plan.len(), 1);
+        assert_eq!(plan[0].title, "shell");
+        assert_eq!(plan[0].style.background.as_deref(), Some("#111"));
 
         let _ = fs::remove_file(module_path);
     }

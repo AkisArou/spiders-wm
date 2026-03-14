@@ -2,6 +2,7 @@ pub mod actions;
 pub mod app;
 pub mod backend;
 pub mod controller;
+pub mod effects;
 pub mod host;
 pub mod ipc;
 pub mod runner;
@@ -14,6 +15,7 @@ pub mod smithay_runtime;
 pub mod smithay_state;
 pub mod smithay_workspace;
 pub mod startup;
+pub mod titlebar;
 pub mod topology;
 pub mod transcript;
 pub mod wm;
@@ -21,6 +23,7 @@ pub mod wm;
 use spiders_config::model::{Config, LayoutConfigError};
 use spiders_config::runtime::{LayoutRuntime, LayoutRuntimeError};
 use spiders_config::service::{ConfigRuntimeService, ConfigRuntimeServiceError};
+use spiders_effects::EffectsCssParseError;
 use spiders_layout::ast::{LayoutValidationError, ValidatedLayoutTree};
 use spiders_layout::pipeline::{compute_layout_from_request, LayoutPipelineError};
 use spiders_shared::layout::{LayoutRequest, LayoutResponse, LayoutSpace, ResolvedLayoutNode};
@@ -43,6 +46,8 @@ pub enum CompositorLayoutError {
     Resolve(#[from] spiders_layout::ast::LayoutResolveError),
     #[error(transparent)]
     Service(#[from] ConfigRuntimeServiceError),
+    #[error(transparent)]
+    EffectsParse(#[from] EffectsCssParseError),
 }
 
 pub trait LayoutEngine {
@@ -61,6 +66,11 @@ pub use backend::{
     BackendSource, BackendTopologySnapshot,
 };
 pub use controller::CompositorController;
+pub use effects::{
+    decoration_visible, resolve_window_effect_style, titlebar_visible,
+    window_decoration_policy_for_style, EffectsRuntimeState, WindowDecorationPolicy,
+    WindowEffectsState,
+};
 pub use host::CompositorHost;
 pub use ipc::{CompositorIpcError, CompositorIpcHost, IpcPumpReport};
 pub use runner::{BootstrapRunner, BootstrapRunnerError};
@@ -81,7 +91,7 @@ pub use smithay_state::{
     SmithayClientState, SmithayKnownLayerSurface, SmithayKnownPopupSurface, SmithayKnownSurface,
     SmithayKnownSurfacesSnapshot, SmithayKnownToplevelSurface, SmithayKnownUnmanagedSurface,
     SmithayPopupParentSnapshot, SmithayStateError, SmithayStateSnapshot, SmithaySurfaceRoleCounts,
-    SpidersSmithayState,
+    SmithayTitlebarRenderSnapshot, SpidersSmithayState,
 };
 #[cfg(feature = "smithay-winit")]
 pub use smithay_workspace::{
@@ -97,6 +107,7 @@ pub use spiders_runtime::{
 pub use startup::{
     StartupConfig, StartupLayoutState, StartupRuntime, StartupSequence, StartupSession,
 };
+pub use titlebar::{compute_titlebar_render_plan, TitlebarRenderItem};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkspaceLayoutSource<'a> {
@@ -104,6 +115,7 @@ pub struct WorkspaceLayoutSource<'a> {
     pub output: Option<&'a OutputSnapshot>,
     pub layout: Option<&'a LayoutRef>,
     pub stylesheet: &'a str,
+    pub effects_stylesheet: &'a str,
 }
 
 impl LayoutService {
@@ -175,6 +187,7 @@ impl LayoutService {
             layout_name: source.layout.map(|layout| layout.name.clone()),
             root,
             stylesheet: source.stylesheet.to_owned(),
+            effects_stylesheet: source.effects_stylesheet.to_owned(),
             space: LayoutSpace {
                 width: source
                     .output
@@ -252,6 +265,7 @@ pub(crate) fn build_request_from_context(
         layout_name: Some(selected_layout.name),
         root,
         stylesheet: selected_layout.stylesheet,
+        effects_stylesheet: selected_layout.effects_stylesheet,
         space: context.space,
     }
 }
@@ -332,6 +346,8 @@ mod tests {
                 name: "master-stack".into(),
                 module: module.into(),
                 stylesheet: stylesheet.into(),
+                effects_stylesheet: String::new(),
+                runtime_source: None,
             }],
             ..Config::default()
         }
@@ -357,6 +373,7 @@ mod tests {
             stylesheet:
                 "workspace { display: flex; width: 300px; height: 200px; } #main { width: 120px; }"
                     .into(),
+            effects_stylesheet: String::new(),
             space: LayoutSpace {
                 width: 300.0,
                 height: 200.0,
@@ -410,6 +427,7 @@ mod tests {
                 output: Some(&output),
                 layout: workspace.effective_layout.as_ref(),
                 stylesheet: "workspace { display: flex; }",
+                effects_stylesheet: "window { appearance: none; }",
             },
             root.clone(),
         );
@@ -422,6 +440,7 @@ mod tests {
                 layout_name: Some("master-stack".into()),
                 root,
                 stylesheet: "workspace { display: flex; }".into(),
+                effects_stylesheet: "window { appearance: none; }".into(),
                 space: LayoutSpace {
                     width: 1920.0,
                     height: 1080.0,
@@ -510,6 +529,7 @@ mod tests {
                 window_type: None,
                 mapped: true,
                 floating: false,
+                floating_rect: None,
                 fullscreen: false,
                 focused: true,
                 urgent: false,
@@ -528,6 +548,7 @@ mod tests {
                 window_type: None,
                 mapped: true,
                 floating: false,
+                floating_rect: None,
                 fullscreen: false,
                 focused: false,
                 urgent: false,

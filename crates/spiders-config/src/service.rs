@@ -42,7 +42,11 @@ impl<L: LayoutSourceLoader, R: LayoutRuntime> ConfigRuntimeService<L, R> {
     }
 
     pub fn load_config(&self, paths: &ConfigPaths) -> Result<Config, ConfigRuntimeServiceError> {
-        Ok(Config::from_path(&paths.runtime_config)?)
+        if paths.runtime_config.exists() {
+            Ok(Config::from_path(&paths.runtime_config)?)
+        } else {
+            Ok(Config::from_authored_path(&paths.authored_config)?)
+        }
     }
 
     pub fn validate_layout_modules(
@@ -190,6 +194,8 @@ mod tests {
                 name: "master-stack".into(),
                 module: "layouts/master-stack.js".into(),
                 stylesheet: String::new(),
+                effects_stylesheet: String::new(),
+                runtime_source: None,
             }],
             ..Config::default()
         };
@@ -229,6 +235,8 @@ mod tests {
                 name: "master-stack".into(),
                 module: "layouts/master-stack.js".into(),
                 stylesheet: String::new(),
+                effects_stylesheet: String::new(),
+                runtime_source: None,
             }],
             ..Config::default()
         };
@@ -309,6 +317,8 @@ mod tests {
                 name: "missing".into(),
                 module: "layouts/missing.js".into(),
                 stylesheet: String::new(),
+                effects_stylesheet: String::new(),
+                runtime_source: None,
             }],
             ..Config::default()
         };
@@ -317,5 +327,55 @@ mod tests {
 
         assert_eq!(errors.len(), 1);
         assert!(errors[0].contains("missing"));
+    }
+
+    #[test]
+    fn runtime_service_loads_authored_config_when_runtime_json_is_missing() {
+        let project_root = std::env::temp_dir().join("spiders-service-authored-config");
+        let _ = fs::create_dir_all(project_root.join("config"));
+        let _ = fs::create_dir_all(project_root.join("layouts/master-stack"));
+        fs::write(
+            project_root.join("config.ts"),
+            r#"
+                import { bindings } from "./config/bindings";
+                export default {
+                  tags: ["1"],
+                  bindings,
+                  layouts: { default: "master-stack" },
+                };
+            "#,
+        )
+        .unwrap();
+        fs::write(
+            project_root.join("config/bindings.ts"),
+            r#"
+                import * as actions from "spider-wm/actions";
+                export const bindings = {
+                  mod: "alt",
+                  entries: [{ bind: ["mod", "Return"], action: actions.spawn("foot") }],
+                };
+            "#,
+        )
+        .unwrap();
+        fs::write(
+            project_root.join("layouts/master-stack/index.tsx"),
+            "export default function layout() { return { type: 'workspace', children: [] }; }",
+        )
+        .unwrap();
+
+        let loader = RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", "."));
+        let runtime = BoaLayoutRuntime::with_loader(loader.clone());
+        let service: ConfigRuntimeService<_, _> = ConfigRuntimeService::new(loader, runtime);
+        let config = service
+            .load_config(&ConfigPaths::new(
+                project_root.join("config.ts"),
+                project_root.join("missing-config.json"),
+            ))
+            .unwrap();
+
+        assert_eq!(config.tags, vec!["1"]);
+        assert_eq!(config.bindings.len(), 1);
+        assert_eq!(config.layouts.len(), 1);
+        assert!(config.layouts[0].runtime_source.is_some());
     }
 }

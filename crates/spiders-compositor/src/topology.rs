@@ -110,7 +110,7 @@ mod tests {
         topology.disable_output(&OutputId::from("out-2")).unwrap();
         topology.enable_output(&OutputId::from("out-2")).unwrap();
 
-        assert_eq!(topology.active_output_id, None);
+        assert_eq!(topology.active_output_id, Some(OutputId::from("out-1")));
         assert!(
             topology
                 .output(&OutputId::from("out-2"))
@@ -249,9 +249,12 @@ mod tests {
             .unwrap();
 
         assert!(topology.output(&OutputId::from("out-2")).is_none());
-        assert_eq!(topology.active_output_id, None);
+        assert_eq!(topology.active_output_id, Some(OutputId::from("out-1")));
         assert_eq!(topology.surface("layer-1").unwrap().output_id, None);
-        assert_eq!(topology.seat("seat-0").unwrap().focused_output_id, None);
+        assert_eq!(
+            topology.seat("seat-0").unwrap().focused_output_id,
+            Some(OutputId::from("out-1"))
+        );
     }
 
     #[test]

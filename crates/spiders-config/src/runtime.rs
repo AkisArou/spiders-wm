@@ -500,6 +500,8 @@ mod tests {
                 name: "master-stack".into(),
                 module: "layouts/master-stack.js".into(),
                 stylesheet: "workspace { display: flex; }".into(),
+                effects_stylesheet: String::new(),
+                runtime_source: None,
             }],
             ..Config::default()
         };
@@ -524,6 +526,7 @@ mod tests {
                         name: "master-stack".into(),
                         module: "layouts/master-stack.js".into(),
                         stylesheet: "workspace { display: flex; }".into(),
+                        effects_stylesheet: String::new(),
                     },
                     runtime_source: String::new(),
                 },
@@ -571,6 +574,7 @@ mod tests {
                     name: "master-stack".into(),
                     module: "layouts/master-stack.js".into(),
                     stylesheet: String::new(),
+                    effects_stylesheet: String::new(),
                 },
                 &state().layout_context(&workspace(), None),
                 "undefined",
@@ -595,6 +599,7 @@ mod tests {
                     name: "master-stack".into(),
                     module: "layouts/master-stack.js".into(),
                     stylesheet: String::new(),
+                    effects_stylesheet: String::new(),
                 },
                 &state().layout_context(&workspace(), None),
                 "({ type: 'workspace', children: [] })",
@@ -619,6 +624,7 @@ mod tests {
                     name: "master-stack".into(),
                     module: "layouts/master-stack.js".into(),
                     stylesheet: String::new(),
+                    effects_stylesheet: String::new(),
                 },
                 &state().layout_context(&workspace(), None),
                 "ctx => ({ type: 'workspace', children: [{ type: 'window', match: 'app_id=\"firefox\"' }] })",
@@ -637,6 +643,7 @@ mod tests {
                     name: "master-stack".into(),
                     module: "layouts/master-stack.js".into(),
                     stylesheet: String::new(),
+                    effects_stylesheet: String::new(),
                 },
                 &state().layout_context(&workspace(), None),
                 "ctx => ({ type: 'workspace', children: [{ type: 'slot', id: 'rest', class: ['stack'], data: { role: 'secondary' }, take: 2 }] })",
@@ -666,6 +673,7 @@ mod tests {
                     name: "master-stack".into(),
                     module: "layouts/master-stack.js".into(),
                     stylesheet: String::new(),
+                    effects_stylesheet: String::new(),
                 },
                 &state().layout_context(&workspace(), None),
                 "ctx => ({ children: [] })",
@@ -686,6 +694,7 @@ mod tests {
                 name: "master-stack".into(),
                 module: "layouts/master-stack.js".into(),
                 stylesheet: String::new(),
+                effects_stylesheet: String::new(),
             },
             runtime_source:
                 "ctx => ({ type: 'workspace', children: [{ type: 'window', id: 'main' }] })".into(),
@@ -709,6 +718,8 @@ mod tests {
                 name: "master-stack".into(),
                 module: "layouts/master-stack.js".into(),
                 stylesheet: String::new(),
+                effects_stylesheet: String::new(),
+                runtime_source: None,
             }],
             ..Config::default()
         };
@@ -736,6 +747,8 @@ mod tests {
                 name: "master-stack".into(),
                 module: module_path.to_string_lossy().into_owned(),
                 stylesheet: String::new(),
+                effects_stylesheet: String::new(),
+                runtime_source: None,
             }],
             ..Config::default()
         };

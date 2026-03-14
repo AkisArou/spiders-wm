@@ -3,32 +3,96 @@ mod imp {
     use std::sync::Arc;
     use std::time::Duration;
 
+    use font8x8::{UnicodeFonts, BASIC_FONTS};
+    use smithay::backend::allocator::Fourcc;
     use smithay::backend::input::{
-        AbsolutePositionEvent, Event, InputEvent, KeyboardKeyEvent, PointerButtonEvent,
+        AbsolutePositionEvent, ButtonState, Event, InputEvent, KeyboardKeyEvent, PointerButtonEvent,
     };
+    use smithay::backend::renderer::damage::OutputDamageTracker;
+    use smithay::backend::renderer::element::memory::{
+        MemoryRenderBuffer, MemoryRenderBufferRenderElement,
+    };
+    use smithay::backend::renderer::element::solid::SolidColorRenderElement;
+    use smithay::backend::renderer::element::surface::{
+        render_elements_from_surface_tree, WaylandSurfaceRenderElement,
+    };
+    use smithay::backend::renderer::element::{Id, Kind};
     use smithay::backend::renderer::gles::GlesRenderer;
-    use smithay::backend::winit::{self, WinitEvent, WinitEventLoop};
+    use smithay::backend::renderer::Color32F;
+    use smithay::backend::renderer::{ImportAll, ImportMem};
+    use smithay::backend::winit::{self, WinitEvent, WinitEventLoop, WinitGraphicsBackend};
+    use smithay::desktop::utils::{
+        send_frames_surface_tree, surface_presentation_feedback_flags_from_states,
+        take_presentation_feedback_surface_tree, OutputPresentationFeedback,
+    };
     use smithay::input::keyboard::FilterResult;
+    use smithay::input::pointer::CursorIcon;
     use smithay::input::pointer::{ButtonEvent, MotionEvent};
     use smithay::output::{Mode, Output, PhysicalProperties, Scale, Subpixel};
     use smithay::reexports::calloop::generic::Generic;
     use smithay::reexports::calloop::{
         EventLoop, Interest, LoopSignal, Mode as CalloopMode, PostAction,
     };
+    use smithay::reexports::wayland_protocols::wp::presentation_time::server::wp_presentation_feedback;
     use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
     use smithay::reexports::wayland_server::Display;
-    use smithay::utils::{Point, Transform, SERIAL_COUNTER};
+    use smithay::utils::{Clock, Monotonic, Point, Rectangle, Transform, SERIAL_COUNTER};
+    use smithay::wayland::presentation::Refresh;
     use spiders_runtime::{
         CompositorTopologyState, ControllerCommand, ControllerReport, OutputState, SeatState,
         SurfaceState,
     };
+    use spiders_shared::api::WmAction;
     use spiders_shared::ids::OutputId;
     use spiders_shared::wm::OutputSnapshot;
 
     use crate::smithay_adapter::{SmithayAdapter, SmithayAdapterEvent, SmithaySeatDescriptor};
     use crate::smithay_state::{
-        SmithayClientState, SmithayStateError, SmithayStateSnapshot, SpidersSmithayState,
+        SmithayClientState, SmithayRenderableToplevelSurface, SmithayStateError,
+        SmithayStateSnapshot, SmithayWindowDecorationPolicySnapshot, SmithayWindowRenderSnapshot,
+        SpidersSmithayState,
     };
+    use crate::titlebar::TitlebarRenderItem;
+
+    smithay::backend::renderer::element::render_elements! {
+        CompositorRenderElement<R> where R: ImportAll + ImportMem;
+        Solid = SolidColorRenderElement,
+        Memory = MemoryRenderBufferRenderElement<R>,
+        Surface = WaylandSurfaceRenderElement<R>,
+    }
+
+    const DEFAULT_CLEAR_COLOR: [f32; 4] = [0.08, 0.08, 0.09, 1.0];
+    const BTN_LEFT: u32 = 0x110;
+
+    #[derive(Debug)]
+    struct TitlebarRenderState {
+        damage_tracker: OutputDamageTracker,
+    }
+
+    #[derive(Debug)]
+    struct PresentationRenderState {
+        clock: Clock<Monotonic>,
+    }
+
+    impl PresentationRenderState {
+        fn new() -> Self {
+            Self {
+                clock: Clock::new(),
+            }
+        }
+    }
+
+    impl TitlebarRenderState {
+        fn new(output: &Output) -> Self {
+            Self {
+                damage_tracker: OutputDamageTracker::from_output(output),
+            }
+        }
+
+        fn next_element_id(&mut self) -> Id {
+            Id::new()
+        }
+    }
 
     #[derive(Debug, thiserror::Error)]
     pub enum SmithayRuntimeError {
@@ -224,6 +288,9 @@ mod imp {
         socket_name: String,
         window_size: (i32, i32),
         state: Option<SpidersSmithayState>,
+        render_state: Option<TitlebarRenderState>,
+        presentation_state: PresentationRenderState,
+        backend: Option<WinitGraphicsBackend<GlesRenderer>>,
         winit: Option<WinitEventLoop>,
     }
 
@@ -258,6 +325,9 @@ mod imp {
 
         pub fn run_startup_cycle(&mut self) -> Result<(), SmithayRuntimeError> {
             self.dispatch_winit_events()?;
+            self.apply_winit_cursor_feedback();
+
+            self.render_if_needed()?;
 
             let state = self.state.as_mut().ok_or_else(|| {
                 SmithayRuntimeError::Winit("smithay runtime state missing".into())
@@ -271,6 +341,97 @@ mod imp {
                 .display_handle
                 .flush_clients()
                 .map_err(|error| SmithayRuntimeError::Winit(error.to_string()))?;
+
+            Ok(())
+        }
+
+        fn apply_winit_cursor_feedback(&mut self) {
+            let cursor_image = self.state().snapshot().seat.cursor_image;
+            let Some(backend) = self.backend.as_mut() else {
+                return;
+            };
+            if cursor_image == "hidden" {
+                backend.window().set_cursor_visible(false);
+                return;
+            }
+
+            backend.window().set_cursor_visible(true);
+            backend
+                .window()
+                .set_cursor(cursor_icon_for_snapshot(&cursor_image));
+        }
+
+        fn render_if_needed(&mut self) -> Result<(), SmithayRuntimeError> {
+            let (should_render, render_items, window_items, output, surfaces) = {
+                let state = self.state_mut();
+                let should_render = state.take_redraw_request();
+                let render_items = state.current_titlebar_render_plan().to_vec();
+                let window_items = state.current_window_render_plan().to_vec();
+                let output = state.active_smithay_output();
+                let surfaces = state.renderable_toplevel_surfaces();
+                (should_render, render_items, window_items, output, surfaces)
+            };
+
+            if !should_render {
+                return Ok(());
+            }
+
+            let output = match output {
+                Some(output) => output,
+                None => return Ok(()),
+            };
+
+            let backend = match self.backend.as_mut() {
+                Some(backend) => backend,
+                None => return Ok(()),
+            };
+            let age = backend.buffer_age().unwrap_or(0);
+            let frame_target = self.presentation_state.clock.now() + frame_interval(&output);
+
+            let result = {
+                let render_state = self
+                    .render_state
+                    .get_or_insert_with(|| TitlebarRenderState::new(&output));
+                let (renderer, mut framebuffer) = backend
+                    .bind()
+                    .map_err(|error| SmithayRuntimeError::Winit(error.to_string()))?;
+                let elements = build_compositor_render_elements(
+                    render_state,
+                    renderer,
+                    &render_items,
+                    &window_items,
+                    &surfaces,
+                );
+                render_state
+                    .damage_tracker
+                    .render_output(
+                        renderer,
+                        &mut framebuffer,
+                        age,
+                        &elements,
+                        DEFAULT_CLEAR_COLOR,
+                    )
+                    .map_err(|error| SmithayRuntimeError::Winit(error.to_string()))?
+            };
+
+            let has_rendered = result.damage.is_some();
+            let submitted_damage = result.damage.cloned();
+            let render_states = result.states;
+
+            if let Some(damage) = submitted_damage.as_deref() {
+                backend
+                    .submit(Some(damage))
+                    .map_err(|error| SmithayRuntimeError::Winit(error.to_string()))?;
+            }
+            let state = self.state_mut();
+            post_repaint(
+                state,
+                &output,
+                frame_target,
+                has_rendered,
+                &surfaces,
+                &render_states,
+            );
 
             Ok(())
         }
@@ -332,6 +493,424 @@ mod imp {
         }
     }
 
+    fn build_compositor_render_elements(
+        render_state: &mut TitlebarRenderState,
+        renderer: &mut GlesRenderer,
+        titlebars: &[TitlebarRenderItem],
+        windows: &[SmithayWindowRenderSnapshot],
+        surfaces: &[SmithayRenderableToplevelSurface],
+    ) -> Vec<CompositorRenderElement<GlesRenderer>> {
+        let mut elements = Vec::new();
+
+        for window in windows {
+            let Some(surface) = surfaces
+                .iter()
+                .find(|surface| surface.window_id == window.window_id)
+            else {
+                continue;
+            };
+
+            let location = (
+                window.window_rect.x.round() as i32,
+                (window.window_rect.y + window.content_offset_y).round() as i32,
+            );
+            elements.extend(render_elements_from_surface_tree::<
+                GlesRenderer,
+                CompositorRenderElement<GlesRenderer>,
+            >(
+                renderer,
+                surface.surface.wl_surface(),
+                location,
+                1.0,
+                1.0,
+                Kind::Unspecified,
+            ));
+        }
+
+        elements.extend(
+            titlebars
+                .iter()
+                .filter_map(|item| {
+                    let color = titlebar_background_color(item);
+                    let width = item.titlebar_rect.width.max(0.0).round() as i32;
+                    let height = item.titlebar_rect.height.max(0.0).round() as i32;
+                    if width <= 0 || height <= 0 {
+                        return None;
+                    }
+
+                    let rect = Rectangle::new(
+                        (
+                            item.titlebar_rect.x.round() as i32,
+                            item.titlebar_rect.y.round() as i32,
+                        )
+                            .into(),
+                        (width, height).into(),
+                    );
+                    Some(SolidColorRenderElement::new(
+                        render_state.next_element_id(),
+                        rect,
+                        1usize,
+                        color,
+                        Kind::Unspecified,
+                    ))
+                })
+                .map(CompositorRenderElement::from),
+        );
+
+        elements.extend(
+            titlebars
+                .iter()
+                .filter_map(build_titlebar_border_element)
+                .map(CompositorRenderElement::from),
+        );
+
+        elements.extend(
+            titlebars
+                .iter()
+                .filter_map(|item| build_titlebar_text_element(renderer, item))
+                .map(CompositorRenderElement::from),
+        );
+
+        elements
+    }
+
+    fn build_titlebar_text_element(
+        renderer: &mut GlesRenderer,
+        item: &TitlebarRenderItem,
+    ) -> Option<MemoryRenderBufferRenderElement<GlesRenderer>> {
+        let font_scale = titlebar_font_scale(item);
+        let max_text_width = titlebar_available_text_width(item);
+        let text = truncate_titlebar_text(&titlebar_text(item), font_scale, max_text_width);
+        if text.is_empty() {
+            return None;
+        }
+
+        let glyph_width = 8 * font_scale;
+        let glyph_height = 8 * font_scale;
+        let text_width = (text.chars().count() as i32) * glyph_width;
+        let text_height = glyph_height;
+        let available_width = max_text_width;
+        let available_height = item.titlebar_rect.height.max(0.0).round() as i32;
+        if available_width <= 0 || available_height <= 0 || text_width <= 0 || text_height <= 0 {
+            return None;
+        }
+
+        let width = text_width.min(available_width);
+        let height = text_height.min(available_height);
+        if width <= 0 || height <= 0 {
+            return None;
+        }
+
+        let mut pixels = vec![0u8; (width * height * 4) as usize];
+        let color = titlebar_text_color(item);
+        let rgba = [
+            (color[0] * 255.0).round().clamp(0.0, 255.0) as u8,
+            (color[1] * 255.0).round().clamp(0.0, 255.0) as u8,
+            (color[2] * 255.0).round().clamp(0.0, 255.0) as u8,
+            (color[3] * 255.0).round().clamp(0.0, 255.0) as u8,
+        ];
+        draw_bitmap_text(&mut pixels, width, height, &text, font_scale, rgba);
+
+        let buffer = MemoryRenderBuffer::from_slice(
+            &pixels,
+            Fourcc::Abgr8888,
+            (width, height),
+            1,
+            Transform::Normal,
+            None,
+        );
+        let location = titlebar_text_location(item, width, height);
+        MemoryRenderBufferRenderElement::from_buffer(
+            renderer,
+            location,
+            &buffer,
+            None,
+            None,
+            None,
+            Kind::Unspecified,
+        )
+        .ok()
+    }
+
+    fn build_titlebar_border_element(item: &TitlebarRenderItem) -> Option<SolidColorRenderElement> {
+        let width = item
+            .style
+            .border_bottom_width
+            .as_deref()
+            .and_then(parse_px_i32)?;
+        if item
+            .style
+            .border_bottom_style
+            .as_deref()
+            .map(str::trim)
+            .is_some_and(|style| style.eq_ignore_ascii_case("none"))
+        {
+            return None;
+        }
+
+        let color = item
+            .style
+            .border_bottom_color
+            .as_deref()
+            .and_then(parse_hex_color)
+            .unwrap_or_else(|| Color32F::new(0.25, 0.27, 0.30, 1.0));
+        let rect = Rectangle::new(
+            (
+                item.titlebar_rect.x.round() as i32,
+                (item.titlebar_rect.y + item.titlebar_rect.height - width as f32).round() as i32,
+            )
+                .into(),
+            ((item.titlebar_rect.width.max(0.0).round() as i32), width).into(),
+        );
+        Some(SolidColorRenderElement::new(
+            Id::new(),
+            rect,
+            1usize,
+            color,
+            Kind::Unspecified,
+        ))
+    }
+
+    fn titlebar_font_scale(item: &TitlebarRenderItem) -> i32 {
+        let size = item
+            .style
+            .font_size
+            .as_deref()
+            .and_then(parse_px_i32)
+            .unwrap_or(12);
+        (size / 8).max(1)
+    }
+
+    fn titlebar_text(item: &TitlebarRenderItem) -> String {
+        match item.style.text_transform.as_deref().map(str::trim) {
+            Some("uppercase") => item.title.to_uppercase(),
+            Some("lowercase") => item.title.to_lowercase(),
+            _ => item.title.clone(),
+        }
+    }
+
+    fn titlebar_available_text_width(item: &TitlebarRenderItem) -> i32 {
+        let padding = item
+            .style
+            .padding
+            .as_deref()
+            .and_then(parse_px_i32)
+            .unwrap_or(8);
+        (item.titlebar_rect.width.max(0.0).round() as i32).saturating_sub(padding * 2)
+    }
+
+    fn truncate_titlebar_text(text: &str, font_scale: i32, max_width: i32) -> String {
+        let max_chars = max_width / (8 * font_scale.max(1));
+        if max_chars <= 0 {
+            return String::new();
+        }
+
+        let chars = text.chars().collect::<Vec<_>>();
+        if chars.len() as i32 <= max_chars {
+            return text.to_owned();
+        }
+        if max_chars <= 3 {
+            return ".".repeat(max_chars as usize);
+        }
+
+        let visible = (max_chars - 3) as usize;
+        let mut truncated = chars.into_iter().take(visible).collect::<String>();
+        truncated.push_str("...");
+        truncated
+    }
+
+    fn titlebar_text_color(item: &TitlebarRenderItem) -> [f32; 4] {
+        item.style
+            .color
+            .as_deref()
+            .and_then(parse_hex_color)
+            .map(|color| [color.r(), color.g(), color.b(), color.a()])
+            .unwrap_or([0.93, 0.94, 0.96, 1.0])
+    }
+
+    fn titlebar_text_location(
+        item: &TitlebarRenderItem,
+        width: i32,
+        height: i32,
+    ) -> Point<f64, smithay::utils::Physical> {
+        let padding = item
+            .style
+            .padding
+            .as_deref()
+            .and_then(parse_px_i32)
+            .unwrap_or(8);
+        let x = match item.style.text_align.as_deref().map(str::trim) {
+            Some("center") => {
+                item.titlebar_rect.x.round() as i32
+                    + (((item.titlebar_rect.width.round() as i32) - width) / 2).max(0)
+            }
+            Some("right") => {
+                item.titlebar_rect.x.round() as i32
+                    + ((item.titlebar_rect.width.round() as i32) - width - padding).max(0)
+            }
+            _ => item.titlebar_rect.x.round() as i32 + padding,
+        };
+        let y = item.titlebar_rect.y.round() as i32
+            + (((item.titlebar_rect.height.round() as i32) - height) / 2).max(0);
+        Point::from((f64::from(x), f64::from(y)))
+    }
+
+    fn draw_bitmap_text(
+        pixels: &mut [u8],
+        width: i32,
+        height: i32,
+        text: &str,
+        scale: i32,
+        color: [u8; 4],
+    ) {
+        let mut pen_x = 0;
+        for ch in text.chars() {
+            let Some(glyph) = BASIC_FONTS.get(ch) else {
+                pen_x += 8 * scale;
+                continue;
+            };
+            for (row, bits) in glyph.iter().enumerate() {
+                for col in 0..8 {
+                    if (bits >> col) & 1 == 0 {
+                        continue;
+                    }
+                    for sy in 0..scale {
+                        for sx in 0..scale {
+                            let x = pen_x + ((7 - col) * scale) + sx;
+                            let y = (row as i32 * scale) + sy;
+                            if x < 0 || x >= width || y < 0 || y >= height {
+                                continue;
+                            }
+                            let idx = ((y * width + x) * 4) as usize;
+                            pixels[idx..idx + 4].copy_from_slice(&color);
+                        }
+                    }
+                }
+            }
+            pen_x += 8 * scale;
+            if pen_x >= width {
+                break;
+            }
+        }
+    }
+
+    fn parse_px_i32(value: &str) -> Option<i32> {
+        let value = value.trim().strip_suffix("px").unwrap_or(value).trim();
+        value.parse::<i32>().ok().filter(|value| *value > 0)
+    }
+
+    fn post_repaint(
+        state: &mut SpidersSmithayState,
+        output: &Output,
+        frame_target: smithay::utils::Time<Monotonic>,
+        has_rendered: bool,
+        surfaces: &[SmithayRenderableToplevelSurface],
+        render_states: &smithay::backend::renderer::element::RenderElementStates,
+    ) {
+        for surface in surfaces {
+            send_frames_surface_tree(
+                surface.surface.wl_surface(),
+                output,
+                frame_target,
+                Some(Duration::ZERO),
+                |_, _| Some(output.clone()),
+            );
+        }
+
+        if has_rendered {
+            let mut feedback = OutputPresentationFeedback::new(output);
+            for surface in surfaces {
+                take_presentation_feedback_surface_tree(
+                    surface.surface.wl_surface(),
+                    &mut feedback,
+                    |_, _| Some(output.clone()),
+                    |surface, _| {
+                        surface_presentation_feedback_flags_from_states(surface, render_states)
+                    },
+                );
+            }
+            feedback.presented(
+                frame_target,
+                refresh_interval(output),
+                0,
+                wp_presentation_feedback::Kind::Vsync,
+            );
+        }
+
+        let _ = state.display_handle.flush_clients();
+    }
+
+    fn frame_interval(output: &Output) -> Duration {
+        output
+            .current_mode()
+            .map(|mode| Duration::from_secs_f64(1_000f64 / f64::from(mode.refresh)))
+            .unwrap_or_default()
+    }
+
+    fn refresh_interval(output: &Output) -> Refresh {
+        output
+            .current_mode()
+            .map(|mode| Refresh::fixed(Duration::from_secs_f64(1_000f64 / f64::from(mode.refresh))))
+            .unwrap_or(Refresh::Unknown)
+    }
+
+    fn titlebar_background_color(item: &TitlebarRenderItem) -> Color32F {
+        item.style
+            .background
+            .as_deref()
+            .and_then(parse_hex_color)
+            .unwrap_or_else(|| {
+                if item.focused {
+                    Color32F::new(0.18, 0.20, 0.24, 1.0)
+                } else {
+                    Color32F::new(0.13, 0.14, 0.16, 1.0)
+                }
+            })
+    }
+
+    fn cursor_icon_for_snapshot(cursor_image: &str) -> CursorIcon {
+        match cursor_image.strip_prefix("named:").unwrap_or(cursor_image) {
+            "Grab" => CursorIcon::Grab,
+            "Grabbing" => CursorIcon::Grabbing,
+            "NsResize" => CursorIcon::NsResize,
+            "EwResize" => CursorIcon::EwResize,
+            "NwseResize" => CursorIcon::NwseResize,
+            "NeswResize" => CursorIcon::NeswResize,
+            "Crosshair" => CursorIcon::Crosshair,
+            _ => CursorIcon::Default,
+        }
+    }
+
+    fn parse_hex_color(value: &str) -> Option<Color32F> {
+        let hex = value.trim().strip_prefix('#')?;
+        match hex.len() {
+            6 => {
+                let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
+                let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
+                let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
+                Some(Color32F::new(
+                    f32::from(r) / 255.0,
+                    f32::from(g) / 255.0,
+                    f32::from(b) / 255.0,
+                    1.0,
+                ))
+            }
+            8 => {
+                let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
+                let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
+                let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
+                let a = u8::from_str_radix(&hex[6..8], 16).ok()?;
+                Some(Color32F::new(
+                    f32::from(r) / 255.0,
+                    f32::from(g) / 255.0,
+                    f32::from(b) / 255.0,
+                    f32::from(a) / 255.0,
+                ))
+            }
+            _ => None,
+        }
+    }
+
     fn handle_input_event<I>(
         state: &mut SpidersSmithayState,
         event: InputEvent<I>,
@@ -359,11 +938,19 @@ mod imp {
                 Ok(())
             }
             InputEvent::PointerMotionAbsolute { event, .. } => {
+                let location = event.position_transformed((*window_size).into());
+                state.update_pointer_location(location.x, location.y);
+                state.update_titlebar_cursor_feedback();
+
+                if state.has_active_titlebar_interaction() {
+                    state.update_titlebar_interaction();
+                    return Ok(());
+                }
+
                 let pointer = state.seat.get_pointer().ok_or_else(|| {
                     SmithayRuntimeError::Winit("smithay pointer capability missing".into())
                 })?;
                 let serial = SERIAL_COUNTER.next_serial();
-                let location = event.position_transformed((*window_size).into());
 
                 pointer.motion(
                     state,
@@ -379,6 +966,26 @@ mod imp {
                 Ok(())
             }
             InputEvent::PointerButton { event, .. } => {
+                if event.button_code() == BTN_LEFT && event.state() == ButtonState::Pressed {
+                    if let Some(hit) = state.titlebar_hit_target_at_pointer() {
+                        state.focus_window_from_titlebar(&hit.window_id);
+                        state.note_titlebar_pointer_request(&hit.window_id, hit.kind);
+                        let _ = state.begin_titlebar_interaction(&hit);
+                        return Ok(());
+                    }
+                }
+
+                if event.button_code() == BTN_LEFT && event.state() == ButtonState::Released {
+                    if let Some((window_id, rect)) = state.end_titlebar_interaction() {
+                        state.update_titlebar_cursor_feedback();
+                        state.queue_workspace_action(WmAction::SetFloatingWindowGeometry {
+                            window_id,
+                            rect,
+                        });
+                        return Ok(());
+                    }
+                }
+
                 let pointer = state.seat.get_pointer().ok_or_else(|| {
                     SmithayRuntimeError::Winit("smithay pointer capability missing".into())
                 })?;
@@ -457,8 +1064,41 @@ mod imp {
         R: spiders_config::runtime::LayoutRuntime,
     {
         let snapshot = controller.state_snapshot();
+        let titlebar_plan = controller.app().session().current_titlebar_render_plan();
         state.refresh_workspace_state(&snapshot);
         state.refresh_workspace_output_groups();
+        state.refresh_titlebar_render_plan(&titlebar_plan);
+        state.refresh_window_render_plan(&build_window_render_plan(&titlebar_plan));
+
+        let decoration_policies = controller.app().window_decoration_policies();
+        state.refresh_window_decoration_policies(
+            &decoration_policies
+                .into_iter()
+                .map(|(window_id, policy)| {
+                    (
+                        window_id,
+                        SmithayWindowDecorationPolicySnapshot {
+                            decorations_visible: policy.decorations_visible,
+                            titlebar_visible: policy.titlebar_visible,
+                            titlebar_style: policy.titlebar_style,
+                        },
+                    )
+                })
+                .collect::<Vec<_>>(),
+        );
+    }
+
+    fn build_window_render_plan(
+        titlebar_plan: &[TitlebarRenderItem],
+    ) -> Vec<SmithayWindowRenderSnapshot> {
+        titlebar_plan
+            .iter()
+            .map(|item| SmithayWindowRenderSnapshot {
+                window_id: item.window_id.clone(),
+                window_rect: item.window_rect,
+                content_offset_y: item.titlebar_rect.height,
+            })
+            .collect()
     }
 
     pub fn initialize_smithay_workspace_export<L, R>(
@@ -600,6 +1240,9 @@ mod imp {
             socket_name: socket_name.clone(),
             window_size: (size.w, size.h),
             state: Some(smithay_state),
+            render_state: None,
+            presentation_state: PresentationRenderState::new(),
+            backend: Some(backend),
             winit: Some(winit),
         };
 
@@ -677,6 +1320,8 @@ mod imp {
                     name: "master-stack".into(),
                     module: "layouts/master-stack.js".into(),
                     stylesheet: String::new(),
+                    effects_stylesheet: String::new(),
+                    runtime_source: None,
                 }],
                 ..Config::default()
             }
@@ -721,6 +1366,9 @@ mod imp {
                 socket_name: socket_name.into(),
                 window_size: (1280, 720),
                 state: Some(state),
+                render_state: None,
+                presentation_state: PresentationRenderState::new(),
+                backend: None,
                 winit: None,
             }
         }
@@ -1012,7 +1660,7 @@ mod imp {
             let applied = bootstrap.apply_pending_discovery_events().unwrap();
 
             let snapshot = bootstrap.snapshot();
-            assert_eq!(applied, 2);
+            assert_eq!(applied, 1);
             assert_eq!(snapshot.runtime.state.pending_discovery_event_count, 0);
             assert_eq!(snapshot.runtime.state.known_surfaces.toplevels.len(), 1);
             assert_eq!(snapshot.topology_surface_count, 1);
@@ -1083,15 +1731,9 @@ mod imp {
 
             let commands = runtime.drain_pending_discovery_commands();
 
-            assert_eq!(commands.len(), 2);
+            assert_eq!(commands.len(), 1);
             assert!(matches!(
                 &commands[0],
-                ControllerCommand::DiscoveryEvent(
-                    crate::backend::BackendDiscoveryEvent::OutputActivated { output_id }
-                ) if output_id == &OutputId::from("out-2")
-            ));
-            assert!(matches!(
-                &commands[1],
                 ControllerCommand::DiscoveryEvent(
                     crate::backend::BackendDiscoveryEvent::OutputLost { output_id }
                 ) if output_id == &OutputId::from("out-2")
@@ -1153,7 +1795,10 @@ mod imp {
                 .outputs
                 .iter()
                 .all(|output| output.snapshot.id != OutputId::from("out-2")));
-            assert_eq!(snapshot.topology.active_output_id, None);
+            assert_eq!(
+                snapshot.topology.active_output_id,
+                Some(OutputId::from("out-1"))
+            );
             assert_eq!(
                 snapshot
                     .topology
@@ -1684,7 +2329,7 @@ mod imp {
                 .iter()
                 .find(|seat| seat.name == "seat-batch")
                 .unwrap();
-            assert_eq!(seat.focused_window_id, Some(WindowId::from("w1")));
+            assert_eq!(seat.focused_window_id, None);
             assert_eq!(seat.focused_output_id, Some(OutputId::from("out-2")));
             let surface = snapshot
                 .topology
@@ -2973,6 +3618,18 @@ mod imp {
         }
 
         #[test]
+        fn titlebar_text_truncates_when_width_is_limited() {
+            let truncated = truncate_titlebar_text("very long terminal title", 1, 64);
+            assert_eq!(truncated, "very ...");
+        }
+
+        #[test]
+        fn titlebar_text_preserves_short_titles() {
+            let truncated = truncate_titlebar_text("term", 1, 64);
+            assert_eq!(truncated, "term");
+        }
+
+        #[test]
         fn bootstrap_apply_pending_discovery_events_returns_zero_when_empty() {
             let runtime_service = test_runtime_service();
             let config = test_config();
@@ -3097,10 +3754,10 @@ mod imp {
             let applied = bootstrap.apply_pending_discovery_events().unwrap();
             let snapshot = bootstrap.snapshot();
 
-            assert_eq!(applied, 1);
+            assert_eq!(applied, 0);
             assert_eq!(
                 snapshot.topology.active_output_id,
-                Some(OutputId::from("out-2"))
+                Some(OutputId::from("out-1"))
             );
         }
 
@@ -3155,7 +3812,7 @@ mod imp {
                 .runtime
                 .state_mut()
                 .activate_output_id(OutputId::from("out-2"));
-            assert_eq!(bootstrap.apply_pending_discovery_events().unwrap(), 2);
+            assert_eq!(bootstrap.apply_pending_discovery_events().unwrap(), 1);
 
             bootstrap
                 .runtime
@@ -3171,7 +3828,10 @@ mod imp {
                 .outputs
                 .iter()
                 .all(|output| output.snapshot.id != OutputId::from("out-2")));
-            assert_eq!(snapshot.topology.active_output_id, None);
+            assert_eq!(
+                snapshot.topology.active_output_id,
+                Some(OutputId::from("out-1"))
+            );
             let layer = snapshot
                 .topology
                 .surfaces
@@ -3310,6 +3970,86 @@ mod imp {
                     .unwrap()
                     .output_id,
                 Some(OutputId::from("out-2"))
+            );
+        }
+
+        #[test]
+        fn workspace_export_carries_window_decoration_policy_snapshot() {
+            let runtime_service = test_runtime_service();
+            let mut config = test_config();
+            config.layouts[0].effects_stylesheet =
+                "window { appearance: none; } window::titlebar { background: #111; }".into();
+            let mut state = test_state_snapshot();
+            state.windows.push(spiders_shared::wm::WindowSnapshot {
+                id: WindowId::from("smithay-window-1"),
+                shell: spiders_shared::wm::ShellKind::XdgToplevel,
+                app_id: Some("foot".into()),
+                title: Some("terminal".into()),
+                class: None,
+                instance: None,
+                role: None,
+                window_type: None,
+                mapped: true,
+                floating: false,
+                floating_rect: None,
+                fullscreen: false,
+                focused: true,
+                urgent: false,
+                output_id: Some(OutputId::from("out-1")),
+                workspace_id: Some(WorkspaceId::from("ws-1")),
+                tags: vec!["1".into()],
+            });
+            state
+                .visible_window_ids
+                .push(WindowId::from("smithay-window-1"));
+
+            let controller =
+                crate::CompositorController::initialize(runtime_service, config, state).unwrap();
+            let runtime = test_runtime("wayland-test-decoration-policy-export");
+            let report = SmithayStartupReport {
+                controller: controller.report(),
+                output_name: "smithay-test-output".into(),
+                seat_name: "smithay-test-seat".into(),
+                logical_size: (1280, 720),
+                socket_name: Some("wayland-test-decoration-policy-export".into()),
+            };
+            let mut bootstrap = SmithayBootstrap {
+                controller,
+                runtime,
+                report,
+            };
+
+            bootstrap.runtime.state_mut().track_test_surface_snapshot(
+                crate::backend::BackendSurfaceSnapshot::Window {
+                    surface_id: "wl-surface-701".into(),
+                    window_id: WindowId::from("smithay-window-1"),
+                    output_id: Some(OutputId::from("out-1")),
+                },
+            );
+
+            initialize_smithay_workspace_export(
+                &bootstrap.controller,
+                bootstrap.runtime.state_mut(),
+            );
+
+            let snapshot = bootstrap.runtime.snapshot();
+            let toplevel = snapshot
+                .state
+                .known_surfaces
+                .toplevels
+                .iter()
+                .find(|surface| surface.surface_id == "wl-surface-701")
+                .unwrap();
+
+            assert!(!toplevel.decoration_policy.decorations_visible);
+            assert!(!toplevel.decoration_policy.titlebar_visible);
+            assert_eq!(
+                toplevel
+                    .decoration_policy
+                    .titlebar_style
+                    .background
+                    .as_deref(),
+                Some("#111")
             );
         }
     }

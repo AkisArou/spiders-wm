@@ -7,6 +7,7 @@ use spiders_shared::ids::WorkspaceId;
 use spiders_shared::layout::{LayoutRequest, LayoutResponse};
 use spiders_shared::wm::StateSnapshot;
 
+use crate::effects::EffectsRuntimeState;
 use crate::{build_request_from_context, CompositorLayoutError, LayoutService};
 
 #[derive(Debug)]
@@ -34,6 +35,7 @@ pub struct StartupLayoutState {
     pub workspace_id: WorkspaceId,
     pub request: LayoutRequest,
     pub response: LayoutResponse,
+    pub effects: EffectsRuntimeState,
 }
 
 #[derive(Debug)]
@@ -115,12 +117,16 @@ pub(crate) fn bootstrap_runtime<L: spiders_config::loader::LayoutSourceLoader, R
                     resolved.root,
                 );
                 let response = compute_layout_from_request(&request)?;
+                let mut effects =
+                    EffectsRuntimeState::from_stylesheet(&request.effects_stylesheet)?;
+                effects.recompute_for_workspace(state, workspace);
 
                 Ok(StartupLayoutState {
                     workspace_id: workspace.id.clone(),
                     evaluated,
                     request,
                     response,
+                    effects,
                 })
             },
         )
@@ -224,6 +230,8 @@ mod tests {
                 name: "master-stack".into(),
                 module: "layouts/master-stack.js".into(),
                 stylesheet: String::new(),
+                effects_stylesheet: String::new(),
+                runtime_source: None,
             }],
             ..Config::default()
         }
@@ -375,6 +383,7 @@ mod tests {
                     window_type: None,
                     mapped: true,
                     floating: false,
+                    floating_rect: None,
                     fullscreen: false,
                     focused: true,
                     urgent: false,
@@ -393,6 +402,7 @@ mod tests {
                     window_type: None,
                     mapped: true,
                     floating: false,
+                    floating_rect: None,
                     fullscreen: false,
                     focused: false,
                     urgent: false,

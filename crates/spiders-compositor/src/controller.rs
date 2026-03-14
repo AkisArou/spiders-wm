@@ -322,6 +322,8 @@ mod tests {
                 name: "master-stack".into(),
                 module: "layouts/master-stack.js".into(),
                 stylesheet: String::new(),
+                effects_stylesheet: String::new(),
+                runtime_source: None,
             }],
             ..Config::default()
         }
@@ -364,6 +366,7 @@ mod tests {
                 window_type: None,
                 mapped: true,
                 floating: false,
+                floating_rect: None,
                 fullscreen: false,
                 focused: true,
                 urgent: false,

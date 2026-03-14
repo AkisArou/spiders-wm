@@ -10,6 +10,7 @@ default = []
 smithay-winit = ["dep:smithay"]
 
 [dependencies]
+font8x8 = "0.3"
 spiders-config = { path = "../spiders-config" }
 spiders-effects = { path = "../spiders-effects" }
 spiders-ipc = { path = "../spiders-ipc" }

@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::ids::{OutputId, WindowId, WorkspaceId};
+use crate::layout::LayoutRect;
 use crate::layout::LayoutSpace;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -34,6 +35,8 @@ pub struct SelectedLayout {
     pub name: String,
     pub module: String,
     pub stylesheet: String,
+    #[serde(default)]
+    pub effects_stylesheet: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -53,7 +56,7 @@ pub struct LayoutEvaluationContext {
     pub space: LayoutSpace,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WindowSnapshot {
     pub id: WindowId,
     pub shell: ShellKind,
@@ -65,6 +68,8 @@ pub struct WindowSnapshot {
     pub window_type: Option<String>,
     pub mapped: bool,
     pub floating: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub floating_rect: Option<LayoutRect>,
     pub fullscreen: bool,
     pub focused: bool,
     pub urgent: bool,
@@ -96,7 +101,7 @@ pub struct OutputSnapshot {
     pub current_workspace_id: Option<WorkspaceId>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StateSnapshot {
     pub focused_window_id: Option<WindowId>,
     pub current_output_id: Option<OutputId>,
@@ -320,6 +325,7 @@ mod tests {
                     window_type: None,
                     mapped: true,
                     floating: false,
+                    floating_rect: None,
                     fullscreen: false,
                     focused: true,
                     urgent: false,
@@ -338,6 +344,7 @@ mod tests {
                     window_type: None,
                     mapped: true,
                     floating: false,
+                    floating_rect: None,
                     fullscreen: false,
                     focused: false,
                     urgent: false,
@@ -356,6 +363,7 @@ mod tests {
                     window_type: None,
                     mapped: true,
                     floating: false,
+                    floating_rect: None,
                     fullscreen: false,
                     focused: false,
                     urgent: false,

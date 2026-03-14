@@ -1,5 +1,6 @@
 use spiders_shared::api::{CompositorEvent, FocusDirection};
 use spiders_shared::ids::{OutputId, WindowId, WorkspaceId};
+use spiders_shared::layout::LayoutRect;
 use spiders_shared::wm::{
     LayoutRef, OutputSnapshot, StateSnapshot, WindowSnapshot, WorkspaceSnapshot,
 };
@@ -27,7 +28,7 @@ pub enum WmStateError {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct WmState {
     snapshot: StateSnapshot,
 }
@@ -357,10 +358,32 @@ impl WmState {
             .ok_or_else(|| WmStateError::WindowNotFound(window_id.clone()))?;
 
         window.floating = !window.floating;
+        if !window.floating {
+            window.floating_rect = None;
+        }
 
         Ok(CompositorEvent::WindowFloatingChange {
             window_id,
             floating: window.floating,
+        })
+    }
+
+    pub fn set_floating_window_geometry(
+        &mut self,
+        window_id: &WindowId,
+        rect: LayoutRect,
+    ) -> Result<CompositorEvent, WmStateError> {
+        let window = self
+            .snapshot
+            .windows
+            .iter_mut()
+            .find(|window| &window.id == window_id)
+            .ok_or_else(|| WmStateError::WindowNotFound(window_id.clone()))?;
+
+        window.floating_rect = Some(rect);
+        Ok(CompositorEvent::WindowGeometryChange {
+            window_id: window_id.clone(),
+            floating_rect: Some(rect),
         })
     }
 
@@ -653,6 +676,7 @@ mod tests {
                     window_type: None,
                     mapped: true,
                     floating: false,
+                    floating_rect: None,
                     fullscreen: false,
                     focused: true,
                     urgent: false,
@@ -671,6 +695,7 @@ mod tests {
                     window_type: None,
                     mapped: true,
                     floating: false,
+                    floating_rect: None,
                     fullscreen: false,
                     focused: false,
                     urgent: false,
@@ -752,6 +777,7 @@ mod tests {
             window_type: None,
             mapped: false,
             floating: false,
+            floating_rect: None,
             fullscreen: false,
             focused: false,
             urgent: false,
@@ -964,6 +990,7 @@ mod tests {
             window_type: None,
             mapped: true,
             floating: false,
+            floating_rect: None,
             fullscreen: false,
             focused: false,
             urgent: false,

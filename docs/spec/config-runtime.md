@@ -231,6 +231,10 @@ documented behaviors.
 
 Rules and bindings remain declarative data in config.
 
+Decoration visibility is not a top-level config option. Window titlebar or frame
+policy belongs to effects CSS on `window` selectors, with `appearance: none`
+used to disable compositor-drawn decorations.
+
 Rules should continue to support at least:
 
 - `app_id`

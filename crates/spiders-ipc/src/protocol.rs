@@ -13,7 +13,7 @@ pub enum IpcSubscriptionTopic {
     Config,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct IpcEnvelope<T> {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub request_id: Option<String>,
@@ -34,7 +34,7 @@ impl<T> IpcEnvelope<T> {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", content = "payload", rename_all = "kebab-case")]
 pub enum IpcClientMessage {
     Query(QueryRequest),
@@ -49,7 +49,7 @@ pub enum IpcClientMessage {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", content = "payload", rename_all = "kebab-case")]
 pub enum IpcServerMessage {
     Query(QueryResponse),
@@ -127,6 +127,7 @@ pub fn infer_topics(event: &CompositorEvent) -> Vec<IpcSubscriptionTopic> {
         | CompositorEvent::WindowDestroyed { .. }
         | CompositorEvent::WindowTagChange { .. }
         | CompositorEvent::WindowFloatingChange { .. }
+        | CompositorEvent::WindowGeometryChange { .. }
         | CompositorEvent::WindowFullscreenChange { .. } => vec![IpcSubscriptionTopic::Windows],
         CompositorEvent::TagChange { .. } => vec![IpcSubscriptionTopic::Tags],
         CompositorEvent::LayoutChange { .. } => vec![IpcSubscriptionTopic::Layout],
@@ -250,6 +251,7 @@ mod tests {
                 window_type: None,
                 mapped: true,
                 floating: false,
+                floating_rect: None,
                 fullscreen: false,
                 focused: true,
                 urgent: false,

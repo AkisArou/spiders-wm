@@ -654,6 +654,7 @@ fn synthetic_bootstrap_state() -> spiders_shared::wm::StateSnapshot {
             window_type: None,
             mapped: true,
             floating: false,
+            floating_rect: None,
             fullscreen: false,
             focused: true,
             urgent: false,

@@ -157,6 +157,7 @@ mod tests {
             window_type: Some("normal".into()),
             mapped: true,
             floating: false,
+            floating_rect: None,
             fullscreen: false,
             focused: false,
             urgent: false,

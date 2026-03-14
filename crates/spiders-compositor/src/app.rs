@@ -7,6 +7,7 @@ use spiders_shared::wm::StateSnapshot;
 
 use crate::session::CompositorSession;
 use crate::topology::{CompositorTopologyState, SurfaceState, TopologyError};
+use crate::WindowDecorationPolicy;
 use crate::{CompositorLayoutError, LayoutService};
 
 #[derive(Debug)]
@@ -26,6 +27,10 @@ impl<L, R> CompositorApp<L, R> {
 
     pub fn state(&self) -> &StateSnapshot {
         self.session.state()
+    }
+
+    pub fn window_decoration_policies(&self) -> Vec<(WindowId, WindowDecorationPolicy)> {
+        self.session.window_decoration_policies()
     }
 
     pub fn register_popup_surface(
@@ -269,6 +274,8 @@ mod tests {
                 name: "master-stack".into(),
                 module: "layouts/master-stack.js".into(),
                 stylesheet: String::new(),
+                effects_stylesheet: String::new(),
+                runtime_source: None,
             }],
             ..Config::default()
         }
@@ -311,6 +318,7 @@ mod tests {
                 window_type: None,
                 mapped: true,
                 floating: false,
+                floating_rect: None,
                 fullscreen: false,
                 focused: true,
                 urgent: false,
@@ -530,7 +538,10 @@ mod tests {
         app.enable_output(&OutputId::from("out-2")).unwrap();
         app.activate_seat("seat-1").unwrap();
 
-        assert!(app.topology().active_output().is_none());
+        assert_eq!(
+            app.topology().active_output_id,
+            Some(OutputId::from("out-1"))
+        );
         assert!(
             app.topology()
                 .output(&OutputId::from("out-2"))

@@ -10,7 +10,9 @@ use spiders_shared::ids::{OutputId, WindowId};
 use spiders_shared::wm::{StateSnapshot, WindowSnapshot};
 
 use crate::actions::{apply_action, ActionError};
+use crate::effects::WindowDecorationPolicy;
 use crate::runtime::{CompositorRuntimeState, WorkspaceLayoutState};
+use crate::titlebar::TitlebarRenderItem;
 use crate::{CompositorLayoutError, LayoutService};
 
 #[derive(Debug)]
@@ -24,6 +26,8 @@ pub struct SessionUpdate {
     pub events: Vec<CompositorEvent>,
     pub recomputed_layout: bool,
     pub current_layout: Option<WorkspaceLayoutState>,
+    pub decoration_policies: Vec<(WindowId, WindowDecorationPolicy)>,
+    pub titlebar_render_plan: Vec<TitlebarRenderItem>,
     pub topology: CompositorTopologyState,
 }
 
@@ -57,6 +61,29 @@ impl<L, R> CompositorSession<L, R> {
 
     pub fn topology(&self) -> &CompositorTopologyState {
         self.domain.topology()
+    }
+
+    pub fn window_decoration_policies(&self) -> Vec<(WindowId, WindowDecorationPolicy)> {
+        self.runtime
+            .current_layout()
+            .map(|layout| {
+                layout
+                    .effects
+                    .windows
+                    .iter()
+                    .filter_map(|window| {
+                        layout
+                            .effects
+                            .window_decoration_policy(&window.window_id)
+                            .map(|policy| (window.window_id.clone(), policy))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    pub fn current_titlebar_render_plan(&self) -> Vec<TitlebarRenderItem> {
+        self.runtime.current_titlebar_render_plan()
     }
 
     pub fn register_popup_surface(
@@ -211,6 +238,8 @@ impl<L: spiders_config::loader::LayoutSourceLoader, R: LayoutRuntime> Compositor
                     events: outcome.events,
                     recomputed_layout: outcome.recomputed_layout,
                     current_layout: self.runtime.current_layout().cloned(),
+                    decoration_policies: self.window_decoration_policies(),
+                    titlebar_render_plan: self.current_titlebar_render_plan(),
                     topology: self.domain.topology().clone(),
                 })
             }
@@ -324,6 +353,8 @@ impl<L: spiders_config::loader::LayoutSourceLoader, R: LayoutRuntime> Compositor
             events: outcome.events,
             recomputed_layout: outcome.recomputed_layout,
             current_layout: self.runtime.current_layout().cloned(),
+            decoration_policies: self.window_decoration_policies(),
+            titlebar_render_plan: self.current_titlebar_render_plan(),
             topology: outcome.topology,
         }
     }
@@ -370,11 +401,15 @@ mod tests {
                     name: "master-stack".into(),
                     module: "layouts/master-stack.js".into(),
                     stylesheet: String::new(),
+                    effects_stylesheet: String::new(),
+                    runtime_source: None,
                 },
                 LayoutDefinition {
                     name: "columns".into(),
                     module: "layouts/columns.js".into(),
                     stylesheet: String::new(),
+                    effects_stylesheet: String::new(),
+                    runtime_source: None,
                 },
             ],
             ..Config::default()
@@ -432,6 +467,7 @@ mod tests {
                     window_type: None,
                     mapped: true,
                     floating: false,
+                    floating_rect: None,
                     fullscreen: false,
                     focused: true,
                     urgent: false,
@@ -450,6 +486,7 @@ mod tests {
                     window_type: None,
                     mapped: true,
                     floating: false,
+                    floating_rect: None,
                     fullscreen: false,
                     focused: false,
                     urgent: false,
@@ -596,6 +633,7 @@ mod tests {
                 window_type: None,
                 mapped: false,
                 floating: false,
+                floating_rect: None,
                 fullscreen: false,
                 focused: false,
                 urgent: false,
@@ -655,6 +693,7 @@ mod tests {
             window_type: None,
             mapped: false,
             floating: false,
+            floating_rect: None,
             fullscreen: false,
             focused: false,
             urgent: false,
@@ -673,6 +712,7 @@ mod tests {
             window_type: None,
             mapped: false,
             floating: false,
+            floating_rect: None,
             fullscreen: false,
             focused: false,
             urgent: false,
@@ -737,6 +777,47 @@ mod tests {
     }
 
     #[test]
+    fn session_update_exposes_decoration_policies() {
+        let temp_dir = std::env::temp_dir();
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let runtime_root = temp_dir.join(format!("spiders-session-effects-{unique}"));
+        let _ = fs::create_dir_all(runtime_root.join("layouts"));
+        fs::write(
+            runtime_root.join("layouts/master-stack.js"),
+            "ctx => ({ type: 'workspace', children: [{ type: 'window', id: 'main' }] })",
+        )
+        .unwrap();
+        fs::write(
+            runtime_root.join("layouts/columns.js"),
+            "ctx => ({ type: 'workspace', children: [{ type: 'slot', id: 'rest' }] })",
+        )
+        .unwrap();
+
+        let mut config = config();
+        config.layouts[0].effects_stylesheet =
+            "window { appearance: none; } window::titlebar { background: #111; }".into();
+
+        let loader =
+            RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
+        let runtime = BoaLayoutRuntime::with_loader(loader.clone());
+        let service = ConfigRuntimeService::new(loader, runtime);
+        let mut session =
+            CompositorSession::initialize(LayoutService, service, config, state()).unwrap();
+        session.register_seat("seat-0");
+
+        let update = session.toggle_focused_fullscreen().unwrap();
+
+        assert!(update
+            .decoration_policies
+            .iter()
+            .any(|(window_id, policy)| window_id == &WindowId::from("w1")
+                && !policy.decorations_visible));
+    }
+
+    #[test]
     fn session_registers_snapshot_outputs_in_topology() {
         let mut session = session();
 
@@ -766,7 +847,10 @@ mod tests {
         session.disable_output(&OutputId::from("out-2")).unwrap();
         session.enable_output(&OutputId::from("out-2")).unwrap();
 
-        assert!(session.topology().active_output().is_none());
+        assert_eq!(
+            session.topology().active_output_id,
+            Some(OutputId::from("out-1"))
+        );
         assert!(
             session
                 .topology()

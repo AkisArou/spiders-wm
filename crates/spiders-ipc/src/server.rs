@@ -16,7 +16,7 @@ pub struct IpcServerState {
     next_client_id: IpcClientId,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum IpcServerHandleResult {
     Query {
         client_id: IpcClientId,

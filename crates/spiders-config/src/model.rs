@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use spiders_shared::api::WmAction;
@@ -13,16 +14,60 @@ use thiserror::Error;
 pub struct ConfigOptions {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mod_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sloppyfocus: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attach: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct InputConfig {
     pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub xkb_layout: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub xkb_model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub xkb_variant: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub xkb_options: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repeat_rate: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repeat_delay: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub natural_scroll: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tap: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub drag_lock: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub accel_profile: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pointer_accel: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub left_handed: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub middle_emulation: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dwt: Option<bool>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct OutputConfig {
     pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scale: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transform: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub position: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub adaptive_sync: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -31,6 +76,20 @@ pub struct LayoutDefinition {
     pub module: String,
     #[serde(default)]
     pub stylesheet: String,
+    #[serde(default)]
+    pub effects_stylesheet: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_source: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct LayoutSelectionConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub per_tag: Vec<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub per_monitor: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -68,6 +127,8 @@ pub struct Config {
     #[serde(default)]
     pub layouts: Vec<LayoutDefinition>,
     #[serde(default)]
+    pub layout_selection: LayoutSelectionConfig,
+    #[serde(default)]
     pub rules: Vec<WindowRule>,
     #[serde(default)]
     pub bindings: Vec<Binding>,
@@ -85,6 +146,12 @@ pub enum LayoutConfigError {
     ReadConfig { path: PathBuf },
     #[error("config file `{path}` is invalid")]
     ParseConfig { path: PathBuf },
+    #[error("authored config `{path}` could not be compiled: {message}")]
+    CompileAuthoredConfig { path: PathBuf, message: String },
+    #[error("authored config `{path}` could not be evaluated: {message}")]
+    EvaluateAuthoredConfig { path: PathBuf, message: String },
+    #[error("authored config `{path}` could not be decoded: {message}")]
+    DecodeAuthoredConfig { path: PathBuf, message: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -166,6 +233,10 @@ impl Config {
         })
     }
 
+    pub fn from_authored_path(path: impl AsRef<Path>) -> Result<Self, LayoutConfigError> {
+        crate::authored::load_authored_config(path)
+    }
+
     pub fn layout_by_name(&self, name: &str) -> Option<&LayoutDefinition> {
         self.layouts.iter().find(|layout| layout.name == name)
     }
@@ -190,6 +261,7 @@ impl Config {
                     name: layout.name.clone(),
                     module: layout.module.clone(),
                     stylesheet: layout.stylesheet.clone(),
+                    effects_stylesheet: layout.effects_stylesheet.clone(),
                 })
             })
             .or_else(|| {
@@ -219,7 +291,12 @@ impl Config {
                 .map(|layout| layout.name.clone()),
             root,
             stylesheet: selected_layout
-                .map(|layout| layout.stylesheet)
+                .as_ref()
+                .map(|layout| layout.stylesheet.clone())
+                .unwrap_or_default(),
+            effects_stylesheet: selected_layout
+                .as_ref()
+                .map(|layout| layout.effects_stylesheet.clone())
                 .unwrap_or_default(),
             space: LayoutSpace {
                 width: output
@@ -298,6 +375,8 @@ mod tests {
                 name: "master-stack".into(),
                 module: "layouts/master-stack.js".into(),
                 stylesheet: "workspace { display: flex; }".into(),
+                effects_stylesheet: String::new(),
+                runtime_source: None,
             }],
             ..Config::default()
         };
@@ -315,6 +394,8 @@ mod tests {
                 name: "master-stack".into(),
                 module: "layouts/master-stack.js".into(),
                 stylesheet: "workspace { display: flex; }".into(),
+                effects_stylesheet: String::new(),
+                runtime_source: None,
             }],
             ..Config::default()
         };
@@ -343,6 +424,8 @@ mod tests {
                 name: "master-stack".into(),
                 module: "layouts/master-stack.js".into(),
                 stylesheet: "workspace { display: flex; }".into(),
+                effects_stylesheet: String::new(),
+                runtime_source: None,
             }],
             ..Config::default()
         };
@@ -357,6 +440,7 @@ mod tests {
                 name: "master-stack".into(),
                 module: "layouts/master-stack.js".into(),
                 stylesheet: "workspace { display: flex; }".into(),
+                effects_stylesheet: String::new(),
             })
         );
     }
@@ -368,6 +452,8 @@ mod tests {
                 name: "master-stack".into(),
                 module: "layouts/master-stack.js".into(),
                 stylesheet: "workspace { display: flex; }".into(),
+                effects_stylesheet: String::new(),
+                runtime_source: None,
             }],
             ..Config::default()
         };

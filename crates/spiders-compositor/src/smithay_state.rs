@@ -13,14 +13,17 @@ mod imp {
     use smithay::delegate_ext_data_control;
     use smithay::delegate_layer_shell;
     use smithay::delegate_output;
+    use smithay::delegate_presentation;
     use smithay::delegate_primary_selection;
     use smithay::delegate_seat;
     use smithay::delegate_shm;
+    use smithay::delegate_xdg_decoration;
     use smithay::delegate_xdg_shell;
     use smithay::input::keyboard::XkbConfig;
     use smithay::input::pointer::CursorImageStatus;
     use smithay::input::{Seat, SeatHandler, SeatState};
     use smithay::output::Output;
+    use smithay::reexports::wayland_protocols::xdg::decoration::zv1::server::zxdg_toplevel_decoration_v1;
     use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel;
     use smithay::reexports::wayland_server::backend::{ClientData, ClientId, DisconnectReason};
     use smithay::reexports::wayland_server::protocol::wl_buffer;
@@ -29,13 +32,14 @@ mod imp {
     use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
     use smithay::reexports::wayland_server::Resource;
     use smithay::reexports::wayland_server::{BindError, Client, Display, DisplayHandle};
-    use smithay::utils::Serial;
+    use smithay::utils::{Serial, SERIAL_COUNTER};
     use smithay::wayland::buffer::BufferHandler;
     use smithay::wayland::compositor::{
         get_parent, get_role, is_sync_subsurface, with_states, BufferAssignment,
     };
     use smithay::wayland::compositor::{CompositorClientState, CompositorHandler, CompositorState};
     use smithay::wayland::output::{OutputHandler, OutputManagerState};
+    use smithay::wayland::presentation::PresentationState;
     use smithay::wayland::selection::data_device::{
         DataDeviceHandler, DataDeviceState, WaylandDndGrabHandler,
     };
@@ -55,19 +59,23 @@ mod imp {
         WlrLayerShellHandler, WlrLayerShellState,
     };
     use smithay::wayland::shell::xdg::{
+        decoration::{XdgDecorationHandler, XdgDecorationState},
         PopupSurface, PositionerState, ToplevelSurface, XdgPopupSurfaceData, XdgShellHandler,
         XdgShellState, XdgToplevelSurfaceData, XDG_POPUP_ROLE, XDG_TOPLEVEL_ROLE,
     };
     use smithay::wayland::shm::{ShmHandler, ShmState};
     use smithay::wayland::socket::ListeningSocketSource;
+    use spiders_effects::TitlebarEffects;
     use spiders_runtime::{
         LayerExclusiveZone, LayerKeyboardInteractivity, LayerSurfaceMetadata, LayerSurfaceTier,
     };
     use spiders_shared::api::WmAction;
     use spiders_shared::ids::{OutputId, WindowId};
+    use spiders_shared::layout::LayoutRect;
     use spiders_shared::wm::{OutputTransform, StateSnapshot};
 
     use crate::smithay_workspace::{WorkspaceHandler, WorkspaceManagerState};
+    use crate::titlebar::TitlebarRenderItem;
 
     #[derive(Debug, thiserror::Error)]
     pub enum SmithayStateError {
@@ -94,9 +102,76 @@ mod imp {
     pub struct SmithayKnownToplevelSurface {
         pub surface_id: String,
         pub window_id: WindowId,
+        pub decoration_policy: SmithayWindowDecorationPolicySnapshot,
+        pub titlebar: Option<SmithayTitlebarRenderSnapshot>,
         pub configure: SmithayXdgToplevelConfigureSnapshot,
         pub metadata: SmithayXdgToplevelMetadataSnapshot,
         pub requests: SmithayXdgToplevelRequestSnapshot,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct SmithayWindowDecorationPolicySnapshot {
+        pub decorations_visible: bool,
+        pub titlebar_visible: bool,
+        pub titlebar_style: TitlebarEffects,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct SmithayTitlebarRenderSnapshot {
+        pub title: String,
+        pub app_id: Option<String>,
+        pub style: TitlebarEffects,
+    }
+
+    #[derive(Debug, Clone, PartialEq)]
+    pub struct SmithayWindowRenderSnapshot {
+        pub window_id: WindowId,
+        pub window_rect: LayoutRect,
+        pub content_offset_y: f32,
+    }
+
+    #[derive(Debug, Clone)]
+    pub struct SmithayRenderableToplevelSurface {
+        pub window_id: WindowId,
+        pub surface: ToplevelSurface,
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum TitlebarHitKind {
+        Move,
+        ResizeTop,
+        ResizeBottom,
+        ResizeLeft,
+        ResizeRight,
+        ResizeTopLeft,
+        ResizeTopRight,
+        ResizeBottomLeft,
+        ResizeBottomRight,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct SmithayTitlebarHitTarget {
+        pub window_id: WindowId,
+        pub kind: TitlebarHitKind,
+    }
+
+    #[derive(Debug, Clone, PartialEq)]
+    struct ActiveTitlebarInteraction {
+        window_id: WindowId,
+        kind: TitlebarHitKind,
+        pointer_origin: (f64, f64),
+        initial_window_rect: LayoutRect,
+        titlebar_height: f32,
+    }
+
+    impl Default for SmithayWindowDecorationPolicySnapshot {
+        fn default() -> Self {
+            Self {
+                decorations_visible: true,
+                titlebar_visible: true,
+                titlebar_style: TitlebarEffects::default(),
+            }
+        }
     }
 
     #[derive(Debug, Clone, PartialEq, Eq)]
@@ -285,9 +360,11 @@ mod imp {
         pub display_handle: DisplayHandle,
         pub compositor_state: CompositorState,
         pub shm_state: ShmState,
+        pub xdg_decoration_state: XdgDecorationState,
         pub xdg_shell_state: XdgShellState,
         pub layer_shell_state: WlrLayerShellState,
         pub output_manager_state: OutputManagerState,
+        pub presentation_state: PresentationState,
         pub data_device_state: DataDeviceState,
         pub primary_selection_state: PrimarySelectionState,
         pub wlr_data_control_state: WlrDataControlState,
@@ -310,11 +387,19 @@ mod imp {
         xdg_toplevel_configures: HashMap<String, SmithayXdgToplevelConfigureSnapshot>,
         xdg_toplevel_metadata: HashMap<String, SmithayXdgToplevelMetadataSnapshot>,
         xdg_toplevel_requests: HashMap<String, SmithayXdgToplevelRequestSnapshot>,
+        xdg_toplevel_decoration_policies: HashMap<String, SmithayWindowDecorationPolicySnapshot>,
         xdg_popup_configures: HashMap<String, SmithayXdgPopupConfigureSnapshot>,
         clipboard_selection: Option<SmithaySelectionOfferSnapshot>,
         clipboard_focus_client_id: Option<String>,
         primary_selection: Option<SmithaySelectionOfferSnapshot>,
         primary_focus_client_id: Option<String>,
+        titlebar_render_plan: Vec<TitlebarRenderItem>,
+        window_render_plan: Vec<SmithayWindowRenderSnapshot>,
+        floating_window_ids: HashSet<WindowId>,
+        floating_window_overrides: HashMap<WindowId, LayoutRect>,
+        active_titlebar_interaction: Option<ActiveTitlebarInteraction>,
+        needs_redraw: bool,
+        pointer_location: Option<(f64, f64)>,
         focused_surface_id: Option<String>,
         cursor_image: String,
         cursor_surface_id: Option<String>,
@@ -352,10 +437,12 @@ mod imp {
             let display_handle = display.handle();
             let compositor_state = CompositorState::new::<Self>(&display_handle);
             let shm_state = ShmState::new::<Self>(&display_handle, vec![]);
+            let xdg_decoration_state = XdgDecorationState::new::<Self>(&display_handle);
             let xdg_shell_state = XdgShellState::new::<Self>(&display_handle);
             let layer_shell_state = WlrLayerShellState::new::<Self>(&display_handle);
             let output_manager_state =
                 OutputManagerState::new_with_xdg_output::<Self>(&display_handle);
+            let presentation_state = PresentationState::new::<Self>(&display_handle, 1);
             let data_device_state = DataDeviceState::new::<Self>(&display_handle);
             let primary_selection_state = PrimarySelectionState::new::<Self>(&display_handle);
             let wlr_data_control_state = WlrDataControlState::new::<Self, _>(
@@ -379,9 +466,11 @@ mod imp {
                 display_handle,
                 compositor_state,
                 shm_state,
+                xdg_decoration_state,
                 xdg_shell_state,
                 layer_shell_state,
                 output_manager_state,
+                presentation_state,
                 data_device_state,
                 primary_selection_state,
                 wlr_data_control_state,
@@ -404,11 +493,19 @@ mod imp {
                 xdg_toplevel_configures: HashMap::new(),
                 xdg_toplevel_metadata: HashMap::new(),
                 xdg_toplevel_requests: HashMap::new(),
+                xdg_toplevel_decoration_policies: HashMap::new(),
                 xdg_popup_configures: HashMap::new(),
                 clipboard_selection: None,
                 clipboard_focus_client_id: None,
                 primary_selection: None,
                 primary_focus_client_id: None,
+                titlebar_render_plan: Vec::new(),
+                window_render_plan: Vec::new(),
+                floating_window_ids: HashSet::new(),
+                floating_window_overrides: HashMap::new(),
+                active_titlebar_interaction: None,
+                needs_redraw: true,
+                pointer_location: None,
                 focused_surface_id: None,
                 cursor_image: "default".into(),
                 cursor_surface_id: None,
@@ -565,6 +662,8 @@ mod imp {
                 metadata.logical_width = Some(size.0);
                 metadata.logical_height = Some(size.1);
             }
+
+            self.needs_redraw = true;
         }
 
         pub fn update_active_output_size(&mut self, size: (u32, u32)) {
@@ -581,11 +680,419 @@ mod imp {
         pub fn refresh_workspace_state(&mut self, snapshot: &StateSnapshot) {
             self.workspace_manager_state
                 .refresh_from_snapshot::<Self>(&self.display_handle, snapshot);
+            self.floating_window_ids = snapshot
+                .windows
+                .iter()
+                .filter(|window| window.floating)
+                .map(|window| window.id.clone())
+                .collect();
+            self.floating_window_overrides
+                .retain(|window_id, _| self.floating_window_ids.contains(window_id));
         }
 
         pub fn refresh_workspace_output_groups(&mut self) {
             self.workspace_manager_state
                 .refresh_output_groups::<Self>(&self.display_handle, &self.known_output_ids);
+        }
+
+        pub fn refresh_window_decoration_policies(
+            &mut self,
+            policies: &[(WindowId, SmithayWindowDecorationPolicySnapshot)],
+        ) {
+            let previous = self.xdg_toplevel_decoration_policies.clone();
+            let mut next = HashMap::new();
+            let toplevels = self
+                .toplevel_window_ids
+                .iter()
+                .map(|(surface_id, window_id)| (surface_id.clone(), window_id.clone()))
+                .collect::<Vec<_>>();
+
+            for (surface_id, window_id) in toplevels {
+                let policy = policies
+                    .iter()
+                    .find(|(candidate, _)| candidate == &window_id)
+                    .map(|(_, policy)| policy.clone())
+                    .unwrap_or_default();
+
+                if previous.get(&surface_id) != Some(&policy) {
+                    self.apply_window_decoration_policy(&surface_id, &policy);
+                }
+
+                next.insert(surface_id, policy);
+            }
+
+            self.xdg_toplevel_decoration_policies = next;
+            self.needs_redraw = true;
+        }
+
+        pub fn refresh_titlebar_render_plan(&mut self, plan: &[TitlebarRenderItem]) {
+            let plan = plan
+                .iter()
+                .cloned()
+                .map(|mut item| {
+                    if let Some(rect) = self.floating_window_overrides.get(&item.window_id).copied()
+                    {
+                        item.window_rect = rect;
+                        item.titlebar_rect = LayoutRect {
+                            x: rect.x,
+                            y: rect.y,
+                            width: rect.width,
+                            height: item.titlebar_rect.height.min(rect.height.max(0.0)),
+                        };
+                    }
+                    item
+                })
+                .collect::<Vec<_>>();
+
+            if self.titlebar_render_plan != plan {
+                self.titlebar_render_plan = plan;
+                self.needs_redraw = true;
+            }
+        }
+
+        pub fn current_titlebar_render_plan(&self) -> &[TitlebarRenderItem] {
+            &self.titlebar_render_plan
+        }
+
+        pub fn refresh_window_render_plan(&mut self, plan: &[SmithayWindowRenderSnapshot]) {
+            let plan = plan
+                .iter()
+                .cloned()
+                .map(|mut item| {
+                    if let Some(rect) = self.floating_window_overrides.get(&item.window_id).copied()
+                    {
+                        item.window_rect = rect;
+                    }
+                    item
+                })
+                .collect::<Vec<_>>();
+
+            if self.window_render_plan != plan {
+                self.window_render_plan = plan;
+                self.needs_redraw = true;
+            }
+        }
+
+        pub fn current_window_render_plan(&self) -> &[SmithayWindowRenderSnapshot] {
+            &self.window_render_plan
+        }
+
+        pub fn is_floating_window(&self, window_id: &WindowId) -> bool {
+            self.floating_window_ids.contains(window_id)
+        }
+
+        pub fn take_redraw_request(&mut self) -> bool {
+            std::mem::take(&mut self.needs_redraw)
+        }
+
+        pub fn update_pointer_location(&mut self, x: f64, y: f64) {
+            self.pointer_location = Some((x, y));
+        }
+
+        pub fn update_titlebar_cursor_feedback(&mut self) {
+            self.cursor_image = self
+                .titlebar_hit_target_at_pointer()
+                .map(|hit| titlebar_cursor_name(hit.kind))
+                .unwrap_or("default")
+                .into();
+            self.cursor_surface_id = None;
+        }
+
+        pub fn active_smithay_output(&self) -> Option<Output> {
+            self.active_output_id
+                .as_ref()
+                .and_then(|output_id| self.smithay_outputs.get(output_id))
+                .cloned()
+                .or_else(|| {
+                    self.known_output_ids
+                        .first()
+                        .and_then(|output_id| self.smithay_outputs.get(output_id))
+                        .cloned()
+                })
+        }
+
+        pub fn active_output_bounds(&self) -> Option<LayoutRect> {
+            self.active_output_id
+                .as_ref()
+                .or_else(|| self.known_output_ids.first())
+                .and_then(|output_id| self.known_output_metadata.get(output_id))
+                .and_then(|output| {
+                    Some(LayoutRect {
+                        x: 0.0,
+                        y: 0.0,
+                        width: output.logical_width? as f32,
+                        height: output.logical_height? as f32,
+                    })
+                })
+        }
+
+        pub fn renderable_toplevel_surfaces(&self) -> Vec<SmithayRenderableToplevelSurface> {
+            self.xdg_shell_state
+                .toplevel_surfaces()
+                .into_iter()
+                .filter_map(|surface| {
+                    let surface_id = smithay_surface_id(surface.wl_surface());
+                    self.toplevel_window_ids
+                        .get(&surface_id)
+                        .cloned()
+                        .map(|window_id| SmithayRenderableToplevelSurface {
+                            window_id,
+                            surface: surface.clone(),
+                        })
+                })
+                .collect()
+        }
+
+        pub fn titlebar_hit_target_at_pointer(&self) -> Option<SmithayTitlebarHitTarget> {
+            let (x, y) = self.pointer_location?;
+            self.titlebar_render_plan.iter().find_map(|item| {
+                if !layout_rect_contains(item.titlebar_rect, x, y) {
+                    return None;
+                }
+
+                let edge_width = f64::from((item.titlebar_rect.width * 0.15).clamp(12.0, 32.0));
+                let vertical_edge = f64::from((item.titlebar_rect.height * 0.4).clamp(8.0, 18.0));
+                let relative_x = x - f64::from(item.titlebar_rect.x);
+                let relative_y = y - f64::from(item.titlebar_rect.y);
+                let left = relative_x <= edge_width;
+                let right = relative_x >= f64::from(item.titlebar_rect.width) - edge_width;
+                let top = relative_y <= vertical_edge;
+                let bottom = relative_y >= f64::from(item.titlebar_rect.height) - vertical_edge;
+                let kind = if top && left {
+                    TitlebarHitKind::ResizeTopLeft
+                } else if top && right {
+                    TitlebarHitKind::ResizeTopRight
+                } else if bottom && left {
+                    TitlebarHitKind::ResizeBottomLeft
+                } else if bottom && right {
+                    TitlebarHitKind::ResizeBottomRight
+                } else if top {
+                    TitlebarHitKind::ResizeTop
+                } else if bottom {
+                    TitlebarHitKind::ResizeBottom
+                } else if left {
+                    TitlebarHitKind::ResizeLeft
+                } else if right {
+                    TitlebarHitKind::ResizeRight
+                } else {
+                    TitlebarHitKind::Move
+                };
+
+                Some(SmithayTitlebarHitTarget {
+                    window_id: item.window_id.clone(),
+                    kind,
+                })
+            })
+        }
+
+        pub fn begin_titlebar_interaction(&mut self, hit: &SmithayTitlebarHitTarget) -> bool {
+            if !self.is_floating_window(&hit.window_id) {
+                return false;
+            }
+            let Some(item) = self
+                .titlebar_render_plan
+                .iter()
+                .find(|item| item.window_id == hit.window_id)
+            else {
+                return false;
+            };
+            let Some(pointer_origin) = self.pointer_location else {
+                return false;
+            };
+
+            self.active_titlebar_interaction = Some(ActiveTitlebarInteraction {
+                window_id: hit.window_id.clone(),
+                kind: hit.kind,
+                pointer_origin,
+                initial_window_rect: item.window_rect,
+                titlebar_height: item.titlebar_rect.height,
+            });
+            true
+        }
+
+        pub fn update_titlebar_interaction(&mut self) {
+            let Some(interaction) = self.active_titlebar_interaction.clone() else {
+                return;
+            };
+            let Some(pointer) = self.pointer_location else {
+                return;
+            };
+
+            let dx = (pointer.0 - interaction.pointer_origin.0) as f32;
+            let dy = (pointer.1 - interaction.pointer_origin.1) as f32;
+            let mut rect = interaction.initial_window_rect;
+            match interaction.kind {
+                TitlebarHitKind::Move => {
+                    rect.x += dx;
+                    rect.y += dy;
+                }
+                TitlebarHitKind::ResizeTop => {
+                    rect.y += dy;
+                    rect.height -= dy;
+                }
+                TitlebarHitKind::ResizeBottom => {
+                    rect.height += dy;
+                }
+                TitlebarHitKind::ResizeLeft => {
+                    rect.x += dx;
+                    rect.width -= dx;
+                }
+                TitlebarHitKind::ResizeRight => {
+                    rect.width += dx;
+                }
+                TitlebarHitKind::ResizeTopLeft => {
+                    rect.x += dx;
+                    rect.width -= dx;
+                    rect.y += dy;
+                    rect.height -= dy;
+                }
+                TitlebarHitKind::ResizeTopRight => {
+                    rect.width += dx;
+                    rect.y += dy;
+                    rect.height -= dy;
+                }
+                TitlebarHitKind::ResizeBottomLeft => {
+                    rect.x += dx;
+                    rect.width -= dx;
+                    rect.height += dy;
+                }
+                TitlebarHitKind::ResizeBottomRight => {
+                    rect.width += dx;
+                    rect.height += dy;
+                }
+            }
+
+            rect.width = rect.width.max(160.0);
+            rect.height = rect.height.max(interaction.titlebar_height + 64.0);
+            if let Some(bounds) = self.active_output_bounds() {
+                rect = clamp_floating_rect(rect, bounds, interaction.titlebar_height + 64.0);
+            }
+            self.floating_window_overrides
+                .insert(interaction.window_id.clone(), rect);
+            for item in &mut self.titlebar_render_plan {
+                if item.window_id == interaction.window_id {
+                    item.window_rect = rect;
+                    item.titlebar_rect = LayoutRect {
+                        x: rect.x,
+                        y: rect.y,
+                        width: rect.width,
+                        height: item.titlebar_rect.height.min(rect.height.max(0.0)),
+                    };
+                }
+            }
+            for item in &mut self.window_render_plan {
+                if item.window_id == interaction.window_id {
+                    item.window_rect = rect;
+                }
+            }
+            self.needs_redraw = true;
+        }
+
+        pub fn end_titlebar_interaction(&mut self) -> Option<(WindowId, LayoutRect)> {
+            let interaction = self.active_titlebar_interaction.take()?;
+            let rect = self
+                .floating_window_overrides
+                .get(&interaction.window_id)
+                .copied()
+                .unwrap_or(interaction.initial_window_rect);
+            Some((interaction.window_id, rect))
+        }
+
+        pub fn has_active_titlebar_interaction(&self) -> bool {
+            self.active_titlebar_interaction.is_some()
+        }
+
+        pub fn focus_window_from_titlebar(&mut self, window_id: &WindowId) {
+            let Some(surface) = self
+                .xdg_shell_state
+                .toplevel_surfaces()
+                .iter()
+                .find(|surface| {
+                    let surface_id = smithay_surface_id(surface.wl_surface());
+                    self.toplevel_window_ids.get(&surface_id) == Some(window_id)
+                })
+                .cloned()
+            else {
+                return;
+            };
+
+            let serial = SERIAL_COUNTER.next_serial();
+            if let Some(keyboard) = self.seat.get_keyboard() {
+                keyboard.set_focus(self, Some(surface.wl_surface().clone()), serial);
+            }
+            self.queue_workspace_action(WmAction::FocusWindow {
+                window_id: window_id.clone(),
+            });
+        }
+
+        pub fn note_titlebar_pointer_request(
+            &mut self,
+            window_id: &WindowId,
+            kind: TitlebarHitKind,
+        ) {
+            let Some(surface_id) = self
+                .toplevel_window_ids
+                .iter()
+                .find(|(_, candidate)| *candidate == window_id)
+                .map(|(surface_id, _)| surface_id.clone())
+            else {
+                return;
+            };
+
+            let request_kind = match kind {
+                TitlebarHitKind::Move => "titlebar-move",
+                TitlebarHitKind::ResizeTop => "titlebar-resize-top",
+                TitlebarHitKind::ResizeBottom => "titlebar-resize-bottom",
+                TitlebarHitKind::ResizeLeft => "titlebar-resize-left",
+                TitlebarHitKind::ResizeRight => "titlebar-resize-right",
+                TitlebarHitKind::ResizeTopLeft => "titlebar-resize-top-left",
+                TitlebarHitKind::ResizeTopRight => "titlebar-resize-top-right",
+                TitlebarHitKind::ResizeBottomLeft => "titlebar-resize-bottom-left",
+                TitlebarHitKind::ResizeBottomRight => "titlebar-resize-bottom-right",
+            };
+            let snapshot = self.note_xdg_toplevel_request(surface_id.clone(), request_kind);
+            self.xdg_toplevel_requests.insert(surface_id, snapshot);
+        }
+
+        fn apply_window_decoration_policy(
+            &mut self,
+            surface_id: &str,
+            policy: &SmithayWindowDecorationPolicySnapshot,
+        ) {
+            let Some(surface) = self
+                .xdg_shell_state
+                .toplevel_surfaces()
+                .iter()
+                .find(|surface| smithay_surface_id(surface.wl_surface()) == surface_id)
+                .cloned()
+            else {
+                return;
+            };
+
+            let mode = if policy.decorations_visible {
+                zxdg_toplevel_decoration_v1::Mode::ServerSide
+            } else {
+                zxdg_toplevel_decoration_v1::Mode::ClientSide
+            };
+
+            surface.with_pending_state(|state| {
+                state.decoration_mode = Some(mode);
+            });
+
+            if surface.is_initial_configure_sent() {
+                surface.send_pending_configure();
+                let configure = self
+                    .xdg_toplevel_configures
+                    .get(surface_id)
+                    .cloned()
+                    .unwrap_or_else(default_xdg_toplevel_configure_snapshot);
+                self.note_xdg_toplevel_configure_sent(
+                    surface_id.to_owned(),
+                    configure.activated,
+                    configure.fullscreen,
+                    configure.maximized,
+                );
+            }
         }
 
         pub fn backend_surface_snapshots(&self) -> Vec<BackendSurfaceSnapshot> {
@@ -750,6 +1257,9 @@ mod imp {
                     self.xdg_toplevel_requests
                         .entry(surface_id.clone())
                         .or_insert_with(default_xdg_toplevel_request_snapshot);
+                    self.xdg_toplevel_decoration_policies
+                        .entry(surface_id.clone())
+                        .or_default();
                 }
                 BackendSurfaceSnapshot::Popup {
                     surface_id,
@@ -800,6 +1310,7 @@ mod imp {
                 Some(SmithayTrackedSurfaceKind::Toplevel)
             ) {
                 self.toplevel_window_ids.remove(surface_id);
+                self.xdg_toplevel_decoration_policies.remove(surface_id);
             }
 
             self.track_surface_loss_by_id(surface_id.to_owned());
@@ -1469,6 +1980,9 @@ mod imp {
                 surface_id.clone(),
                 xdg_toplevel_metadata_snapshot_for(surface),
             );
+            self.xdg_toplevel_decoration_policies
+                .entry(surface_id.clone())
+                .or_default();
             self.track_surface_snapshot(BackendSurfaceSnapshot::Window {
                 window_id,
                 surface_id,
@@ -1552,6 +2066,7 @@ mod imp {
         fn track_toplevel_surface_loss(&mut self, surface: &ToplevelSurface) {
             let surface_id = smithay_surface_id(surface.wl_surface());
             self.toplevel_window_ids.remove(&surface_id);
+            self.xdg_toplevel_decoration_policies.remove(&surface_id);
             self.track_surface_loss_by_id(surface_id);
         }
 
@@ -1563,6 +2078,8 @@ mod imp {
             if is_sync_subsurface(surface) {
                 return;
             }
+
+            self.needs_redraw = true;
 
             let root = root_surface(surface);
             let role = get_role(&root);
@@ -1743,24 +2260,35 @@ mod imp {
             let mut toplevels = self
                 .toplevel_window_ids
                 .iter()
-                .map(|(surface_id, window_id)| SmithayKnownToplevelSurface {
-                    surface_id: surface_id.clone(),
-                    window_id: window_id.clone(),
-                    configure: self
-                        .xdg_toplevel_configures
+                .map(|(surface_id, window_id)| {
+                    let decoration_policy = self
+                        .xdg_toplevel_decoration_policies
                         .get(surface_id)
                         .cloned()
-                        .unwrap_or_else(default_xdg_toplevel_configure_snapshot),
-                    metadata: self
+                        .unwrap_or_default();
+                    let metadata = self
                         .xdg_toplevel_metadata
                         .get(surface_id)
                         .cloned()
-                        .unwrap_or_else(default_xdg_toplevel_metadata_snapshot),
-                    requests: self
-                        .xdg_toplevel_requests
-                        .get(surface_id)
-                        .cloned()
-                        .unwrap_or_else(default_xdg_toplevel_request_snapshot),
+                        .unwrap_or_else(default_xdg_toplevel_metadata_snapshot);
+
+                    SmithayKnownToplevelSurface {
+                        surface_id: surface_id.clone(),
+                        window_id: window_id.clone(),
+                        titlebar: titlebar_render_snapshot(&decoration_policy, &metadata),
+                        decoration_policy,
+                        configure: self
+                            .xdg_toplevel_configures
+                            .get(surface_id)
+                            .cloned()
+                            .unwrap_or_else(default_xdg_toplevel_configure_snapshot),
+                        metadata,
+                        requests: self
+                            .xdg_toplevel_requests
+                            .get(surface_id)
+                            .cloned()
+                            .unwrap_or_else(default_xdg_toplevel_request_snapshot),
+                    }
                 })
                 .collect::<Vec<_>>();
             toplevels.sort_by(|left, right| left.surface_id.cmp(&right.surface_id));
@@ -1972,6 +2500,27 @@ mod imp {
         }
     }
 
+    fn titlebar_render_snapshot(
+        policy: &SmithayWindowDecorationPolicySnapshot,
+        metadata: &SmithayXdgToplevelMetadataSnapshot,
+    ) -> Option<SmithayTitlebarRenderSnapshot> {
+        if !policy.decorations_visible || !policy.titlebar_visible {
+            return None;
+        }
+
+        let title = metadata
+            .title
+            .clone()
+            .or_else(|| metadata.app_id.clone())
+            .unwrap_or_else(|| "Window".into());
+
+        Some(SmithayTitlebarRenderSnapshot {
+            title,
+            app_id: metadata.app_id.clone(),
+            style: policy.titlebar_style.clone(),
+        })
+    }
+
     fn default_xdg_popup_configure_snapshot() -> SmithayXdgPopupConfigureSnapshot {
         SmithayXdgPopupConfigureSnapshot {
             last_acked_serial: None,
@@ -2070,6 +2619,44 @@ mod imp {
         size: smithay::utils::Size<i32, smithay::utils::Logical>,
     ) -> Option<(i32, i32)> {
         ((size.w > 0) || (size.h > 0)).then_some((size.w, size.h))
+    }
+
+    fn layout_rect_contains(rect: LayoutRect, x: f64, y: f64) -> bool {
+        let left = f64::from(rect.x);
+        let top = f64::from(rect.y);
+        let right = left + f64::from(rect.width);
+        let bottom = top + f64::from(rect.height);
+        x >= left && x < right && y >= top && y < bottom
+    }
+
+    fn titlebar_cursor_name(kind: TitlebarHitKind) -> &'static str {
+        match kind {
+            TitlebarHitKind::Move => "named:Grab",
+            TitlebarHitKind::ResizeTop | TitlebarHitKind::ResizeBottom => "named:NsResize",
+            TitlebarHitKind::ResizeLeft | TitlebarHitKind::ResizeRight => "named:EwResize",
+            TitlebarHitKind::ResizeTopLeft | TitlebarHitKind::ResizeBottomRight => {
+                "named:NwseResize"
+            }
+            TitlebarHitKind::ResizeTopRight | TitlebarHitKind::ResizeBottomLeft => {
+                "named:NeswResize"
+            }
+        }
+    }
+
+    fn clamp_floating_rect(
+        mut rect: LayoutRect,
+        bounds: LayoutRect,
+        min_height: f32,
+    ) -> LayoutRect {
+        rect.width = rect.width.clamp(160.0, bounds.width.max(160.0));
+        rect.height = rect.height.clamp(min_height, bounds.height.max(min_height));
+        rect.x = rect
+            .x
+            .clamp(bounds.x, bounds.x + (bounds.width - rect.width).max(0.0));
+        rect.y = rect
+            .y
+            .clamp(bounds.y, bounds.y + (bounds.height - rect.height).max(0.0));
+        rect
     }
 
     fn xdg_popup_configure_snapshot_for(
@@ -2368,16 +2955,18 @@ mod imp {
 
         fn new_toplevel(&mut self, surface: ToplevelSurface) {
             self.track_toplevel_surface(surface.wl_surface());
+            let surface_id = smithay_surface_id(surface.wl_surface());
+            let policy = self
+                .xdg_toplevel_decoration_policies
+                .get(&surface_id)
+                .cloned()
+                .unwrap_or_default();
+            self.apply_window_decoration_policy(&surface_id, &policy);
             surface.with_pending_state(|state| {
                 state.states.set(xdg_toplevel::State::Activated);
             });
             let _ = surface.send_configure();
-            self.note_xdg_toplevel_configure_sent(
-                smithay_surface_id(surface.wl_surface()),
-                true,
-                false,
-                false,
-            );
+            self.note_xdg_toplevel_configure_sent(surface_id, true, false, false);
         }
 
         fn new_popup(&mut self, surface: PopupSurface, positioner: PositionerState) {
@@ -2632,6 +3221,42 @@ mod imp {
         }
     }
 
+    impl XdgDecorationHandler for SpidersSmithayState {
+        fn new_decoration(&mut self, toplevel: ToplevelSurface) {
+            let surface_id = smithay_surface_id(toplevel.wl_surface());
+            let policy = self
+                .xdg_toplevel_decoration_policies
+                .get(&surface_id)
+                .cloned()
+                .unwrap_or_default();
+            self.apply_window_decoration_policy(&surface_id, &policy);
+        }
+
+        fn request_mode(
+            &mut self,
+            toplevel: ToplevelSurface,
+            _mode: zxdg_toplevel_decoration_v1::Mode,
+        ) {
+            let surface_id = smithay_surface_id(toplevel.wl_surface());
+            let policy = self
+                .xdg_toplevel_decoration_policies
+                .get(&surface_id)
+                .cloned()
+                .unwrap_or_default();
+            self.apply_window_decoration_policy(&surface_id, &policy);
+        }
+
+        fn unset_mode(&mut self, toplevel: ToplevelSurface) {
+            let surface_id = smithay_surface_id(toplevel.wl_surface());
+            let policy = self
+                .xdg_toplevel_decoration_policies
+                .get(&surface_id)
+                .cloned()
+                .unwrap_or_default();
+            self.apply_window_decoration_policy(&surface_id, &policy);
+        }
+    }
+
     impl WlrLayerShellHandler for SpidersSmithayState {
         fn shell_state(&mut self) -> &mut WlrLayerShellState {
             &mut self.layer_shell_state
@@ -2730,9 +3355,11 @@ mod imp {
     delegate_compositor!(SpidersSmithayState);
     delegate_shm!(SpidersSmithayState);
     delegate_seat!(SpidersSmithayState);
+    delegate_xdg_decoration!(SpidersSmithayState);
     delegate_xdg_shell!(SpidersSmithayState);
     delegate_layer_shell!(SpidersSmithayState);
     delegate_output!(SpidersSmithayState);
+    delegate_presentation!(SpidersSmithayState);
     delegate_data_device!(SpidersSmithayState);
     delegate_primary_selection!(SpidersSmithayState);
     delegate_data_control!(SpidersSmithayState);
@@ -2742,6 +3369,160 @@ mod imp {
     #[cfg(test)]
     mod tests {
         use super::*;
+        use std::os::unix::net::UnixStream;
+        use std::sync::Arc;
+
+        use spiders_shared::ids::WorkspaceId;
+        use spiders_shared::wm::{OutputSnapshot, ShellKind, WindowSnapshot, WorkspaceSnapshot};
+        use wayland_client::protocol::{wl_compositor, wl_registry, wl_surface};
+        use wayland_client::{delegate_noop, Connection, Dispatch, EventQueue, QueueHandle, WEnum};
+        use wayland_protocols::xdg::decoration::zv1::client::{
+            zxdg_decoration_manager_v1, zxdg_toplevel_decoration_v1,
+        };
+        use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base};
+
+        #[derive(Debug, Default)]
+        struct DecorationClientState {
+            globals: Vec<(u32, String, u32)>,
+            decoration_modes: Vec<zxdg_toplevel_decoration_v1::Mode>,
+        }
+
+        impl Dispatch<wl_registry::WlRegistry, ()> for DecorationClientState {
+            fn event(
+                state: &mut Self,
+                _proxy: &wl_registry::WlRegistry,
+                event: wl_registry::Event,
+                _data: &(),
+                _conn: &Connection,
+                _qh: &QueueHandle<Self>,
+            ) {
+                if let wl_registry::Event::Global {
+                    name,
+                    interface,
+                    version,
+                } = event
+                {
+                    state.globals.push((name, interface, version));
+                }
+            }
+        }
+
+        impl Dispatch<wl_compositor::WlCompositor, ()> for DecorationClientState {
+            fn event(
+                _state: &mut Self,
+                _proxy: &wl_compositor::WlCompositor,
+                _event: wl_compositor::Event,
+                _data: &(),
+                _conn: &Connection,
+                _qh: &QueueHandle<Self>,
+            ) {
+            }
+        }
+
+        impl Dispatch<wl_surface::WlSurface, ()> for DecorationClientState {
+            fn event(
+                _state: &mut Self,
+                _proxy: &wl_surface::WlSurface,
+                _event: wl_surface::Event,
+                _data: &(),
+                _conn: &Connection,
+                _qh: &QueueHandle<Self>,
+            ) {
+            }
+        }
+
+        impl Dispatch<xdg_wm_base::XdgWmBase, ()> for DecorationClientState {
+            fn event(
+                _state: &mut Self,
+                proxy: &xdg_wm_base::XdgWmBase,
+                event: xdg_wm_base::Event,
+                _data: &(),
+                _conn: &Connection,
+                _qh: &QueueHandle<Self>,
+            ) {
+                if let xdg_wm_base::Event::Ping { serial } = event {
+                    proxy.pong(serial);
+                }
+            }
+        }
+
+        impl Dispatch<xdg_surface::XdgSurface, ()> for DecorationClientState {
+            fn event(
+                _state: &mut Self,
+                proxy: &xdg_surface::XdgSurface,
+                event: xdg_surface::Event,
+                _data: &(),
+                _conn: &Connection,
+                _qh: &QueueHandle<Self>,
+            ) {
+                if let xdg_surface::Event::Configure { serial } = event {
+                    proxy.ack_configure(serial);
+                }
+            }
+        }
+
+        impl Dispatch<xdg_toplevel::XdgToplevel, ()> for DecorationClientState {
+            fn event(
+                _state: &mut Self,
+                _proxy: &xdg_toplevel::XdgToplevel,
+                _event: xdg_toplevel::Event,
+                _data: &(),
+                _conn: &Connection,
+                _qh: &QueueHandle<Self>,
+            ) {
+            }
+        }
+
+        impl Dispatch<zxdg_decoration_manager_v1::ZxdgDecorationManagerV1, ()> for DecorationClientState {
+            fn event(
+                _state: &mut Self,
+                _proxy: &zxdg_decoration_manager_v1::ZxdgDecorationManagerV1,
+                _event: zxdg_decoration_manager_v1::Event,
+                _data: &(),
+                _conn: &Connection,
+                _qh: &QueueHandle<Self>,
+            ) {
+            }
+        }
+
+        impl Dispatch<zxdg_toplevel_decoration_v1::ZxdgToplevelDecorationV1, ()> for DecorationClientState {
+            fn event(
+                state: &mut Self,
+                _proxy: &zxdg_toplevel_decoration_v1::ZxdgToplevelDecorationV1,
+                event: zxdg_toplevel_decoration_v1::Event,
+                _data: &(),
+                _conn: &Connection,
+                _qh: &QueueHandle<Self>,
+            ) {
+                if let zxdg_toplevel_decoration_v1::Event::Configure { mode } = event {
+                    if let WEnum::Value(mode) = mode {
+                        state.decoration_modes.push(mode);
+                    }
+                }
+            }
+        }
+
+        delegate_noop!(DecorationClientState: ignore wayland_client::protocol::wl_callback::WlCallback);
+
+        fn flush_decoration_roundtrip(
+            conn: &Connection,
+            display: &mut Display<SpidersSmithayState>,
+            server_state: &mut SpidersSmithayState,
+            queue: &mut EventQueue<DecorationClientState>,
+            client_state: &mut DecorationClientState,
+        ) {
+            conn.flush().unwrap();
+            display.dispatch_clients(server_state).unwrap();
+            display.flush_clients().unwrap();
+
+            if let Some(guard) = conn.prepare_read() {
+                let _ = guard.read();
+            } else {
+                let _ = conn.backend().dispatch_inner_queue();
+            }
+
+            queue.dispatch_pending(client_state).unwrap();
+        }
 
         #[test]
         fn smithay_state_initializes_seat_capabilities() {
@@ -2828,6 +3609,399 @@ mod imp {
             assert_eq!(first, second);
             assert_eq!(first, WindowId::from("smithay-window-1"));
             assert_eq!(third, WindowId::from("smithay-window-2"));
+        }
+
+        #[test]
+        fn smithay_state_defaults_toplevel_decoration_policy_to_visible() {
+            let display = Display::<SpidersSmithayState>::new().unwrap();
+            let mut state = SpidersSmithayState::new(&display, "test-seat").unwrap();
+
+            state.track_test_surface_snapshot(BackendSurfaceSnapshot::Window {
+                surface_id: "wl-surface-decoration-default".into(),
+                window_id: WindowId::from("smithay-window-decoration-default"),
+                output_id: None,
+            });
+
+            let snapshot = state.snapshot();
+            let toplevel = snapshot
+                .known_surfaces
+                .toplevels
+                .iter()
+                .find(|surface| surface.surface_id == "wl-surface-decoration-default")
+                .unwrap();
+
+            assert!(toplevel.decoration_policy.decorations_visible);
+            assert!(toplevel.decoration_policy.titlebar_visible);
+        }
+
+        #[test]
+        fn smithay_state_refreshes_toplevel_decoration_policy_snapshot() {
+            let display = Display::<SpidersSmithayState>::new().unwrap();
+            let mut state = SpidersSmithayState::new(&display, "test-seat").unwrap();
+
+            state.track_test_surface_snapshot(BackendSurfaceSnapshot::Window {
+                surface_id: "wl-surface-decoration-1".into(),
+                window_id: WindowId::from("smithay-window-decoration-1"),
+                output_id: None,
+            });
+            state.refresh_window_decoration_policies(&[(
+                WindowId::from("smithay-window-decoration-1"),
+                SmithayWindowDecorationPolicySnapshot {
+                    decorations_visible: false,
+                    titlebar_visible: false,
+                    titlebar_style: TitlebarEffects {
+                        background: Some("#111".into()),
+                        ..TitlebarEffects::default()
+                    },
+                },
+            )]);
+
+            let snapshot = state.snapshot();
+            let toplevel = snapshot
+                .known_surfaces
+                .toplevels
+                .iter()
+                .find(|surface| surface.surface_id == "wl-surface-decoration-1")
+                .unwrap();
+
+            assert!(!toplevel.decoration_policy.decorations_visible);
+            assert!(!toplevel.decoration_policy.titlebar_visible);
+            assert_eq!(
+                toplevel
+                    .decoration_policy
+                    .titlebar_style
+                    .background
+                    .as_deref(),
+                Some("#111")
+            );
+            assert!(toplevel.titlebar.is_none());
+        }
+
+        #[test]
+        fn smithay_state_hides_titlebar_render_snapshot_when_decorations_are_disabled() {
+            let display = Display::<SpidersSmithayState>::new().unwrap();
+            let mut state = SpidersSmithayState::new(&display, "test-seat").unwrap();
+
+            state.track_test_surface_snapshot(BackendSurfaceSnapshot::Window {
+                surface_id: "wl-surface-titlebar-hidden".into(),
+                window_id: WindowId::from("smithay-window-titlebar-hidden"),
+                output_id: None,
+            });
+            state.set_test_toplevel_metadata_snapshot(
+                "wl-surface-titlebar-hidden",
+                SmithayXdgToplevelMetadataSnapshot {
+                    title: Some("Terminal".into()),
+                    app_id: Some("foot".into()),
+                    ..default_xdg_toplevel_metadata_snapshot()
+                },
+            );
+            state.refresh_window_decoration_policies(&[(
+                WindowId::from("smithay-window-titlebar-hidden"),
+                SmithayWindowDecorationPolicySnapshot {
+                    decorations_visible: false,
+                    titlebar_visible: false,
+                    titlebar_style: TitlebarEffects::default(),
+                },
+            )]);
+
+            let snapshot = state.snapshot();
+            let toplevel = snapshot
+                .known_surfaces
+                .toplevels
+                .iter()
+                .find(|surface| surface.surface_id == "wl-surface-titlebar-hidden")
+                .unwrap();
+
+            assert!(toplevel.titlebar.is_none());
+        }
+
+        #[test]
+        fn smithay_state_materializes_titlebar_render_snapshot_when_visible() {
+            let display = Display::<SpidersSmithayState>::new().unwrap();
+            let mut state = SpidersSmithayState::new(&display, "test-seat").unwrap();
+
+            state.track_test_surface_snapshot(BackendSurfaceSnapshot::Window {
+                surface_id: "wl-surface-titlebar-visible".into(),
+                window_id: WindowId::from("smithay-window-titlebar-visible"),
+                output_id: None,
+            });
+            state.set_test_toplevel_metadata_snapshot(
+                "wl-surface-titlebar-visible",
+                SmithayXdgToplevelMetadataSnapshot {
+                    title: Some("Terminal".into()),
+                    app_id: Some("foot".into()),
+                    ..default_xdg_toplevel_metadata_snapshot()
+                },
+            );
+            state.refresh_window_decoration_policies(&[(
+                WindowId::from("smithay-window-titlebar-visible"),
+                SmithayWindowDecorationPolicySnapshot {
+                    decorations_visible: true,
+                    titlebar_visible: true,
+                    titlebar_style: TitlebarEffects {
+                        background: Some("#222".into()),
+                        ..TitlebarEffects::default()
+                    },
+                },
+            )]);
+
+            let snapshot = state.snapshot();
+            let toplevel = snapshot
+                .known_surfaces
+                .toplevels
+                .iter()
+                .find(|surface| surface.surface_id == "wl-surface-titlebar-visible")
+                .unwrap();
+
+            assert_eq!(
+                toplevel
+                    .titlebar
+                    .as_ref()
+                    .map(|titlebar| titlebar.title.as_str()),
+                Some("Terminal")
+            );
+            assert_eq!(
+                toplevel
+                    .titlebar
+                    .as_ref()
+                    .and_then(|titlebar| titlebar.app_id.as_deref()),
+                Some("foot")
+            );
+            assert_eq!(
+                toplevel
+                    .titlebar
+                    .as_ref()
+                    .and_then(|titlebar| titlebar.style.background.as_deref()),
+                Some("#222")
+            );
+        }
+
+        #[test]
+        fn floating_titlebar_interaction_updates_render_plan_geometry() {
+            let display = Display::<SpidersSmithayState>::new().unwrap();
+            let mut state = SpidersSmithayState::new(&display, "test-seat").unwrap();
+            let window_id = WindowId::from("w1");
+            let base_item = TitlebarRenderItem {
+                window_id: window_id.clone(),
+                window_rect: LayoutRect {
+                    x: 10.0,
+                    y: 20.0,
+                    width: 300.0,
+                    height: 220.0,
+                },
+                titlebar_rect: LayoutRect {
+                    x: 10.0,
+                    y: 20.0,
+                    width: 300.0,
+                    height: 24.0,
+                },
+                title: "Terminal".into(),
+                app_id: Some("foot".into()),
+                focused: true,
+                style: TitlebarEffects::default(),
+            };
+
+            state.refresh_workspace_state(&StateSnapshot {
+                focused_window_id: Some(window_id.clone()),
+                current_output_id: Some(OutputId::from("out-1")),
+                current_workspace_id: Some(WorkspaceId::from("ws-1")),
+                outputs: vec![OutputSnapshot {
+                    id: OutputId::from("out-1"),
+                    name: "HDMI-A-1".into(),
+                    logical_width: 800,
+                    logical_height: 600,
+                    scale: 1,
+                    transform: OutputTransform::Normal,
+                    enabled: true,
+                    current_workspace_id: Some(WorkspaceId::from("ws-1")),
+                }],
+                workspaces: vec![WorkspaceSnapshot {
+                    id: WorkspaceId::from("ws-1"),
+                    name: "1".into(),
+                    output_id: Some(OutputId::from("out-1")),
+                    active_tags: vec!["1".into()],
+                    focused: true,
+                    visible: true,
+                    effective_layout: None,
+                }],
+                windows: vec![WindowSnapshot {
+                    id: window_id.clone(),
+                    shell: ShellKind::XdgToplevel,
+                    app_id: Some("foot".into()),
+                    title: Some("Terminal".into()),
+                    class: None,
+                    instance: None,
+                    role: None,
+                    window_type: None,
+                    mapped: true,
+                    floating: true,
+                    floating_rect: None,
+                    fullscreen: false,
+                    focused: true,
+                    urgent: false,
+                    output_id: Some(OutputId::from("out-1")),
+                    workspace_id: Some(WorkspaceId::from("ws-1")),
+                    tags: vec!["1".into()],
+                }],
+                visible_window_ids: vec![window_id.clone()],
+                tag_names: vec!["1".into()],
+            });
+            state.refresh_titlebar_render_plan(std::slice::from_ref(&base_item));
+
+            state.update_pointer_location(100.0, 30.0);
+            let hit = state.titlebar_hit_target_at_pointer().unwrap();
+            assert_eq!(hit.kind, TitlebarHitKind::Move);
+            assert!(state.begin_titlebar_interaction(&hit));
+
+            state.update_pointer_location(140.0, 70.0);
+            state.update_titlebar_interaction();
+            state.refresh_titlebar_render_plan(std::slice::from_ref(&base_item));
+
+            assert_eq!(state.current_titlebar_render_plan()[0].window_rect.x, 50.0);
+            assert_eq!(state.current_titlebar_render_plan()[0].window_rect.y, 60.0);
+        }
+
+        #[test]
+        fn titlebar_hit_target_reports_corner_resize_and_cursor_feedback() {
+            let display = Display::<SpidersSmithayState>::new().unwrap();
+            let mut state = SpidersSmithayState::new(&display, "test-seat").unwrap();
+
+            state.refresh_titlebar_render_plan(&[TitlebarRenderItem {
+                window_id: WindowId::from("w1"),
+                window_rect: LayoutRect {
+                    x: 10.0,
+                    y: 20.0,
+                    width: 300.0,
+                    height: 220.0,
+                },
+                titlebar_rect: LayoutRect {
+                    x: 10.0,
+                    y: 20.0,
+                    width: 300.0,
+                    height: 24.0,
+                },
+                title: "Terminal".into(),
+                app_id: Some("foot".into()),
+                focused: true,
+                style: TitlebarEffects::default(),
+            }]);
+
+            state.update_pointer_location(12.0, 22.0);
+            let hit = state.titlebar_hit_target_at_pointer().unwrap();
+            assert_eq!(hit.kind, TitlebarHitKind::ResizeTopLeft);
+
+            state.update_titlebar_cursor_feedback();
+            assert_eq!(state.snapshot().seat.cursor_image, "named:NwseResize");
+        }
+
+        #[test]
+        fn smithay_state_protocol_emits_client_side_decoration_mode_when_policy_disables_ssd() {
+            let mut display = Display::<SpidersSmithayState>::new().unwrap();
+            let mut handle = display.handle();
+            let mut state = SpidersSmithayState::new(&display, "test-seat").unwrap();
+
+            let (client_stream, server_stream) = UnixStream::pair().unwrap();
+            client_stream.set_nonblocking(true).unwrap();
+            server_stream.set_nonblocking(true).unwrap();
+            handle
+                .insert_client(server_stream, Arc::new(SmithayClientState::default()))
+                .unwrap();
+
+            let conn = Connection::from_socket(client_stream).unwrap();
+            let mut queue = conn.new_event_queue::<DecorationClientState>();
+            let qh = queue.handle();
+            let registry = conn.display().get_registry(&qh, ());
+            let mut client_state = DecorationClientState::default();
+
+            flush_decoration_roundtrip(
+                &conn,
+                &mut display,
+                &mut state,
+                &mut queue,
+                &mut client_state,
+            );
+
+            let compositor_name = client_state
+                .globals
+                .iter()
+                .find(|(_, interface, _)| interface == "wl_compositor")
+                .map(|(name, _, _)| *name)
+                .unwrap();
+            let wm_base_name = client_state
+                .globals
+                .iter()
+                .find(|(_, interface, _)| interface == "xdg_wm_base")
+                .map(|(name, _, _)| *name)
+                .unwrap();
+            let decoration_name = client_state
+                .globals
+                .iter()
+                .find(|(_, interface, _)| interface == "zxdg_decoration_manager_v1")
+                .map(|(name, _, _)| *name)
+                .unwrap();
+
+            let compositor =
+                registry.bind::<wl_compositor::WlCompositor, _, _>(compositor_name, 1, &qh, ());
+            let wm_base = registry.bind::<xdg_wm_base::XdgWmBase, _, _>(wm_base_name, 1, &qh, ());
+            let decoration_manager = registry
+                .bind::<zxdg_decoration_manager_v1::ZxdgDecorationManagerV1, _, _>(
+                    decoration_name,
+                    1,
+                    &qh,
+                    (),
+                );
+            let surface = compositor.create_surface(&qh, ());
+            let xdg_surface = wm_base.get_xdg_surface(&surface, &qh, ());
+            let toplevel = xdg_surface.get_toplevel(&qh, ());
+            let _decoration = decoration_manager.get_toplevel_decoration(&toplevel, &qh, ());
+
+            surface.commit();
+            flush_decoration_roundtrip(
+                &conn,
+                &mut display,
+                &mut state,
+                &mut queue,
+                &mut client_state,
+            );
+            flush_decoration_roundtrip(
+                &conn,
+                &mut display,
+                &mut state,
+                &mut queue,
+                &mut client_state,
+            );
+
+            let window_id = state.snapshot().known_surfaces.toplevels[0]
+                .window_id
+                .clone();
+            state.refresh_window_decoration_policies(&[(
+                window_id,
+                SmithayWindowDecorationPolicySnapshot {
+                    decorations_visible: false,
+                    titlebar_visible: false,
+                    titlebar_style: TitlebarEffects::default(),
+                },
+            )]);
+
+            flush_decoration_roundtrip(
+                &conn,
+                &mut display,
+                &mut state,
+                &mut queue,
+                &mut client_state,
+            );
+            flush_decoration_roundtrip(
+                &conn,
+                &mut display,
+                &mut state,
+                &mut queue,
+                &mut client_state,
+            );
+
+            assert!(client_state
+                .decoration_modes
+                .iter()
+                .any(|mode| *mode == zxdg_toplevel_decoration_v1::Mode::ClientSide));
         }
 
         #[test]
@@ -4526,8 +5700,9 @@ pub use imp::{
     SmithayKnownPopupSurface, SmithayKnownSurface, SmithayKnownSurfacesSnapshot,
     SmithayKnownToplevelSurface, SmithayKnownUnmanagedSurface,
     SmithayLayerSurfaceConfigureSnapshot, SmithayPopupParentSnapshot,
-    SmithaySelectionOfferSnapshot, SmithayStateError, SmithayStateSnapshot,
-    SmithaySurfaceRoleCounts, SmithayXdgPopupConfigureSnapshot,
-    SmithayXdgToplevelConfigureSnapshot, SmithayXdgToplevelMetadataSnapshot,
-    SmithayXdgToplevelRequestSnapshot, SpidersSmithayState,
+    SmithayRenderableToplevelSurface, SmithaySelectionOfferSnapshot, SmithayStateError,
+    SmithayStateSnapshot, SmithaySurfaceRoleCounts, SmithayTitlebarRenderSnapshot,
+    SmithayWindowDecorationPolicySnapshot, SmithayWindowRenderSnapshot,
+    SmithayXdgPopupConfigureSnapshot, SmithayXdgToplevelConfigureSnapshot,
+    SmithayXdgToplevelMetadataSnapshot, SmithayXdgToplevelRequestSnapshot, SpidersSmithayState,
 };

@@ -230,6 +230,8 @@ pub struct LayoutRequest {
     pub layout_name: Option<String>,
     pub root: ResolvedLayoutNode,
     pub stylesheet: String,
+    #[serde(default)]
+    pub effects_stylesheet: String,
     pub space: LayoutSpace,
 }
 

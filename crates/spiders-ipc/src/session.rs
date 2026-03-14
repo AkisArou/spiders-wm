@@ -10,7 +10,7 @@ pub struct IpcSession {
     subscription_topics: Vec<IpcSubscriptionTopic>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum IpcSessionHandleResult {
     Query {
         request_id: Option<String>,

@@ -8,6 +8,8 @@ publish.workspace = true
 [dependencies]
 anyhow.workspace = true
 boa_engine = "0.21.0"
+oxc = { version = "0.119.0", features = ["full"] }
+oxc_resolver = "11.19.1"
 serde.workspace = true
 serde_json.workspace = true
 spiders-layout = { path = "../spiders-layout" }

@@ -92,6 +92,14 @@ where
             let event = wm_state.toggle_focused_fullscreen()?;
             vec![event]
         }
+        WmAction::FocusWindow { window_id } => {
+            let event = wm_state.focus_window(window_id)?;
+            vec![event]
+        }
+        WmAction::SetFloatingWindowGeometry { window_id, rect } => {
+            let event = wm_state.set_floating_window_geometry(window_id, *rect)?;
+            vec![event]
+        }
         WmAction::FocusDirection { direction } => {
             let event = wm_state.focus_direction(*direction)?;
             vec![event]
@@ -160,11 +168,15 @@ mod tests {
                     name: "master-stack".into(),
                     module: "layouts/master-stack.js".into(),
                     stylesheet: String::new(),
+                    effects_stylesheet: String::new(),
+                    runtime_source: None,
                 },
                 LayoutDefinition {
                     name: "columns".into(),
                     module: "layouts/columns.js".into(),
                     stylesheet: String::new(),
+                    effects_stylesheet: String::new(),
+                    runtime_source: None,
                 },
             ],
             ..Config::default()
@@ -222,6 +234,7 @@ mod tests {
                     window_type: None,
                     mapped: true,
                     floating: false,
+                    floating_rect: None,
                     fullscreen: false,
                     focused: true,
                     urgent: false,
@@ -240,6 +253,7 @@ mod tests {
                     window_type: None,
                     mapped: true,
                     floating: false,
+                    floating_rect: None,
                     fullscreen: false,
                     focused: false,
                     urgent: false,
@@ -473,6 +487,7 @@ mod tests {
             window_type: None,
             mapped: true,
             floating: false,
+            floating_rect: None,
             fullscreen: false,
             focused: false,
             urgent: false,

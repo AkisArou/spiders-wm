@@ -15,14 +15,14 @@ pub enum DomainSessionError {
     Topology(#[from] TopologyError),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct DomainUpdate {
     pub events: Vec<CompositorEvent>,
     pub recomputed_layout: bool,
     pub topology: CompositorTopologyState,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct DomainSession {
     wm: WmState,
     topology: CompositorTopologyState,
@@ -338,6 +338,7 @@ mod tests {
                 window_type: None,
                 mapped: true,
                 floating: false,
+                floating_rect: None,
                 fullscreen: false,
                 focused: true,
                 urgent: false,
@@ -369,6 +370,7 @@ mod tests {
                 window_type: None,
                 mapped: false,
                 floating: false,
+                floating_rect: None,
                 fullscreen: false,
                 focused: false,
                 urgent: false,
@@ -396,6 +398,7 @@ mod tests {
             window_type: None,
             mapped: true,
             floating: false,
+            floating_rect: None,
             fullscreen: false,
             focused: false,
             urgent: false,

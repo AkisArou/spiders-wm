@@ -323,6 +323,7 @@ mod tests {
             window_type: None,
             mapped: true,
             floating: false,
+            floating_rect: None,
             fullscreen: false,
             focused: false,
             urgent: false,

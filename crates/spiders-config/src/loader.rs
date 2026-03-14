@@ -153,11 +153,14 @@ pub fn loaded_layout_definition(
     module: String,
     runtime_source: String,
 ) -> LoadedLayout {
+    let runtime_source = layout.runtime_source.clone().unwrap_or(runtime_source);
+
     LoadedLayout {
         selected: SelectedLayout {
             name: layout.name.clone(),
             module,
             stylesheet: layout.stylesheet.clone(),
+            effects_stylesheet: layout.effects_stylesheet.clone(),
         },
         runtime_source,
     }
@@ -200,6 +203,8 @@ mod tests {
                 name: "master-stack".into(),
                 module: "layouts/master-stack.js".into(),
                 stylesheet: "workspace { display: flex; }".into(),
+                effects_stylesheet: String::new(),
+                runtime_source: None,
             }],
             ..Config::default()
         };
@@ -224,6 +229,8 @@ mod tests {
                 name: "master-stack".into(),
                 module: "layouts/master-stack.js".into(),
                 stylesheet: "workspace { display: flex; }".into(),
+                effects_stylesheet: String::new(),
+                runtime_source: None,
             }],
             ..Config::default()
         };
@@ -251,6 +258,8 @@ mod tests {
             name: "master-stack".into(),
             module: module_path.to_string_lossy().into_owned(),
             stylesheet: "workspace { display: flex; }".into(),
+            effects_stylesheet: String::new(),
+            runtime_source: None,
         };
 
         let loaded = loader.load_definition(&definition).unwrap();
@@ -308,6 +317,8 @@ mod tests {
             name: "master-stack".into(),
             module: "layouts/master-stack.js".into(),
             stylesheet: String::new(),
+            effects_stylesheet: String::new(),
+            runtime_source: None,
         };
 
         let loaded = loader.load_definition(&definition).unwrap();
@@ -330,6 +341,8 @@ mod tests {
             name: "fallback".into(),
             module: "layouts/fallback.js".into(),
             stylesheet: String::new(),
+            effects_stylesheet: String::new(),
+            runtime_source: None,
         };
 
         let loaded = loader.load_definition(&definition).unwrap();
