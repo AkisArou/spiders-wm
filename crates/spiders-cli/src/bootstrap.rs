@@ -2,9 +2,9 @@
 pub struct CliBootstrap {
     pub paths: spiders_config::model::ConfigPaths,
     pub service: spiders_config::service::ConfigRuntimeService<
-        spiders_config::loader::RuntimeProjectLayoutSourceLoader,
-        spiders_config::runtime::BoaLayoutRuntime<
-            spiders_config::loader::RuntimeProjectLayoutSourceLoader,
+        spiders_runtime_js::loader::RuntimeProjectLayoutSourceLoader,
+        spiders_runtime_js::runtime::BoaLayoutRuntime<
+            spiders_runtime_js::loader::RuntimeProjectLayoutSourceLoader,
         >,
     >,
 }
@@ -13,7 +13,7 @@ pub fn build_bootstrap(
     options: spiders_config::model::ConfigDiscoveryOptions,
 ) -> Result<CliBootstrap, spiders_config::model::LayoutConfigError> {
     let paths = spiders_config::model::ConfigPaths::discover(options)?;
-    let resolver = spiders_config::loader::RuntimePathResolver::new(
+    let resolver = spiders_runtime_js::loader::RuntimePathResolver::new(
         paths
             .authored_config
             .parent()
@@ -26,9 +26,11 @@ pub fn build_bootstrap(
             .map(std::path::Path::to_path_buf)
             .unwrap_or_else(|| std::path::PathBuf::from(".")),
     );
-    let loader = spiders_config::loader::RuntimeProjectLayoutSourceLoader::new(resolver);
-    let runtime = spiders_config::runtime::BoaLayoutRuntime::with_loader(loader.clone());
-    let service = spiders_config::service::ConfigRuntimeService::new(loader, runtime);
+    let loader = spiders_runtime_js::loader::RuntimeProjectLayoutSourceLoader::new(resolver);
+    let runtime = spiders_runtime_js::runtime::BoaLayoutRuntime::with_loader(loader.clone());
+    let authored_runtime = spiders_runtime_js::authored::JsAuthoredConfigRuntime;
+    let service =
+        spiders_config::service::ConfigRuntimeService::new(loader, runtime, authored_runtime);
 
     Ok(CliBootstrap { paths, service })
 }

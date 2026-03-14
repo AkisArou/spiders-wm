@@ -14,7 +14,8 @@ spiders-compositor = { path = "../spiders-compositor" }
 spiders-effects = { path = "../spiders-effects" }
 spiders-ipc = { path = "../spiders-ipc" }
 spiders-layout = { path = "../spiders-layout" }
-spiders-runtime = { path = "../spiders-runtime" }
+spiders-runtime-js = { path = "../runtimes/js" }
+spiders-wm = { path = "../spiders-wm" }
 spiders-shared = { path = "../spiders-shared" }
 
 [[bin]]

@@ -1,6 +1,7 @@
+use spiders_shared::runtime::{LayoutSourceLoader, RuntimeError};
 use spiders_shared::wm::{LoadedLayout, SelectedLayout};
 
-use crate::model::{Config, LayoutConfigError, LayoutDefinition};
+use spiders_config::model::{Config, LayoutConfigError, LayoutDefinition};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimePathResolver {
@@ -40,14 +41,6 @@ pub enum LayoutLoadError {
     Config(#[from] LayoutConfigError),
     #[error("layout module `{module}` source is unavailable")]
     MissingRuntimeSource { module: String },
-}
-
-pub trait LayoutSourceLoader {
-    fn load_runtime_source(
-        &self,
-        config: &Config,
-        workspace: &spiders_shared::wm::WorkspaceSnapshot,
-    ) -> Result<Option<LoadedLayout>, LayoutLoadError>;
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -92,18 +85,24 @@ impl RuntimeProjectLayoutSourceLoader {
     }
 }
 
-impl LayoutSourceLoader for InlineLayoutSourceLoader {
+impl LayoutSourceLoader<Config> for InlineLayoutSourceLoader {
     fn load_runtime_source(
         &self,
         config: &Config,
         workspace: &spiders_shared::wm::WorkspaceSnapshot,
-    ) -> Result<Option<LoadedLayout>, LayoutLoadError> {
-        let Some(selected_layout) = config.resolve_selected_layout(workspace)? else {
+    ) -> Result<Option<LoadedLayout>, RuntimeError> {
+        let Some(selected_layout) =
+            config
+                .resolve_selected_layout(workspace)
+                .map_err(|error| RuntimeError::Config {
+                    message: error.to_string(),
+                })?
+        else {
             return Ok(None);
         };
 
-        Err(LayoutLoadError::MissingRuntimeSource {
-            module: selected_layout.module,
+        Err(RuntimeError::MissingRuntimeSource {
+            name: selected_layout.module,
         })
     }
 }
@@ -134,31 +133,39 @@ impl FsLayoutSourceLoader {
     }
 }
 
-impl LayoutSourceLoader for FsLayoutSourceLoader {
+impl LayoutSourceLoader<Config> for FsLayoutSourceLoader {
     fn load_runtime_source(
         &self,
         config: &Config,
         workspace: &spiders_shared::wm::WorkspaceSnapshot,
-    ) -> Result<Option<LoadedLayout>, LayoutLoadError> {
+    ) -> Result<Option<LoadedLayout>, RuntimeError> {
         let Some(layout) = config.selected_layout(workspace) else {
             return Ok(None);
         };
 
-        self.load_definition(layout).map(Some)
+        self.load_definition(layout)
+            .map(Some)
+            .map_err(|error| RuntimeError::Other {
+                message: error.to_string(),
+            })
     }
 }
 
-impl LayoutSourceLoader for RuntimeProjectLayoutSourceLoader {
+impl LayoutSourceLoader<Config> for RuntimeProjectLayoutSourceLoader {
     fn load_runtime_source(
         &self,
         config: &Config,
         workspace: &spiders_shared::wm::WorkspaceSnapshot,
-    ) -> Result<Option<LoadedLayout>, LayoutLoadError> {
+    ) -> Result<Option<LoadedLayout>, RuntimeError> {
         let Some(layout) = config.selected_layout(workspace) else {
             return Ok(None);
         };
 
-        self.load_definition(layout).map(Some)
+        self.load_definition(layout)
+            .map(Some)
+            .map_err(|error| RuntimeError::Other {
+                message: error.to_string(),
+            })
     }
 }
 
@@ -189,7 +196,7 @@ mod tests {
     use spiders_shared::wm::{LayoutRef, WorkspaceSnapshot};
 
     use super::*;
-    use crate::model::{Config, LayoutDefinition};
+    use spiders_config::model::{Config, LayoutDefinition};
 
     fn workspace() -> WorkspaceSnapshot {
         WorkspaceSnapshot {
@@ -206,7 +213,7 @@ mod tests {
     }
 
     fn fixture_root() -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures")
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../spiders-config/tests/fixtures")
     }
 
     #[test]
@@ -229,8 +236,8 @@ mod tests {
 
         assert_eq!(
             error,
-            LayoutLoadError::MissingRuntimeSource {
-                module: "layouts/master-stack.js".into(),
+            RuntimeError::MissingRuntimeSource {
+                name: "layouts/master-stack.js".into(),
             }
         );
     }
@@ -255,8 +262,8 @@ mod tests {
 
         assert_eq!(
             error,
-            LayoutLoadError::MissingRuntimeSource {
-                module: "layouts/master-stack.js".into(),
+            RuntimeError::MissingRuntimeSource {
+                name: "layouts/master-stack.js".into(),
             }
         );
     }

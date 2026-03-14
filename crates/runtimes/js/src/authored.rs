@@ -4,10 +4,11 @@ use std::path::Path;
 use boa_engine::{Context as JsContext, Source};
 use serde_json::Value;
 use spiders_shared::api::{FocusDirection, WmAction};
+use spiders_shared::runtime::{AuthoredConfigRuntime, RuntimeError};
 
 use crate::compile::{bundle_app, compile_app, AppBuildPlan};
 use crate::graph::{discover_project_apps, ModuleGraphBuilder};
-use crate::model::{
+use spiders_config::model::{
     Binding, Config, ConfigOptions, InputConfig, LayoutConfigError, LayoutDefinition,
     LayoutSelectionConfig, OutputConfig, WindowRule,
 };
@@ -84,6 +85,19 @@ pub fn load_authored_config(path: impl AsRef<Path>) -> Result<Config, LayoutConf
 
     config.layouts = layout_defs;
     Ok(config)
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub struct JsAuthoredConfigRuntime;
+
+impl AuthoredConfigRuntime for JsAuthoredConfigRuntime {
+    type Config = Config;
+
+    fn load_authored_config(&self, path: &Path) -> Result<Self::Config, RuntimeError> {
+        load_authored_config(path).map_err(|error| RuntimeError::Config {
+            message: error.to_string(),
+        })
+    }
 }
 
 fn evaluate_bundled_config(path: &Path, source: &str) -> Result<Value, LayoutConfigError> {
@@ -744,25 +758,5 @@ mod tests {
         assert!(config.layouts[0]
             .effects_stylesheet
             .contains("window { appearance: none; }"));
-    }
-
-    #[test]
-    fn debug_writes_master_stack_runtime_source_for_node() {
-        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test_config/config.ts");
-        let config = load_authored_config(path).unwrap();
-        let layout = config
-            .layouts
-            .iter()
-            .find(|layout| layout.name == "master-stack")
-            .unwrap();
-        let output_path = Path::new("/home/akisarou/OUTPUT.js");
-        std::fs::write(
-            output_path,
-            format!(
-                "module.exports = {}\n",
-                layout.runtime_source.as_deref().unwrap()
-            ),
-        )
-        .unwrap();
     }
 }

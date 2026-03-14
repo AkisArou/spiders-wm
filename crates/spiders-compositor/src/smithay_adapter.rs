@@ -2,8 +2,8 @@ use crate::backend::{
     BackendDiscoveryEvent, BackendOutputSnapshot, BackendSeatSnapshot, BackendSource,
     BackendSurfaceSnapshot, BackendTopologySnapshot,
 };
-use spiders_runtime::ControllerCommand;
 use spiders_shared::wm::OutputTransform;
+use spiders_wm::ControllerCommand;
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "kebab-case")]

@@ -2796,8 +2796,9 @@ dependencies = [
  "spiders-effects",
  "spiders-ipc",
  "spiders-layout",
- "spiders-runtime",
+ "spiders-runtime-js",
  "spiders-shared",
+ "spiders-wm",
 ]
 
 [[package]]
@@ -2812,8 +2813,9 @@ dependencies = [
  "spiders-effects",
  "spiders-ipc",
  "spiders-layout",
- "spiders-runtime",
+ "spiders-runtime-js",
  "spiders-shared",
+ "spiders-wm",
  "thiserror 2.0.18",
  "wayland-client",
  "wayland-protocols",
@@ -2824,9 +2826,6 @@ name = "spiders-config"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "boa_engine",
- "oxc",
- "oxc_resolver",
  "serde",
  "serde_json",
  "spiders-layout",
@@ -2864,11 +2863,16 @@ dependencies = [
 ]
 
 [[package]]
-name = "spiders-runtime"
+name = "spiders-runtime-js"
 version = "0.1.0"
 dependencies = [
+ "boa_engine",
+ "oxc",
+ "oxc_resolver",
  "serde",
  "serde_json",
+ "spiders-config",
+ "spiders-layout",
  "spiders-shared",
  "thiserror 2.0.18",
 ]
@@ -2879,6 +2883,16 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "spiders-wm"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "spiders-shared",
  "thiserror 2.0.18",
 ]
 

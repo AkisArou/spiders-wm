@@ -45,7 +45,7 @@ Workspace crates:
 - `crates/spiders-config`
 - `crates/spiders-effects`
 - `crates/spiders-ipc`
-- `crates/spiders-runtime`
+- `crates/spiders-wm`
 - `crates/spiders-compositor`
 - `crates/spiders-cli`
 

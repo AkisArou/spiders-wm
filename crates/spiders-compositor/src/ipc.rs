@@ -2,12 +2,13 @@ use std::collections::BTreeMap;
 use std::io::ErrorKind;
 use std::os::unix::net::UnixStream;
 
-use spiders_config::runtime::LayoutRuntime;
+use spiders_config::model::Config;
 use spiders_ipc::{
     bind_listener, IpcCodecError, IpcServeError, IpcServerHandleResult, IpcServerState,
     IpcTransportError, UnknownClientError,
 };
 use spiders_shared::api::{QueryRequest, QueryResponse};
+use spiders_shared::runtime::{LayoutRuntime, LayoutSourceLoader};
 
 use crate::actions::ActionError;
 use crate::controller::CompositorController;
@@ -93,8 +94,8 @@ impl CompositorIpcHost {
         controller: &mut CompositorController<L, R>,
     ) -> Result<spiders_ipc::IpcResponse, CompositorIpcError>
     where
-        L: spiders_config::loader::LayoutSourceLoader,
-        R: LayoutRuntime,
+        L: LayoutSourceLoader<Config>,
+        R: LayoutRuntime<Config = Config>,
     {
         let request = {
             let stream = self
@@ -192,8 +193,8 @@ impl CompositorIpcHost {
         controller: &mut CompositorController<L, R>,
     ) -> Result<IpcPumpReport, CompositorIpcError>
     where
-        L: spiders_config::loader::LayoutSourceLoader,
-        R: LayoutRuntime,
+        L: LayoutSourceLoader<Config>,
+        R: LayoutRuntime<Config = Config>,
     {
         let mut accepted_clients = 0;
 
@@ -316,14 +317,14 @@ mod tests {
     use std::os::unix::net::UnixStream;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use spiders_config::loader::{RuntimePathResolver, RuntimeProjectLayoutSourceLoader};
     use spiders_config::model::{Config, LayoutDefinition};
-    use spiders_config::runtime::BoaLayoutRuntime;
     use spiders_config::service::ConfigRuntimeService;
     use spiders_ipc::{
         recv_response, send_request, IpcClientMessage, IpcEnvelope, IpcServerMessage,
         IpcSubscriptionTopic,
     };
+    use spiders_runtime_js::loader::{RuntimePathResolver, RuntimeProjectLayoutSourceLoader};
+    use spiders_runtime_js::runtime::BoaLayoutRuntime;
     use spiders_shared::api::WmAction;
     use spiders_shared::ids::{OutputId, WindowId, WorkspaceId};
     use spiders_shared::wm::{
@@ -418,7 +419,11 @@ mod tests {
         let loader =
             RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
         let runtime = BoaLayoutRuntime::with_loader(loader.clone());
-        let service = ConfigRuntimeService::new(loader, runtime);
+        let service = ConfigRuntimeService::new(
+            loader,
+            runtime,
+            spiders_runtime_js::authored::JsAuthoredConfigRuntime,
+        );
 
         CompositorController::initialize(service, config(), state()).unwrap()
     }
@@ -544,7 +549,11 @@ mod tests {
         let loader =
             RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
         let runtime = BoaLayoutRuntime::with_loader(loader.clone());
-        let service = ConfigRuntimeService::new(loader, runtime);
+        let service = ConfigRuntimeService::new(
+            loader,
+            runtime,
+            spiders_runtime_js::authored::JsAuthoredConfigRuntime,
+        );
         let mut startup_state = state();
         startup_state.outputs.push(OutputSnapshot {
             id: OutputId::from("out-2"),

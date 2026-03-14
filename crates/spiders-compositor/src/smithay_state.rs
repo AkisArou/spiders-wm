@@ -66,13 +66,13 @@ mod imp {
     use smithay::wayland::shm::{ShmHandler, ShmState};
     use smithay::wayland::socket::ListeningSocketSource;
     use spiders_effects::TitlebarEffects;
-    use spiders_runtime::{
-        LayerExclusiveZone, LayerKeyboardInteractivity, LayerSurfaceMetadata, LayerSurfaceTier,
-    };
     use spiders_shared::api::WmAction;
     use spiders_shared::ids::{OutputId, WindowId};
     use spiders_shared::layout::LayoutRect;
     use spiders_shared::wm::{OutputTransform, StateSnapshot};
+    use spiders_wm::{
+        LayerExclusiveZone, LayerKeyboardInteractivity, LayerSurfaceMetadata, LayerSurfaceTier,
+    };
 
     use crate::smithay_workspace::{WorkspaceHandler, WorkspaceManagerState};
     use crate::titlebar::TitlebarRenderItem;

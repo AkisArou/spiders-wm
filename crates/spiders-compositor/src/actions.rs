@@ -1,6 +1,6 @@
 use spiders_config::model::Config;
-use spiders_config::runtime::LayoutRuntime;
 use spiders_shared::api::{CompositorEvent, LayoutCycleDirection, WmAction};
+use spiders_shared::runtime::{LayoutRuntime, LayoutSourceLoader};
 
 use crate::runtime::CompositorRuntimeState;
 use crate::wm::{WmState, WmStateError};
@@ -35,8 +35,8 @@ pub fn apply_action<L, R>(
     action: &WmAction,
 ) -> Result<ActionOutcome, ActionError>
 where
-    L: spiders_config::loader::LayoutSourceLoader,
-    R: LayoutRuntime,
+    L: LayoutSourceLoader<Config>,
+    R: LayoutRuntime<Config = Config>,
 {
     let mut recompute = false;
 
@@ -195,10 +195,10 @@ mod tests {
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use spiders_config::loader::{RuntimePathResolver, RuntimeProjectLayoutSourceLoader};
     use spiders_config::model::{Config, LayoutDefinition};
-    use spiders_config::runtime::BoaLayoutRuntime;
     use spiders_config::service::ConfigRuntimeService;
+    use spiders_runtime_js::loader::{RuntimePathResolver, RuntimeProjectLayoutSourceLoader};
+    use spiders_runtime_js::runtime::BoaLayoutRuntime;
     use spiders_shared::api::{CompositorEvent, FocusDirection, WmAction};
     use spiders_shared::ids::{OutputId, WindowId, WorkspaceId};
     use spiders_shared::wm::{
@@ -342,7 +342,11 @@ mod tests {
         let loader =
             RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
         let runtime = BoaLayoutRuntime::with_loader(loader.clone());
-        let service = ConfigRuntimeService::new(loader, runtime);
+        let service = ConfigRuntimeService::new(
+            loader,
+            runtime,
+            spiders_runtime_js::authored::JsAuthoredConfigRuntime,
+        );
 
         LayoutService
             .initialize_runtime_state(service, config(), state())

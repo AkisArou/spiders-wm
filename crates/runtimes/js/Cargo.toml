@@ -1,0 +1,17 @@
+[package]
+name = "spiders-runtime-js"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+boa_engine = "0.21.0"
+oxc = { version = "0.119.0", features = ["full"] }
+oxc_resolver = "11.19.1"
+serde.workspace = true
+serde_json.workspace = true
+spiders-config = { path = "../../spiders-config" }
+spiders-layout = { path = "../../spiders-layout" }
+spiders-shared = { path = "../../spiders-shared" }
+thiserror.workspace = true

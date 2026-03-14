@@ -1,9 +1,9 @@
 use spiders_config::model::Config;
-use spiders_config::runtime::LayoutRuntime;
 use spiders_config::service::ConfigRuntimeService;
-use spiders_runtime::{BootstrapEvent, LayerSurfaceMetadata, StartupRegistration};
 use spiders_shared::ids::{OutputId, WindowId};
+use spiders_shared::runtime::{LayoutRuntime, LayoutSourceLoader};
 use spiders_shared::wm::StateSnapshot;
+use spiders_wm::{BootstrapEvent, LayerSurfaceMetadata, StartupRegistration};
 
 use crate::session::CompositorSession;
 use crate::topology::{CompositorTopologyState, SurfaceState, TopologyError};
@@ -206,7 +206,7 @@ impl<L, R> CompositorApp<L, R> {
     }
 }
 
-impl<L: spiders_config::loader::LayoutSourceLoader, R: LayoutRuntime> CompositorApp<L, R> {
+impl<L: LayoutSourceLoader<Config>, R: LayoutRuntime<Config = Config>> CompositorApp<L, R> {
     pub fn initialize(
         layout_service: LayoutService,
         runtime_service: ConfigRuntimeService<L, R>,
@@ -254,17 +254,17 @@ mod tests {
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use spiders_config::loader::{RuntimePathResolver, RuntimeProjectLayoutSourceLoader};
     use spiders_config::model::{Config, LayoutDefinition};
-    use spiders_config::runtime::BoaLayoutRuntime;
     use spiders_config::service::ConfigRuntimeService;
-    use spiders_runtime::LayerSurfaceTier;
-    use spiders_runtime::{LayerExclusiveZone, LayerKeyboardInteractivity};
+    use spiders_runtime_js::loader::{RuntimePathResolver, RuntimeProjectLayoutSourceLoader};
+    use spiders_runtime_js::runtime::BoaLayoutRuntime;
     use spiders_shared::ids::{OutputId, WindowId, WorkspaceId};
     use spiders_shared::wm::{
         LayoutRef, OutputSnapshot, OutputTransform, ShellKind, StateSnapshot, WindowSnapshot,
         WorkspaceSnapshot,
     };
+    use spiders_wm::LayerSurfaceTier;
+    use spiders_wm::{LayerExclusiveZone, LayerKeyboardInteractivity};
 
     use super::*;
 
@@ -351,7 +351,11 @@ mod tests {
         let loader =
             RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
         let runtime = BoaLayoutRuntime::with_loader(loader.clone());
-        let service = ConfigRuntimeService::new(loader, runtime);
+        let service = ConfigRuntimeService::new(
+            loader,
+            runtime,
+            spiders_runtime_js::authored::JsAuthoredConfigRuntime,
+        );
 
         let app = CompositorApp::initialize(LayoutService, service, config(), state()).unwrap();
 
@@ -390,7 +394,11 @@ mod tests {
         let loader =
             RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
         let runtime = BoaLayoutRuntime::with_loader(loader.clone());
-        let service = ConfigRuntimeService::new(loader, runtime);
+        let service = ConfigRuntimeService::new(
+            loader,
+            runtime,
+            spiders_runtime_js::authored::JsAuthoredConfigRuntime,
+        );
         let mut snapshot = state();
         snapshot.outputs.push(OutputSnapshot {
             id: OutputId::from("out-2"),
@@ -444,7 +452,11 @@ mod tests {
         let loader =
             RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
         let runtime = BoaLayoutRuntime::with_loader(loader.clone());
-        let service = ConfigRuntimeService::new(loader, runtime);
+        let service = ConfigRuntimeService::new(
+            loader,
+            runtime,
+            spiders_runtime_js::authored::JsAuthoredConfigRuntime,
+        );
 
         let mut app = CompositorApp::initialize(LayoutService, service, config(), state()).unwrap();
         app.session.register_output_snapshot(OutputSnapshot {
@@ -524,7 +536,11 @@ mod tests {
         let loader =
             RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
         let runtime = BoaLayoutRuntime::with_loader(loader.clone());
-        let service = ConfigRuntimeService::new(loader, runtime);
+        let service = ConfigRuntimeService::new(
+            loader,
+            runtime,
+            spiders_runtime_js::authored::JsAuthoredConfigRuntime,
+        );
 
         let mut app = CompositorApp::initialize(LayoutService, service, config(), state()).unwrap();
         app.session.register_output_snapshot(OutputSnapshot {
@@ -578,7 +594,11 @@ mod tests {
         let loader =
             RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
         let runtime = BoaLayoutRuntime::with_loader(loader.clone());
-        let service = ConfigRuntimeService::new(loader, runtime);
+        let service = ConfigRuntimeService::new(
+            loader,
+            runtime,
+            spiders_runtime_js::authored::JsAuthoredConfigRuntime,
+        );
 
         let mut app = CompositorApp::initialize(LayoutService, service, config(), state()).unwrap();
         app.session.register_output_snapshot(OutputSnapshot {
@@ -626,9 +646,9 @@ mod tests {
             output_id: OutputId::from("out-2"),
             metadata: LayerSurfaceMetadata {
                 namespace: String::new(),
-                tier: spiders_runtime::LayerSurfaceTier::Background,
-                keyboard_interactivity: spiders_runtime::LayerKeyboardInteractivity::None,
-                exclusive_zone: spiders_runtime::LayerExclusiveZone::Neutral,
+                tier: spiders_wm::LayerSurfaceTier::Background,
+                keyboard_interactivity: spiders_wm::LayerKeyboardInteractivity::None,
+                exclusive_zone: spiders_wm::LayerExclusiveZone::Neutral,
             },
         })
         .unwrap();
@@ -691,7 +711,11 @@ mod tests {
         let loader =
             RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
         let runtime = BoaLayoutRuntime::with_loader(loader.clone());
-        let service = ConfigRuntimeService::new(loader, runtime);
+        let service = ConfigRuntimeService::new(
+            loader,
+            runtime,
+            spiders_runtime_js::authored::JsAuthoredConfigRuntime,
+        );
 
         let mut app = CompositorApp::initialize(LayoutService, service, config(), state()).unwrap();
         app.apply_bootstrap_event(BootstrapEvent::RegisterSeat {

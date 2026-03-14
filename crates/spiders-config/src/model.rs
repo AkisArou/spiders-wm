@@ -233,10 +233,6 @@ impl Config {
         })
     }
 
-    pub fn from_authored_path(path: impl AsRef<Path>) -> Result<Self, LayoutConfigError> {
-        crate::authored::load_authored_config(path)
-    }
-
     pub fn layout_by_name(&self, name: &str) -> Option<&LayoutDefinition> {
         self.layouts.iter().find(|layout| layout.name == name)
     }

@@ -38,13 +38,13 @@ mod imp {
     use smithay::reexports::wayland_server::Display;
     use smithay::utils::{Clock, Monotonic, Point, Rectangle, Transform, SERIAL_COUNTER};
     use smithay::wayland::presentation::Refresh;
-    use spiders_runtime::{
-        CompositorTopologyState, ControllerCommand, ControllerReport, OutputState, SeatState,
-        SurfaceState,
-    };
     use spiders_shared::api::WmAction;
     use spiders_shared::ids::OutputId;
     use spiders_shared::wm::OutputSnapshot;
+    use spiders_wm::{
+        CompositorTopologyState, ControllerCommand, ControllerReport, OutputState, SeatState,
+        SurfaceState,
+    };
 
     use crate::smithay_adapter::{SmithayAdapter, SmithayAdapterEvent, SmithaySeatDescriptor};
     use crate::smithay_state::{
@@ -148,7 +148,7 @@ mod imp {
 
     impl<L, R> SmithayBootstrap<L, R>
     where
-        L: spiders_config::loader::LayoutSourceLoader,
+        L: LayoutSourceLoader<Config>,
         R: spiders_config::runtime::LayoutRuntime,
     {
         pub fn run_startup_cycle(&mut self) -> Result<(), SmithayRuntimeError> {
@@ -1062,7 +1062,7 @@ mod imp {
         controller: &crate::CompositorController<L, R>,
         state: &mut SpidersSmithayState,
     ) where
-        L: spiders_config::loader::LayoutSourceLoader,
+        L: LayoutSourceLoader<Config>,
         R: spiders_config::runtime::LayoutRuntime,
     {
         let snapshot = controller.state_snapshot();
@@ -1116,7 +1116,7 @@ mod imp {
         controller: &crate::CompositorController<L, R>,
         state: &mut SpidersSmithayState,
     ) where
-        L: spiders_config::loader::LayoutSourceLoader,
+        L: LayoutSourceLoader<Config>,
         R: spiders_config::runtime::LayoutRuntime,
     {
         refresh_workspace_export_from_controller(controller, state);
@@ -1128,7 +1128,7 @@ mod imp {
         state: spiders_shared::wm::StateSnapshot,
     ) -> Result<crate::CompositorController<L, R>, SmithayRuntimeError>
     where
-        L: spiders_config::loader::LayoutSourceLoader,
+        L: LayoutSourceLoader<Config>,
         R: spiders_config::runtime::LayoutRuntime,
     {
         crate::CompositorController::initialize(runtime_service, config, state)
@@ -1141,7 +1141,7 @@ mod imp {
         state: spiders_shared::wm::StateSnapshot,
     ) -> Result<SmithayBootstrap<L, R>, SmithayRuntimeError>
     where
-        L: spiders_config::loader::LayoutSourceLoader,
+        L: LayoutSourceLoader<Config>,
         R: spiders_config::runtime::LayoutRuntime,
     {
         let mut controller = initialize_winit_controller(runtime_service, config, state)?;
@@ -1158,7 +1158,7 @@ mod imp {
         controller: &mut crate::CompositorController<L, R>,
     ) -> Result<(SmithayWinitRuntime<'static>, SmithayStartupReport), SmithayRuntimeError>
     where
-        L: spiders_config::loader::LayoutSourceLoader,
+        L: LayoutSourceLoader<Config>,
         R: spiders_config::runtime::LayoutRuntime,
     {
         let event_loop = EventLoop::<SpidersSmithayState>::try_new()
@@ -1275,17 +1275,17 @@ mod imp {
         use std::fs;
         use std::time::{SystemTime, UNIX_EPOCH};
 
-        use spiders_config::loader::{RuntimePathResolver, RuntimeProjectLayoutSourceLoader};
         use spiders_config::model::{Config, LayoutDefinition};
-        use spiders_config::runtime::BoaLayoutRuntime;
         use spiders_config::service::ConfigRuntimeService;
-        use spiders_runtime::{
-            ControllerPhase, LayerExclusiveZone, LayerKeyboardInteractivity, LayerSurfaceMetadata,
-            LayerSurfaceTier, SurfaceRole,
-        };
+        use spiders_runtime_js::loader::{RuntimePathResolver, RuntimeProjectLayoutSourceLoader};
+        use spiders_runtime_js::runtime::BoaLayoutRuntime;
         use spiders_shared::ids::{OutputId, WindowId, WorkspaceId};
         use spiders_shared::wm::{
             LayoutRef, OutputSnapshot, OutputTransform, StateSnapshot, WorkspaceSnapshot,
+        };
+        use spiders_wm::{
+            ControllerPhase, LayerExclusiveZone, LayerKeyboardInteractivity, LayerSurfaceMetadata,
+            LayerSurfaceTier, SurfaceRole,
         };
 
         use super::*;

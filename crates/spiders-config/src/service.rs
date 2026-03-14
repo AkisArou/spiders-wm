@@ -1,17 +1,16 @@
 use std::collections::BTreeMap;
 
+use spiders_shared::runtime::{
+    AuthoredConfigRuntime, LayoutRuntime, LayoutSourceLoader, RuntimeError,
+};
 use spiders_shared::wm::{LayoutEvaluationContext, LoadedLayout};
 
-use crate::loader::{LayoutLoadError, LayoutSourceLoader};
 use crate::model::{Config, ConfigDiscoveryOptions, ConfigPaths, LayoutConfigError};
-use crate::runtime::{LayoutRuntime, LayoutRuntimeError};
 
 #[derive(Debug, thiserror::Error, PartialEq)]
 pub enum ConfigRuntimeServiceError {
     #[error(transparent)]
-    Load(#[from] LayoutLoadError),
-    #[error(transparent)]
-    Runtime(#[from] LayoutRuntimeError),
+    Runtime(#[from] RuntimeError),
     #[error(transparent)]
     Config(#[from] LayoutConfigError),
 }
@@ -20,20 +19,29 @@ pub enum ConfigRuntimeServiceError {
 pub struct ConfigRuntimeService<L, R> {
     loader: L,
     runtime: R,
+    authored_runtime: Box<dyn AuthoredConfigRuntime<Config = Config>>,
     cache: BTreeMap<String, LoadedLayout>,
 }
 
 impl<L, R> ConfigRuntimeService<L, R> {
-    pub fn new(loader: L, runtime: R) -> Self {
+    pub fn new<A>(loader: L, runtime: R, authored_runtime: A) -> Self
+    where
+        A: AuthoredConfigRuntime<Config = Config> + 'static,
+    {
         Self {
             loader,
             runtime,
+            authored_runtime: Box::new(authored_runtime),
             cache: BTreeMap::new(),
         }
     }
 }
 
-impl<L: LayoutSourceLoader, R: LayoutRuntime> ConfigRuntimeService<L, R> {
+impl<L, R> ConfigRuntimeService<L, R>
+where
+    L: LayoutSourceLoader<Config>,
+    R: LayoutRuntime<Config = Config>,
+{
     pub fn discover_config_paths(
         &self,
         options: ConfigDiscoveryOptions,
@@ -45,7 +53,9 @@ impl<L: LayoutSourceLoader, R: LayoutRuntime> ConfigRuntimeService<L, R> {
         if paths.runtime_config.exists() {
             Ok(Config::from_path(&paths.runtime_config)?)
         } else {
-            Ok(Config::from_authored_path(&paths.authored_config)?)
+            Ok(self
+                .authored_runtime
+                .load_authored_config(&paths.authored_config)?)
         }
     }
 
@@ -129,14 +139,119 @@ mod tests {
     use std::fs;
 
     use spiders_shared::ids::{OutputId, WorkspaceId};
+    use spiders_shared::layout::SourceLayoutNode;
+    use spiders_shared::runtime::{
+        AuthoredConfigRuntime, LayoutModuleContract, LayoutRuntime, LayoutSourceLoader,
+        RuntimeError,
+    };
     use spiders_shared::wm::{
-        LayoutRef, OutputSnapshot, OutputTransform, StateSnapshot, WorkspaceSnapshot,
+        LayoutRef, LoadedLayout, OutputSnapshot, OutputTransform, SelectedLayout, StateSnapshot,
+        WorkspaceSnapshot,
     };
 
     use super::*;
-    use crate::loader::{RuntimePathResolver, RuntimeProjectLayoutSourceLoader};
     use crate::model::{Config, ConfigDiscoveryOptions, LayoutDefinition};
-    use crate::runtime::BoaLayoutRuntime;
+
+    #[derive(Debug, Clone)]
+    struct StubLoader {
+        loaded: Option<LoadedLayout>,
+        error_message: Option<String>,
+    }
+
+    impl LayoutSourceLoader<Config> for StubLoader {
+        fn load_runtime_source(
+            &self,
+            _config: &Config,
+            _workspace: &WorkspaceSnapshot,
+        ) -> Result<Option<LoadedLayout>, RuntimeError> {
+            if let Some(message) = &self.error_message {
+                return Err(RuntimeError::Other {
+                    message: message.clone(),
+                });
+            }
+
+            Ok(self.loaded.clone())
+        }
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    struct StubRuntime;
+
+    impl LayoutRuntime for StubRuntime {
+        type Config = Config;
+
+        fn selected_layout(
+            &self,
+            config: &Self::Config,
+            workspace: &WorkspaceSnapshot,
+        ) -> Result<Option<SelectedLayout>, RuntimeError> {
+            config
+                .resolve_selected_layout(workspace)
+                .map_err(|error| RuntimeError::Config {
+                    message: error.to_string(),
+                })
+        }
+
+        fn load_selected_layout(
+            &self,
+            _config: &Self::Config,
+            _workspace: &WorkspaceSnapshot,
+        ) -> Result<Option<LoadedLayout>, RuntimeError> {
+            Ok(None)
+        }
+
+        fn build_context(
+            &self,
+            state: &StateSnapshot,
+            workspace: &WorkspaceSnapshot,
+            selected_layout: Option<SelectedLayout>,
+        ) -> spiders_shared::wm::LayoutEvaluationContext {
+            state.layout_context(workspace, selected_layout)
+        }
+
+        fn evaluate_layout(
+            &self,
+            _loaded_layout: &LoadedLayout,
+            _context: &spiders_shared::wm::LayoutEvaluationContext,
+        ) -> Result<SourceLayoutNode, RuntimeError> {
+            Ok(SourceLayoutNode::Workspace {
+                meta: Default::default(),
+                children: vec![],
+            })
+        }
+
+        fn contract(&self) -> LayoutModuleContract {
+            LayoutModuleContract::default()
+        }
+    }
+
+    #[derive(Debug, Clone, Default)]
+    struct StubAuthoredRuntime {
+        config: Config,
+    }
+
+    impl AuthoredConfigRuntime for StubAuthoredRuntime {
+        type Config = Config;
+
+        fn load_authored_config(
+            &self,
+            _path: &std::path::Path,
+        ) -> Result<Self::Config, RuntimeError> {
+            Ok(self.config.clone())
+        }
+    }
+
+    fn loaded_layout(name: &str, module: &str) -> LoadedLayout {
+        LoadedLayout {
+            selected: SelectedLayout {
+                name: name.into(),
+                module: module.into(),
+                stylesheet: String::new(),
+                effects_stylesheet: String::new(),
+            },
+            runtime_source: "ctx => ({ type: 'workspace', children: [] })".into(),
+        }
+    }
 
     fn workspace() -> WorkspaceSnapshot {
         WorkspaceSnapshot {
@@ -178,19 +293,12 @@ mod tests {
 
     #[test]
     fn runtime_service_loads_and_caches_runtime_artifact() {
-        let temp_dir = std::env::temp_dir();
-        let project_root = temp_dir.join("spiders-service-project");
-        let runtime_root = temp_dir.join("spiders-service-runtime");
-        let _ = fs::create_dir_all(runtime_root.join("layouts"));
-        let module_path = runtime_root.join("layouts/master-stack.js");
-        fs::write(&module_path, "ctx => ({ type: 'workspace', children: [] })").unwrap();
-
-        let loader = RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(
-            &project_root,
-            &runtime_root,
-        ));
-        let runtime = BoaLayoutRuntime::with_loader(loader.clone());
-        let mut service = ConfigRuntimeService::new(loader, runtime);
+        let loader = StubLoader {
+            loaded: Some(loaded_layout("master-stack", "layouts/master-stack.js")),
+            error_message: None,
+        };
+        let mut service =
+            ConfigRuntimeService::new(loader, StubRuntime, StubAuthoredRuntime::default());
         let config = Config {
             layouts: vec![LayoutDefinition {
                 name: "master-stack".into(),
@@ -209,29 +317,16 @@ mod tests {
 
         assert_eq!(loaded.selected.name, "master-stack");
         assert!(service.cache().contains_key("master-stack"));
-
-        let _ = fs::remove_file(module_path);
     }
 
     #[test]
     fn runtime_service_evaluates_loaded_layout_for_workspace() {
-        let temp_dir = std::env::temp_dir();
-        let project_root = temp_dir.join("spiders-service-project-eval");
-        let runtime_root = temp_dir.join("spiders-service-runtime-eval");
-        let _ = fs::create_dir_all(runtime_root.join("layouts"));
-        let module_path = runtime_root.join("layouts/master-stack.js");
-        fs::write(
-            &module_path,
-            "ctx => ({ type: 'workspace', children: [{ type: 'window', id: 'main' }] })",
-        )
-        .unwrap();
-
-        let loader = RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(
-            &project_root,
-            &runtime_root,
-        ));
-        let runtime = BoaLayoutRuntime::with_loader(loader.clone());
-        let mut service = ConfigRuntimeService::new(loader, runtime);
+        let loader = StubLoader {
+            loaded: Some(loaded_layout("master-stack", "layouts/master-stack.js")),
+            error_message: None,
+        };
+        let mut service =
+            ConfigRuntimeService::new(loader, StubRuntime, StubAuthoredRuntime::default());
         let config = Config {
             layouts: vec![LayoutDefinition {
                 name: "master-stack".into(),
@@ -253,8 +348,6 @@ mod tests {
             evaluated.layout,
             spiders_shared::layout::SourceLayoutNode::Workspace { .. }
         ));
-
-        let _ = fs::remove_file(module_path);
     }
 
     #[test]
@@ -267,9 +360,14 @@ mod tests {
         )
         .unwrap();
 
-        let loader = RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", "."));
-        let runtime = BoaLayoutRuntime::with_loader(loader.clone());
-        let service: ConfigRuntimeService<_, _> = ConfigRuntimeService::new(loader, runtime);
+        let service: ConfigRuntimeService<_, _> = ConfigRuntimeService::new(
+            StubLoader {
+                loaded: None,
+                error_message: None,
+            },
+            StubRuntime,
+            StubAuthoredRuntime::default(),
+        );
         let config = service
             .load_config(&ConfigPaths::new("unused", &runtime_config_path))
             .unwrap();
@@ -289,9 +387,14 @@ mod tests {
         let _ = fs::create_dir_all(&data_dir);
         fs::write(config_dir.join("config.ts"), "export default {};").unwrap();
 
-        let loader = RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", "."));
-        let runtime = BoaLayoutRuntime::with_loader(loader.clone());
-        let service: ConfigRuntimeService<_, _> = ConfigRuntimeService::new(loader, runtime);
+        let service: ConfigRuntimeService<_, _> = ConfigRuntimeService::new(
+            StubLoader {
+                loaded: None,
+                error_message: None,
+            },
+            StubRuntime,
+            StubAuthoredRuntime::default(),
+        );
         let paths = service
             .discover_config_paths(ConfigDiscoveryOptions {
                 home_dir: Some(home_dir.clone()),
@@ -311,9 +414,16 @@ mod tests {
 
     #[test]
     fn runtime_service_reports_missing_layout_module_sources() {
-        let loader = RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", "."));
-        let runtime = BoaLayoutRuntime::with_loader(loader.clone());
-        let service: ConfigRuntimeService<_, _> = ConfigRuntimeService::new(loader, runtime);
+        let service: ConfigRuntimeService<_, _> = ConfigRuntimeService::new(
+            StubLoader {
+                loaded: None,
+                error_message: Some(
+                    "layout module `layouts/missing.js` source is unavailable".into(),
+                ),
+            },
+            StubRuntime,
+            StubAuthoredRuntime::default(),
+        );
         let config = Config {
             layouts: vec![LayoutDefinition {
                 name: "missing".into(),
@@ -334,40 +444,29 @@ mod tests {
     #[test]
     fn runtime_service_loads_authored_config_when_runtime_json_is_missing() {
         let project_root = std::env::temp_dir().join("spiders-service-authored-config");
-        let _ = fs::create_dir_all(project_root.join("config"));
-        let _ = fs::create_dir_all(project_root.join("layouts/master-stack"));
-        fs::write(
-            project_root.join("config.ts"),
-            r#"
-                import { bindings } from "./config/bindings";
-                export default {
-                  tags: ["1"],
-                  bindings,
-                  layouts: { default: "master-stack" },
-                };
-            "#,
-        )
-        .unwrap();
-        fs::write(
-            project_root.join("config/bindings.ts"),
-            r#"
-                import * as actions from "spider-wm/actions";
-                export const bindings = {
-                  mod: "alt",
-                  entries: [{ bind: ["mod", "Return"], action: actions.spawn("foot") }],
-                };
-            "#,
-        )
-        .unwrap();
-        fs::write(
-            project_root.join("layouts/master-stack/index.tsx"),
-            "export default function layout() { return { type: 'workspace', children: [] }; }",
-        )
-        .unwrap();
+        let authored_config = Config {
+            tags: vec!["1".into()],
+            bindings: vec![],
+            layouts: vec![LayoutDefinition {
+                name: "master-stack".into(),
+                module: "layouts/master-stack.bundle.js".into(),
+                stylesheet: String::new(),
+                effects_stylesheet: String::new(),
+                runtime_source: Some("ctx => ({ type: 'workspace', children: [] })".into()),
+            }],
+            ..Config::default()
+        };
 
-        let loader = RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", "."));
-        let runtime = BoaLayoutRuntime::with_loader(loader.clone());
-        let service: ConfigRuntimeService<_, _> = ConfigRuntimeService::new(loader, runtime);
+        let service: ConfigRuntimeService<_, _> = ConfigRuntimeService::new(
+            StubLoader {
+                loaded: None,
+                error_message: None,
+            },
+            StubRuntime,
+            StubAuthoredRuntime {
+                config: authored_config,
+            },
+        );
         let config = service
             .load_config(&ConfigPaths::new(
                 project_root.join("config.ts"),
@@ -376,7 +475,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(config.tags, vec!["1"]);
-        assert_eq!(config.bindings.len(), 1);
+        assert_eq!(config.bindings.len(), 0);
         assert_eq!(config.layouts.len(), 1);
         assert!(config.layouts[0].runtime_source.is_some());
     }

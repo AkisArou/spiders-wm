@@ -1,4 +1,4 @@
-pub use spiders_runtime::BootstrapTranscript;
+pub use spiders_wm::BootstrapTranscript;
 
 #[cfg(test)]
 mod tests {
@@ -10,7 +10,7 @@ mod tests {
     #[test]
     fn transcript_round_trips_through_json() {
         let transcript = BootstrapTranscript::new(
-            spiders_runtime::StartupRegistration {
+            spiders_wm::StartupRegistration {
                 seats: vec!["seat-0".into(), "seat-1".into()],
                 outputs: vec![OutputId::from("out-1")],
                 active_seat: Some("seat-1".into()),

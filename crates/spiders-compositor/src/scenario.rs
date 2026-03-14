@@ -1,9 +1,9 @@
-pub use spiders_runtime::BootstrapScenario;
+pub use spiders_wm::BootstrapScenario;
 
 #[cfg(test)]
 mod tests {
-    use spiders_runtime::BootstrapEvent;
     use spiders_shared::ids::OutputId;
+    use spiders_wm::BootstrapEvent;
 
     use super::*;
 

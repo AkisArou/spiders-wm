@@ -1,4 +1,4 @@
-pub use spiders_runtime::{
+pub use spiders_wm::{
     BackendDiscoveryEvent, BackendOutputSnapshot, BackendSeatSnapshot, BackendSessionReport,
     BackendSessionState, BackendSnapshotSummary, BackendSource, BackendSurfaceSnapshot,
     BackendTopologySnapshot,
@@ -6,12 +6,12 @@ pub use spiders_runtime::{
 
 #[cfg(test)]
 mod tests {
-    use spiders_runtime::{
+    use spiders_shared::ids::{OutputId, WindowId};
+    use spiders_shared::wm::OutputTransform;
+    use spiders_wm::{
         BootstrapEvent, LayerExclusiveZone, LayerKeyboardInteractivity, LayerSurfaceMetadata,
         LayerSurfaceTier,
     };
-    use spiders_shared::ids::{OutputId, WindowId};
-    use spiders_shared::wm::OutputTransform;
 
     use super::*;
 

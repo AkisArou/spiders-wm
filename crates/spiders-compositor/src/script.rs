@@ -1,4 +1,4 @@
-pub use spiders_runtime::{BootstrapScript, BootstrapScriptKind};
+pub use spiders_wm::{BootstrapScript, BootstrapScriptKind};
 
 #[cfg(test)]
 mod tests {
@@ -28,7 +28,7 @@ mod tests {
     #[test]
     fn script_round_trips_transcripts() {
         let script = BootstrapScript::Transcript(BootstrapTranscript::new(
-            spiders_runtime::StartupRegistration {
+            spiders_wm::StartupRegistration {
                 seats: vec!["seat-0".into(), "seat-1".into()],
                 outputs: vec![OutputId::from("out-1")],
                 active_seat: Some("seat-1".into()),

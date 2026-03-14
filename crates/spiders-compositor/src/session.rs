@@ -1,13 +1,13 @@
 use spiders_config::model::Config;
-use spiders_config::runtime::LayoutRuntime;
 use spiders_config::service::ConfigRuntimeService;
-use spiders_runtime::{
+use spiders_shared::api::{CompositorEvent, FocusDirection, WmAction};
+use spiders_shared::ids::{OutputId, WindowId};
+use spiders_shared::runtime::{LayoutRuntime, LayoutSourceLoader};
+use spiders_shared::wm::{StateSnapshot, WindowSnapshot};
+use spiders_wm::{
     CompositorTopologyState, DomainSession, DomainUpdate, LayerSurfaceMetadata, SurfaceState,
     TopologyError, WmState,
 };
-use spiders_shared::api::{CompositorEvent, FocusDirection, WmAction};
-use spiders_shared::ids::{OutputId, WindowId};
-use spiders_shared::wm::{StateSnapshot, WindowSnapshot};
 
 use crate::actions::{apply_action, ActionError};
 use crate::effects::WindowDecorationPolicy;
@@ -213,7 +213,7 @@ impl<L, R> CompositorSession<L, R> {
     }
 }
 
-impl<L: spiders_config::loader::LayoutSourceLoader, R: LayoutRuntime> CompositorSession<L, R> {
+impl<L: LayoutSourceLoader<Config>, R: LayoutRuntime<Config = Config>> CompositorSession<L, R> {
     pub fn initialize(
         layout_service: LayoutService,
         runtime_service: ConfigRuntimeService<L, R>,
@@ -367,16 +367,16 @@ impl<L: spiders_config::loader::LayoutSourceLoader, R: LayoutRuntime> Compositor
 
 fn map_topology_error(error: TopologyError) -> ActionError {
     ActionError::Layout(CompositorLayoutError::Runtime(
-        spiders_config::runtime::LayoutRuntimeError::JavaScript {
+        spiders_shared::runtime::RuntimeError::Other {
             message: error.to_string(),
         },
     ))
 }
 
-fn map_domain_error(error: spiders_runtime::DomainSessionError) -> ActionError {
+fn map_domain_error(error: spiders_wm::DomainSessionError) -> ActionError {
     match error {
-        spiders_runtime::DomainSessionError::Wm(error) => ActionError::WmState(error),
-        spiders_runtime::DomainSessionError::Topology(error) => map_topology_error(error),
+        spiders_wm::DomainSessionError::Wm(error) => ActionError::WmState(error),
+        spiders_wm::DomainSessionError::Topology(error) => map_topology_error(error),
     }
 }
 
@@ -385,17 +385,17 @@ mod tests {
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use spiders_config::loader::{RuntimePathResolver, RuntimeProjectLayoutSourceLoader};
     use spiders_config::model::{Config, LayoutDefinition};
-    use spiders_config::runtime::BoaLayoutRuntime;
     use spiders_config::service::ConfigRuntimeService;
-    use spiders_runtime::SurfaceRole;
+    use spiders_runtime_js::loader::{RuntimePathResolver, RuntimeProjectLayoutSourceLoader};
+    use spiders_runtime_js::runtime::BoaLayoutRuntime;
     use spiders_shared::api::{CompositorEvent, FocusDirection, WmAction};
     use spiders_shared::ids::{OutputId, WindowId, WorkspaceId};
     use spiders_shared::wm::{
         LayoutRef, OutputSnapshot, OutputTransform, ShellKind, StateSnapshot, WindowSnapshot,
         WorkspaceSnapshot,
     };
+    use spiders_wm::SurfaceRole;
 
     use super::*;
 
@@ -532,7 +532,11 @@ mod tests {
         let loader =
             RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
         let runtime = BoaLayoutRuntime::with_loader(loader.clone());
-        let service = ConfigRuntimeService::new(loader, runtime);
+        let service = ConfigRuntimeService::new(
+            loader,
+            runtime,
+            spiders_runtime_js::authored::JsAuthoredConfigRuntime,
+        );
 
         let mut session =
             CompositorSession::initialize(LayoutService, service, config(), state()).unwrap();
@@ -810,7 +814,11 @@ mod tests {
         let loader =
             RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
         let runtime = BoaLayoutRuntime::with_loader(loader.clone());
-        let service = ConfigRuntimeService::new(loader, runtime);
+        let service = ConfigRuntimeService::new(
+            loader,
+            runtime,
+            spiders_runtime_js::authored::JsAuthoredConfigRuntime,
+        );
         let mut session =
             CompositorSession::initialize(LayoutService, service, config, state()).unwrap();
         session.register_seat("seat-0");

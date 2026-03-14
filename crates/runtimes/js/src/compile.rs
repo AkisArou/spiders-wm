@@ -307,9 +307,9 @@ pub fn bundle_app(graph: &ModuleGraph, compiled: &CompiledApp) -> Result<Bundled
 
 fn read_virtual_module_source(specifier: &str) -> Result<String, CompileError> {
     let relative_path = match specifier {
-        "spider-wm/actions" => PathBuf::from("../../spwm-js/actions.js"),
+        "spider-wm/actions" => PathBuf::from("sdk/actions.js"),
         "spider-wm/config" => PathBuf::from("src/virtual/config.js"),
-        "spider-wm/jsx-runtime" => PathBuf::from("../../spwm-js/jsx-runtime.js"),
+        "spider-wm/jsx-runtime" => PathBuf::from("sdk/jsx-runtime.js"),
         "spider-wm/layout" => PathBuf::from("src/virtual/layout.js"),
         "spider-wm/api" => PathBuf::from("src/virtual/api.js"),
         _ => {

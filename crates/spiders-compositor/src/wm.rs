@@ -1,4 +1,4 @@
-pub use spiders_runtime::{WmState, WmStateError};
+pub use spiders_wm::{WmState, WmStateError};
 
 #[cfg(test)]
 mod tests {

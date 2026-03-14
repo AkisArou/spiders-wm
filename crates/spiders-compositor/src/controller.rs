@@ -1,14 +1,14 @@
 use spiders_config::model::Config;
-use spiders_config::runtime::LayoutRuntime;
 use spiders_config::service::ConfigRuntimeService;
-use spiders_runtime::{
+use spiders_shared::api::WmAction;
+use spiders_shared::ids::{OutputId, WorkspaceId};
+use spiders_shared::runtime::{LayoutRuntime, LayoutSourceLoader};
+use spiders_shared::wm::StateSnapshot;
+use spiders_wm::{
     BootstrapEvent, BootstrapFailureTrace, BootstrapRunTrace, BootstrapScenario, BootstrapScript,
     BootstrapTranscript, ControllerCommand, ControllerCommandReport, ControllerPhase,
     ControllerReport, StartupRegistration,
 };
-use spiders_shared::api::WmAction;
-use spiders_shared::ids::{OutputId, WorkspaceId};
-use spiders_shared::wm::StateSnapshot;
 
 use crate::backend::{
     BackendDiscoveryEvent, BackendSessionState, BackendSource, BackendTopologySnapshot,
@@ -61,7 +61,7 @@ impl<L, R> CompositorController<L, R> {
     }
 }
 
-impl<L: spiders_config::loader::LayoutSourceLoader, R: LayoutRuntime> CompositorController<L, R> {
+impl<L: LayoutSourceLoader<Config>, R: LayoutRuntime<Config = Config>> CompositorController<L, R> {
     pub fn initialize(
         runtime_service: ConfigRuntimeService<L, R>,
         config: Config,
@@ -304,10 +304,10 @@ mod tests {
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use spiders_config::loader::{RuntimePathResolver, RuntimeProjectLayoutSourceLoader};
     use spiders_config::model::{Config, LayoutDefinition};
-    use spiders_config::runtime::BoaLayoutRuntime;
     use spiders_config::service::ConfigRuntimeService;
+    use spiders_runtime_js::loader::{RuntimePathResolver, RuntimeProjectLayoutSourceLoader};
+    use spiders_runtime_js::runtime::BoaLayoutRuntime;
     use spiders_shared::ids::{OutputId, WindowId, WorkspaceId};
     use spiders_shared::wm::{
         LayoutRef, OutputSnapshot, OutputTransform, ShellKind, StateSnapshot, WindowSnapshot,
@@ -401,7 +401,11 @@ mod tests {
         let loader =
             RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
         let runtime = BoaLayoutRuntime::with_loader(loader.clone());
-        ConfigRuntimeService::new(loader, runtime)
+        ConfigRuntimeService::new(
+            loader,
+            runtime,
+            spiders_runtime_js::authored::JsAuthoredConfigRuntime,
+        )
     }
 
     #[test]
@@ -648,11 +652,11 @@ mod tests {
             .apply_discovery_event(BackendDiscoveryEvent::LayerSurfaceDiscovered {
                 surface_id: "layer-1".into(),
                 output_id: OutputId::from("out-1"),
-                metadata: spiders_runtime::LayerSurfaceMetadata {
+                metadata: spiders_wm::LayerSurfaceMetadata {
                     namespace: "panel".into(),
-                    tier: spiders_runtime::LayerSurfaceTier::Top,
-                    keyboard_interactivity: spiders_runtime::LayerKeyboardInteractivity::OnDemand,
-                    exclusive_zone: spiders_runtime::LayerExclusiveZone::Exclusive(24),
+                    tier: spiders_wm::LayerSurfaceTier::Top,
+                    keyboard_interactivity: spiders_wm::LayerKeyboardInteractivity::OnDemand,
+                    exclusive_zone: spiders_wm::LayerExclusiveZone::Exclusive(24),
                 },
             })
             .unwrap();

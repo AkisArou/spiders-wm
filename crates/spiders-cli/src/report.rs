@@ -1,5 +1,5 @@
 use serde::Serialize;
-use spiders_runtime::{BootstrapDiagnostics, BootstrapEvent, ControllerPhase, StartupRegistration};
+use spiders_wm::{BootstrapDiagnostics, BootstrapEvent, ControllerPhase, StartupRegistration};
 use spiders_shared::api::{CompositorEvent, QueryRequest, QueryResponse, WmAction};
 
 #[derive(Clone, Copy, PartialEq, Eq)]

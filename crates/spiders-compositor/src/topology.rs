@@ -1,4 +1,4 @@
-pub use spiders_runtime::{
+pub use spiders_wm::{
     CompositorTopologyState, OutputState, SeatState, SurfaceRole, SurfaceState, TopologyError,
 };
 
