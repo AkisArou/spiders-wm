@@ -79,7 +79,7 @@ pub trait LayoutRuntime: std::fmt::Debug {
         &self,
         state: &StateSnapshot,
         workspace: &WorkspaceSnapshot,
-        selected_layout: Option<SelectedLayout>,
+        artifact: Option<&RuntimeArtifact>,
     ) -> LayoutEvaluationContext;
 
     fn evaluate_layout(

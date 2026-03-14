@@ -286,9 +286,12 @@ impl LayoutRuntime for StubLayoutRuntime {
         &self,
         state: &spiders_shared::wm::StateSnapshot,
         workspace: &spiders_shared::wm::WorkspaceSnapshot,
-        selected_layout: Option<SelectedLayout>,
+        artifact: Option<&RuntimeArtifact>,
     ) -> LayoutEvaluationContext {
-        state.layout_context(workspace, selected_layout)
+        state.layout_context(
+            workspace,
+            artifact.map(|artifact| artifact.selected.clone()),
+        )
     }
 
     fn evaluate_layout(
@@ -322,9 +325,12 @@ impl<L: JsLayoutSourceLoader> LayoutRuntime for BoaLayoutRuntime<L> {
         &self,
         state: &spiders_shared::wm::StateSnapshot,
         workspace: &spiders_shared::wm::WorkspaceSnapshot,
-        selected_layout: Option<SelectedLayout>,
+        artifact: Option<&RuntimeArtifact>,
     ) -> LayoutEvaluationContext {
-        state.layout_context(workspace, selected_layout)
+        state.layout_context(
+            workspace,
+            artifact.map(|artifact| artifact.selected.clone()),
+        )
     }
 
     fn evaluate_layout(

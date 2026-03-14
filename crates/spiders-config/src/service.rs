@@ -97,9 +97,7 @@ where
         let Some(loaded) = self.load_for_workspace(config, workspace)?.cloned() else {
             return Ok(None);
         };
-        let context = self
-            .runtime
-            .build_context(state, workspace, Some(loaded.selected.clone()));
+        let context = self.runtime.build_context(state, workspace, Some(&loaded));
         let layout = self.runtime.evaluate_layout(&loaded, &context)?;
 
         Ok(Some(EvaluatedLayout {
@@ -165,9 +163,12 @@ mod tests {
             &self,
             state: &StateSnapshot,
             workspace: &WorkspaceSnapshot,
-            selected_layout: Option<SelectedLayout>,
+            artifact: Option<&RuntimeArtifact>,
         ) -> spiders_shared::wm::LayoutEvaluationContext {
-            state.layout_context(workspace, selected_layout)
+            state.layout_context(
+                workspace,
+                artifact.map(|artifact| artifact.selected.clone()),
+            )
         }
 
         fn evaluate_layout(
@@ -225,13 +226,13 @@ mod tests {
             &self,
             state: &StateSnapshot,
             workspace: &WorkspaceSnapshot,
-            selected_layout: Option<SelectedLayout>,
+            artifact: Option<&RuntimeArtifact>,
         ) -> spiders_shared::wm::LayoutEvaluationContext {
             StubRuntime {
                 loaded: None,
                 error_message: None,
             }
-            .build_context(state, workspace, selected_layout)
+            .build_context(state, workspace, artifact)
         }
 
         fn evaluate_layout(

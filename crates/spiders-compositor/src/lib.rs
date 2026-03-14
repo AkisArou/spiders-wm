@@ -229,7 +229,7 @@ impl LayoutService {
         let Some(loaded_layout) = runtime.prepare_layout(config, workspace)? else {
             return Ok(None);
         };
-        let context = runtime.build_context(state, workspace, Some(loaded_layout.selected.clone()));
+        let context = runtime.build_context(state, workspace, Some(&loaded_layout));
         let source = runtime.evaluate_layout(&loaded_layout, &context)?;
         let validated = ValidatedLayoutTree::new(source)?;
         let resolved = validated.resolve(windows)?;
