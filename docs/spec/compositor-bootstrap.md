@@ -364,6 +364,10 @@ For outputs specifically, that batch should be allowed to carry a typed output
 snapshot when the backend is introducing a genuinely new output that does not
 already exist in the startup `StateSnapshot`.
 
+That same typed snapshot should also be usable for incremental single-output
+discovery events when the adapter is reporting one newly known output rather
+than a larger discovery batch.
+
 That slice is only a startup/discovery proof, not full surface or rendering
 integration.
 

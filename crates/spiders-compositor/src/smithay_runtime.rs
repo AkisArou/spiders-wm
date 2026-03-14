@@ -1154,6 +1154,35 @@ mod imp {
         }
 
         #[test]
+        fn bootstrap_applies_adapter_output_snapshot_event_to_controller() {
+            let mut bootstrap = test_bootstrap("wayland-test-adapter-output-event");
+
+            bootstrap
+                .apply_adapter_event(SmithayAdapterEvent::OutputSnapshot {
+                    output_id: "out-9".into(),
+                    active: true,
+                    width: 3840,
+                    height: 2160,
+                })
+                .unwrap();
+
+            let snapshot = bootstrap.snapshot();
+            let output = snapshot
+                .topology
+                .outputs
+                .iter()
+                .find(|output| output.snapshot.id == OutputId::from("out-9"))
+                .unwrap();
+            assert_eq!(output.snapshot.name, "out-9");
+            assert_eq!(output.snapshot.logical_width, 3840);
+            assert_eq!(output.snapshot.logical_height, 2160);
+            assert_eq!(
+                snapshot.topology.active_output_id,
+                Some(OutputId::from("out-9"))
+            );
+        }
+
+        #[test]
         fn bootstrap_applies_adapter_surface_unmap_and_loss_events_to_controller() {
             let mut bootstrap = test_bootstrap("wayland-test-adapter-surface-lifecycle");
 

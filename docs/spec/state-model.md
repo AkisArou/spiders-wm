@@ -157,6 +157,8 @@ Compositor-domain note:
 - for genuinely new outputs, that discovery path should carry a typed output
   snapshot instead of assuming the output already exists in the startup
   `StateSnapshot`
+- the same typed output snapshot shape should be used for incremental single
+  output discovery events so batch and non-batch adapter paths stay aligned
 - layer-shell configure bookkeeping also remains compositor-owned, but a small
   typed inspection snapshot for last acked serial, pending configure count, and
   configured size may cross the smithay seam for diagnostics and tests

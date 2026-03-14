@@ -24,6 +24,12 @@ pub enum SmithayAdapterEvent {
         output_id: String,
         active: bool,
     },
+    OutputSnapshot {
+        output_id: String,
+        active: bool,
+        width: i32,
+        height: i32,
+    },
     OutputActivated {
         output_id: String,
     },
@@ -79,6 +85,23 @@ impl SmithayAdapter {
             SmithayAdapterEvent::Output { output_id, active } => {
                 ControllerCommand::DiscoveryEvent(BackendDiscoveryEvent::OutputDiscovered {
                     output_id: output_id.into(),
+                    active,
+                })
+            }
+            SmithayAdapterEvent::OutputSnapshot {
+                output_id,
+                active,
+                width,
+                height,
+            } => {
+                ControllerCommand::DiscoveryEvent(BackendDiscoveryEvent::OutputSnapshotDiscovered {
+                    output: Self::translate_output_descriptor(SmithayOutputDescriptor {
+                        output_id,
+                        active,
+                        width,
+                        height,
+                    })
+                    .snapshot,
                     active,
                 })
             }
@@ -172,6 +195,23 @@ mod tests {
         assert!(matches!(
             command,
             ControllerCommand::DiscoveryEvent(BackendDiscoveryEvent::OutputDiscovered { .. })
+        ));
+    }
+
+    #[test]
+    fn adapter_translates_output_snapshot_event_into_controller_command() {
+        let command = SmithayAdapter::translate_event(SmithayAdapterEvent::OutputSnapshot {
+            output_id: "out-9".into(),
+            active: true,
+            width: 3840,
+            height: 2160,
+        });
+
+        assert!(matches!(
+            command,
+            ControllerCommand::DiscoveryEvent(
+                BackendDiscoveryEvent::OutputSnapshotDiscovered { .. }
+            )
         ));
     }
 
