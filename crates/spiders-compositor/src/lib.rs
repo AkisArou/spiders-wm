@@ -3,6 +3,7 @@ pub mod app;
 pub mod backend;
 pub mod controller;
 pub mod host;
+pub mod ipc;
 pub mod runner;
 pub mod runtime;
 pub mod scenario;
@@ -60,6 +61,7 @@ pub use backend::{
 };
 pub use controller::CompositorController;
 pub use host::CompositorHost;
+pub use ipc::{CompositorIpcError, CompositorIpcHost};
 pub use runner::{BootstrapRunner, BootstrapRunnerError};
 pub use runtime::{CompositorRuntimeState, WorkspaceLayoutState};
 pub use session::{CompositorSession, SessionUpdate};

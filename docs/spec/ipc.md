@@ -93,6 +93,17 @@ connection-local client ids and:
   maps it through session/server state, and writes exactly one response back to
   that same stream
 
+The compositor crate may then mount a thin IPC host on top of that helper which:
+
+- owns the bound Unix listener and IPC server state
+- maps query requests to the current compositor `StateSnapshot`
+- applies a small supported action subset through the compositor session/controller
+- leaves long-lived subscriptions and full runtime loop integration as later work
+
+That compositor-mounted host now satisfies the minimum V1 live query/action path,
+even though subscription streaming and runtime-loop ownership are still follow-up
+work.
+
 If a transport codec helper exists, it may treat each IPC message as one JSON
 value per line, append a trailing newline on encode, and ignore surrounding
 whitespace when decoding, while rejecting fully empty frames.

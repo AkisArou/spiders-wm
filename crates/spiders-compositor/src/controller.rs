@@ -6,6 +6,7 @@ use spiders_runtime::{
     BootstrapTranscript, ControllerCommand, ControllerCommandReport, ControllerPhase,
     ControllerReport, StartupRegistration,
 };
+use spiders_shared::api::WmAction;
 use spiders_shared::wm::StateSnapshot;
 
 use crate::backend::{
@@ -52,6 +53,10 @@ impl<L, R> CompositorController<L, R> {
 
     pub fn into_host(self) -> CompositorHost<L, R> {
         self.host
+    }
+
+    pub fn state_snapshot(&self) -> StateSnapshot {
+        self.host.app().state().clone()
     }
 }
 
@@ -248,6 +253,20 @@ impl<L: spiders_config::loader::LayoutSourceLoader, R: LayoutRuntime> Compositor
             phase: self.phase,
             controller: self.report(),
         })
+    }
+
+    pub fn apply_ipc_action(
+        &mut self,
+        action: &WmAction,
+    ) -> Result<crate::session::SessionUpdate, crate::actions::ActionError> {
+        let update = self
+            .host
+            .runner_mut()
+            .app_mut()
+            .session
+            .apply_action(action)?;
+        self.phase = ControllerPhase::Running;
+        Ok(update)
     }
 }
 

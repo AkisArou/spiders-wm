@@ -151,23 +151,26 @@ impl IpcServerState {
             .collect()
     }
 
-    pub fn serve_stream<F>(
+    pub fn serve_stream<F, E>(
         &mut self,
         client_id: IpcClientId,
         stream: &mut UnixStream,
         mut responder: F,
-    ) -> Result<IpcResponse, IpcServeError>
+    ) -> Result<IpcResponse, E>
     where
-        F: FnMut(IpcServerHandleResult) -> Result<IpcResponse, UnknownClientError>,
+        F: FnMut(IpcServerHandleResult) -> Result<IpcResponse, E>,
+        E: From<IpcServeError>,
     {
-        let request = recv_request(stream)?;
-        let result = self.handle_request(client_id, request)?;
+        let request = recv_request(stream).map_err(IpcServeError::from)?;
+        let result = self
+            .handle_request(client_id, request)
+            .map_err(IpcServeError::from)?;
         let response = match result {
             IpcServerHandleResult::Response { response, .. } => response,
             other => responder(other)?,
         };
 
-        send_response(stream, &response)?;
+        send_response(stream, &response).map_err(IpcServeError::from)?;
 
         Ok(response)
     }
@@ -354,7 +357,7 @@ mod tests {
         .unwrap();
 
         let response = server
-            .serve_stream(client_id, &mut server_stream, |_| unreachable!())
+            .serve_stream::<_, IpcServeError>(client_id, &mut server_stream, |_| unreachable!())
             .unwrap();
 
         assert_eq!(
@@ -390,22 +393,24 @@ mod tests {
         )
         .unwrap();
 
-        let response = server
-            .serve_stream(client_id, &mut server_stream, |result| match result {
-                IpcServerHandleResult::Query {
-                    request_id,
-                    query: QueryRequest::TagNames,
-                    ..
-                } => Ok(
-                    IpcEnvelope::new(IpcServerMessage::Query(QueryResponse::TagNames(vec![
-                        "1".into(),
-                        "2".into(),
-                    ])))
-                    .with_request_id(request_id.unwrap_or_default()),
-                ),
-                other => panic!("unexpected serve result: {other:?}"),
-            })
-            .unwrap();
+        let response =
+            server
+                .serve_stream::<_, IpcServeError>(client_id, &mut server_stream, |result| {
+                    match result {
+                        IpcServerHandleResult::Query {
+                            request_id,
+                            query: QueryRequest::TagNames,
+                            ..
+                        } => Ok::<IpcResponse, IpcServeError>(
+                            IpcEnvelope::new(IpcServerMessage::Query(QueryResponse::TagNames(
+                                vec!["1".into(), "2".into()],
+                            )))
+                            .with_request_id(request_id.unwrap_or_default()),
+                        ),
+                        other => panic!("unexpected serve result: {other:?}"),
+                    }
+                })
+                .unwrap();
 
         assert_eq!(
             response,
@@ -442,17 +447,22 @@ mod tests {
         )
         .unwrap();
 
-        let response = server
-            .serve_stream(client_id, &mut server_stream, |result| match result {
-                IpcServerHandleResult::Action {
-                    request_id,
-                    action: WmAction::ReloadConfig,
-                    ..
-                } => Ok(IpcEnvelope::new(IpcServerMessage::ActionAccepted)
-                    .with_request_id(request_id.unwrap_or_default())),
-                other => panic!("unexpected serve result: {other:?}"),
-            })
-            .unwrap();
+        let response =
+            server
+                .serve_stream::<_, IpcServeError>(client_id, &mut server_stream, |result| {
+                    match result {
+                        IpcServerHandleResult::Action {
+                            request_id,
+                            action: WmAction::ReloadConfig,
+                            ..
+                        } => Ok::<IpcResponse, IpcServeError>(
+                            IpcEnvelope::new(IpcServerMessage::ActionAccepted)
+                                .with_request_id(request_id.unwrap_or_default()),
+                        ),
+                        other => panic!("unexpected serve result: {other:?}"),
+                    }
+                })
+                .unwrap();
 
         assert_eq!(
             response,

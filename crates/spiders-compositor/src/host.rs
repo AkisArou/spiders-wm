@@ -21,6 +21,10 @@ impl<L, R> CompositorHost<L, R> {
         &self.runner
     }
 
+    pub fn runner_mut(&mut self) -> &mut BootstrapRunner<L, R> {
+        &mut self.runner
+    }
+
     pub fn app(&self) -> &CompositorApp<L, R> {
         self.runner.app()
     }
