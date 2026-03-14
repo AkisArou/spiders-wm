@@ -467,6 +467,11 @@ mod imp {
 
             if self.known_seat_names.iter().any(|known| known == seat_name) {
                 self.active_seat_name = Some(seat_name.to_owned());
+                self.pending_discovery_events
+                    .push(BackendDiscoveryEvent::SeatDiscovered {
+                        seat_name: seat_name.to_owned(),
+                        active: true,
+                    });
             }
         }
 

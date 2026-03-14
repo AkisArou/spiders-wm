@@ -1012,7 +1012,7 @@ mod imp {
             let applied = bootstrap.apply_pending_discovery_events().unwrap();
 
             let snapshot = bootstrap.snapshot();
-            assert_eq!(applied, 1);
+            assert_eq!(applied, 2);
             assert_eq!(snapshot.runtime.state.pending_discovery_event_count, 0);
             assert_eq!(snapshot.runtime.state.known_surfaces.toplevels.len(), 1);
             assert_eq!(snapshot.topology_surface_count, 1);
@@ -1215,7 +1215,54 @@ mod imp {
                 .seats
                 .iter()
                 .all(|seat| seat.name != "seat-adapter"));
-            assert_eq!(snapshot.topology.active_seat_name, None);
+            assert_eq!(
+                snapshot.topology.active_seat_name.as_deref(),
+                Some("seat-0")
+            );
+        }
+
+        #[test]
+        fn bootstrap_applies_pending_smithay_seat_lifecycle_to_controller() {
+            let mut bootstrap = test_bootstrap("wayland-test-smithay-seat-lifecycle");
+
+            let _ = bootstrap.runtime.state_mut().take_discovery_events();
+            bootstrap
+                .runtime
+                .state_mut()
+                .register_seat_name("seat-extra", false);
+            bootstrap
+                .runtime
+                .state_mut()
+                .activate_seat_name("seat-extra");
+
+            let applied = bootstrap.apply_pending_discovery_events().unwrap();
+            let snapshot = bootstrap.snapshot();
+
+            assert_eq!(applied, 2);
+            assert_eq!(
+                snapshot.topology.active_seat_name.as_deref(),
+                Some("seat-extra")
+            );
+            assert!(snapshot
+                .topology
+                .seats
+                .iter()
+                .any(|seat| seat.name == "seat-extra" && seat.active));
+
+            bootstrap.runtime.state_mut().remove_seat_name("seat-extra");
+            let applied = bootstrap.apply_pending_discovery_events().unwrap();
+            let snapshot = bootstrap.snapshot();
+
+            assert_eq!(applied, 1);
+            assert_eq!(
+                snapshot.topology.active_seat_name.as_deref(),
+                Some("seat-0")
+            );
+            assert!(snapshot
+                .topology
+                .seats
+                .iter()
+                .all(|seat| seat.name != "seat-extra"));
         }
 
         #[test]
