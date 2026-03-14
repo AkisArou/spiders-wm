@@ -897,6 +897,20 @@ fn parse_action_request(name: &str) -> Result<spiders_shared::api::WmAction, Str
             tag: value.to_string(),
         });
     }
+    if let Some(value) = name.strip_prefix("activate-workspace:") {
+        return Ok(WmAction::ActivateWorkspace {
+            workspace_id: value.into(),
+        });
+    }
+    if let Some(value) = name.strip_prefix("assign-workspace:") {
+        let (workspace_id, output_id) = value
+            .split_once('@')
+            .ok_or_else(|| "assign-workspace expects <workspace-id>@<output-id>".to_string())?;
+        return Ok(WmAction::AssignWorkspace {
+            workspace_id: workspace_id.into(),
+            output_id: output_id.into(),
+        });
+    }
     if let Some(value) = name.strip_prefix("spawn:") {
         return Ok(WmAction::Spawn {
             command: value.to_string(),
@@ -981,6 +995,8 @@ fn action_label(action: &spiders_shared::api::WmAction) -> &'static str {
         WmAction::CycleLayout { .. } => "cycle-layout",
         WmAction::ViewTag { .. } => "view-tag",
         WmAction::ToggleViewTag { .. } => "toggle-view-tag",
+        WmAction::ActivateWorkspace { .. } => "activate-workspace",
+        WmAction::AssignWorkspace { .. } => "assign-workspace",
         WmAction::FocusDirection { .. } => "focus-direction",
     }
 }
@@ -1109,6 +1125,31 @@ mod tests {
 
         let path = handle.join().unwrap();
         let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn parse_ipc_action_supports_workspace_activate_and_assign() {
+        assert_eq!(
+            parse_action_request("activate-workspace:ws-2").unwrap(),
+            spiders_shared::api::WmAction::ActivateWorkspace {
+                workspace_id: "ws-2".into(),
+            }
+        );
+        assert_eq!(
+            parse_action_request("assign-workspace:ws-2@out-2").unwrap(),
+            spiders_shared::api::WmAction::AssignWorkspace {
+                workspace_id: "ws-2".into(),
+                output_id: "out-2".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn parse_ipc_action_rejects_invalid_workspace_assign_format() {
+        assert_eq!(
+            parse_action_request("assign-workspace:ws-2"),
+            Err("assign-workspace expects <workspace-id>@<output-id>".into())
+        );
     }
 
     #[test]

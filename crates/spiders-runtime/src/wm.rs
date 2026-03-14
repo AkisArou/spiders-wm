@@ -458,6 +458,8 @@ impl WmState {
             } else if output_id.is_none() && entry.id == workspace.id {
                 entry.visible = true;
                 entry.focused = true;
+            } else {
+                entry.focused = false;
             }
         }
 
@@ -896,6 +898,56 @@ mod tests {
                 ..
             } if id == &WorkspaceId::from("ws-2")
         )));
+    }
+
+    #[test]
+    fn wm_state_activate_workspace_clears_other_output_focus_flags() {
+        let mut snapshot = state();
+        snapshot.outputs.push(OutputSnapshot {
+            id: OutputId::from("out-2"),
+            name: "DP-1".into(),
+            logical_width: 2560,
+            logical_height: 1440,
+            scale: 1,
+            transform: OutputTransform::Normal,
+            enabled: true,
+            current_workspace_id: Some(WorkspaceId::from("ws-2")),
+        });
+        snapshot.workspaces.push(WorkspaceSnapshot {
+            id: WorkspaceId::from("ws-2"),
+            name: "2".into(),
+            output_id: Some(OutputId::from("out-2")),
+            active_tags: vec!["2".into()],
+            focused: false,
+            visible: true,
+            effective_layout: Some(LayoutRef {
+                name: "stack".into(),
+            }),
+        });
+        let mut state = WmState::from_snapshot(snapshot);
+
+        state
+            .activate_workspace(&WorkspaceId::from("ws-2"))
+            .unwrap();
+
+        assert!(
+            state
+                .snapshot()
+                .workspaces
+                .iter()
+                .find(|workspace| workspace.id == WorkspaceId::from("ws-2"))
+                .unwrap()
+                .focused
+        );
+        assert!(
+            !state
+                .snapshot()
+                .workspaces
+                .iter()
+                .find(|workspace| workspace.id == WorkspaceId::from("ws-1"))
+                .unwrap()
+                .focused
+        );
     }
 
     #[test]

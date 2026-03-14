@@ -484,6 +484,107 @@ mod tests {
     }
 
     #[test]
+    fn ipc_host_serves_workspace_activate_action_against_controller_state() {
+        let path = unique_socket_path("workspace-activate");
+        let mut host = CompositorIpcHost::bind(&path).unwrap();
+        let mut controller = controller();
+        controller
+            .apply_ipc_action(&WmAction::AssignWorkspace {
+                workspace_id: WorkspaceId::from("ws-1"),
+                output_id: OutputId::from("out-1"),
+            })
+            .unwrap();
+
+        let mut client = UnixStream::connect(&path).unwrap();
+        let client_id = host.accept_client().unwrap();
+
+        send_request(
+            &mut client,
+            &IpcEnvelope::new(IpcClientMessage::Action(WmAction::ActivateWorkspace {
+                workspace_id: WorkspaceId::from("ws-1"),
+            })),
+        )
+        .unwrap();
+        let response = host.serve_client_once(client_id, &mut controller).unwrap();
+        let decoded = recv_response(&client).unwrap();
+
+        assert_eq!(response, decoded);
+        assert!(matches!(decoded.message, IpcServerMessage::ActionAccepted));
+        assert_eq!(
+            controller.state_snapshot().current_workspace_id,
+            Some(WorkspaceId::from("ws-1"))
+        );
+
+        drop(client);
+        let _ = host.remove_client(client_id);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn ipc_host_serves_workspace_assign_action_against_controller_state() {
+        let path = unique_socket_path("workspace-assign");
+        let mut host = CompositorIpcHost::bind(&path).unwrap();
+        let temp_dir = std::env::temp_dir();
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let runtime_root = temp_dir.join(format!("spiders-compositor-ipc-assign-{unique}"));
+        let _ = fs::create_dir_all(runtime_root.join("layouts"));
+        fs::write(
+            runtime_root.join("layouts/master-stack.js"),
+            "ctx => ({ type: 'workspace', children: [{ type: 'slot', id: 'rest' }] })",
+        )
+        .unwrap();
+        let loader =
+            RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
+        let runtime = BoaLayoutRuntime::with_loader(loader.clone());
+        let service = ConfigRuntimeService::new(loader, runtime);
+        let mut startup_state = state();
+        startup_state.outputs.push(OutputSnapshot {
+            id: OutputId::from("out-2"),
+            name: "DP-1".into(),
+            logical_width: 1024,
+            logical_height: 768,
+            scale: 1,
+            transform: OutputTransform::Normal,
+            enabled: true,
+            current_workspace_id: None,
+        });
+        let mut controller =
+            CompositorController::initialize(service, config(), startup_state).unwrap();
+
+        let mut client = UnixStream::connect(&path).unwrap();
+        let client_id = host.accept_client().unwrap();
+
+        send_request(
+            &mut client,
+            &IpcEnvelope::new(IpcClientMessage::Action(WmAction::AssignWorkspace {
+                workspace_id: WorkspaceId::from("ws-1"),
+                output_id: OutputId::from("out-2"),
+            })),
+        )
+        .unwrap();
+        let response = host.serve_client_once(client_id, &mut controller).unwrap();
+        let decoded = recv_response(&client).unwrap();
+
+        assert_eq!(response, decoded);
+        assert!(matches!(decoded.message, IpcServerMessage::ActionAccepted));
+        assert_eq!(
+            controller
+                .state_snapshot()
+                .workspace_by_id(&WorkspaceId::from("ws-1"))
+                .unwrap()
+                .output_id,
+            Some(OutputId::from("out-2"))
+        );
+
+        drop(client);
+        let _ = host.remove_client(client_id);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
     fn ipc_host_broadcasts_subscribed_action_events_to_other_clients() {
         let path = unique_socket_path("broadcast-action-events");
         let mut host = CompositorIpcHost::bind(&path).unwrap();

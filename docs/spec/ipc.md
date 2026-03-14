@@ -151,6 +151,10 @@ The current action surface is intentionally narrow: clients may request
 workspace activation and assignment when those capabilities are advertised, but
 deactivate and remove remain unsupported and should stay disabled in client UI.
 
+The CLI and IPC action surface should expose the same controller-backed actions
+as the Wayland protocol path so behavior stays testable without a Wayland
+client.
+
 ## CLI Expectation
 
 The rewrite should eventually ship a small CLI or helper commands for:
