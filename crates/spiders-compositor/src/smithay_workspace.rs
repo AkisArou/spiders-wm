@@ -921,9 +921,12 @@ mod imp {
             finished_count: usize,
             output_enter_count: usize,
             workspace_enter_count: usize,
+            workspace_leave_count: usize,
             workspace_names: Vec<String>,
             workspace_ids: Vec<String>,
             workspace_states: Vec<u32>,
+            workspace_capabilities: Vec<u32>,
+            group_capabilities: Vec<u32>,
         }
 
         impl WorkspaceHandler for TestWorkspaceState {
@@ -1173,11 +1176,17 @@ mod imp {
                 _qh: &QueueHandle<Self>,
             ) {
                 match event {
+                    ext_workspace_group_handle_v1::Event::Capabilities { capabilities } => {
+                        state.group_capabilities.push(capabilities.into())
+                    }
                     ext_workspace_group_handle_v1::Event::OutputEnter { .. } => {
                         state.output_enter_count += 1
                     }
                     ext_workspace_group_handle_v1::Event::WorkspaceEnter { .. } => {
                         state.workspace_enter_count += 1
+                    }
+                    ext_workspace_group_handle_v1::Event::WorkspaceLeave { .. } => {
+                        state.workspace_leave_count += 1
                     }
                     _ => {}
                 }
@@ -1202,6 +1211,9 @@ mod imp {
                     }
                     ext_workspace_handle_v1::Event::State { state: bits } => {
                         state.workspace_states.push(bits.into())
+                    }
+                    ext_workspace_handle_v1::Event::Capabilities { capabilities } => {
+                        state.workspace_capabilities.push(capabilities.into())
                     }
                     _ => {}
                 }
@@ -1526,8 +1538,16 @@ mod imp {
             assert!(client_state.done_count >= 1);
             assert!(client_state.output_enter_count >= 1);
             assert!(client_state.workspace_enter_count >= 1);
+            assert_eq!(client_state.workspace_leave_count, 0);
             assert!(client_state.workspace_names.iter().any(|name| name == "1"));
             assert!(client_state.workspace_ids.iter().any(|id| id == "ws-1"));
+            assert!(client_state
+                .group_capabilities
+                .iter()
+                .all(|bits| *bits == GroupCapabilities::empty().bits()));
+            assert!(client_state.workspace_capabilities.iter().all(|bits| {
+                *bits == (WorkspaceCapabilities::Activate | WorkspaceCapabilities::Assign).bits()
+            }));
             let initial_done_count = client_state.done_count;
             let initial_state_event_count = client_state.workspace_states.len();
 
@@ -1557,6 +1577,7 @@ mod imp {
                 .rev()
                 .take(2)
                 .any(|bits| *bits == WorkspaceState::Active.bits()));
+            assert_eq!(client_state.workspace_leave_count, 0);
 
             let group = client_state.groups.first().cloned().unwrap();
             let assign_done_count = client_state.done_count;
@@ -1575,6 +1596,7 @@ mod imp {
                 .iter()
                 .any(|output_id| output_id.as_ref() == Some(&OutputId::from("out-1"))));
             assert!(client_state.done_count > assign_done_count);
+            assert!(client_state.workspace_enter_count >= 2);
 
             manager.stop();
             flush_roundtrip(
