@@ -70,6 +70,12 @@ aligned.
 `BootstrapTranscript`, which lets the CLI and future runtime owners share one
 typed bootstrap file boundary.
 
+Transcript fixtures intentionally remain a good fit for startup-seeded output
+cases: `StartupRegistration.outputs` seeds the known output ids, and later
+id-only output events may activate or reference those already-known outputs.
+Scenario-only fixtures may instead use typed output snapshots when they need to
+model backend-created outputs that were not part of startup registration.
+
 `CompositorHost` can own a runner plus scenario replay at the top of this stack,
 which gives the future runtime loop a small backend-agnostic owner before any
 real backend integration begins.
