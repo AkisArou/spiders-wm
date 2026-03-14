@@ -145,6 +145,9 @@ Compositor-domain note:
 - if several such lifecycle deltas arrive together, preserving order through a
   batch of typed controller commands is preferable to inventing a new larger
   backend snapshot shape for small incremental updates
+- for initial adapter-driven surface discovery, a surface-only typed batch is
+  acceptable when it carries only stable surface facts already represented by
+  backend topology snapshots
 - layer-shell configure bookkeeping also remains compositor-owned, but a small
   typed inspection snapshot for last acked serial, pending configure count, and
   configured size may cross the smithay seam for diagnostics and tests

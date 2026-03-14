@@ -130,6 +130,19 @@ mod imp {
             self.apply_pending_discovery_commands(commands)
         }
 
+        pub fn apply_adapter_surface_discovery_batch(
+            &mut self,
+            generation: u64,
+            surfaces: Vec<crate::backend::BackendSurfaceSnapshot>,
+        ) -> Result<(), SmithayRuntimeError> {
+            self.apply_controller_command(SmithayAdapter::translate_snapshot(
+                generation,
+                Vec::new(),
+                Vec::new(),
+                surfaces,
+            ))
+        }
+
         pub fn apply_pending_discovery_commands(
             &mut self,
             commands: Vec<ControllerCommand>,
@@ -998,19 +1011,21 @@ mod imp {
                 Some(OutputId::from("out-2"))
             );
 
-            bootstrap.runtime.state_mut().track_test_surface_snapshot(
-                crate::backend::BackendSurfaceSnapshot::Layer {
-                    surface_id: "wl-adapter-output-layer-1".into(),
-                    output_id: OutputId::from("out-2"),
-                    metadata: LayerSurfaceMetadata {
-                        namespace: "panel".into(),
-                        tier: LayerSurfaceTier::Top,
-                        keyboard_interactivity: LayerKeyboardInteractivity::OnDemand,
-                        exclusive_zone: LayerExclusiveZone::Exclusive(10),
-                    },
-                },
-            );
-            assert_eq!(bootstrap.apply_pending_discovery_events().unwrap(), 1);
+            bootstrap
+                .apply_adapter_surface_discovery_batch(
+                    1,
+                    vec![crate::backend::BackendSurfaceSnapshot::Layer {
+                        surface_id: "wl-adapter-output-layer-1".into(),
+                        output_id: OutputId::from("out-2"),
+                        metadata: LayerSurfaceMetadata {
+                            namespace: "panel".into(),
+                            tier: LayerSurfaceTier::Top,
+                            keyboard_interactivity: LayerKeyboardInteractivity::OnDemand,
+                            exclusive_zone: LayerExclusiveZone::Exclusive(10),
+                        },
+                    }],
+                )
+                .unwrap();
 
             bootstrap
                 .apply_adapter_event(SmithayAdapterEvent::OutputLost {
@@ -1088,21 +1103,23 @@ mod imp {
         fn bootstrap_applies_adapter_surface_unmap_and_loss_events_to_controller() {
             let mut bootstrap = test_bootstrap("wayland-test-adapter-surface-lifecycle");
 
-            bootstrap.runtime.state_mut().track_test_surface_snapshot(
-                crate::backend::BackendSurfaceSnapshot::Window {
-                    surface_id: "wl-adapter-window-1".into(),
-                    window_id: WindowId::from("w1"),
-                    output_id: Some(OutputId::from("out-1")),
-                },
-            );
-            bootstrap.runtime.state_mut().track_test_surface_snapshot(
-                crate::backend::BackendSurfaceSnapshot::Popup {
-                    surface_id: "wl-adapter-popup-1".into(),
-                    output_id: Some(OutputId::from("out-1")),
-                    parent_surface_id: "wl-adapter-window-1".into(),
-                },
-            );
-            assert_eq!(bootstrap.apply_pending_discovery_events().unwrap(), 2);
+            bootstrap
+                .apply_adapter_surface_discovery_batch(
+                    1,
+                    vec![
+                        crate::backend::BackendSurfaceSnapshot::Window {
+                            surface_id: "wl-adapter-window-1".into(),
+                            window_id: WindowId::from("w1"),
+                            output_id: Some(OutputId::from("out-1")),
+                        },
+                        crate::backend::BackendSurfaceSnapshot::Popup {
+                            surface_id: "wl-adapter-popup-1".into(),
+                            output_id: Some(OutputId::from("out-1")),
+                            parent_surface_id: "wl-adapter-window-1".into(),
+                        },
+                    ],
+                )
+                .unwrap();
 
             bootstrap
                 .apply_adapter_event(SmithayAdapterEvent::SurfaceUnmapped {
@@ -1153,14 +1170,16 @@ mod imp {
             });
             let mut bootstrap = test_bootstrap_with_state("wayland-test-adapter-batch", state);
 
-            bootstrap.runtime.state_mut().track_test_surface_snapshot(
-                crate::backend::BackendSurfaceSnapshot::Window {
-                    surface_id: "wl-batch-window-1".into(),
-                    window_id: WindowId::from("w1"),
-                    output_id: Some(OutputId::from("out-2")),
-                },
-            );
-            assert_eq!(bootstrap.apply_pending_discovery_events().unwrap(), 1);
+            bootstrap
+                .apply_adapter_surface_discovery_batch(
+                    1,
+                    vec![crate::backend::BackendSurfaceSnapshot::Window {
+                        surface_id: "wl-batch-window-1".into(),
+                        window_id: WindowId::from("w1"),
+                        output_id: Some(OutputId::from("out-2")),
+                    }],
+                )
+                .unwrap();
 
             let applied = bootstrap
                 .apply_adapter_events(vec![

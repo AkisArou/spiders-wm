@@ -342,6 +342,10 @@ When several incremental lifecycle changes arrive together, the bootstrap owner
 may batch typed adapter events and forward them in order through the same
 controller-command path instead of rebuilding a larger discovery snapshot.
 
+For initial surface discovery in adapter-driven tests, a small surface-only
+discovery batch is also acceptable when it keeps the seam focused on stable
+surface facts without reaching into smithay test-state mutation helpers.
+
 That slice is only a startup/discovery proof, not full surface or rendering
 integration.
 
