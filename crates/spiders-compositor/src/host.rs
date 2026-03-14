@@ -1,6 +1,6 @@
 use spiders_config::model::Config;
 use spiders_config::service::ConfigRuntimeService;
-use spiders_shared::runtime::{AuthoringRuntime, LayoutSourceLoader};
+use spiders_shared::runtime::AuthoringRuntime;
 use spiders_shared::wm::StateSnapshot;
 use spiders_wm::{BootstrapEvent, BootstrapFailureTrace, BootstrapRunTrace, StartupRegistration};
 
@@ -10,20 +10,20 @@ use crate::transcript::BootstrapTranscript;
 use crate::{CompositorApp, LayoutService};
 
 #[derive(Debug)]
-pub struct CompositorHost<L, R> {
-    runner: BootstrapRunner<L, R>,
+pub struct CompositorHost<R> {
+    runner: BootstrapRunner<R>,
 }
 
-impl<L, R> CompositorHost<L, R> {
-    pub fn runner(&self) -> &BootstrapRunner<L, R> {
+impl<R> CompositorHost<R> {
+    pub fn runner(&self) -> &BootstrapRunner<R> {
         &self.runner
     }
 
-    pub fn runner_mut(&mut self) -> &mut BootstrapRunner<L, R> {
+    pub fn runner_mut(&mut self) -> &mut BootstrapRunner<R> {
         &mut self.runner
     }
 
-    pub fn app(&self) -> &CompositorApp<L, R> {
+    pub fn app(&self) -> &CompositorApp<R> {
         self.runner.app()
     }
 
@@ -32,9 +32,9 @@ impl<L, R> CompositorHost<L, R> {
     }
 }
 
-impl<L: LayoutSourceLoader<Config>, R: AuthoringRuntime<Config = Config>> CompositorHost<L, R> {
+impl<R: AuthoringRuntime<Config = Config>> CompositorHost<R> {
     pub fn initialize(
-        runtime_service: ConfigRuntimeService<L, R>,
+        runtime_service: ConfigRuntimeService<R>,
         config: Config,
         state: StateSnapshot,
     ) -> Result<Self, BootstrapRunnerError> {
@@ -44,7 +44,7 @@ impl<L: LayoutSourceLoader<Config>, R: AuthoringRuntime<Config = Config>> Compos
     }
 
     pub fn initialize_with_registration(
-        runtime_service: ConfigRuntimeService<L, R>,
+        runtime_service: ConfigRuntimeService<R>,
         config: Config,
         state: StateSnapshot,
         startup: StartupRegistration,
@@ -61,7 +61,7 @@ impl<L: LayoutSourceLoader<Config>, R: AuthoringRuntime<Config = Config>> Compos
     }
 
     pub fn initialize_with_transcript(
-        runtime_service: ConfigRuntimeService<L, R>,
+        runtime_service: ConfigRuntimeService<R>,
         config: Config,
         state: StateSnapshot,
         transcript: &BootstrapTranscript,
@@ -185,10 +185,7 @@ mod tests {
         }
     }
 
-    fn host() -> CompositorHost<
-        RuntimeProjectLayoutSourceLoader,
-        BoaLayoutRuntime<RuntimeProjectLayoutSourceLoader>,
-    > {
+    fn host() -> CompositorHost<BoaLayoutRuntime<RuntimeProjectLayoutSourceLoader>> {
         let temp_dir = std::env::temp_dir();
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -205,7 +202,7 @@ mod tests {
         let loader =
             RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
         let runtime = BoaLayoutRuntime::with_loader(loader.clone());
-        let service = ConfigRuntimeService::new(loader, runtime);
+        let service = ConfigRuntimeService::new(runtime);
 
         CompositorHost::initialize(service, config(), state()).unwrap()
     }
@@ -261,7 +258,7 @@ mod tests {
         let loader =
             RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
         let runtime = BoaLayoutRuntime::with_loader(loader.clone());
-        let service = ConfigRuntimeService::new(loader, runtime);
+        let service = ConfigRuntimeService::new(runtime);
         let mut snapshot = state();
         snapshot.outputs.push(OutputSnapshot {
             id: OutputId::from("out-2"),

@@ -8,7 +8,7 @@ use spiders_ipc::{
     IpcTransportError, UnknownClientError,
 };
 use spiders_shared::api::{QueryRequest, QueryResponse};
-use spiders_shared::runtime::{AuthoringRuntime, LayoutSourceLoader};
+use spiders_shared::runtime::AuthoringRuntime;
 
 use crate::actions::ActionError;
 use crate::controller::CompositorController;
@@ -88,13 +88,12 @@ impl CompositorIpcHost {
         self.server.remove_client(client_id)
     }
 
-    pub fn serve_client_once<L, R>(
+    pub fn serve_client_once<R>(
         &mut self,
         client_id: spiders_ipc::IpcClientId,
-        controller: &mut CompositorController<L, R>,
+        controller: &mut CompositorController<R>,
     ) -> Result<spiders_ipc::IpcResponse, CompositorIpcError>
     where
-        L: LayoutSourceLoader<Config>,
         R: AuthoringRuntime<Config = Config>,
     {
         let request = {
@@ -188,12 +187,11 @@ impl CompositorIpcHost {
         Ok(delivered)
     }
 
-    pub fn pump_once<L, R>(
+    pub fn pump_once<R>(
         &mut self,
-        controller: &mut CompositorController<L, R>,
+        controller: &mut CompositorController<R>,
     ) -> Result<IpcPumpReport, CompositorIpcError>
     where
-        L: LayoutSourceLoader<Config>,
         R: AuthoringRuntime<Config = Config>,
     {
         let mut accepted_clients = 0;
@@ -283,10 +281,7 @@ fn ipc_error_is_empty_frame(error: &CompositorIpcError) -> bool {
     )
 }
 
-fn query_response<L, R>(
-    controller: &CompositorController<L, R>,
-    query: QueryRequest,
-) -> QueryResponse {
+fn query_response<R>(controller: &CompositorController<R>, query: QueryRequest) -> QueryResponse {
     let state = controller.state_snapshot();
     let focused_window = state.focused_window_id.as_ref().and_then(|window_id| {
         state
@@ -399,10 +394,7 @@ mod tests {
         }
     }
 
-    fn controller() -> CompositorController<
-        RuntimeProjectLayoutSourceLoader,
-        BoaLayoutRuntime<RuntimeProjectLayoutSourceLoader>,
-    > {
+    fn controller() -> CompositorController<BoaLayoutRuntime<RuntimeProjectLayoutSourceLoader>> {
         let temp_dir = std::env::temp_dir();
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -419,7 +411,7 @@ mod tests {
         let loader =
             RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
         let runtime = BoaLayoutRuntime::with_loader(loader.clone());
-        let service = ConfigRuntimeService::new(loader, runtime);
+        let service = ConfigRuntimeService::new(runtime);
 
         CompositorController::initialize(service, config(), state()).unwrap()
     }
@@ -545,7 +537,7 @@ mod tests {
         let loader =
             RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
         let runtime = BoaLayoutRuntime::with_loader(loader.clone());
-        let service = ConfigRuntimeService::new(loader, runtime);
+        let service = ConfigRuntimeService::new(runtime);
         let mut startup_state = state();
         startup_state.outputs.push(OutputSnapshot {
             id: OutputId::from("out-2"),

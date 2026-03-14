@@ -1,8 +1,6 @@
 use std::collections::BTreeMap;
 
-use spiders_shared::runtime::{
-    AuthoringRuntime, LayoutSourceLoader, RuntimeArtifact, RuntimeError,
-};
+use spiders_shared::runtime::{AuthoringRuntime, RuntimeArtifact, RuntimeError};
 use spiders_shared::wm::{LayoutEvaluationContext, LoadedLayout};
 
 use crate::model::{Config, ConfigDiscoveryOptions, ConfigPaths, LayoutConfigError};
@@ -16,25 +14,22 @@ pub enum ConfigRuntimeServiceError {
 }
 
 #[derive(Debug)]
-pub struct ConfigRuntimeService<L, R> {
-    loader: L,
+pub struct ConfigRuntimeService<R> {
     runtime: R,
     cache: BTreeMap<String, RuntimeArtifact>,
 }
 
-impl<L, R> ConfigRuntimeService<L, R> {
-    pub fn new(loader: L, runtime: R) -> Self {
+impl<R> ConfigRuntimeService<R> {
+    pub fn new(runtime: R) -> Self {
         Self {
-            loader,
             runtime,
             cache: BTreeMap::new(),
         }
     }
 }
 
-impl<L, R> ConfigRuntimeService<L, R>
+impl<R> ConfigRuntimeService<R>
 where
-    L: LayoutSourceLoader<Config>,
     R: AuthoringRuntime<Config = Config>,
 {
     pub fn discover_config_paths(
@@ -71,7 +66,7 @@ where
                 }),
             };
 
-            if let Err(error) = self.loader.load_runtime_source(config, &workspace) {
+            if let Err(error) = self.runtime.load_selected_layout(config, &workspace) {
                 errors.push(format!("{}: {error}", layout.name));
             }
         }
@@ -84,7 +79,7 @@ where
         config: &Config,
         workspace: &spiders_shared::wm::WorkspaceSnapshot,
     ) -> Result<Option<&RuntimeArtifact>, ConfigRuntimeServiceError> {
-        let Some(loaded) = self.loader.load_runtime_source(config, workspace)? else {
+        let Some(loaded) = self.runtime.load_selected_layout(config, workspace)? else {
             return Ok(None);
         };
 
@@ -99,13 +94,12 @@ where
         state: &spiders_shared::wm::StateSnapshot,
         workspace: &spiders_shared::wm::WorkspaceSnapshot,
     ) -> Result<Option<crate::service::EvaluatedLayout>, ConfigRuntimeServiceError> {
-        let Some(selected) = self.runtime.selected_layout(config, workspace)? else {
-            return Ok(None);
-        };
         let Some(loaded) = self.load_for_workspace(config, workspace)?.cloned() else {
             return Ok(None);
         };
-        let context = self.runtime.build_context(state, workspace, Some(selected));
+        let context = self
+            .runtime
+            .build_context(state, workspace, Some(loaded.selected.clone()));
         let layout = self.runtime.evaluate_layout(&loaded, &context)?;
 
         Ok(Some(EvaluatedLayout {
@@ -134,8 +128,7 @@ mod tests {
     use spiders_shared::ids::{OutputId, WorkspaceId};
     use spiders_shared::layout::SourceLayoutNode;
     use spiders_shared::runtime::{
-        AuthoringRuntime, LayoutModuleContract, LayoutRuntime, LayoutSourceLoader, RuntimeArtifact,
-        RuntimeError,
+        AuthoringRuntime, LayoutModuleContract, LayoutRuntime, RuntimeArtifact, RuntimeError,
     };
     use spiders_shared::wm::{
         LayoutRef, OutputSnapshot, OutputTransform, SelectedLayout, StateSnapshot,
@@ -146,29 +139,10 @@ mod tests {
     use crate::model::{Config, ConfigDiscoveryOptions, LayoutDefinition};
 
     #[derive(Debug, Clone)]
-    struct StubLoader {
+    struct StubRuntime {
         loaded: Option<RuntimeArtifact>,
         error_message: Option<String>,
     }
-
-    impl LayoutSourceLoader<Config> for StubLoader {
-        fn load_runtime_source(
-            &self,
-            _config: &Config,
-            _workspace: &WorkspaceSnapshot,
-        ) -> Result<Option<RuntimeArtifact>, RuntimeError> {
-            if let Some(message) = &self.error_message {
-                return Err(RuntimeError::Other {
-                    message: message.clone(),
-                });
-            }
-
-            Ok(self.loaded.clone())
-        }
-    }
-
-    #[derive(Debug, Clone, Copy)]
-    struct StubRuntime;
 
     impl LayoutRuntime for StubRuntime {
         type Config = Config;
@@ -190,7 +164,13 @@ mod tests {
             _config: &Self::Config,
             _workspace: &WorkspaceSnapshot,
         ) -> Result<Option<RuntimeArtifact>, RuntimeError> {
-            Ok(None)
+            if let Some(message) = &self.error_message {
+                return Err(RuntimeError::Other {
+                    message: message.clone(),
+                });
+            }
+
+            Ok(self.loaded.clone())
         }
 
         fn build_context(
@@ -231,6 +211,8 @@ mod tests {
 
     #[derive(Debug, Clone, Default)]
     struct StubAuthoredRuntime {
+        loaded: Option<RuntimeArtifact>,
+        error_message: Option<String>,
         config: Config,
     }
 
@@ -242,7 +224,7 @@ mod tests {
             config: &Self::Config,
             workspace: &WorkspaceSnapshot,
         ) -> Result<Option<SelectedLayout>, RuntimeError> {
-            StubRuntime.selected_layout(config, workspace)
+            StubRuntime { loaded: None, error_message: None }.selected_layout(config, workspace)
         }
 
         fn load_selected_layout(
@@ -250,7 +232,13 @@ mod tests {
             _config: &Self::Config,
             _workspace: &WorkspaceSnapshot,
         ) -> Result<Option<RuntimeArtifact>, RuntimeError> {
-            Ok(None)
+            if let Some(message) = &self.error_message {
+                return Err(RuntimeError::Other {
+                    message: message.clone(),
+                });
+            }
+
+            Ok(self.loaded.clone())
         }
 
         fn build_context(
@@ -259,7 +247,7 @@ mod tests {
             workspace: &WorkspaceSnapshot,
             selected_layout: Option<SelectedLayout>,
         ) -> spiders_shared::wm::LayoutEvaluationContext {
-            StubRuntime.build_context(state, workspace, selected_layout)
+            StubRuntime { loaded: None, error_message: None }.build_context(state, workspace, selected_layout)
         }
 
         fn evaluate_layout(
@@ -267,7 +255,7 @@ mod tests {
             loaded_layout: &RuntimeArtifact,
             context: &spiders_shared::wm::LayoutEvaluationContext,
         ) -> Result<SourceLayoutNode, RuntimeError> {
-            StubRuntime.evaluate_layout(loaded_layout, context)
+            StubRuntime { loaded: None, error_message: None }.evaluate_layout(loaded_layout, context)
         }
 
         fn contract(&self) -> LayoutModuleContract {
@@ -336,11 +324,11 @@ mod tests {
 
     #[test]
     fn runtime_service_loads_and_caches_runtime_artifact() {
-        let loader = StubLoader {
+        let runtime = StubRuntime {
             loaded: Some(loaded_layout("master-stack", "layouts/master-stack.js")),
             error_message: None,
         };
-        let mut service = ConfigRuntimeService::new(loader, StubRuntime);
+        let mut service = ConfigRuntimeService::new(runtime);
         let config = Config {
             layouts: vec![LayoutDefinition {
                 name: "master-stack".into(),
@@ -363,11 +351,11 @@ mod tests {
 
     #[test]
     fn runtime_service_evaluates_loaded_layout_for_workspace() {
-        let loader = StubLoader {
+        let runtime = StubRuntime {
             loaded: Some(loaded_layout("master-stack", "layouts/master-stack.js")),
             error_message: None,
         };
-        let mut service = ConfigRuntimeService::new(loader, StubRuntime);
+        let mut service = ConfigRuntimeService::new(runtime);
         let config = Config {
             layouts: vec![LayoutDefinition {
                 name: "master-stack".into(),
@@ -401,13 +389,10 @@ mod tests {
         )
         .unwrap();
 
-        let service: ConfigRuntimeService<_, _> = ConfigRuntimeService::new(
-            StubLoader {
-                loaded: None,
-                error_message: None,
-            },
-            StubRuntime,
-        );
+        let service: ConfigRuntimeService<_> = ConfigRuntimeService::new(StubRuntime {
+            loaded: None,
+            error_message: None,
+        });
         let config = service
             .load_config(&ConfigPaths::new("unused", &runtime_config_path))
             .unwrap();
@@ -427,13 +412,10 @@ mod tests {
         let _ = fs::create_dir_all(&data_dir);
         fs::write(config_dir.join("config.ts"), "export default {};").unwrap();
 
-        let service: ConfigRuntimeService<_, _> = ConfigRuntimeService::new(
-            StubLoader {
-                loaded: None,
-                error_message: None,
-            },
-            StubRuntime,
-        );
+        let service: ConfigRuntimeService<_> = ConfigRuntimeService::new(StubRuntime {
+            loaded: None,
+            error_message: None,
+        });
         let paths = service
             .discover_config_paths(ConfigDiscoveryOptions {
                 home_dir: Some(home_dir.clone()),
@@ -453,15 +435,10 @@ mod tests {
 
     #[test]
     fn runtime_service_reports_missing_layout_module_sources() {
-        let service: ConfigRuntimeService<_, _> = ConfigRuntimeService::new(
-            StubLoader {
-                loaded: None,
-                error_message: Some(
-                    "layout module `layouts/missing.js` source is unavailable".into(),
-                ),
-            },
-            StubRuntime,
-        );
+        let service: ConfigRuntimeService<_> = ConfigRuntimeService::new(StubRuntime {
+            loaded: None,
+            error_message: Some("layout module `layouts/missing.js` source is unavailable".into()),
+        });
         let config = Config {
             layouts: vec![LayoutDefinition {
                 name: "missing".into(),
@@ -495,15 +472,11 @@ mod tests {
             ..Config::default()
         };
 
-        let service: ConfigRuntimeService<_, _> = ConfigRuntimeService::new(
-            StubLoader {
-                loaded: None,
-                error_message: None,
-            },
-            StubAuthoredRuntime {
-                config: authored_config,
-            },
-        );
+        let service: ConfigRuntimeService<_> = ConfigRuntimeService::new(StubAuthoredRuntime {
+            loaded: None,
+            error_message: None,
+            config: authored_config,
+        });
         let config = service
             .load_config(&ConfigPaths::new(
                 project_root.join("config.ts"),

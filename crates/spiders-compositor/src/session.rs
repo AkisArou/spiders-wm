@@ -2,7 +2,7 @@ use spiders_config::model::Config;
 use spiders_config::service::ConfigRuntimeService;
 use spiders_shared::api::{CompositorEvent, FocusDirection, WmAction};
 use spiders_shared::ids::{OutputId, WindowId};
-use spiders_shared::runtime::{AuthoringRuntime, LayoutSourceLoader};
+use spiders_shared::runtime::AuthoringRuntime;
 use spiders_shared::wm::{StateSnapshot, WindowSnapshot};
 use spiders_wm::{
     CompositorTopologyState, DomainSession, DomainUpdate, LayerSurfaceMetadata, SurfaceState,
@@ -17,8 +17,8 @@ use crate::titlebar::TitlebarRenderItem;
 use crate::{CompositorLayoutError, LayoutService};
 
 #[derive(Debug)]
-pub struct CompositorSession<L, R> {
-    runtime: CompositorRuntimeState<L, R>,
+pub struct CompositorSession<R> {
+    runtime: CompositorRuntimeState<R>,
     domain: DomainSession,
 }
 
@@ -32,9 +32,9 @@ pub struct SessionUpdate {
     pub topology: CompositorTopologyState,
 }
 
-impl<L, R> CompositorSession<L, R> {
+impl<R> CompositorSession<R> {
     pub fn new(
-        runtime: CompositorRuntimeState<L, R>,
+        runtime: CompositorRuntimeState<R>,
         wm: WmState,
         topology: CompositorTopologyState,
     ) -> Self {
@@ -44,7 +44,7 @@ impl<L, R> CompositorSession<L, R> {
         }
     }
 
-    pub fn runtime(&self) -> &CompositorRuntimeState<L, R> {
+    pub fn runtime(&self) -> &CompositorRuntimeState<R> {
         &self.runtime
     }
 
@@ -213,10 +213,10 @@ impl<L, R> CompositorSession<L, R> {
     }
 }
 
-impl<L: LayoutSourceLoader<Config>, R: AuthoringRuntime<Config = Config>> CompositorSession<L, R> {
+impl<R: AuthoringRuntime<Config = Config>> CompositorSession<R> {
     pub fn initialize(
         layout_service: LayoutService,
-        runtime_service: ConfigRuntimeService<L, R>,
+        runtime_service: ConfigRuntimeService<R>,
         config: Config,
         state: StateSnapshot,
     ) -> Result<Self, CompositorLayoutError> {
@@ -507,10 +507,7 @@ mod tests {
         }
     }
 
-    fn session() -> CompositorSession<
-        RuntimeProjectLayoutSourceLoader,
-        BoaLayoutRuntime<RuntimeProjectLayoutSourceLoader>,
-    > {
+    fn session() -> CompositorSession<BoaLayoutRuntime<RuntimeProjectLayoutSourceLoader>> {
         let temp_dir = std::env::temp_dir();
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -532,7 +529,7 @@ mod tests {
         let loader =
             RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
         let runtime = BoaLayoutRuntime::with_loader(loader.clone());
-        let service = ConfigRuntimeService::new(loader, runtime);
+        let service = ConfigRuntimeService::new(runtime);
 
         let mut session =
             CompositorSession::initialize(LayoutService, service, config(), state()).unwrap();
@@ -810,7 +807,7 @@ mod tests {
         let loader =
             RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
         let runtime = BoaLayoutRuntime::with_loader(loader.clone());
-        let service = ConfigRuntimeService::new(loader, runtime);
+        let service = ConfigRuntimeService::new(runtime);
         let mut session =
             CompositorSession::initialize(LayoutService, service, config, state()).unwrap();
         session.register_seat("seat-0");

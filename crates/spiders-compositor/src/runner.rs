@@ -1,6 +1,6 @@
 use spiders_config::model::Config;
 use spiders_config::service::ConfigRuntimeService;
-use spiders_shared::runtime::{AuthoringRuntime, LayoutSourceLoader};
+use spiders_shared::runtime::AuthoringRuntime;
 use spiders_shared::wm::StateSnapshot;
 use spiders_wm::{
     BootstrapDiagnostics, BootstrapEvent, BootstrapFailureTrace, BootstrapRunTrace,
@@ -20,21 +20,21 @@ pub enum BootstrapRunnerError {
 }
 
 #[derive(Debug)]
-pub struct BootstrapRunner<L, R> {
-    app: CompositorApp<L, R>,
+pub struct BootstrapRunner<R> {
+    app: CompositorApp<R>,
     applied_events: Vec<BootstrapEvent>,
 }
 
-impl<L, R> BootstrapRunner<L, R> {
-    pub fn app(&self) -> &CompositorApp<L, R> {
+impl<R> BootstrapRunner<R> {
+    pub fn app(&self) -> &CompositorApp<R> {
         &self.app
     }
 
-    pub fn app_mut(&mut self) -> &mut CompositorApp<L, R> {
+    pub fn app_mut(&mut self) -> &mut CompositorApp<R> {
         &mut self.app
     }
 
-    pub fn into_app(self) -> CompositorApp<L, R> {
+    pub fn into_app(self) -> CompositorApp<R> {
         self.app
     }
 
@@ -119,10 +119,10 @@ impl<L, R> BootstrapRunner<L, R> {
     }
 }
 
-impl<L: LayoutSourceLoader<Config>, R: AuthoringRuntime<Config = Config>> BootstrapRunner<L, R> {
+impl<R: AuthoringRuntime<Config = Config>> BootstrapRunner<R> {
     pub fn initialize(
         layout_service: LayoutService,
-        runtime_service: ConfigRuntimeService<L, R>,
+        runtime_service: ConfigRuntimeService<R>,
         config: Config,
         state: StateSnapshot,
     ) -> Result<Self, BootstrapRunnerError> {
@@ -134,7 +134,7 @@ impl<L: LayoutSourceLoader<Config>, R: AuthoringRuntime<Config = Config>> Bootst
 
     pub fn initialize_with_registration(
         layout_service: LayoutService,
-        runtime_service: ConfigRuntimeService<L, R>,
+        runtime_service: ConfigRuntimeService<R>,
         config: Config,
         state: StateSnapshot,
         startup: StartupRegistration,
@@ -282,10 +282,7 @@ mod tests {
         }
     }
 
-    fn runner() -> BootstrapRunner<
-        RuntimeProjectLayoutSourceLoader,
-        BoaLayoutRuntime<RuntimeProjectLayoutSourceLoader>,
-    > {
+    fn runner() -> BootstrapRunner<BoaLayoutRuntime<RuntimeProjectLayoutSourceLoader>> {
         let temp_dir = std::env::temp_dir();
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -302,7 +299,7 @@ mod tests {
         let loader =
             RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
         let runtime = BoaLayoutRuntime::with_loader(loader.clone());
-        let service = ConfigRuntimeService::new(loader, runtime);
+        let service = ConfigRuntimeService::new(runtime);
 
         BootstrapRunner::initialize(LayoutService, service, config(), state()).unwrap()
     }
@@ -389,7 +386,7 @@ mod tests {
         let loader =
             RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
         let runtime = BoaLayoutRuntime::with_loader(loader.clone());
-        let service = ConfigRuntimeService::new(loader, runtime);
+        let service = ConfigRuntimeService::new(runtime);
         let mut snapshot = state();
         snapshot.outputs.push(OutputSnapshot {
             id: OutputId::from("out-2"),

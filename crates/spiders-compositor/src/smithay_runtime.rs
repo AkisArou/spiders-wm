@@ -40,7 +40,7 @@ mod imp {
     use smithay::wayland::presentation::Refresh;
     use spiders_shared::api::WmAction;
     use spiders_shared::ids::OutputId;
-    use spiders_shared::runtime::{AuthoringRuntime, LayoutSourceLoader};
+    use spiders_shared::runtime::AuthoringRuntime;
     use spiders_shared::wm::OutputSnapshot;
     use spiders_wm::{
         CompositorTopologyState, ControllerCommand, ControllerReport, OutputState, SeatState,
@@ -141,15 +141,14 @@ mod imp {
     }
 
     #[derive(Debug)]
-    pub struct SmithayBootstrap<L, R> {
-        pub controller: crate::CompositorController<L, R>,
+    pub struct SmithayBootstrap<R> {
+        pub controller: crate::CompositorController<R>,
         pub runtime: SmithayWinitRuntime<'static>,
         pub report: SmithayStartupReport,
     }
 
-    impl<L, R> SmithayBootstrap<L, R>
+    impl<R> SmithayBootstrap<R>
     where
-        L: LayoutSourceLoader<Config>,
         R: AuthoringRuntime<Config = Config>,
     {
         pub fn run_startup_cycle(&mut self) -> Result<(), SmithayRuntimeError> {
@@ -1059,11 +1058,10 @@ mod imp {
         }
     }
 
-    pub fn refresh_workspace_export_from_controller<L, R>(
-        controller: &crate::CompositorController<L, R>,
+    pub fn refresh_workspace_export_from_controller<R>(
+        controller: &crate::CompositorController<R>,
         state: &mut SpidersSmithayState,
     ) where
-        L: LayoutSourceLoader<Config>,
         R: AuthoringRuntime<Config = Config>,
     {
         let snapshot = controller.state_snapshot();
@@ -1113,36 +1111,33 @@ mod imp {
             .collect()
     }
 
-    pub fn initialize_smithay_workspace_export<L, R>(
-        controller: &crate::CompositorController<L, R>,
+    pub fn initialize_smithay_workspace_export<R>(
+        controller: &crate::CompositorController<R>,
         state: &mut SpidersSmithayState,
     ) where
-        L: LayoutSourceLoader<Config>,
         R: AuthoringRuntime<Config = Config>,
     {
         refresh_workspace_export_from_controller(controller, state);
     }
 
-    pub fn initialize_winit_controller<L, R>(
-        runtime_service: spiders_config::service::ConfigRuntimeService<L, R>,
+    pub fn initialize_winit_controller<R>(
+        runtime_service: spiders_config::service::ConfigRuntimeService<R>,
         config: spiders_config::model::Config,
         state: spiders_shared::wm::StateSnapshot,
-    ) -> Result<crate::CompositorController<L, R>, SmithayRuntimeError>
+    ) -> Result<crate::CompositorController<R>, SmithayRuntimeError>
     where
-        L: LayoutSourceLoader<Config>,
         R: AuthoringRuntime<Config = Config>,
     {
         crate::CompositorController::initialize(runtime_service, config, state)
             .map_err(|error| SmithayRuntimeError::Winit(error.to_string()))
     }
 
-    pub fn bootstrap_winit<L, R>(
-        runtime_service: spiders_config::service::ConfigRuntimeService<L, R>,
+    pub fn bootstrap_winit<R>(
+        runtime_service: spiders_config::service::ConfigRuntimeService<R>,
         config: spiders_config::model::Config,
         state: spiders_shared::wm::StateSnapshot,
-    ) -> Result<SmithayBootstrap<L, R>, SmithayRuntimeError>
+    ) -> Result<SmithayBootstrap<R>, SmithayRuntimeError>
     where
-        L: LayoutSourceLoader<Config>,
         R: AuthoringRuntime<Config = Config>,
     {
         let mut controller = initialize_winit_controller(runtime_service, config, state)?;
@@ -1155,11 +1150,10 @@ mod imp {
         })
     }
 
-    pub fn bootstrap_winit_controller<L, R>(
-        controller: &mut crate::CompositorController<L, R>,
+    pub fn bootstrap_winit_controller<R>(
+        controller: &mut crate::CompositorController<R>,
     ) -> Result<(SmithayWinitRuntime<'static>, SmithayStartupReport), SmithayRuntimeError>
     where
-        L: LayoutSourceLoader<Config>,
         R: AuthoringRuntime<Config = Config>,
     {
         let event_loop = EventLoop::<SpidersSmithayState>::try_new()
@@ -1366,7 +1360,7 @@ mod imp {
             let loader =
                 RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
             let runtime = BoaLayoutRuntime::with_loader(loader.clone());
-            ConfigRuntimeService::new(loader, runtime)
+            ConfigRuntimeService::new(runtime)
         }
 
         fn test_runtime(socket_name: &str) -> SmithayWinitRuntime<'static> {

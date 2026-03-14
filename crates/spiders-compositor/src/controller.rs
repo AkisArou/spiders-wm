@@ -2,7 +2,7 @@ use spiders_config::model::Config;
 use spiders_config::service::ConfigRuntimeService;
 use spiders_shared::api::WmAction;
 use spiders_shared::ids::{OutputId, WorkspaceId};
-use spiders_shared::runtime::{AuthoringRuntime, LayoutSourceLoader};
+use spiders_shared::runtime::AuthoringRuntime;
 use spiders_shared::wm::StateSnapshot;
 use spiders_wm::{
     BootstrapEvent, BootstrapFailureTrace, BootstrapRunTrace, BootstrapScenario, BootstrapScript,
@@ -18,18 +18,18 @@ use crate::runner::BootstrapRunnerError;
 use crate::CompositorApp;
 
 #[derive(Debug)]
-pub struct CompositorController<L, R> {
-    host: CompositorHost<L, R>,
+pub struct CompositorController<R> {
+    host: CompositorHost<R>,
     phase: ControllerPhase,
     backend: BackendSessionState,
 }
 
-impl<L, R> CompositorController<L, R> {
-    pub fn host(&self) -> &CompositorHost<L, R> {
+impl<R> CompositorController<R> {
+    pub fn host(&self) -> &CompositorHost<R> {
         &self.host
     }
 
-    pub fn app(&self) -> &CompositorApp<L, R> {
+    pub fn app(&self) -> &CompositorApp<R> {
         self.host.app()
     }
 
@@ -52,7 +52,7 @@ impl<L, R> CompositorController<L, R> {
         }
     }
 
-    pub fn into_host(self) -> CompositorHost<L, R> {
+    pub fn into_host(self) -> CompositorHost<R> {
         self.host
     }
 
@@ -61,11 +61,9 @@ impl<L, R> CompositorController<L, R> {
     }
 }
 
-impl<L: LayoutSourceLoader<Config>, R: AuthoringRuntime<Config = Config>>
-    CompositorController<L, R>
-{
+impl<R: AuthoringRuntime<Config = Config>> CompositorController<R> {
     pub fn initialize(
-        runtime_service: ConfigRuntimeService<L, R>,
+        runtime_service: ConfigRuntimeService<R>,
         config: Config,
         state: StateSnapshot,
     ) -> Result<Self, BootstrapRunnerError> {
@@ -77,7 +75,7 @@ impl<L: LayoutSourceLoader<Config>, R: AuthoringRuntime<Config = Config>>
     }
 
     pub fn initialize_with_registration(
-        runtime_service: ConfigRuntimeService<L, R>,
+        runtime_service: ConfigRuntimeService<R>,
         config: Config,
         state: StateSnapshot,
         startup: StartupRegistration,
@@ -95,7 +93,7 @@ impl<L: LayoutSourceLoader<Config>, R: AuthoringRuntime<Config = Config>>
     }
 
     pub fn initialize_with_transcript(
-        runtime_service: ConfigRuntimeService<L, R>,
+        runtime_service: ConfigRuntimeService<R>,
         config: Config,
         state: StateSnapshot,
         transcript: &BootstrapTranscript,
@@ -113,7 +111,7 @@ impl<L: LayoutSourceLoader<Config>, R: AuthoringRuntime<Config = Config>>
     }
 
     pub fn initialize_with_script(
-        runtime_service: ConfigRuntimeService<L, R>,
+        runtime_service: ConfigRuntimeService<R>,
         config: Config,
         state: StateSnapshot,
         script: &BootstrapScript,
@@ -383,10 +381,7 @@ mod tests {
         }
     }
 
-    fn runtime_service() -> ConfigRuntimeService<
-        RuntimeProjectLayoutSourceLoader,
-        BoaLayoutRuntime<RuntimeProjectLayoutSourceLoader>,
-    > {
+    fn runtime_service() -> ConfigRuntimeService<BoaLayoutRuntime<RuntimeProjectLayoutSourceLoader>> {
         let temp_dir = std::env::temp_dir();
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -403,7 +398,7 @@ mod tests {
         let loader =
             RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
         let runtime = BoaLayoutRuntime::with_loader(loader.clone());
-        ConfigRuntimeService::new(loader, runtime)
+        ConfigRuntimeService::new(runtime)
     }
 
     #[test]
