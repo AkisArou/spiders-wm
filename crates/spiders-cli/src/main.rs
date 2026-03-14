@@ -858,6 +858,10 @@ mod tests {
             let socket_path = socket_path.clone();
             move || {
                 let (mut stream, _) = listener.accept().unwrap();
+                let mut request = String::new();
+                let mut reader = std::io::BufReader::new(stream.try_clone().unwrap());
+                use std::io::BufRead;
+                reader.read_line(&mut request).unwrap();
                 let line = encode_response_line(&IpcEnvelope::new(IpcServerMessage::Query(
                     QueryResponse::TagNames(vec!["1".into(), "2".into()]),
                 )))
@@ -889,6 +893,10 @@ mod tests {
             let socket_path = socket_path.clone();
             move || {
                 let (mut stream, _) = listener.accept().unwrap();
+                let mut request = String::new();
+                let mut reader = std::io::BufReader::new(stream.try_clone().unwrap());
+                use std::io::BufRead;
+                reader.read_line(&mut request).unwrap();
                 let line =
                     encode_response_line(&IpcEnvelope::new(IpcServerMessage::ActionAccepted))
                         .unwrap();

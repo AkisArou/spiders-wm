@@ -89,6 +89,9 @@ connection-local client ids and:
 - route `query` and `action` work upward tagged with the originating client id
 - return immediate subscription acknowledgements from the session layer
 - broadcast compositor events only to clients whose stored subscriptions match
+- provide a small request-serving helper that reads one request from a stream,
+  maps it through session/server state, and writes exactly one response back to
+  that same stream
 
 If a transport codec helper exists, it may treat each IPC message as one JSON
 value per line, append a trailing newline on encode, and ignore surrounding

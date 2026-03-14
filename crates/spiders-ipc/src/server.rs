@@ -1,8 +1,12 @@
 use std::collections::BTreeMap;
+use std::os::unix::net::UnixStream;
 
 use spiders_shared::api::{CompositorEvent, QueryRequest, QueryResponse, WmAction};
 
-use crate::{IpcRequest, IpcResponse, IpcSession, IpcSessionHandleResult};
+use crate::{
+    recv_request, send_response, IpcRequest, IpcResponse, IpcSession, IpcSessionHandleResult,
+    IpcTransportError,
+};
 
 pub type IpcClientId = u64;
 
@@ -33,6 +37,14 @@ pub enum IpcServerHandleResult {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnknownClientError {
     pub client_id: IpcClientId,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum IpcServeError {
+    #[error(transparent)]
+    UnknownClient(#[from] UnknownClientError),
+    #[error(transparent)]
+    Transport(#[from] IpcTransportError),
 }
 
 impl std::fmt::Display for UnknownClientError {
@@ -138,10 +150,34 @@ impl IpcServerState {
             })
             .collect()
     }
+
+    pub fn serve_stream<F>(
+        &mut self,
+        client_id: IpcClientId,
+        stream: &mut UnixStream,
+        mut responder: F,
+    ) -> Result<IpcResponse, IpcServeError>
+    where
+        F: FnMut(IpcServerHandleResult) -> Result<IpcResponse, UnknownClientError>,
+    {
+        let request = recv_request(stream)?;
+        let result = self.handle_request(client_id, request)?;
+        let response = match result {
+            IpcServerHandleResult::Response { response, .. } => response,
+            other => responder(other)?,
+        };
+
+        send_response(stream, &response)?;
+
+        Ok(response)
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::os::unix::net::UnixListener;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
     use crate::{IpcClientMessage, IpcEnvelope, IpcServerMessage, IpcSubscriptionTopic};
 
     use super::*;
@@ -299,5 +335,144 @@ mod tests {
 
         assert_eq!(error, UnknownClientError { client_id: 7 });
         assert_eq!(error.to_string(), "unknown IPC client 7");
+    }
+
+    #[test]
+    fn server_serve_stream_replies_with_subscription_ack() {
+        let path = unique_socket_path("serve-subscribe");
+        let listener = UnixListener::bind(&path).unwrap();
+        let mut client = UnixStream::connect(&path).unwrap();
+        let (mut server_stream, _) = listener.accept().unwrap();
+
+        let mut server = IpcServerState::new();
+        let client_id = server.add_client();
+
+        crate::send_request(
+            &mut client,
+            &IpcEnvelope::new(IpcClientMessage::subscribe([IpcSubscriptionTopic::Layout])),
+        )
+        .unwrap();
+
+        let response = server
+            .serve_stream(client_id, &mut server_stream, |_| unreachable!())
+            .unwrap();
+
+        assert_eq!(
+            response,
+            IpcEnvelope::new(IpcServerMessage::Subscribed {
+                topics: vec![IpcSubscriptionTopic::Layout],
+            })
+        );
+
+        let decoded = crate::recv_response(&client).unwrap();
+        assert_eq!(decoded, response);
+
+        drop(server_stream);
+        drop(client);
+        drop(listener);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn server_serve_stream_uses_responder_for_query_requests() {
+        let path = unique_socket_path("serve-query");
+        let listener = UnixListener::bind(&path).unwrap();
+        let mut client = UnixStream::connect(&path).unwrap();
+        let (mut server_stream, _) = listener.accept().unwrap();
+
+        let mut server = IpcServerState::new();
+        let client_id = server.add_client();
+
+        crate::send_request(
+            &mut client,
+            &IpcEnvelope::new(IpcClientMessage::Query(QueryRequest::TagNames))
+                .with_request_id("req-10"),
+        )
+        .unwrap();
+
+        let response = server
+            .serve_stream(client_id, &mut server_stream, |result| match result {
+                IpcServerHandleResult::Query {
+                    request_id,
+                    query: QueryRequest::TagNames,
+                    ..
+                } => Ok(
+                    IpcEnvelope::new(IpcServerMessage::Query(QueryResponse::TagNames(vec![
+                        "1".into(),
+                        "2".into(),
+                    ])))
+                    .with_request_id(request_id.unwrap_or_default()),
+                ),
+                other => panic!("unexpected serve result: {other:?}"),
+            })
+            .unwrap();
+
+        assert_eq!(
+            response,
+            IpcEnvelope::new(IpcServerMessage::Query(QueryResponse::TagNames(vec![
+                "1".into(),
+                "2".into(),
+            ])))
+            .with_request_id("req-10")
+        );
+
+        let decoded = crate::recv_response(&client).unwrap();
+        assert_eq!(decoded, response);
+
+        drop(server_stream);
+        drop(client);
+        drop(listener);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn server_serve_stream_uses_responder_for_action_requests() {
+        let path = unique_socket_path("serve-action");
+        let listener = UnixListener::bind(&path).unwrap();
+        let mut client = UnixStream::connect(&path).unwrap();
+        let (mut server_stream, _) = listener.accept().unwrap();
+
+        let mut server = IpcServerState::new();
+        let client_id = server.add_client();
+
+        crate::send_request(
+            &mut client,
+            &IpcEnvelope::new(IpcClientMessage::Action(WmAction::ReloadConfig))
+                .with_request_id("req-11"),
+        )
+        .unwrap();
+
+        let response = server
+            .serve_stream(client_id, &mut server_stream, |result| match result {
+                IpcServerHandleResult::Action {
+                    request_id,
+                    action: WmAction::ReloadConfig,
+                    ..
+                } => Ok(IpcEnvelope::new(IpcServerMessage::ActionAccepted)
+                    .with_request_id(request_id.unwrap_or_default())),
+                other => panic!("unexpected serve result: {other:?}"),
+            })
+            .unwrap();
+
+        assert_eq!(
+            response,
+            IpcEnvelope::new(IpcServerMessage::ActionAccepted).with_request_id("req-11")
+        );
+
+        let decoded = crate::recv_response(&client).unwrap();
+        assert_eq!(decoded, response);
+
+        drop(server_stream);
+        drop(client);
+        drop(listener);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    fn unique_socket_path(label: &str) -> std::path::PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!("spiders-ipc-server-{label}-{nanos}.sock"))
     }
 }
