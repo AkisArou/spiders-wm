@@ -154,6 +154,9 @@ Compositor-domain note:
 - the same adapter-driven batch approach is acceptable for initial seat/output
   discovery when it carries only stable registration facts already representable
   in backend topology snapshots
+- for genuinely new outputs, that discovery path should carry a typed output
+  snapshot instead of assuming the output already exists in the startup
+  `StateSnapshot`
 - layer-shell configure bookkeeping also remains compositor-owned, but a small
   typed inspection snapshot for last acked serial, pending configure count, and
   configured size may cross the smithay seam for diagnostics and tests

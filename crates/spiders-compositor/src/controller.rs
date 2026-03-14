@@ -639,7 +639,16 @@ mod tests {
                     active: true,
                 }],
                 outputs: vec![crate::backend::BackendOutputSnapshot {
-                    output_id: OutputId::from("out-1"),
+                    snapshot: OutputSnapshot {
+                        id: OutputId::from("out-1"),
+                        name: "HDMI-A-1".into(),
+                        logical_width: 1920,
+                        logical_height: 1080,
+                        scale: 1,
+                        transform: OutputTransform::Normal,
+                        enabled: true,
+                        current_workspace_id: Some(WorkspaceId::from("ws-1")),
+                    },
                     active: true,
                 }],
                 surfaces: vec![crate::backend::BackendSurfaceSnapshot::Window {

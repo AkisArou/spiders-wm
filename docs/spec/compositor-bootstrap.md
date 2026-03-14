@@ -360,6 +360,10 @@ The same rule applies to seat/output discovery: small typed discovery batches
 are acceptable when they register stable topology facts through the adapter seam
 instead of constructing those facts by mutating smithay-owned test state.
 
+For outputs specifically, that batch should be allowed to carry a typed output
+snapshot when the backend is introducing a genuinely new output that does not
+already exist in the startup `StateSnapshot`.
+
 That slice is only a startup/discovery proof, not full surface or rendering
 integration.
 

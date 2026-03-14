@@ -3,7 +3,7 @@ pub mod topology;
 pub mod wm;
 
 use spiders_shared::ids::{OutputId, WindowId};
-use spiders_shared::wm::StateSnapshot;
+use spiders_shared::wm::{OutputSnapshot, StateSnapshot};
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -17,6 +17,10 @@ pub enum BootstrapEvent {
     },
     RegisterOutput {
         output_id: OutputId,
+        active: bool,
+    },
+    RegisterOutputSnapshot {
+        output: OutputSnapshot,
         active: bool,
     },
     ActivateOutput {
@@ -369,7 +373,7 @@ pub struct BackendSeatSnapshot {
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct BackendOutputSnapshot {
-    pub output_id: OutputId,
+    pub snapshot: OutputSnapshot,
     pub active: bool,
 }
 
@@ -443,6 +447,10 @@ pub enum BackendDiscoveryEvent {
         output_id: OutputId,
         active: bool,
     },
+    OutputSnapshotDiscovered {
+        output: OutputSnapshot,
+        active: bool,
+    },
     OutputActivated {
         output_id: OutputId,
     },
@@ -489,6 +497,9 @@ impl BackendDiscoveryEvent {
             Self::SeatLost { seat_name } => BootstrapEvent::RemoveSeat { seat_name },
             Self::OutputDiscovered { output_id, active } => {
                 BootstrapEvent::RegisterOutput { output_id, active }
+            }
+            Self::OutputSnapshotDiscovered { output, active } => {
+                BootstrapEvent::RegisterOutputSnapshot { output, active }
             }
             Self::OutputActivated { output_id } => BootstrapEvent::ActivateOutput { output_id },
             Self::SeatFocusChanged {
@@ -559,8 +570,8 @@ impl BackendTopologySnapshot {
                 }),
         );
         events.extend(self.outputs.into_iter().map(|output| {
-            BackendDiscoveryEvent::OutputDiscovered {
-                output_id: output.output_id,
+            BackendDiscoveryEvent::OutputSnapshotDiscovered {
+                output: output.snapshot,
                 active: output.active,
             }
         }));
@@ -760,7 +771,16 @@ mod tests {
                 active: true,
             }],
             outputs: vec![BackendOutputSnapshot {
-                output_id: OutputId::from("out-1"),
+                snapshot: OutputSnapshot {
+                    id: OutputId::from("out-1"),
+                    name: "HDMI-A-1".into(),
+                    logical_width: 1920,
+                    logical_height: 1080,
+                    scale: 1,
+                    transform: spiders_shared::wm::OutputTransform::Normal,
+                    enabled: true,
+                    current_workspace_id: None,
+                },
                 active: true,
             }],
             surfaces: vec![
@@ -781,6 +801,10 @@ mod tests {
         assert!(matches!(
             events[0],
             BackendDiscoveryEvent::SeatDiscovered { .. }
+        ));
+        assert!(matches!(
+            events[1],
+            BackendDiscoveryEvent::OutputSnapshotDiscovered { .. }
         ));
     }
 

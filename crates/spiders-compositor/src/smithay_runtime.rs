@@ -1118,26 +1118,23 @@ mod imp {
 
         #[test]
         fn bootstrap_applies_adapter_output_discovery_batch_to_controller() {
-            let mut state = test_state_snapshot();
-            state.outputs.push(OutputSnapshot {
-                id: OutputId::from("out-3"),
-                name: "DP-2".into(),
-                logical_width: 3440,
-                logical_height: 1440,
-                scale: 1,
-                transform: OutputTransform::Normal,
-                enabled: true,
-                current_workspace_id: None,
-            });
-            let mut bootstrap =
-                test_bootstrap_with_state("wayland-test-adapter-output-discovery", state);
+            let mut bootstrap = test_bootstrap("wayland-test-adapter-output-discovery");
 
             bootstrap
                 .apply_adapter_discovery_batch(
                     1,
                     Vec::new(),
                     vec![crate::backend::BackendOutputSnapshot {
-                        output_id: OutputId::from("out-3"),
+                        snapshot: OutputSnapshot {
+                            id: OutputId::from("out-3"),
+                            name: "DP-2".into(),
+                            logical_width: 3440,
+                            logical_height: 1440,
+                            scale: 1,
+                            transform: OutputTransform::Normal,
+                            enabled: true,
+                            current_workspace_id: None,
+                        },
                         active: true,
                     }],
                     Vec::new(),

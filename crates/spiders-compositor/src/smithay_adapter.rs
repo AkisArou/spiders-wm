@@ -3,6 +3,7 @@ use crate::backend::{
     BackendSurfaceSnapshot, BackendTopologySnapshot,
 };
 use spiders_runtime::ControllerCommand;
+use spiders_shared::wm::OutputTransform;
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -110,9 +111,18 @@ impl SmithayAdapter {
     }
 
     pub fn translate_output_descriptor(output: SmithayOutputDescriptor) -> BackendOutputSnapshot {
-        let _ = (output.width, output.height);
+        let output_id = output.output_id;
         BackendOutputSnapshot {
-            output_id: output.output_id.into(),
+            snapshot: spiders_shared::wm::OutputSnapshot {
+                id: output_id.clone().into(),
+                name: output_id,
+                logical_width: output.width.max(0) as u32,
+                logical_height: output.height.max(0) as u32,
+                scale: 1,
+                transform: OutputTransform::Normal,
+                enabled: true,
+                current_workspace_id: None,
+            },
             active: output.active,
         }
     }
@@ -242,7 +252,7 @@ mod tests {
 
         assert_eq!(seat.seat_name, "seat-0");
         assert_eq!(
-            output.output_id,
+            output.snapshot.id,
             spiders_shared::ids::OutputId::from("out-1")
         );
     }
@@ -256,7 +266,16 @@ mod tests {
                 active: true,
             }],
             vec![BackendOutputSnapshot {
-                output_id: spiders_shared::ids::OutputId::from("out-1"),
+                snapshot: spiders_shared::wm::OutputSnapshot {
+                    id: spiders_shared::ids::OutputId::from("out-1"),
+                    name: "HDMI-A-1".into(),
+                    logical_width: 1280,
+                    logical_height: 720,
+                    scale: 1,
+                    transform: spiders_shared::wm::OutputTransform::Normal,
+                    enabled: true,
+                    current_workspace_id: None,
+                },
                 active: true,
             }],
             vec![BackendSurfaceSnapshot::Window {

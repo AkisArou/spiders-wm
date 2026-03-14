@@ -11,6 +11,7 @@ mod tests {
         LayerSurfaceTier,
     };
     use spiders_shared::ids::{OutputId, WindowId};
+    use spiders_shared::wm::OutputTransform;
 
     use super::*;
 
@@ -53,6 +54,25 @@ mod tests {
                 },
             }
         );
+
+        let output_event = BackendDiscoveryEvent::OutputSnapshotDiscovered {
+            output: spiders_shared::wm::OutputSnapshot {
+                id: OutputId::from("out-2"),
+                name: "DP-1".into(),
+                logical_width: 2560,
+                logical_height: 1440,
+                scale: 1,
+                transform: OutputTransform::Normal,
+                enabled: true,
+                current_workspace_id: None,
+            },
+            active: false,
+        };
+
+        assert!(matches!(
+            output_event.into_bootstrap_event(),
+            BootstrapEvent::RegisterOutputSnapshot { .. }
+        ));
     }
 
     #[test]
@@ -65,7 +85,16 @@ mod tests {
                 active: true,
             }],
             outputs: vec![BackendOutputSnapshot {
-                output_id: OutputId::from("out-1"),
+                snapshot: spiders_shared::wm::OutputSnapshot {
+                    id: OutputId::from("out-1"),
+                    name: "HDMI-A-1".into(),
+                    logical_width: 1920,
+                    logical_height: 1080,
+                    scale: 1,
+                    transform: OutputTransform::Normal,
+                    enabled: true,
+                    current_workspace_id: None,
+                },
                 active: true,
             }],
             surfaces: vec![
