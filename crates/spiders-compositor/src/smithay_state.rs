@@ -297,6 +297,8 @@ mod imp {
         pub seat: Seat<Self>,
         pub seat_name: String,
         next_window_serial: u64,
+        known_seat_names: Vec<String>,
+        active_seat_name: Option<String>,
         smithay_outputs: HashMap<OutputId, Output>,
         toplevel_window_ids: HashMap<String, WindowId>,
         known_output_ids: Vec<OutputId>,
@@ -387,8 +389,10 @@ mod imp {
                 workspace_manager_state,
                 seat_state,
                 seat,
-                seat_name,
+                seat_name: seat_name.clone(),
                 next_window_serial: 1,
+                known_seat_names: vec![seat_name.clone()],
+                active_seat_name: Some(seat_name),
                 smithay_outputs: HashMap::new(),
                 toplevel_window_ids: HashMap::new(),
                 known_output_ids: Vec::new(),
@@ -428,8 +432,59 @@ mod imp {
             std::mem::take(&mut self.pending_workspace_actions)
         }
 
+        fn current_seat_name(&self) -> &str {
+            self.active_seat_name
+                .as_deref()
+                .unwrap_or(self.seat_name.as_str())
+        }
+
         pub fn queue_workspace_action(&mut self, action: WmAction) {
             self.pending_workspace_actions.push(action);
+        }
+
+        pub fn register_seat_name(&mut self, seat_name: impl Into<String>, active: bool) {
+            let seat_name = seat_name.into();
+            if !self
+                .known_seat_names
+                .iter()
+                .any(|known| known == &seat_name)
+            {
+                self.known_seat_names.push(seat_name.clone());
+            }
+
+            if active || self.active_seat_name.is_none() {
+                self.active_seat_name = Some(seat_name.clone());
+            }
+
+            self.pending_discovery_events
+                .push(BackendDiscoveryEvent::SeatDiscovered { seat_name, active });
+        }
+
+        pub fn activate_seat_name(&mut self, seat_name: &str) {
+            if self.active_seat_name.as_deref() == Some(seat_name) {
+                return;
+            }
+
+            if self.known_seat_names.iter().any(|known| known == seat_name) {
+                self.active_seat_name = Some(seat_name.to_owned());
+            }
+        }
+
+        pub fn remove_seat_name(&mut self, seat_name: &str) {
+            let known_before = self.known_seat_names.len();
+            self.known_seat_names.retain(|known| known != seat_name);
+            if self.known_seat_names.len() == known_before {
+                return;
+            }
+
+            if self.active_seat_name.as_deref() == Some(seat_name) {
+                self.active_seat_name = self.known_seat_names.first().cloned();
+            }
+
+            self.pending_discovery_events
+                .push(BackendDiscoveryEvent::SeatLost {
+                    seat_name: seat_name.to_owned(),
+                });
         }
 
         pub fn register_output_id(&mut self, output_id: OutputId, active: bool) {
@@ -577,9 +632,21 @@ mod imp {
 
         pub fn backend_topology_snapshot(&self, generation: u64) -> BackendTopologySnapshot {
             let seats = vec![BackendSeatSnapshot {
-                seat_name: self.seat_name.clone(),
+                seat_name: self.current_seat_name().to_owned(),
                 active: true,
             }];
+            let seats = if self.known_seat_names.is_empty() {
+                seats
+            } else {
+                self.known_seat_names
+                    .iter()
+                    .cloned()
+                    .map(|seat_name| BackendSeatSnapshot {
+                        active: self.active_seat_name.as_deref() == Some(seat_name.as_str()),
+                        seat_name,
+                    })
+                    .collect()
+            };
 
             let outputs = self
                 .known_output_ids
@@ -996,7 +1063,7 @@ mod imp {
                 .and_then(|surface_id| self.focused_output_id(surface_id));
             self.pending_discovery_events
                 .push(BackendDiscoveryEvent::SeatFocusChanged {
-                    seat_name: self.seat_name.clone(),
+                    seat_name: self.current_seat_name().to_owned(),
                     window_id: focused_window_id,
                     output_id: focused_output_id,
                 });
@@ -1028,9 +1095,9 @@ mod imp {
                 .as_ref()
                 .and_then(|surface_id| self.focused_output_id(surface_id));
             SmithayStateSnapshot {
-                seat_name: self.seat_name.clone(),
+                seat_name: self.current_seat_name().to_owned(),
                 seat: SmithaySeatSnapshot {
-                    name: self.seat_name.clone(),
+                    name: self.current_seat_name().to_owned(),
                     has_keyboard: self.seat.get_keyboard().is_some(),
                     has_pointer: self.seat.get_pointer().is_some(),
                     has_touch: self.seat.get_touch().is_some(),
@@ -1074,13 +1141,13 @@ mod imp {
                     ext_data_control: true,
                 },
                 clipboard_selection: SmithayClipboardSelectionSnapshot {
-                    seat_name: self.seat_name.clone(),
+                    seat_name: self.current_seat_name().to_owned(),
                     target: "clipboard".into(),
                     selection: self.clipboard_selection.clone(),
                     focused_client_id: self.clipboard_focus_client_id.clone(),
                 },
                 primary_selection: SmithayPrimarySelectionSnapshot {
-                    seat_name: self.seat_name.clone(),
+                    seat_name: self.current_seat_name().to_owned(),
                     target: "primary".into(),
                     selection: self.primary_selection.clone(),
                     focused_client_id: self.primary_focus_client_id.clone(),
@@ -1194,7 +1261,7 @@ mod imp {
                 if focus_cleared {
                     self.pending_discovery_events
                         .push(BackendDiscoveryEvent::SeatFocusChanged {
-                            seat_name: self.seat_name.clone(),
+                            seat_name: self.current_seat_name().to_owned(),
                             window_id: None,
                             output_id: None,
                         });
@@ -2632,7 +2699,7 @@ mod imp {
                 .and_then(|surface_id| self.focused_output_id(surface_id));
             self.pending_discovery_events
                 .push(BackendDiscoveryEvent::SeatFocusChanged {
-                    seat_name: self.seat_name.clone(),
+                    seat_name: self.current_seat_name().to_owned(),
                     window_id: focused_window_id,
                     output_id: focused_output_id,
                 });
@@ -3196,6 +3263,50 @@ mod imp {
                     && window_id == &None
                     && output_id == &Some(OutputId::from("out-1"))
             ));
+        }
+
+        #[test]
+        fn smithay_state_tracks_known_and_active_seat_names() {
+            let display = Display::<SpidersSmithayState>::new().unwrap();
+            let mut state = SpidersSmithayState::new(&display, "seat-0").unwrap();
+
+            let _ = state.take_discovery_events();
+            state.register_seat_name("seat-1", false);
+            state.activate_seat_name("seat-1");
+
+            let snapshot = state.backend_topology_snapshot(1);
+            assert_eq!(snapshot.seats.len(), 2);
+            assert_eq!(state.snapshot().seat_name, "seat-1");
+            assert_eq!(
+                snapshot
+                    .seats
+                    .iter()
+                    .find(|seat| seat.active)
+                    .map(|seat| seat.seat_name.as_str()),
+                Some("seat-1")
+            );
+        }
+
+        #[test]
+        fn smithay_state_reassigns_active_seat_when_active_seat_is_removed() {
+            let display = Display::<SpidersSmithayState>::new().unwrap();
+            let mut state = SpidersSmithayState::new(&display, "seat-0").unwrap();
+
+            let _ = state.take_discovery_events();
+            state.register_seat_name("seat-1", false);
+            state.activate_seat_name("seat-1");
+            let _ = state.take_discovery_events();
+
+            state.remove_seat_name("seat-1");
+
+            let events = state.take_discovery_events();
+            assert_eq!(events.len(), 1);
+            assert!(matches!(
+                &events[0],
+                BackendDiscoveryEvent::SeatLost { seat_name } if seat_name == "seat-1"
+            ));
+            assert_eq!(state.snapshot().seat_name, "seat-0");
+            assert_eq!(state.backend_topology_snapshot(2).seats.len(), 1);
         }
 
         #[test]
