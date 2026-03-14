@@ -65,6 +65,7 @@ Recommended default:
 
 - Unix domain socket
 - JSON messages
+- newline-delimited JSON frames for stream-friendly request and event transport
 - request/response for commands and queries
 - long-lived subscription stream for events
 
@@ -88,6 +89,10 @@ connection-local client ids and:
 - route `query` and `action` work upward tagged with the originating client id
 - return immediate subscription acknowledgements from the session layer
 - broadcast compositor events only to clients whose stored subscriptions match
+
+If a transport codec helper exists, it may treat each IPC message as one JSON
+value per line, append a trailing newline on encode, and ignore surrounding
+whitespace when decoding, while rejecting fully empty frames.
 
 Agents may implement this unless the repository later defines a stricter wire
 format.
