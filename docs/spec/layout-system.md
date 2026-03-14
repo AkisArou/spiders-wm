@@ -196,6 +196,15 @@ Validation happens in Rust, not in JS.
 6. Rust creates a `taffy` tree and computes geometry.
 7. Rust applies computed geometry to tiled windows.
 
+Floating windows are a compositor-managed exception to the tiled layout result.
+If a window is marked floating and has a persisted `floating_rect`, that rect
+overrides the tiled layout geometry for compositor rendering and interaction
+until the floating placement is changed or cleared.
+
+Current implementation note: floating drag/resize clamps against the active
+output bounds. True multi-output floating moves will require explicit output
+origin metadata in shared output snapshots.
+
 The compositor-facing boundary should use explicit shared request/response types:
 
 - `LayoutRequest { workspace_id, output_id?, layout_name?, root, stylesheet, space }`

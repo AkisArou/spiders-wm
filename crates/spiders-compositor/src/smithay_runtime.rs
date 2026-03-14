@@ -325,7 +325,6 @@ mod imp {
 
         pub fn run_startup_cycle(&mut self) -> Result<(), SmithayRuntimeError> {
             self.dispatch_winit_events()?;
-            self.apply_winit_cursor_feedback();
 
             self.render_if_needed()?;
 
@@ -471,6 +470,7 @@ mod imp {
                 handle_winit_event(state, event, &mut window_size)?;
             }
             self.window_size = window_size;
+            self.apply_winit_cursor_feedback();
 
             Ok(())
         }

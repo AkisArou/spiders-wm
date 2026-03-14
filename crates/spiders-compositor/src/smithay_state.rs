@@ -3895,6 +3895,92 @@ mod imp {
         }
 
         #[test]
+        fn floating_titlebar_interaction_clamps_to_active_output_bounds() {
+            let display = Display::<SpidersSmithayState>::new().unwrap();
+            let mut state = SpidersSmithayState::new(&display, "test-seat").unwrap();
+            let output_id = OutputId::from("out-1");
+            let window_id = WindowId::from("w1");
+            let base_item = TitlebarRenderItem {
+                window_id: window_id.clone(),
+                window_rect: LayoutRect {
+                    x: 10.0,
+                    y: 20.0,
+                    width: 300.0,
+                    height: 220.0,
+                },
+                titlebar_rect: LayoutRect {
+                    x: 10.0,
+                    y: 20.0,
+                    width: 300.0,
+                    height: 24.0,
+                },
+                title: "Terminal".into(),
+                app_id: Some("foot".into()),
+                focused: true,
+                style: TitlebarEffects::default(),
+            };
+
+            state.register_output_snapshot(output_id.clone(), "HDMI-A-1", Some((800, 600)), true);
+            state.refresh_workspace_state(&StateSnapshot {
+                focused_window_id: Some(window_id.clone()),
+                current_output_id: Some(output_id.clone()),
+                current_workspace_id: Some(WorkspaceId::from("ws-1")),
+                outputs: vec![OutputSnapshot {
+                    id: output_id.clone(),
+                    name: "HDMI-A-1".into(),
+                    logical_width: 800,
+                    logical_height: 600,
+                    scale: 1,
+                    transform: OutputTransform::Normal,
+                    enabled: true,
+                    current_workspace_id: Some(WorkspaceId::from("ws-1")),
+                }],
+                workspaces: vec![WorkspaceSnapshot {
+                    id: WorkspaceId::from("ws-1"),
+                    name: "1".into(),
+                    output_id: Some(output_id),
+                    active_tags: vec!["1".into()],
+                    focused: true,
+                    visible: true,
+                    effective_layout: None,
+                }],
+                windows: vec![WindowSnapshot {
+                    id: window_id.clone(),
+                    shell: ShellKind::XdgToplevel,
+                    app_id: Some("foot".into()),
+                    title: Some("Terminal".into()),
+                    class: None,
+                    instance: None,
+                    role: None,
+                    window_type: None,
+                    mapped: true,
+                    floating: true,
+                    floating_rect: None,
+                    fullscreen: false,
+                    focused: true,
+                    urgent: false,
+                    output_id: Some(OutputId::from("out-1")),
+                    workspace_id: Some(WorkspaceId::from("ws-1")),
+                    tags: vec!["1".into()],
+                }],
+                visible_window_ids: vec![window_id.clone()],
+                tag_names: vec!["1".into()],
+            });
+            state.refresh_titlebar_render_plan(std::slice::from_ref(&base_item));
+
+            state.update_pointer_location(100.0, 30.0);
+            let hit = state.titlebar_hit_target_at_pointer().unwrap();
+            assert!(state.begin_titlebar_interaction(&hit));
+
+            state.update_pointer_location(1000.0, 1000.0);
+            state.update_titlebar_interaction();
+
+            let rect = state.current_titlebar_render_plan()[0].window_rect;
+            assert_eq!(rect.x, 500.0);
+            assert_eq!(rect.y, 380.0);
+        }
+
+        #[test]
         fn smithay_state_protocol_emits_client_side_decoration_mode_when_policy_disables_ssd() {
             let mut display = Display::<SpidersSmithayState>::new().unwrap();
             let mut handle = display.handle();
