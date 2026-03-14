@@ -41,7 +41,7 @@ pub enum RuntimeError {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RuntimeArtifact {
+pub struct PreparedLayout {
     pub selected: SelectedLayout,
     pub runtime_source: String,
 }
@@ -53,18 +53,18 @@ pub trait LayoutRuntime: std::fmt::Debug {
         &self,
         config: &Self::Config,
         workspace: &WorkspaceSnapshot,
-    ) -> Result<Option<RuntimeArtifact>, RuntimeError>;
+    ) -> Result<Option<PreparedLayout>, RuntimeError>;
 
     fn build_context(
         &self,
         state: &StateSnapshot,
         workspace: &WorkspaceSnapshot,
-        artifact: Option<&RuntimeArtifact>,
+        artifact: Option<&PreparedLayout>,
     ) -> LayoutEvaluationContext;
 
     fn evaluate_layout(
         &self,
-        artifact: &RuntimeArtifact,
+        artifact: &PreparedLayout,
         context: &LayoutEvaluationContext,
     ) -> Result<SourceLayoutNode, RuntimeError>;
 

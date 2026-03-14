@@ -8,7 +8,7 @@ use spiders_layout::ast::{
 };
 use spiders_shared::layout::{SlotTake, SourceLayoutNode};
 use spiders_shared::runtime::{
-    AuthoringRuntime, LayoutModuleContract, LayoutRuntime, RuntimeArtifact, RuntimeError,
+    AuthoringRuntime, LayoutModuleContract, LayoutRuntime, PreparedLayout, RuntimeError,
 };
 use spiders_shared::wm::{LayoutEvaluationContext, SelectedLayout};
 
@@ -258,7 +258,7 @@ impl<L: JsLayoutSourceLoader> BoaLayoutRuntime<L> {
         &self,
         config: &Config,
         workspace: &spiders_shared::wm::WorkspaceSnapshot,
-    ) -> Result<Option<RuntimeArtifact>, RuntimeError> {
+    ) -> Result<Option<PreparedLayout>, RuntimeError> {
         self.loader.load_runtime_source(config, workspace)
     }
 }
@@ -270,13 +270,13 @@ impl LayoutRuntime for StubLayoutRuntime {
         &self,
         config: &Self::Config,
         workspace: &spiders_shared::wm::WorkspaceSnapshot,
-    ) -> Result<Option<RuntimeArtifact>, RuntimeError> {
+    ) -> Result<Option<PreparedLayout>, RuntimeError> {
         Ok(config
             .resolve_selected_layout(workspace)
             .map_err(|error| RuntimeError::Config {
                 message: error.to_string(),
             })?
-            .map(|selected| RuntimeArtifact {
+            .map(|selected| PreparedLayout {
                 selected,
                 runtime_source: String::new(),
             }))
@@ -286,7 +286,7 @@ impl LayoutRuntime for StubLayoutRuntime {
         &self,
         state: &spiders_shared::wm::StateSnapshot,
         workspace: &spiders_shared::wm::WorkspaceSnapshot,
-        artifact: Option<&RuntimeArtifact>,
+        artifact: Option<&PreparedLayout>,
     ) -> LayoutEvaluationContext {
         state.layout_context(
             workspace,
@@ -296,7 +296,7 @@ impl LayoutRuntime for StubLayoutRuntime {
 
     fn evaluate_layout(
         &self,
-        loaded_layout: &RuntimeArtifact,
+        loaded_layout: &PreparedLayout,
         _context: &LayoutEvaluationContext,
     ) -> Result<SourceLayoutNode, RuntimeError> {
         Err(RuntimeError::NotImplemented(format!(
@@ -317,7 +317,7 @@ impl<L: JsLayoutSourceLoader> LayoutRuntime for BoaLayoutRuntime<L> {
         &self,
         config: &Self::Config,
         workspace: &spiders_shared::wm::WorkspaceSnapshot,
-    ) -> Result<Option<RuntimeArtifact>, RuntimeError> {
+    ) -> Result<Option<PreparedLayout>, RuntimeError> {
         BoaLayoutRuntime::prepare_layout(self, config, workspace)
     }
 
@@ -325,7 +325,7 @@ impl<L: JsLayoutSourceLoader> LayoutRuntime for BoaLayoutRuntime<L> {
         &self,
         state: &spiders_shared::wm::StateSnapshot,
         workspace: &spiders_shared::wm::WorkspaceSnapshot,
-        artifact: Option<&RuntimeArtifact>,
+        artifact: Option<&PreparedLayout>,
     ) -> LayoutEvaluationContext {
         state.layout_context(
             workspace,
@@ -335,7 +335,7 @@ impl<L: JsLayoutSourceLoader> LayoutRuntime for BoaLayoutRuntime<L> {
 
     fn evaluate_layout(
         &self,
-        loaded_layout: &RuntimeArtifact,
+        loaded_layout: &PreparedLayout,
         context: &LayoutEvaluationContext,
     ) -> Result<SourceLayoutNode, RuntimeError> {
         self.evaluate_module_source(

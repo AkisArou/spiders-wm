@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use spiders_shared::runtime::{AuthoringRuntime, RuntimeArtifact, RuntimeError};
+use spiders_shared::runtime::{AuthoringRuntime, PreparedLayout, RuntimeError};
 use spiders_shared::wm::LayoutEvaluationContext;
 
 use crate::model::{Config, ConfigDiscoveryOptions, ConfigPaths, LayoutConfigError};
@@ -16,7 +16,7 @@ pub enum ConfigRuntimeServiceError {
 #[derive(Debug)]
 pub struct ConfigRuntimeService<R> {
     runtime: R,
-    cache: BTreeMap<String, RuntimeArtifact>,
+    cache: BTreeMap<String, PreparedLayout>,
 }
 
 impl<R> ConfigRuntimeService<R> {
@@ -78,7 +78,7 @@ where
         &mut self,
         config: &Config,
         workspace: &spiders_shared::wm::WorkspaceSnapshot,
-    ) -> Result<Option<&RuntimeArtifact>, ConfigRuntimeServiceError> {
+    ) -> Result<Option<&PreparedLayout>, ConfigRuntimeServiceError> {
         let Some(loaded) = self.runtime.prepare_layout(config, workspace)? else {
             return Ok(None);
         };
@@ -107,14 +107,14 @@ where
         }))
     }
 
-    pub fn cache(&self) -> &BTreeMap<String, RuntimeArtifact> {
+    pub fn cache(&self) -> &BTreeMap<String, PreparedLayout> {
         &self.cache
     }
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct EvaluatedLayout {
-    pub artifact: RuntimeArtifact,
+    pub artifact: PreparedLayout,
     pub context: LayoutEvaluationContext,
     pub layout: spiders_shared::layout::SourceLayoutNode,
 }
@@ -126,7 +126,7 @@ mod tests {
     use spiders_shared::ids::{OutputId, WorkspaceId};
     use spiders_shared::layout::SourceLayoutNode;
     use spiders_shared::runtime::{
-        AuthoringRuntime, LayoutModuleContract, LayoutRuntime, RuntimeArtifact, RuntimeError,
+        AuthoringRuntime, LayoutModuleContract, LayoutRuntime, PreparedLayout, RuntimeError,
     };
     use spiders_shared::wm::{
         LayoutRef, OutputSnapshot, OutputTransform, SelectedLayout, StateSnapshot,
@@ -138,7 +138,7 @@ mod tests {
 
     #[derive(Debug, Clone)]
     struct StubRuntime {
-        loaded: Option<RuntimeArtifact>,
+        loaded: Option<PreparedLayout>,
         error_message: Option<String>,
     }
 
@@ -149,7 +149,7 @@ mod tests {
             &self,
             _config: &Self::Config,
             _workspace: &WorkspaceSnapshot,
-        ) -> Result<Option<RuntimeArtifact>, RuntimeError> {
+        ) -> Result<Option<PreparedLayout>, RuntimeError> {
             if let Some(message) = &self.error_message {
                 return Err(RuntimeError::Other {
                     message: message.clone(),
@@ -163,7 +163,7 @@ mod tests {
             &self,
             state: &StateSnapshot,
             workspace: &WorkspaceSnapshot,
-            artifact: Option<&RuntimeArtifact>,
+            artifact: Option<&PreparedLayout>,
         ) -> spiders_shared::wm::LayoutEvaluationContext {
             state.layout_context(
                 workspace,
@@ -173,7 +173,7 @@ mod tests {
 
         fn evaluate_layout(
             &self,
-            _loaded_layout: &RuntimeArtifact,
+            _loaded_layout: &PreparedLayout,
             _context: &spiders_shared::wm::LayoutEvaluationContext,
         ) -> Result<SourceLayoutNode, RuntimeError> {
             Ok(SourceLayoutNode::Workspace {
@@ -200,7 +200,7 @@ mod tests {
 
     #[derive(Debug, Clone, Default)]
     struct StubAuthoredRuntime {
-        loaded: Option<RuntimeArtifact>,
+        loaded: Option<PreparedLayout>,
         error_message: Option<String>,
         config: Config,
     }
@@ -212,7 +212,7 @@ mod tests {
             &self,
             _config: &Self::Config,
             _workspace: &WorkspaceSnapshot,
-        ) -> Result<Option<RuntimeArtifact>, RuntimeError> {
+        ) -> Result<Option<PreparedLayout>, RuntimeError> {
             if let Some(message) = &self.error_message {
                 return Err(RuntimeError::Other {
                     message: message.clone(),
@@ -226,7 +226,7 @@ mod tests {
             &self,
             state: &StateSnapshot,
             workspace: &WorkspaceSnapshot,
-            artifact: Option<&RuntimeArtifact>,
+            artifact: Option<&PreparedLayout>,
         ) -> spiders_shared::wm::LayoutEvaluationContext {
             StubRuntime {
                 loaded: None,
@@ -237,7 +237,7 @@ mod tests {
 
         fn evaluate_layout(
             &self,
-            loaded_layout: &RuntimeArtifact,
+            loaded_layout: &PreparedLayout,
             context: &spiders_shared::wm::LayoutEvaluationContext,
         ) -> Result<SourceLayoutNode, RuntimeError> {
             StubRuntime {
@@ -261,8 +261,8 @@ mod tests {
         }
     }
 
-    fn loaded_layout(name: &str, module: &str) -> RuntimeArtifact {
-        RuntimeArtifact {
+    fn loaded_layout(name: &str, module: &str) -> PreparedLayout {
+        PreparedLayout {
             selected: SelectedLayout {
                 name: name.into(),
                 module: module.into(),
