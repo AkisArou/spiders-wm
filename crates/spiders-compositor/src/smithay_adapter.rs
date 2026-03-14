@@ -7,9 +7,34 @@ use spiders_runtime::ControllerCommand;
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum SmithayAdapterEvent {
-    Seat { seat_name: String, active: bool },
-    Output { output_id: String, active: bool },
-    SurfaceLost { surface_id: String },
+    Seat {
+        seat_name: String,
+        active: bool,
+    },
+    SeatLost {
+        seat_name: String,
+    },
+    SeatFocusChanged {
+        seat_name: String,
+        window_id: Option<String>,
+        output_id: Option<String>,
+    },
+    Output {
+        output_id: String,
+        active: bool,
+    },
+    OutputActivated {
+        output_id: String,
+    },
+    OutputLost {
+        output_id: String,
+    },
+    SurfaceUnmapped {
+        surface_id: String,
+    },
+    SurfaceLost {
+        surface_id: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -38,10 +63,37 @@ impl SmithayAdapter {
                     active,
                 })
             }
+            SmithayAdapterEvent::SeatLost { seat_name } => {
+                ControllerCommand::DiscoveryEvent(BackendDiscoveryEvent::SeatLost { seat_name })
+            }
+            SmithayAdapterEvent::SeatFocusChanged {
+                seat_name,
+                window_id,
+                output_id,
+            } => ControllerCommand::DiscoveryEvent(BackendDiscoveryEvent::SeatFocusChanged {
+                seat_name,
+                window_id: window_id.map(Into::into),
+                output_id: output_id.map(Into::into),
+            }),
             SmithayAdapterEvent::Output { output_id, active } => {
                 ControllerCommand::DiscoveryEvent(BackendDiscoveryEvent::OutputDiscovered {
                     output_id: output_id.into(),
                     active,
+                })
+            }
+            SmithayAdapterEvent::OutputActivated { output_id } => {
+                ControllerCommand::DiscoveryEvent(BackendDiscoveryEvent::OutputActivated {
+                    output_id: output_id.into(),
+                })
+            }
+            SmithayAdapterEvent::OutputLost { output_id } => {
+                ControllerCommand::DiscoveryEvent(BackendDiscoveryEvent::OutputLost {
+                    output_id: output_id.into(),
+                })
+            }
+            SmithayAdapterEvent::SurfaceUnmapped { surface_id } => {
+                ControllerCommand::DiscoveryEvent(BackendDiscoveryEvent::SurfaceUnmapped {
+                    surface_id,
                 })
             }
             SmithayAdapterEvent::SurfaceLost { surface_id } => {
@@ -110,6 +162,68 @@ mod tests {
         assert!(matches!(
             command,
             ControllerCommand::DiscoveryEvent(BackendDiscoveryEvent::OutputDiscovered { .. })
+        ));
+    }
+
+    #[test]
+    fn adapter_translates_seat_lost_event_into_controller_command() {
+        let command = SmithayAdapter::translate_event(SmithayAdapterEvent::SeatLost {
+            seat_name: "seat-0".into(),
+        });
+
+        assert!(matches!(
+            command,
+            ControllerCommand::DiscoveryEvent(BackendDiscoveryEvent::SeatLost { .. })
+        ));
+    }
+
+    #[test]
+    fn adapter_translates_seat_focus_event_into_controller_command() {
+        let command = SmithayAdapter::translate_event(SmithayAdapterEvent::SeatFocusChanged {
+            seat_name: "seat-0".into(),
+            window_id: Some("w1".into()),
+            output_id: Some("out-1".into()),
+        });
+
+        assert!(matches!(
+            command,
+            ControllerCommand::DiscoveryEvent(BackendDiscoveryEvent::SeatFocusChanged { .. })
+        ));
+    }
+
+    #[test]
+    fn adapter_translates_output_activation_event_into_controller_command() {
+        let command = SmithayAdapter::translate_event(SmithayAdapterEvent::OutputActivated {
+            output_id: "out-1".into(),
+        });
+
+        assert!(matches!(
+            command,
+            ControllerCommand::DiscoveryEvent(BackendDiscoveryEvent::OutputActivated { .. })
+        ));
+    }
+
+    #[test]
+    fn adapter_translates_output_lost_event_into_controller_command() {
+        let command = SmithayAdapter::translate_event(SmithayAdapterEvent::OutputLost {
+            output_id: "out-1".into(),
+        });
+
+        assert!(matches!(
+            command,
+            ControllerCommand::DiscoveryEvent(BackendDiscoveryEvent::OutputLost { .. })
+        ));
+    }
+
+    #[test]
+    fn adapter_translates_surface_unmapped_event_into_controller_command() {
+        let command = SmithayAdapter::translate_event(SmithayAdapterEvent::SurfaceUnmapped {
+            surface_id: "surface-1".into(),
+        });
+
+        assert!(matches!(
+            command,
+            ControllerCommand::DiscoveryEvent(BackendDiscoveryEvent::SurfaceUnmapped { .. })
         ));
     }
 

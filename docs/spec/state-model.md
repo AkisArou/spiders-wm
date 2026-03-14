@@ -128,8 +128,23 @@ Compositor-domain note:
   bootstrap/runtime, that handoff should happen through small typed seat-focus
   events carrying seat name plus optional focused window/output ids rather than
   leaking smithay seat or surface objects across the boundary
+- smithay-owned seat removal should follow the same typed handoff rule so
+  backend-agnostic topology can drop seat state without learning about smithay
+  seat objects
 - the same pattern applies to smithay-owned output activation changes: hand off
   only the typed output id needed to update backend-agnostic topology state
+- smithay-owned output removal should follow the same typed handoff rule so
+  backend-agnostic topology can drop the output and clear derived attachments
+  without learning about smithay output objects
+- when those smithay lifecycle changes arrive through the adapter boundary, the
+  runtime/bootstrap owner should be able to forward them as typed controller
+  commands without reconstructing a full discovery snapshot
+- the same adapter-driven incremental path is appropriate for surface unmap/loss
+  deltas when stable surface ids and existing topology links are enough to apply
+  the change on the backend-agnostic side
+- if several such lifecycle deltas arrive together, preserving order through a
+  batch of typed controller commands is preferable to inventing a new larger
+  backend snapshot shape for small incremental updates
 - layer-shell configure bookkeeping also remains compositor-owned, but a small
   typed inspection snapshot for last acked serial, pending configure count, and
   configured size may cross the smithay seam for diagnostics and tests

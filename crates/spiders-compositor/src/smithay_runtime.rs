@@ -24,7 +24,9 @@ mod imp {
     };
     use spiders_shared::ids::OutputId;
 
-    use crate::smithay_adapter::{SmithayAdapter, SmithayOutputDescriptor, SmithaySeatDescriptor};
+    use crate::smithay_adapter::{
+        SmithayAdapter, SmithayAdapterEvent, SmithayOutputDescriptor, SmithaySeatDescriptor,
+    };
     use crate::smithay_state::{
         SmithayClientState, SmithayStateError, SmithayStateSnapshot, SpidersSmithayState,
     };
@@ -106,16 +108,49 @@ mod imp {
         }
 
         pub fn apply_pending_discovery_events(&mut self) -> Result<usize, SmithayRuntimeError> {
+            let commands = self.runtime.drain_pending_discovery_commands();
+            self.apply_pending_discovery_commands(commands)
+        }
+
+        pub fn apply_adapter_event(
+            &mut self,
+            event: SmithayAdapterEvent,
+        ) -> Result<(), SmithayRuntimeError> {
+            self.apply_controller_command(SmithayAdapter::translate_event(event))
+        }
+
+        pub fn apply_adapter_events(
+            &mut self,
+            events: Vec<SmithayAdapterEvent>,
+        ) -> Result<usize, SmithayRuntimeError> {
+            let commands = events
+                .into_iter()
+                .map(SmithayAdapter::translate_event)
+                .collect();
+            self.apply_pending_discovery_commands(commands)
+        }
+
+        pub fn apply_pending_discovery_commands(
+            &mut self,
+            commands: Vec<ControllerCommand>,
+        ) -> Result<usize, SmithayRuntimeError> {
             let mut applied = 0;
 
-            for event in self.runtime.take_pending_discovery_events() {
-                self.controller
-                    .apply_command(ControllerCommand::DiscoveryEvent(event))?;
+            for command in commands {
+                self.apply_controller_command(command)?;
                 applied += 1;
             }
 
-            self.report.controller = self.controller.report();
             Ok(applied)
+        }
+
+        fn apply_controller_command(
+            &mut self,
+            command: ControllerCommand,
+        ) -> Result<(), SmithayRuntimeError> {
+            self.controller.apply_command(command)?;
+            self.report.controller = self.controller.report();
+            Ok(())
         }
     }
 
@@ -182,6 +217,13 @@ mod imp {
             &mut self,
         ) -> Vec<crate::backend::BackendDiscoveryEvent> {
             self.state_mut().take_discovery_events()
+        }
+
+        pub fn drain_pending_discovery_commands(&mut self) -> Vec<ControllerCommand> {
+            self.take_pending_discovery_events()
+                .into_iter()
+                .map(ControllerCommand::DiscoveryEvent)
+                .collect()
         }
 
         fn dispatch_winit_events(&mut self) -> Result<(), SmithayRuntimeError> {
@@ -868,6 +910,340 @@ mod imp {
             assert_topology_matches_known_surfaces(&snapshot);
             assert_output_summary_matches_topology(&snapshot);
             assert_seat_summary_matches_topology(&snapshot);
+        }
+
+        #[test]
+        fn runtime_drains_pending_discovery_events_as_controller_commands() {
+            let mut runtime = test_runtime("wayland-test-discovery-drain");
+            runtime
+                .state_mut()
+                .register_output_id(OutputId::from("out-2"), false);
+            runtime
+                .state_mut()
+                .activate_output_id(OutputId::from("out-2"));
+            runtime
+                .state_mut()
+                .remove_output_id(&OutputId::from("out-2"));
+
+            let commands = runtime.drain_pending_discovery_commands();
+
+            assert_eq!(commands.len(), 2);
+            assert!(matches!(
+                &commands[0],
+                ControllerCommand::DiscoveryEvent(
+                    crate::backend::BackendDiscoveryEvent::OutputActivated { output_id }
+                ) if output_id == &OutputId::from("out-2")
+            ));
+            assert!(matches!(
+                &commands[1],
+                ControllerCommand::DiscoveryEvent(
+                    crate::backend::BackendDiscoveryEvent::OutputLost { output_id }
+                ) if output_id == &OutputId::from("out-2")
+            ));
+        }
+
+        #[test]
+        fn bootstrap_applies_adapter_output_lifecycle_events_to_controller() {
+            let runtime_service = test_runtime_service();
+            let config = test_config();
+            let mut state = test_state_snapshot();
+            state.outputs.push(OutputSnapshot {
+                id: OutputId::from("out-2"),
+                name: "DP-1".into(),
+                logical_width: 2560,
+                logical_height: 1440,
+                scale: 1,
+                transform: OutputTransform::Normal,
+                enabled: true,
+                current_workspace_id: None,
+            });
+            let controller =
+                crate::CompositorController::initialize(runtime_service, config, state).unwrap();
+            let runtime = test_runtime("wayland-test-adapter-output-lifecycle");
+            let report = SmithayStartupReport {
+                controller: controller.report(),
+                output_name: "smithay-test-output".into(),
+                seat_name: "smithay-test-seat".into(),
+                logical_size: (1280, 720),
+                socket_name: Some("wayland-test-adapter-output-lifecycle".into()),
+            };
+            let mut bootstrap = SmithayBootstrap {
+                controller,
+                runtime,
+                report,
+            };
+
+            bootstrap
+                .apply_adapter_event(SmithayAdapterEvent::OutputActivated {
+                    output_id: "out-2".into(),
+                })
+                .unwrap();
+            let snapshot = bootstrap.snapshot();
+            assert_eq!(
+                snapshot.topology.active_output_id,
+                Some(OutputId::from("out-2"))
+            );
+
+            bootstrap.runtime.state_mut().track_test_surface_snapshot(
+                crate::backend::BackendSurfaceSnapshot::Layer {
+                    surface_id: "wl-adapter-output-layer-1".into(),
+                    output_id: OutputId::from("out-2"),
+                    metadata: LayerSurfaceMetadata {
+                        namespace: "panel".into(),
+                        tier: LayerSurfaceTier::Top,
+                        keyboard_interactivity: LayerKeyboardInteractivity::OnDemand,
+                        exclusive_zone: LayerExclusiveZone::Exclusive(10),
+                    },
+                },
+            );
+            assert_eq!(bootstrap.apply_pending_discovery_events().unwrap(), 1);
+
+            bootstrap
+                .apply_adapter_event(SmithayAdapterEvent::OutputLost {
+                    output_id: "out-2".into(),
+                })
+                .unwrap();
+
+            let snapshot = bootstrap.snapshot();
+            assert!(snapshot
+                .topology
+                .outputs
+                .iter()
+                .all(|output| output.snapshot.id != OutputId::from("out-2")));
+            assert_eq!(snapshot.topology.active_output_id, None);
+            assert_eq!(
+                snapshot
+                    .topology
+                    .surfaces
+                    .iter()
+                    .find(|surface| surface.id == "wl-adapter-output-layer-1")
+                    .unwrap()
+                    .output_id,
+                None
+            );
+        }
+
+        #[test]
+        fn bootstrap_applies_adapter_seat_lifecycle_and_focus_events_to_controller() {
+            let runtime_service = test_runtime_service();
+            let config = test_config();
+            let state = test_state_snapshot();
+            let controller =
+                crate::CompositorController::initialize(runtime_service, config, state).unwrap();
+            let runtime = test_runtime("wayland-test-adapter-seat-lifecycle");
+            let report = SmithayStartupReport {
+                controller: controller.report(),
+                output_name: "smithay-test-output".into(),
+                seat_name: "smithay-test-seat".into(),
+                logical_size: (1280, 720),
+                socket_name: Some("wayland-test-adapter-seat-lifecycle".into()),
+            };
+            let mut bootstrap = SmithayBootstrap {
+                controller,
+                runtime,
+                report,
+            };
+
+            bootstrap
+                .apply_adapter_event(SmithayAdapterEvent::Seat {
+                    seat_name: "seat-adapter".into(),
+                    active: true,
+                })
+                .unwrap();
+            bootstrap
+                .apply_adapter_event(SmithayAdapterEvent::SeatFocusChanged {
+                    seat_name: "seat-adapter".into(),
+                    window_id: Some("w1".into()),
+                    output_id: Some("out-1".into()),
+                })
+                .unwrap();
+
+            let snapshot = bootstrap.snapshot();
+            let seat = snapshot
+                .topology
+                .seats
+                .iter()
+                .find(|seat| seat.name == "seat-adapter")
+                .unwrap();
+            assert_eq!(
+                snapshot.topology.active_seat_name.as_deref(),
+                Some("seat-adapter")
+            );
+            assert_eq!(seat.focused_window_id, Some(WindowId::from("w1")));
+            assert_eq!(seat.focused_output_id, Some(OutputId::from("out-1")));
+
+            bootstrap
+                .apply_adapter_event(SmithayAdapterEvent::SeatLost {
+                    seat_name: "seat-adapter".into(),
+                })
+                .unwrap();
+
+            let snapshot = bootstrap.snapshot();
+            assert!(snapshot
+                .topology
+                .seats
+                .iter()
+                .all(|seat| seat.name != "seat-adapter"));
+            assert_eq!(snapshot.topology.active_seat_name, None);
+        }
+
+        #[test]
+        fn bootstrap_applies_adapter_surface_unmap_and_loss_events_to_controller() {
+            let runtime_service = test_runtime_service();
+            let config = test_config();
+            let state = test_state_snapshot();
+            let controller =
+                crate::CompositorController::initialize(runtime_service, config, state).unwrap();
+            let runtime = test_runtime("wayland-test-adapter-surface-lifecycle");
+            let report = SmithayStartupReport {
+                controller: controller.report(),
+                output_name: "smithay-test-output".into(),
+                seat_name: "smithay-test-seat".into(),
+                logical_size: (1280, 720),
+                socket_name: Some("wayland-test-adapter-surface-lifecycle".into()),
+            };
+            let mut bootstrap = SmithayBootstrap {
+                controller,
+                runtime,
+                report,
+            };
+
+            bootstrap.runtime.state_mut().track_test_surface_snapshot(
+                crate::backend::BackendSurfaceSnapshot::Window {
+                    surface_id: "wl-adapter-window-1".into(),
+                    window_id: WindowId::from("w1"),
+                    output_id: Some(OutputId::from("out-1")),
+                },
+            );
+            bootstrap.runtime.state_mut().track_test_surface_snapshot(
+                crate::backend::BackendSurfaceSnapshot::Popup {
+                    surface_id: "wl-adapter-popup-1".into(),
+                    output_id: Some(OutputId::from("out-1")),
+                    parent_surface_id: "wl-adapter-window-1".into(),
+                },
+            );
+            assert_eq!(bootstrap.apply_pending_discovery_events().unwrap(), 2);
+
+            bootstrap
+                .apply_adapter_event(SmithayAdapterEvent::SurfaceUnmapped {
+                    surface_id: "wl-adapter-window-1".into(),
+                })
+                .unwrap();
+
+            let snapshot = bootstrap.snapshot();
+            let window = snapshot
+                .topology
+                .surfaces
+                .iter()
+                .find(|surface| surface.id == "wl-adapter-window-1")
+                .unwrap();
+            let popup = snapshot
+                .topology
+                .surfaces
+                .iter()
+                .find(|surface| surface.id == "wl-adapter-popup-1")
+                .unwrap();
+            assert!(!window.mapped);
+            assert!(!popup.mapped);
+
+            bootstrap
+                .apply_adapter_event(SmithayAdapterEvent::SurfaceLost {
+                    surface_id: "wl-adapter-window-1".into(),
+                })
+                .unwrap();
+
+            let snapshot = bootstrap.snapshot();
+            assert!(snapshot.topology.surfaces.iter().all(|surface| {
+                surface.id != "wl-adapter-window-1" && surface.id != "wl-adapter-popup-1"
+            }));
+        }
+
+        #[test]
+        fn bootstrap_applies_batched_adapter_lifecycle_events_to_controller() {
+            let runtime_service = test_runtime_service();
+            let config = test_config();
+            let mut state = test_state_snapshot();
+            state.outputs.push(OutputSnapshot {
+                id: OutputId::from("out-2"),
+                name: "DP-1".into(),
+                logical_width: 2560,
+                logical_height: 1440,
+                scale: 1,
+                transform: OutputTransform::Normal,
+                enabled: true,
+                current_workspace_id: None,
+            });
+            let controller =
+                crate::CompositorController::initialize(runtime_service, config, state).unwrap();
+            let runtime = test_runtime("wayland-test-adapter-batch");
+            let report = SmithayStartupReport {
+                controller: controller.report(),
+                output_name: "smithay-test-output".into(),
+                seat_name: "smithay-test-seat".into(),
+                logical_size: (1280, 720),
+                socket_name: Some("wayland-test-adapter-batch".into()),
+            };
+            let mut bootstrap = SmithayBootstrap {
+                controller,
+                runtime,
+                report,
+            };
+
+            bootstrap.runtime.state_mut().track_test_surface_snapshot(
+                crate::backend::BackendSurfaceSnapshot::Window {
+                    surface_id: "wl-batch-window-1".into(),
+                    window_id: WindowId::from("w1"),
+                    output_id: Some(OutputId::from("out-2")),
+                },
+            );
+            assert_eq!(bootstrap.apply_pending_discovery_events().unwrap(), 1);
+
+            let applied = bootstrap
+                .apply_adapter_events(vec![
+                    SmithayAdapterEvent::Seat {
+                        seat_name: "seat-batch".into(),
+                        active: true,
+                    },
+                    SmithayAdapterEvent::SeatFocusChanged {
+                        seat_name: "seat-batch".into(),
+                        window_id: Some("w1".into()),
+                        output_id: Some("out-2".into()),
+                    },
+                    SmithayAdapterEvent::OutputActivated {
+                        output_id: "out-2".into(),
+                    },
+                    SmithayAdapterEvent::SurfaceUnmapped {
+                        surface_id: "wl-batch-window-1".into(),
+                    },
+                ])
+                .unwrap();
+
+            assert_eq!(applied, 4);
+
+            let snapshot = bootstrap.snapshot();
+            assert_eq!(
+                snapshot.topology.active_seat_name.as_deref(),
+                Some("seat-batch")
+            );
+            assert_eq!(
+                snapshot.topology.active_output_id,
+                Some(OutputId::from("out-2"))
+            );
+            let seat = snapshot
+                .topology
+                .seats
+                .iter()
+                .find(|seat| seat.name == "seat-batch")
+                .unwrap();
+            assert_eq!(seat.focused_window_id, Some(WindowId::from("w1")));
+            assert_eq!(seat.focused_output_id, Some(OutputId::from("out-2")));
+            let surface = snapshot
+                .topology
+                .surfaces
+                .iter()
+                .find(|surface| surface.id == "wl-batch-window-1")
+                .unwrap();
+            assert!(!surface.mapped);
         }
 
         #[test]

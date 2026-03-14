@@ -318,9 +318,29 @@ discovery/bootstrap events when that is the cleanest way to keep backend-agnosti
 topology focus state in sync during bootstrap/runtime tests. Those events may
 carry seat name plus optional focused window/output ids only.
 
+Smithay-owned seat removal may cross the same seam as a small typed seat-lost
+event carrying only the stable seat name needed to drop backend-agnostic seat
+state.
+
 Likewise, smithay-owned output activation changes may cross the same seam as
 small typed output-activation events when runtime/bootstrap tests need topology
 active-output state to follow smithay state changes after initial registration.
+
+Smithay-owned output loss may cross that seam the same way, as a small typed
+output-lost event carrying only the stable output id needed to remove topology
+state and clear derived attachments.
+
+When the adapter seam is used directly for incremental lifecycle changes, the
+smithay runtime/bootstrap owner should be able to hand those typed adapter
+events straight to the controller without rebuilding a full topology snapshot.
+
+That direct adapter path also covers surface lifecycle deltas such as unmap and
+loss when topology tests only need stable surface ids and existing parent/output
+relationships to update backend-agnostic state.
+
+When several incremental lifecycle changes arrive together, the bootstrap owner
+may batch typed adapter events and forward them in order through the same
+controller-command path instead of rebuilding a larger discovery snapshot.
 
 That slice is only a startup/discovery proof, not full surface or rendering
 integration.
