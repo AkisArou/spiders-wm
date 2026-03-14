@@ -1273,7 +1273,7 @@ mod imp {
         use spiders_config::model::{Config, LayoutDefinition};
         use spiders_config::service::ConfigRuntimeService;
         use spiders_runtime_js::loader::{RuntimePathResolver, RuntimeProjectLayoutSourceLoader};
-        use spiders_runtime_js::runtime::BoaLayoutRuntime;
+        use spiders_runtime_js::runtime::BoaPreparedLayoutRuntime;
         use spiders_shared::ids::{OutputId, WindowId, WorkspaceId};
         use spiders_shared::wm::{
             LayoutRef, OutputSnapshot, OutputTransform, StateSnapshot, WorkspaceSnapshot,
@@ -1286,7 +1286,7 @@ mod imp {
         use super::*;
 
         type TestLoader = RuntimeProjectLayoutSourceLoader;
-        type TestLayoutRuntime = BoaLayoutRuntime<TestLoader>;
+        type TestLayoutRuntime = BoaPreparedLayoutRuntime<TestLoader>;
         type TestBootstrap = SmithayBootstrap<TestLoader, TestLayoutRuntime>;
 
         fn test_state_snapshot() -> StateSnapshot {
@@ -1338,7 +1338,7 @@ mod imp {
 
         fn test_runtime_service() -> ConfigRuntimeService<
             RuntimeProjectLayoutSourceLoader,
-            BoaLayoutRuntime<RuntimeProjectLayoutSourceLoader>,
+            BoaPreparedLayoutRuntime<RuntimeProjectLayoutSourceLoader>,
         > {
             let unique = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
@@ -1359,7 +1359,7 @@ mod imp {
 
             let loader =
                 RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
-            let runtime = BoaLayoutRuntime::with_loader(loader.clone());
+            let runtime = BoaPreparedLayoutRuntime::with_loader(loader.clone());
             ConfigRuntimeService::new(runtime)
         }
 

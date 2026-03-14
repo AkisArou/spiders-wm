@@ -494,7 +494,7 @@ mod tests {
             "ctx => ({ type: 'workspace', children: [{ type: 'window', id: 'main', match: 'app_id=\"firefox\"' }, { type: 'slot', id: 'rest', class: ['rest'] }] })",
         )
         .unwrap();
-        let runtime = spiders_runtime_js::runtime::BoaLayoutRuntime::with_loader(
+        let runtime = spiders_runtime_js::runtime::BoaPreparedLayoutRuntime::with_loader(
             spiders_runtime_js::loader::FsLayoutSourceLoader,
         );
         let config = layout_config(
@@ -576,7 +576,7 @@ mod tests {
         let loader = spiders_runtime_js::loader::RuntimeProjectLayoutSourceLoader::new(
             spiders_runtime_js::loader::RuntimePathResolver::new(".", &runtime_root),
         );
-        let runtime = spiders_runtime_js::runtime::BoaLayoutRuntime::with_loader(loader.clone());
+        let runtime = spiders_runtime_js::runtime::BoaPreparedLayoutRuntime::with_loader(loader.clone());
         let mut runtime_service = spiders_config::service::ConfigRuntimeService::new(runtime);
         let config = layout_config("", "layouts/master-stack.js");
         let state = state_snapshot(800, 600);
@@ -617,7 +617,7 @@ mod tests {
         let loader = spiders_runtime_js::loader::RuntimeProjectLayoutSourceLoader::new(
             spiders_runtime_js::loader::RuntimePathResolver::new(".", &runtime_root),
         );
-        let runtime = spiders_runtime_js::runtime::BoaLayoutRuntime::with_loader(loader.clone());
+        let runtime = spiders_runtime_js::runtime::BoaPreparedLayoutRuntime::with_loader(loader.clone());
         let runtime_service = spiders_config::service::ConfigRuntimeService::new(runtime);
         let config = layout_config("", "layouts/master-stack.js");
         let state = state_snapshot(800, 600);
@@ -669,7 +669,7 @@ mod tests {
         let loader = spiders_runtime_js::loader::RuntimeProjectLayoutSourceLoader::new(
             spiders_runtime_js::loader::RuntimePathResolver::new(".", &runtime_root),
         );
-        let runtime = spiders_runtime_js::runtime::BoaLayoutRuntime::with_loader(loader.clone());
+        let runtime = spiders_runtime_js::runtime::BoaPreparedLayoutRuntime::with_loader(loader.clone());
         let runtime_service = spiders_config::service::ConfigRuntimeService::new(runtime);
         let config = layout_config("", "layouts/master-stack.js");
         let state = state_snapshot(800, 600);
@@ -726,7 +726,7 @@ mod tests {
         let loader = spiders_runtime_js::loader::RuntimeProjectLayoutSourceLoader::new(
             spiders_runtime_js::loader::RuntimePathResolver::new(".", &runtime_root),
         );
-        let runtime = spiders_runtime_js::runtime::BoaLayoutRuntime::with_loader(loader.clone());
+        let runtime = spiders_runtime_js::runtime::BoaPreparedLayoutRuntime::with_loader(loader.clone());
         let runtime_service = spiders_config::service::ConfigRuntimeService::new(runtime);
         let config = layout_config("", "layouts/master-stack.js");
         let state = state_snapshot(800, 600);
@@ -771,7 +771,7 @@ mod tests {
         let loader = spiders_runtime_js::loader::RuntimeProjectLayoutSourceLoader::new(
             spiders_runtime_js::loader::RuntimePathResolver::new(".", &runtime_root),
         );
-        let runtime = spiders_runtime_js::runtime::BoaLayoutRuntime::with_loader(loader.clone());
+        let runtime = spiders_runtime_js::runtime::BoaPreparedLayoutRuntime::with_loader(loader.clone());
         let runtime_service = spiders_config::service::ConfigRuntimeService::new(runtime);
         let config = layout_config("", "layouts/master-stack.js");
         let state = state_snapshot(800, 600);

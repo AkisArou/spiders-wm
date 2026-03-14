@@ -188,7 +188,7 @@ mod tests {
 
     use spiders_config::service::ConfigRuntimeService;
     use spiders_runtime_js::loader::{RuntimePathResolver, RuntimeProjectLayoutSourceLoader};
-    use spiders_runtime_js::runtime::BoaLayoutRuntime;
+    use spiders_runtime_js::runtime::BoaPreparedLayoutRuntime;
     use spiders_shared::ids::{OutputId, WorkspaceId};
     use spiders_shared::wm::{OutputSnapshot, OutputTransform, StateSnapshot, WorkspaceSnapshot};
 
@@ -255,7 +255,7 @@ mod tests {
 
         let loader =
             RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
-        let runtime = BoaLayoutRuntime::with_loader(loader.clone());
+        let runtime = BoaPreparedLayoutRuntime::with_loader(loader.clone());
         let runtime_service = ConfigRuntimeService::new(runtime);
 
         let runtime =
@@ -299,7 +299,7 @@ mod tests {
 
         let loader =
             RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
-        let runtime = BoaLayoutRuntime::with_loader(loader.clone());
+        let runtime = BoaPreparedLayoutRuntime::with_loader(loader.clone());
         let runtime_service = ConfigRuntimeService::new(runtime);
         let mut config = config();
         config.layouts[0].effects_stylesheet =
@@ -356,7 +356,7 @@ mod tests {
 
         let loader =
             RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
-        let runtime = BoaLayoutRuntime::with_loader(loader.clone());
+        let runtime = BoaPreparedLayoutRuntime::with_loader(loader.clone());
         let runtime_service = ConfigRuntimeService::new(runtime);
         let mut config = config();
         config.layouts[0].effects_stylesheet =

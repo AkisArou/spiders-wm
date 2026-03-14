@@ -91,7 +91,7 @@ enum JsAuthoredLayoutNode {
 }
 
 #[derive(Debug, thiserror::Error, PartialEq)]
-pub enum LayoutRuntimeError {
+pub enum PreparedLayoutRuntimeError {
     #[error("layout `{name}` evaluation is not implemented yet")]
     NotImplemented { name: String },
     #[error(transparent)]
@@ -107,15 +107,15 @@ pub enum LayoutRuntimeError {
 }
 
 #[derive(Debug, Default, Clone, Copy)]
-pub struct StubLayoutRuntime;
+pub struct StubPreparedLayoutRuntime;
 
 #[derive(Debug)]
-pub struct BoaLayoutRuntime<L = InlineLayoutSourceLoader> {
+pub struct BoaPreparedLayoutRuntime<L = InlineLayoutSourceLoader> {
     contract: LayoutModuleContract,
     loader: L,
 }
 
-impl Default for BoaLayoutRuntime<InlineLayoutSourceLoader> {
+impl Default for BoaPreparedLayoutRuntime<InlineLayoutSourceLoader> {
     fn default() -> Self {
         Self {
             contract: LayoutModuleContract::default(),
@@ -124,13 +124,13 @@ impl Default for BoaLayoutRuntime<InlineLayoutSourceLoader> {
     }
 }
 
-impl BoaLayoutRuntime<InlineLayoutSourceLoader> {
+impl BoaPreparedLayoutRuntime<InlineLayoutSourceLoader> {
     pub fn new() -> Self {
         Self::default()
     }
 }
 
-impl<L> BoaLayoutRuntime<L> {
+impl<L> BoaPreparedLayoutRuntime<L> {
     pub fn with_loader(loader: L) -> Self {
         Self {
             contract: LayoutModuleContract::default(),
@@ -143,7 +143,7 @@ impl<L> BoaLayoutRuntime<L> {
         selected_layout: &SelectedLayout,
         context: &LayoutEvaluationContext,
         source: &str,
-    ) -> Result<SourceLayoutNode, LayoutRuntimeError> {
+    ) -> Result<SourceLayoutNode, PreparedLayoutRuntimeError> {
         let mut js = JsContext::default();
         let module = self.evaluate_module(selected_layout, source, &mut js)?;
         let context_value = self.context_to_js_value(context, &mut js)?;
@@ -154,7 +154,7 @@ impl<L> BoaLayoutRuntime<L> {
     pub fn normalize_authored_layout(
         &self,
         root: AuthoredLayoutNode,
-    ) -> Result<SourceLayoutNode, LayoutRuntimeError> {
+    ) -> Result<SourceLayoutNode, PreparedLayoutRuntimeError> {
         Ok(ValidatedLayoutTree::from_authored(root)?.root)
     }
 
@@ -163,16 +163,16 @@ impl<L> BoaLayoutRuntime<L> {
         selected_layout: &SelectedLayout,
         source: &str,
         js: &mut JsContext,
-    ) -> Result<EvaluatedLayoutModule, LayoutRuntimeError> {
+    ) -> Result<EvaluatedLayoutModule, PreparedLayoutRuntimeError> {
         let wrapped = format!("({source})");
         let export = js.eval(Source::from_bytes(&wrapped)).map_err(|error| {
-            LayoutRuntimeError::JavaScript {
+            PreparedLayoutRuntimeError::JavaScript {
                 message: error.to_string(),
             }
         })?;
 
         if export.is_null_or_undefined() {
-            return Err(LayoutRuntimeError::MissingExport {
+            return Err(PreparedLayoutRuntimeError::MissingExport {
                 name: selected_layout.name.clone(),
                 export: self.contract.export_name.clone(),
             });
@@ -185,13 +185,13 @@ impl<L> BoaLayoutRuntime<L> {
         &self,
         context: &LayoutEvaluationContext,
         js: &mut JsContext,
-    ) -> Result<JsValue, LayoutRuntimeError> {
+    ) -> Result<JsValue, PreparedLayoutRuntimeError> {
         let value =
-            serde_json::to_value(context).map_err(|error| LayoutRuntimeError::JavaScript {
+            serde_json::to_value(context).map_err(|error| PreparedLayoutRuntimeError::JavaScript {
                 message: error.to_string(),
             })?;
 
-        JsValue::from_json(&value, js).map_err(|error| LayoutRuntimeError::JavaScript {
+        JsValue::from_json(&value, js).map_err(|error| PreparedLayoutRuntimeError::JavaScript {
             message: error.to_string(),
         })
     }
@@ -202,12 +202,12 @@ impl<L> BoaLayoutRuntime<L> {
         module: &EvaluatedLayoutModule,
         context_value: &JsValue,
         js: &mut JsContext,
-    ) -> Result<SourceLayoutNode, LayoutRuntimeError> {
+    ) -> Result<SourceLayoutNode, PreparedLayoutRuntimeError> {
         let callable =
             module
                 .export
                 .as_callable()
-                .ok_or_else(|| LayoutRuntimeError::NonCallableExport {
+                .ok_or_else(|| PreparedLayoutRuntimeError::NonCallableExport {
                     name: selected_layout.name.clone(),
                     export: self.contract.export_name.clone(),
                 })?;
@@ -218,7 +218,7 @@ impl<L> BoaLayoutRuntime<L> {
                 std::slice::from_ref(context_value),
                 js,
             )
-            .map_err(|error| LayoutRuntimeError::JavaScript {
+            .map_err(|error| PreparedLayoutRuntimeError::JavaScript {
                 message: error.to_string(),
             })?;
 
@@ -230,20 +230,20 @@ impl<L> BoaLayoutRuntime<L> {
         selected_layout: &SelectedLayout,
         value: &JsValue,
         js: &mut JsContext,
-    ) -> Result<SourceLayoutNode, LayoutRuntimeError> {
+    ) -> Result<SourceLayoutNode, PreparedLayoutRuntimeError> {
         let json = value
             .to_json(js)
-            .map_err(|error| LayoutRuntimeError::JavaScript {
+            .map_err(|error| PreparedLayoutRuntimeError::JavaScript {
                 message: error.to_string(),
             })?
-            .ok_or_else(|| LayoutRuntimeError::ValueConversion {
+            .ok_or_else(|| PreparedLayoutRuntimeError::ValueConversion {
                 name: selected_layout.name.clone(),
                 message: "layout function returned undefined".into(),
             })?;
 
         let authored =
             decode_authored_layout_node(&json, &DecodePath::root()).map_err(|message| {
-                LayoutRuntimeError::ValueConversion {
+                PreparedLayoutRuntimeError::ValueConversion {
                     name: selected_layout.name.clone(),
                     message,
                 }
@@ -253,7 +253,7 @@ impl<L> BoaLayoutRuntime<L> {
     }
 }
 
-impl<L: JsLayoutSourceLoader> BoaLayoutRuntime<L> {
+impl<L: JsLayoutSourceLoader> BoaPreparedLayoutRuntime<L> {
     pub fn prepare_layout(
         &self,
         config: &Config,
@@ -263,7 +263,7 @@ impl<L: JsLayoutSourceLoader> BoaLayoutRuntime<L> {
     }
 }
 
-impl PreparedLayoutRuntime for StubLayoutRuntime {
+impl PreparedLayoutRuntime for StubPreparedLayoutRuntime {
     type Config = Config;
 
     fn prepare_layout(
@@ -310,7 +310,7 @@ impl PreparedLayoutRuntime for StubLayoutRuntime {
     }
 }
 
-impl<L: JsLayoutSourceLoader> PreparedLayoutRuntime for BoaLayoutRuntime<L> {
+impl<L: JsLayoutSourceLoader> PreparedLayoutRuntime for BoaPreparedLayoutRuntime<L> {
     type Config = Config;
 
     fn prepare_layout(
@@ -318,7 +318,7 @@ impl<L: JsLayoutSourceLoader> PreparedLayoutRuntime for BoaLayoutRuntime<L> {
         config: &Self::Config,
         workspace: &spiders_shared::wm::WorkspaceSnapshot,
     ) -> Result<Option<PreparedLayout>, RuntimeError> {
-        BoaLayoutRuntime::prepare_layout(self, config, workspace)
+        BoaPreparedLayoutRuntime::prepare_layout(self, config, workspace)
     }
 
     fn build_context(
@@ -353,7 +353,7 @@ impl<L: JsLayoutSourceLoader> PreparedLayoutRuntime for BoaLayoutRuntime<L> {
     }
 }
 
-impl<L: JsLayoutSourceLoader> AuthoringLayoutRuntime for BoaLayoutRuntime<L> {
+impl<L: JsLayoutSourceLoader> AuthoringLayoutRuntime for BoaPreparedLayoutRuntime<L> {
     fn load_authored_config(&self, path: &std::path::Path) -> Result<Self::Config, RuntimeError> {
         crate::authored::load_authored_config(path).map_err(|error| RuntimeError::Config {
             message: error.to_string(),
@@ -361,7 +361,7 @@ impl<L: JsLayoutSourceLoader> AuthoringLayoutRuntime for BoaLayoutRuntime<L> {
     }
 }
 
-impl AuthoringLayoutRuntime for StubLayoutRuntime {
+impl AuthoringLayoutRuntime for StubPreparedLayoutRuntime {
     fn load_authored_config(&self, _path: &std::path::Path) -> Result<Self::Config, RuntimeError> {
         Err(RuntimeError::NotImplemented(
             "authored config loading".into(),
@@ -480,13 +480,13 @@ mod tests {
 
     #[test]
     fn boa_runtime_exposes_default_export_contract() {
-        let runtime = BoaLayoutRuntime::new();
+        let runtime = BoaPreparedLayoutRuntime::new();
         assert_eq!(runtime.contract().export_name, "default");
     }
 
     #[test]
     fn boa_runtime_decodes_js_layout_object_into_normalized_tree() {
-        let runtime = BoaLayoutRuntime::new();
+        let runtime = BoaPreparedLayoutRuntime::new();
         let layout = runtime
             .evaluate_module_source(
                 &SelectedLayout {
@@ -513,7 +513,7 @@ mod tests {
         )
         .unwrap();
 
-        let runtime = BoaLayoutRuntime::with_loader(FsLayoutSourceLoader);
+        let runtime = BoaPreparedLayoutRuntime::with_loader(FsLayoutSourceLoader);
         let config = Config {
             layouts: vec![LayoutDefinition {
                 name: "master-stack".into(),

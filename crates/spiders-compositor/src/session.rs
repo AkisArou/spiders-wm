@@ -388,7 +388,7 @@ mod tests {
     use spiders_config::model::{Config, LayoutDefinition};
     use spiders_config::service::ConfigRuntimeService;
     use spiders_runtime_js::loader::{RuntimePathResolver, RuntimeProjectLayoutSourceLoader};
-    use spiders_runtime_js::runtime::BoaLayoutRuntime;
+    use spiders_runtime_js::runtime::BoaPreparedLayoutRuntime;
     use spiders_shared::api::{CompositorEvent, FocusDirection, WmAction};
     use spiders_shared::ids::{OutputId, WindowId, WorkspaceId};
     use spiders_shared::wm::{
@@ -507,7 +507,7 @@ mod tests {
         }
     }
 
-    fn session() -> CompositorSession<BoaLayoutRuntime<RuntimeProjectLayoutSourceLoader>> {
+    fn session() -> CompositorSession<BoaPreparedLayoutRuntime<RuntimeProjectLayoutSourceLoader>> {
         let temp_dir = std::env::temp_dir();
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -528,7 +528,7 @@ mod tests {
 
         let loader =
             RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
-        let runtime = BoaLayoutRuntime::with_loader(loader.clone());
+        let runtime = BoaPreparedLayoutRuntime::with_loader(loader.clone());
         let service = ConfigRuntimeService::new(runtime);
 
         let mut session =
@@ -806,7 +806,7 @@ mod tests {
 
         let loader =
             RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
-        let runtime = BoaLayoutRuntime::with_loader(loader.clone());
+        let runtime = BoaPreparedLayoutRuntime::with_loader(loader.clone());
         let service = ConfigRuntimeService::new(runtime);
         let mut session =
             CompositorSession::initialize(LayoutService, service, config, state()).unwrap();
