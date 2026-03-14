@@ -372,6 +372,11 @@ For outputs specifically, that batch should be allowed to carry a typed output
 snapshot when the backend is introducing a genuinely new output that does not
 already exist in the startup `StateSnapshot`.
 
+The older id-only output registration path still has a narrow role for outputs
+that were already seeded by startup state and only need activation/enablement to
+cross the seam; new backend-created outputs should prefer the typed snapshot
+path.
+
 That same typed snapshot should also be usable for incremental single-output
 discovery events when the adapter is reporting one newly known output rather
 than a larger discovery batch.

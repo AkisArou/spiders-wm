@@ -19,6 +19,8 @@ pub enum BootstrapEvent {
         output_id: OutputId,
         active: bool,
     },
+    // Preferred only for outputs already present in startup state. Newly
+    // discovered backend-created outputs should use RegisterOutputSnapshot.
     RegisterOutputSnapshot {
         output: OutputSnapshot,
         active: bool,
@@ -447,6 +449,8 @@ pub enum BackendDiscoveryEvent {
         output_id: OutputId,
         active: bool,
     },
+    // Preferred for genuinely new backend-created outputs. OutputDiscovered is
+    // kept for id-only activation of outputs already seeded by startup state.
     OutputSnapshotDiscovered {
         output: OutputSnapshot,
         active: bool,

@@ -159,6 +159,9 @@ Compositor-domain note:
   `StateSnapshot`
 - the same typed output snapshot shape should be used for incremental single
   output discovery events so batch and non-batch adapter paths stay aligned
+- id-only output discovery/bootstrap variants still make sense for outputs that
+  already exist in startup state, but they are no longer the preferred path for
+  introducing new backend-created outputs
 - the real smithay bootstrap/runtime path should also introduce its initial
   output through that typed snapshot shape when the output is backend-created
   rather than startup-config-derived
