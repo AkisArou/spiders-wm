@@ -74,7 +74,7 @@ where
         Ok(errors)
     }
 
-    pub fn load_for_workspace(
+    pub fn prepare_for_workspace(
         &mut self,
         config: &Config,
         workspace: &spiders_shared::wm::WorkspaceSnapshot,
@@ -88,13 +88,13 @@ where
         Ok(self.cache.get(&key))
     }
 
-    pub fn evaluate_for_workspace(
+    pub fn evaluate_prepared_for_workspace(
         &mut self,
         config: &Config,
         state: &spiders_shared::wm::StateSnapshot,
         workspace: &spiders_shared::wm::WorkspaceSnapshot,
     ) -> Result<Option<crate::service::EvaluatedLayout>, ConfigRuntimeServiceError> {
-        let Some(loaded) = self.load_for_workspace(config, workspace)?.cloned() else {
+        let Some(loaded) = self.prepare_for_workspace(config, workspace)?.cloned() else {
             return Ok(None);
         };
         let context = self.runtime.build_context(state, workspace, Some(&loaded));
@@ -331,7 +331,7 @@ mod tests {
         };
 
         let loaded = service
-            .load_for_workspace(&config, &workspace())
+            .prepare_for_workspace(&config, &workspace())
             .unwrap()
             .unwrap();
 
@@ -358,7 +358,7 @@ mod tests {
         };
 
         let evaluated = service
-            .evaluate_for_workspace(&config, &state(), &workspace())
+            .evaluate_prepared_for_workspace(&config, &state(), &workspace())
             .unwrap()
             .unwrap();
 

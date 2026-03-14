@@ -105,7 +105,7 @@ pub(crate) fn bootstrap_runtime<R: AuthoringLayoutRuntime<Config = Config>>(
     };
 
     Ok(runtime_service
-        .evaluate_for_workspace(config, state, workspace)?
+        .evaluate_prepared_for_workspace(config, state, workspace)?
         .map(
             |evaluated| -> Result<StartupLayoutState, CompositorLayoutError> {
                 let workspace_windows = state.windows_for_workspace(workspace);
