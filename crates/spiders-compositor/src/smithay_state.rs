@@ -1,18 +1,26 @@
 #[cfg(feature = "smithay-winit")]
 mod imp {
-    use std::collections::HashMap;
+    use std::collections::{HashMap, HashSet};
 
     use crate::backend::{BackendDiscoveryEvent, BackendSurfaceSnapshot};
     use smithay::backend::renderer::utils::on_commit_buffer_handler;
     use smithay::delegate_compositor;
+    use smithay::delegate_data_control;
+    use smithay::delegate_data_device;
+    use smithay::delegate_ext_data_control;
+    use smithay::delegate_layer_shell;
+    use smithay::delegate_primary_selection;
     use smithay::delegate_seat;
     use smithay::delegate_shm;
     use smithay::delegate_xdg_shell;
     use smithay::input::keyboard::XkbConfig;
+    use smithay::input::pointer::CursorImageStatus;
     use smithay::input::{Seat, SeatHandler, SeatState};
+    use smithay::output::Output;
     use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel;
     use smithay::reexports::wayland_server::backend::{ClientData, ClientId, DisconnectReason};
     use smithay::reexports::wayland_server::protocol::wl_buffer;
+    use smithay::reexports::wayland_server::protocol::wl_output::WlOutput;
     use smithay::reexports::wayland_server::protocol::wl_seat;
     use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
     use smithay::reexports::wayland_server::Resource;
@@ -23,13 +31,34 @@ mod imp {
         get_parent, get_role, is_sync_subsurface, with_states, BufferAssignment,
     };
     use smithay::wayland::compositor::{CompositorClientState, CompositorHandler, CompositorState};
+    use smithay::wayland::selection::data_device::{
+        DataDeviceHandler, DataDeviceState, WaylandDndGrabHandler,
+    };
+    use smithay::wayland::selection::ext_data_control::{
+        DataControlHandler as ExtDataControlHandler, DataControlState as ExtDataControlState,
+    };
+    use smithay::wayland::selection::primary_selection::{
+        set_primary_focus, PrimarySelectionHandler, PrimarySelectionState,
+    };
+    use smithay::wayland::selection::wlr_data_control::{
+        DataControlHandler as WlrDataControlHandler, DataControlState as WlrDataControlState,
+    };
+    use smithay::wayland::selection::{SelectionHandler, SelectionSource, SelectionTarget};
+    use smithay::wayland::shell::wlr_layer::{
+        ExclusiveZone as WlrExclusiveZone, KeyboardInteractivity as WlrKeyboardInteractivity,
+        Layer as WlrLayer, LayerSurface, LayerSurfaceConfigure, LayerSurfaceData,
+        WlrLayerShellHandler, WlrLayerShellState,
+    };
     use smithay::wayland::shell::xdg::{
         PopupSurface, PositionerState, ToplevelSurface, XdgPopupSurfaceData, XdgShellHandler,
         XdgShellState, XdgToplevelSurfaceData, XDG_POPUP_ROLE, XDG_TOPLEVEL_ROLE,
     };
     use smithay::wayland::shm::{ShmHandler, ShmState};
     use smithay::wayland::socket::ListeningSocketSource;
-    use spiders_shared::ids::WindowId;
+    use spiders_runtime::{
+        LayerExclusiveZone, LayerKeyboardInteractivity, LayerSurfaceMetadata, LayerSurfaceTier,
+    };
+    use spiders_shared::ids::{OutputId, WindowId};
 
     #[derive(Debug, thiserror::Error)]
     pub enum SmithayStateError {
@@ -56,12 +85,60 @@ mod imp {
     pub struct SmithayKnownToplevelSurface {
         pub surface_id: String,
         pub window_id: WindowId,
+        pub configure: SmithayXdgToplevelConfigureSnapshot,
+        pub metadata: SmithayXdgToplevelMetadataSnapshot,
+        pub requests: SmithayXdgToplevelRequestSnapshot,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct SmithayXdgToplevelConfigureSnapshot {
+        pub last_acked_serial: Option<u32>,
+        pub activated: bool,
+        pub fullscreen: bool,
+        pub maximized: bool,
+        pub pending_configure_count: usize,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct SmithayXdgToplevelMetadataSnapshot {
+        pub title: Option<String>,
+        pub app_id: Option<String>,
+        pub parent_surface_id: Option<String>,
+        pub min_size: Option<(i32, i32)>,
+        pub max_size: Option<(i32, i32)>,
+        pub window_geometry: Option<(i32, i32, i32, i32)>,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct SmithayXdgToplevelRequestSnapshot {
+        pub last_move_serial: Option<u32>,
+        pub last_resize_serial: Option<u32>,
+        pub last_resize_edge: Option<String>,
+        pub last_window_menu_serial: Option<u32>,
+        pub last_window_menu_location: Option<(i32, i32)>,
+        pub minimize_requested: bool,
+        pub last_request_kind: Option<String>,
+        pub request_count: usize,
     }
 
     #[derive(Debug, Clone, PartialEq, Eq)]
     pub struct SmithayKnownPopupSurface {
         pub surface_id: String,
         pub parent: SmithayPopupParentSnapshot,
+        pub configure: SmithayXdgPopupConfigureSnapshot,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct SmithayXdgPopupConfigureSnapshot {
+        pub last_acked_serial: Option<u32>,
+        pub pending_configure_count: usize,
+        pub last_reposition_token: Option<u32>,
+        pub reactive: bool,
+        pub geometry: (i32, i32, i32, i32),
+        pub last_grab_serial: Option<u32>,
+        pub grab_requested: bool,
+        pub last_request_kind: Option<String>,
+        pub request_count: usize,
     }
 
     #[derive(Debug, Clone, PartialEq, Eq)]
@@ -81,6 +158,69 @@ mod imp {
     #[derive(Debug, Clone, PartialEq, Eq)]
     pub struct SmithayKnownLayerSurface {
         pub surface_id: String,
+        pub output_id: Option<OutputId>,
+        pub metadata: LayerSurfaceMetadata,
+        pub configure: SmithayLayerSurfaceConfigureSnapshot,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct SmithayLayerSurfaceConfigureSnapshot {
+        pub last_acked_serial: Option<u32>,
+        pub pending_configure_count: usize,
+        pub last_configured_size: Option<(i32, i32)>,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct SmithaySelectionOfferSnapshot {
+        pub mime_types: Vec<String>,
+        pub source_kind: String,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct SmithayClipboardSelectionSnapshot {
+        pub seat_name: String,
+        pub target: String,
+        pub selection: Option<SmithaySelectionOfferSnapshot>,
+        pub focused_client_id: Option<String>,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct SmithayPrimarySelectionSnapshot {
+        pub seat_name: String,
+        pub target: String,
+        pub selection: Option<SmithaySelectionOfferSnapshot>,
+        pub focused_client_id: Option<String>,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct SmithaySelectionProtocolSupportSnapshot {
+        pub data_device: bool,
+        pub primary_selection: bool,
+        pub wlr_data_control: bool,
+        pub ext_data_control: bool,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct SmithaySeatSnapshot {
+        pub name: String,
+        pub has_keyboard: bool,
+        pub has_pointer: bool,
+        pub has_touch: bool,
+        pub focused_surface_id: Option<String>,
+        pub focused_surface_role: Option<String>,
+        pub focused_window_id: Option<WindowId>,
+        pub focused_output_id: Option<OutputId>,
+        pub cursor_image: String,
+        pub cursor_surface_id: Option<String>,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct SmithayOutputSnapshot {
+        pub known_output_ids: Vec<OutputId>,
+        pub active_output_id: Option<OutputId>,
+        pub layer_surface_output_count: usize,
+        pub active_output_attached_surface_count: usize,
+        pub mapped_surface_count: usize,
     }
 
     #[derive(Debug, Clone, PartialEq, Eq)]
@@ -103,11 +243,16 @@ mod imp {
     #[derive(Debug, Clone, PartialEq, Eq)]
     pub struct SmithayStateSnapshot {
         pub seat_name: String,
+        pub seat: SmithaySeatSnapshot,
+        pub outputs: SmithayOutputSnapshot,
         pub tracked_surface_count: usize,
         pub tracked_toplevel_count: usize,
         pub pending_discovery_event_count: usize,
         pub role_counts: SmithaySurfaceRoleCounts,
         pub known_surfaces: SmithayKnownSurfacesSnapshot,
+        pub selection_protocols: SmithaySelectionProtocolSupportSnapshot,
+        pub clipboard_selection: SmithayClipboardSelectionSnapshot,
+        pub primary_selection: SmithayPrimarySelectionSnapshot,
     }
 
     impl ClientData for SmithayClientState {
@@ -122,12 +267,34 @@ mod imp {
         pub compositor_state: CompositorState,
         pub shm_state: ShmState,
         pub xdg_shell_state: XdgShellState,
+        pub layer_shell_state: WlrLayerShellState,
+        pub data_device_state: DataDeviceState,
+        pub primary_selection_state: PrimarySelectionState,
+        pub wlr_data_control_state: WlrDataControlState,
+        pub ext_data_control_state: ExtDataControlState,
         pub seat_state: SeatState<Self>,
         pub seat: Seat<Self>,
         pub seat_name: String,
         next_window_serial: u64,
         toplevel_window_ids: HashMap<String, WindowId>,
+        known_output_ids: Vec<OutputId>,
+        active_output_id: Option<OutputId>,
+        layer_output_ids: HashMap<String, OutputId>,
+        layer_metadata: HashMap<String, LayerSurfaceMetadata>,
+        layer_configures: HashMap<String, SmithayLayerSurfaceConfigureSnapshot>,
+        xdg_toplevel_configures: HashMap<String, SmithayXdgToplevelConfigureSnapshot>,
+        xdg_toplevel_metadata: HashMap<String, SmithayXdgToplevelMetadataSnapshot>,
+        xdg_toplevel_requests: HashMap<String, SmithayXdgToplevelRequestSnapshot>,
+        xdg_popup_configures: HashMap<String, SmithayXdgPopupConfigureSnapshot>,
+        clipboard_selection: Option<SmithaySelectionOfferSnapshot>,
+        clipboard_focus_client_id: Option<String>,
+        primary_selection: Option<SmithaySelectionOfferSnapshot>,
+        primary_focus_client_id: Option<String>,
+        focused_surface_id: Option<String>,
+        cursor_image: String,
+        cursor_surface_id: Option<String>,
         tracked_surfaces: HashMap<String, SmithayTrackedSurfaceKind>,
+        mapped_surface_ids: HashSet<String>,
         popup_parent_links: HashMap<String, SmithayPopupParentLink>,
         pending_discovery_events: Vec<BackendDiscoveryEvent>,
     }
@@ -138,6 +305,12 @@ mod imp {
         Popup,
         Layer,
         Unmanaged,
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum SmithaySurfaceLifecycleAction {
+        Unmap,
+        Remove,
     }
 
     #[derive(Debug, Clone, PartialEq, Eq)]
@@ -154,6 +327,19 @@ mod imp {
             let compositor_state = CompositorState::new::<Self>(&display_handle);
             let shm_state = ShmState::new::<Self>(&display_handle, vec![]);
             let xdg_shell_state = XdgShellState::new::<Self>(&display_handle);
+            let layer_shell_state = WlrLayerShellState::new::<Self>(&display_handle);
+            let data_device_state = DataDeviceState::new::<Self>(&display_handle);
+            let primary_selection_state = PrimarySelectionState::new::<Self>(&display_handle);
+            let wlr_data_control_state = WlrDataControlState::new::<Self, _>(
+                &display_handle,
+                Some(&primary_selection_state),
+                |_| true,
+            );
+            let ext_data_control_state = ExtDataControlState::new::<Self, _>(
+                &display_handle,
+                Some(&primary_selection_state),
+                |_| true,
+            );
             let mut seat_state = SeatState::new();
             let seat_name = seat_name.into();
             let mut seat = seat_state.new_wl_seat(&display_handle, seat_name.clone());
@@ -165,12 +351,34 @@ mod imp {
                 compositor_state,
                 shm_state,
                 xdg_shell_state,
+                layer_shell_state,
+                data_device_state,
+                primary_selection_state,
+                wlr_data_control_state,
+                ext_data_control_state,
                 seat_state,
                 seat,
                 seat_name,
                 next_window_serial: 1,
                 toplevel_window_ids: HashMap::new(),
+                known_output_ids: Vec::new(),
+                active_output_id: None,
+                layer_output_ids: HashMap::new(),
+                layer_metadata: HashMap::new(),
+                layer_configures: HashMap::new(),
+                xdg_toplevel_configures: HashMap::new(),
+                xdg_toplevel_metadata: HashMap::new(),
+                xdg_toplevel_requests: HashMap::new(),
+                xdg_popup_configures: HashMap::new(),
+                clipboard_selection: None,
+                clipboard_focus_client_id: None,
+                primary_selection: None,
+                primary_focus_client_id: None,
+                focused_surface_id: None,
+                cursor_image: "default".into(),
+                cursor_surface_id: None,
                 tracked_surfaces: HashMap::new(),
+                mapped_surface_ids: HashSet::new(),
                 popup_parent_links: HashMap::new(),
                 pending_discovery_events: Vec::new(),
             })
@@ -184,31 +392,472 @@ mod imp {
             std::mem::take(&mut self.pending_discovery_events)
         }
 
+        pub fn register_output_id(&mut self, output_id: OutputId, active: bool) {
+            if !self
+                .known_output_ids
+                .iter()
+                .any(|known| known == &output_id)
+            {
+                self.known_output_ids.push(output_id.clone());
+            }
+
+            if active {
+                self.active_output_id = Some(output_id);
+            }
+        }
+
+        pub fn activate_output_id(&mut self, output_id: OutputId) {
+            if self.active_output_id.as_ref() == Some(&output_id) {
+                return;
+            }
+
+            self.active_output_id = Some(output_id.clone());
+            self.pending_discovery_events
+                .push(BackendDiscoveryEvent::OutputActivated { output_id });
+        }
+
+        pub fn remove_output_id(&mut self, output_id: &OutputId) {
+            let known_before = self.known_output_ids.len();
+            self.known_output_ids.retain(|known| known != output_id);
+
+            let mut removed = self.known_output_ids.len() != known_before;
+            if self.active_output_id.as_ref() == Some(output_id) {
+                self.active_output_id = None;
+                removed = true;
+            }
+
+            self.layer_output_ids
+                .retain(|_, attached| attached != output_id);
+
+            if removed {
+                self.pending_discovery_events
+                    .push(BackendDiscoveryEvent::OutputLost {
+                        output_id: output_id.clone(),
+                    });
+            }
+        }
+
         #[cfg(test)]
         pub(crate) fn track_test_surface_snapshot(&mut self, snapshot: BackendSurfaceSnapshot) {
-            if let BackendSurfaceSnapshot::Window {
-                surface_id,
-                window_id,
-                ..
-            } = &snapshot
-            {
-                self.toplevel_window_ids
-                    .insert(surface_id.clone(), window_id.clone());
+            match &snapshot {
+                BackendSurfaceSnapshot::Window {
+                    surface_id,
+                    window_id,
+                    ..
+                } => {
+                    self.toplevel_window_ids
+                        .insert(surface_id.clone(), window_id.clone());
+                    self.xdg_toplevel_configures
+                        .entry(surface_id.clone())
+                        .or_insert_with(default_xdg_toplevel_configure_snapshot);
+                    self.xdg_toplevel_metadata
+                        .entry(surface_id.clone())
+                        .or_insert_with(default_xdg_toplevel_metadata_snapshot);
+                    self.xdg_toplevel_requests
+                        .entry(surface_id.clone())
+                        .or_insert_with(default_xdg_toplevel_request_snapshot);
+                }
+                BackendSurfaceSnapshot::Popup {
+                    surface_id,
+                    output_id,
+                    parent_surface_id,
+                } => {
+                    let parent = if parent_surface_id == &format!("unresolved-parent-{surface_id}")
+                    {
+                        SmithayPopupParentSnapshot::Unresolved
+                    } else {
+                        SmithayPopupParentSnapshot::Resolved {
+                            surface_id: parent_surface_id.clone(),
+                            window_id: self.toplevel_window_ids.get(parent_surface_id).cloned(),
+                        }
+                    };
+                    self.popup_parent_links
+                        .insert(surface_id.clone(), SmithayPopupParentLink { parent });
+                    if let Some(output_id) = output_id
+                        .clone()
+                        .or_else(|| self.layer_output_ids.get(parent_surface_id).cloned())
+                    {
+                        self.layer_output_ids.insert(surface_id.clone(), output_id);
+                    }
+                    self.xdg_popup_configures
+                        .entry(surface_id.clone())
+                        .or_insert_with(default_xdg_popup_configure_snapshot);
+                }
+                BackendSurfaceSnapshot::Layer {
+                    surface_id,
+                    output_id,
+                    metadata,
+                } => {
+                    self.layer_output_ids
+                        .insert(surface_id.clone(), output_id.clone());
+                    self.layer_metadata
+                        .insert(surface_id.clone(), metadata.clone());
+                }
+                BackendSurfaceSnapshot::Unmanaged { .. } => {}
             }
 
             self.track_surface_snapshot(snapshot);
         }
 
+        #[cfg(test)]
+        pub(crate) fn track_test_surface_loss(&mut self, surface_id: &str) {
+            if matches!(
+                self.tracked_surfaces.get(surface_id),
+                Some(SmithayTrackedSurfaceKind::Toplevel)
+            ) {
+                self.toplevel_window_ids.remove(surface_id);
+            }
+
+            self.track_surface_loss_by_id(surface_id.to_owned());
+        }
+
+        #[cfg(test)]
+        pub(crate) fn track_test_surface_unmap(&mut self, surface_id: &str) {
+            self.track_surface_unmap_by_id(surface_id.to_owned());
+        }
+
+        #[cfg(test)]
+        pub(crate) fn layer_output_id(&self, surface_id: &str) -> Option<&OutputId> {
+            self.layer_output_ids.get(surface_id)
+        }
+
+        #[cfg(test)]
+        pub(crate) fn track_test_popup_parent(
+            &mut self,
+            surface_id: &str,
+            parent_surface_id: &str,
+        ) {
+            self.popup_parent_links.insert(
+                surface_id.to_owned(),
+                SmithayPopupParentLink {
+                    parent: SmithayPopupParentSnapshot::Resolved {
+                        surface_id: parent_surface_id.to_owned(),
+                        window_id: self.toplevel_window_ids.get(parent_surface_id).cloned(),
+                    },
+                },
+            );
+        }
+
+        #[cfg(test)]
+        pub(crate) fn track_layer_popup_surface_for_test(
+            &mut self,
+            parent_surface_id: &str,
+            popup_surface_id: &str,
+        ) {
+            self.popup_parent_links.insert(
+                popup_surface_id.to_owned(),
+                SmithayPopupParentLink {
+                    parent: SmithayPopupParentSnapshot::Resolved {
+                        surface_id: parent_surface_id.to_owned(),
+                        window_id: None,
+                    },
+                },
+            );
+            self.xdg_popup_configures
+                .entry(popup_surface_id.to_owned())
+                .or_insert_with(default_xdg_popup_configure_snapshot);
+
+            let output_id = self.layer_output_ids.get(parent_surface_id).cloned();
+            if let Some(output_id) = output_id.clone() {
+                self.layer_output_ids
+                    .insert(popup_surface_id.to_owned(), output_id);
+            }
+
+            self.track_surface_snapshot(BackendSurfaceSnapshot::Popup {
+                surface_id: popup_surface_id.to_owned(),
+                output_id,
+                parent_surface_id: parent_surface_id.to_owned(),
+            });
+        }
+
+        #[cfg(test)]
+        pub(crate) fn set_test_popup_configure_snapshot(
+            &mut self,
+            surface_id: &str,
+            snapshot: SmithayXdgPopupConfigureSnapshot,
+        ) {
+            self.xdg_popup_configures
+                .insert(surface_id.to_owned(), snapshot);
+        }
+
+        #[cfg(test)]
+        pub(crate) fn record_test_xdg_popup_configure_sent(
+            &mut self,
+            surface_id: &str,
+            reposition_token: Option<u32>,
+            reactive: bool,
+            geometry: (i32, i32, i32, i32),
+        ) {
+            self.note_xdg_popup_configure_sent(
+                surface_id.to_owned(),
+                reposition_token,
+                reactive,
+                geometry,
+            );
+        }
+
+        #[cfg(test)]
+        pub(crate) fn record_test_initial_xdg_popup_configure_sent(
+            &mut self,
+            surface_id: &str,
+            reactive: bool,
+            geometry: (i32, i32, i32, i32),
+        ) {
+            self.record_xdg_popup_configure_sent(surface_id.to_owned(), None, reactive, geometry);
+        }
+
+        #[cfg(test)]
+        pub(crate) fn record_test_xdg_popup_configure_acked(
+            &mut self,
+            surface_id: &str,
+            serial: u32,
+            reposition_token: Option<u32>,
+            reactive: bool,
+            geometry: (i32, i32, i32, i32),
+        ) {
+            self.acknowledge_xdg_popup_configure(
+                surface_id.to_owned(),
+                serial,
+                reposition_token,
+                reactive,
+                geometry,
+            );
+        }
+
+        #[cfg(test)]
+        pub(crate) fn record_test_xdg_popup_request(
+            &mut self,
+            surface_id: &str,
+            request_kind: &str,
+            update: impl FnOnce(&mut SmithayXdgPopupConfigureSnapshot),
+        ) {
+            let mut snapshot = self.note_xdg_popup_request(surface_id.to_owned(), request_kind);
+            update(&mut snapshot);
+            self.xdg_popup_configures
+                .insert(surface_id.to_owned(), snapshot);
+        }
+
+        #[cfg(test)]
+        pub(crate) fn set_test_layer_configure_snapshot(
+            &mut self,
+            surface_id: &str,
+            snapshot: SmithayLayerSurfaceConfigureSnapshot,
+        ) {
+            self.layer_configures
+                .insert(surface_id.to_owned(), snapshot);
+        }
+
+        #[cfg(test)]
+        pub(crate) fn record_test_layer_configure_sent(
+            &mut self,
+            surface_id: &str,
+            configured_size: Option<(i32, i32)>,
+        ) {
+            self.note_layer_configure_sent(surface_id.to_owned(), configured_size);
+        }
+
+        #[cfg(test)]
+        pub(crate) fn record_test_layer_configure_acked(
+            &mut self,
+            surface_id: &str,
+            serial: u32,
+            configured_size: Option<(i32, i32)>,
+        ) {
+            self.acknowledge_layer_configure(surface_id.to_owned(), serial, configured_size);
+        }
+
+        #[cfg(test)]
+        pub(crate) fn set_test_toplevel_metadata_snapshot(
+            &mut self,
+            surface_id: &str,
+            snapshot: SmithayXdgToplevelMetadataSnapshot,
+        ) {
+            self.xdg_toplevel_metadata
+                .insert(surface_id.to_owned(), snapshot);
+        }
+
+        #[cfg(test)]
+        pub(crate) fn set_test_toplevel_configure_snapshot(
+            &mut self,
+            surface_id: &str,
+            snapshot: SmithayXdgToplevelConfigureSnapshot,
+        ) {
+            self.xdg_toplevel_configures
+                .insert(surface_id.to_owned(), snapshot);
+        }
+
+        #[cfg(test)]
+        pub(crate) fn set_test_toplevel_request_snapshot(
+            &mut self,
+            surface_id: &str,
+            snapshot: SmithayXdgToplevelRequestSnapshot,
+        ) {
+            self.xdg_toplevel_requests
+                .insert(surface_id.to_owned(), snapshot);
+        }
+
+        #[cfg(test)]
+        pub(crate) fn record_test_xdg_toplevel_configure_sent(
+            &mut self,
+            surface_id: &str,
+            activated: bool,
+            fullscreen: bool,
+            maximized: bool,
+        ) {
+            self.note_xdg_toplevel_configure_sent(
+                surface_id.to_owned(),
+                activated,
+                fullscreen,
+                maximized,
+            );
+        }
+
+        #[cfg(test)]
+        pub(crate) fn record_test_xdg_toplevel_configure_acked(
+            &mut self,
+            surface_id: &str,
+            serial: u32,
+            activated: bool,
+            fullscreen: bool,
+            maximized: bool,
+        ) {
+            self.acknowledge_xdg_toplevel_configure(
+                surface_id.to_owned(),
+                serial,
+                activated,
+                fullscreen,
+                maximized,
+            );
+        }
+
+        #[cfg(test)]
+        pub(crate) fn set_test_clipboard_selection(
+            &mut self,
+            selection: Option<SmithaySelectionOfferSnapshot>,
+        ) {
+            self.clipboard_selection = selection;
+        }
+
+        #[cfg(test)]
+        pub(crate) fn set_test_clipboard_focus_client_id(&mut self, client_id: Option<&str>) {
+            self.clipboard_focus_client_id = client_id.map(str::to_owned);
+        }
+
+        #[cfg(test)]
+        pub(crate) fn set_test_primary_selection(
+            &mut self,
+            selection: Option<SmithaySelectionOfferSnapshot>,
+        ) {
+            self.primary_selection = selection;
+        }
+
+        #[cfg(test)]
+        pub(crate) fn set_test_primary_focus_client_id(&mut self, client_id: Option<&str>) {
+            self.primary_focus_client_id = client_id.map(str::to_owned);
+        }
+
+        #[cfg(test)]
+        pub(crate) fn set_test_focused_surface_id(&mut self, surface_id: Option<&str>) {
+            self.focused_surface_id = surface_id.map(str::to_owned);
+        }
+
+        #[cfg(test)]
+        pub(crate) fn record_test_seat_focus_event(&mut self, surface_id: Option<&str>) {
+            self.focused_surface_id = surface_id.map(str::to_owned);
+            let focused_window_id = self
+                .focused_surface_id
+                .as_ref()
+                .and_then(|surface_id| self.focused_window_id(surface_id));
+            let focused_output_id = self
+                .focused_surface_id
+                .as_ref()
+                .and_then(|surface_id| self.focused_output_id(surface_id));
+            self.pending_discovery_events
+                .push(BackendDiscoveryEvent::SeatFocusChanged {
+                    seat_name: self.seat_name.clone(),
+                    window_id: focused_window_id,
+                    output_id: focused_output_id,
+                });
+        }
+
+        #[cfg(test)]
+        pub(crate) fn set_test_cursor_image(
+            &mut self,
+            cursor_image: impl Into<String>,
+            cursor_surface_id: Option<&str>,
+        ) {
+            self.cursor_image = cursor_image.into();
+            self.cursor_surface_id = cursor_surface_id.map(str::to_owned);
+        }
+
         pub fn snapshot(&self) -> SmithayStateSnapshot {
             let role_counts = self.role_counts();
             let known_surfaces = self.known_surfaces_snapshot();
+            let focused_surface_role = self
+                .focused_surface_id
+                .as_ref()
+                .and_then(|surface_id| self.focused_surface_role(surface_id));
+            let focused_window_id = self
+                .focused_surface_id
+                .as_ref()
+                .and_then(|surface_id| self.focused_window_id(surface_id));
+            let focused_output_id = self
+                .focused_surface_id
+                .as_ref()
+                .and_then(|surface_id| self.focused_output_id(surface_id));
             SmithayStateSnapshot {
                 seat_name: self.seat_name.clone(),
+                seat: SmithaySeatSnapshot {
+                    name: self.seat_name.clone(),
+                    has_keyboard: self.seat.get_keyboard().is_some(),
+                    has_pointer: self.seat.get_pointer().is_some(),
+                    has_touch: self.seat.get_touch().is_some(),
+                    focused_surface_id: self.focused_surface_id.clone(),
+                    focused_surface_role,
+                    focused_window_id,
+                    focused_output_id,
+                    cursor_image: self.cursor_image.clone(),
+                    cursor_surface_id: self.cursor_surface_id.clone(),
+                },
+                outputs: SmithayOutputSnapshot {
+                    known_output_ids: self.known_output_ids.clone(),
+                    active_output_id: self.active_output_id.clone(),
+                    layer_surface_output_count: self.layer_output_ids.len(),
+                    active_output_attached_surface_count: self
+                        .active_output_id
+                        .as_ref()
+                        .map(|active_output_id| {
+                            self.layer_output_ids
+                                .values()
+                                .filter(|output_id| *output_id == active_output_id)
+                                .count()
+                        })
+                        .unwrap_or(0),
+                    mapped_surface_count: self.mapped_surface_ids.len(),
+                },
                 tracked_surface_count: self.tracked_surfaces.len(),
                 tracked_toplevel_count: self.toplevel_window_ids.len(),
                 pending_discovery_event_count: self.pending_discovery_events.len(),
                 role_counts,
                 known_surfaces,
+                selection_protocols: SmithaySelectionProtocolSupportSnapshot {
+                    data_device: true,
+                    primary_selection: true,
+                    wlr_data_control: true,
+                    ext_data_control: true,
+                },
+                clipboard_selection: SmithayClipboardSelectionSnapshot {
+                    seat_name: self.seat_name.clone(),
+                    target: "clipboard".into(),
+                    selection: self.clipboard_selection.clone(),
+                    focused_client_id: self.clipboard_focus_client_id.clone(),
+                },
+                primary_selection: SmithayPrimarySelectionSnapshot {
+                    seat_name: self.seat_name.clone(),
+                    target: "primary".into(),
+                    selection: self.primary_selection.clone(),
+                    focused_client_id: self.primary_focus_client_id.clone(),
+                },
             }
         }
 
@@ -228,27 +877,281 @@ mod imp {
                 }
             };
 
+            if let BackendSurfaceSnapshot::Layer {
+                surface_id,
+                output_id,
+                metadata,
+            } = &snapshot
+            {
+                self.layer_output_ids
+                    .insert(surface_id.clone(), output_id.clone());
+                self.layer_metadata
+                    .insert(surface_id.clone(), metadata.clone());
+            }
+
+            if let BackendSurfaceSnapshot::Popup {
+                surface_id,
+                output_id,
+                parent_surface_id,
+            } = &snapshot
+            {
+                if let Some(output_id) = output_id
+                    .clone()
+                    .or_else(|| self.layer_output_ids.get(parent_surface_id).cloned())
+                {
+                    self.layer_output_ids.insert(surface_id.clone(), output_id);
+                }
+            }
+
             if self.tracked_surfaces.contains_key(&surface_id) {
+                if self.mapped_surface_ids.insert(surface_id) {
+                    self.pending_discovery_events
+                        .push(snapshot_into_discovery_event(snapshot));
+                }
                 return;
             }
 
+            self.mapped_surface_ids.insert(surface_id.clone());
             self.tracked_surfaces.insert(surface_id, kind);
 
             self.pending_discovery_events
                 .push(snapshot_into_discovery_event(snapshot));
         }
 
+        fn track_surface_unmap_by_id(&mut self, surface_id: String) {
+            self.track_surface_lifecycle_by_id(surface_id, SmithaySurfaceLifecycleAction::Unmap);
+        }
+
         fn track_surface_loss_by_id(&mut self, surface_id: String) {
-            if self.tracked_surfaces.remove(&surface_id).is_some() {
-                self.popup_parent_links.remove(&surface_id);
-                self.pending_discovery_events
-                    .push(BackendDiscoveryEvent::SurfaceLost { surface_id });
+            self.track_surface_lifecycle_by_id(surface_id, SmithaySurfaceLifecycleAction::Remove);
+        }
+
+        fn track_surface_lifecycle_by_id(
+            &mut self,
+            surface_id: String,
+            action: SmithaySurfaceLifecycleAction,
+        ) {
+            if self.tracked_surfaces.contains_key(&surface_id) {
+                match action {
+                    SmithaySurfaceLifecycleAction::Unmap => {
+                        if self.mapped_surface_ids.remove(&surface_id) {
+                            self.pending_discovery_events
+                                .push(BackendDiscoveryEvent::SurfaceUnmapped { surface_id });
+                        }
+                    }
+                    SmithaySurfaceLifecycleAction::Remove => {
+                        self.tracked_surfaces.remove(&surface_id);
+                        self.mapped_surface_ids.remove(&surface_id);
+                        self.popup_parent_links.remove(&surface_id);
+                        self.layer_output_ids.remove(&surface_id);
+                        self.layer_metadata.remove(&surface_id);
+                        self.layer_configures.remove(&surface_id);
+                        self.xdg_toplevel_configures.remove(&surface_id);
+                        self.xdg_toplevel_metadata.remove(&surface_id);
+                        self.xdg_toplevel_requests.remove(&surface_id);
+                        self.xdg_popup_configures.remove(&surface_id);
+                        self.pending_discovery_events
+                            .push(BackendDiscoveryEvent::SurfaceLost { surface_id });
+                    }
+                }
             }
+        }
+
+        fn track_layer_surface(
+            &mut self,
+            surface: &LayerSurface,
+            output: Option<WlOutput>,
+            layer: WlrLayer,
+            namespace: String,
+        ) {
+            let surface_id = smithay_surface_id(surface.wl_surface());
+            let output_id = self.resolve_layer_output_id(output.as_ref());
+            let metadata = layer_surface_metadata(surface, namespace, layer);
+            if let Some(output_id) = output_id.as_ref() {
+                self.layer_output_ids
+                    .insert(surface_id.clone(), output_id.clone());
+            }
+            self.layer_metadata
+                .insert(surface_id.clone(), metadata.clone());
+            self.layer_configures.insert(
+                surface_id.clone(),
+                layer_surface_configure_snapshot_for(surface),
+            );
+
+            self.track_surface_snapshot(BackendSurfaceSnapshot::Layer {
+                surface_id,
+                output_id: output_id.unwrap_or_else(|| OutputId::from("unassigned-layer-output")),
+                metadata,
+            });
+        }
+
+        fn note_layer_configure_sent(
+            &mut self,
+            surface_id: String,
+            configured_size: Option<(i32, i32)>,
+        ) {
+            let mut snapshot = self
+                .layer_configures
+                .get(&surface_id)
+                .cloned()
+                .unwrap_or_else(default_layer_surface_configure_snapshot);
+            snapshot.pending_configure_count += 1;
+            snapshot.last_configured_size = configured_size.or(snapshot.last_configured_size);
+            self.layer_configures.insert(surface_id, snapshot);
+        }
+
+        fn acknowledge_layer_configure(
+            &mut self,
+            surface_id: String,
+            serial: u32,
+            configured_size: Option<(i32, i32)>,
+        ) {
+            let mut snapshot = self
+                .layer_configures
+                .get(&surface_id)
+                .cloned()
+                .unwrap_or_else(default_layer_surface_configure_snapshot);
+            snapshot.last_acked_serial = Some(serial);
+            snapshot.pending_configure_count = snapshot.pending_configure_count.saturating_sub(1);
+            snapshot.last_configured_size = configured_size.or(snapshot.last_configured_size);
+            self.layer_configures.insert(surface_id, snapshot);
+        }
+
+        #[cfg(test)]
+        fn note_xdg_popup_configure_sent(
+            &mut self,
+            surface_id: String,
+            reposition_token: Option<u32>,
+            reactive: bool,
+            geometry: (i32, i32, i32, i32),
+        ) {
+            let snapshot = self.note_xdg_popup_request(surface_id.clone(), "reposition");
+            self.xdg_popup_configures
+                .insert(surface_id.clone(), snapshot);
+            self.record_xdg_popup_configure_sent(surface_id, reposition_token, reactive, geometry);
+        }
+
+        fn record_xdg_popup_configure_sent(
+            &mut self,
+            surface_id: String,
+            reposition_token: Option<u32>,
+            reactive: bool,
+            geometry: (i32, i32, i32, i32),
+        ) {
+            let mut snapshot = self
+                .xdg_popup_configures
+                .get(&surface_id)
+                .cloned()
+                .unwrap_or_else(default_xdg_popup_configure_snapshot);
+            snapshot.pending_configure_count += 1;
+            snapshot.last_reposition_token = reposition_token.or(snapshot.last_reposition_token);
+            snapshot.reactive = reactive;
+            snapshot.geometry = geometry;
+            self.xdg_popup_configures.insert(surface_id, snapshot);
+        }
+
+        fn acknowledge_xdg_popup_configure(
+            &mut self,
+            surface_id: String,
+            serial: u32,
+            reposition_token: Option<u32>,
+            reactive: bool,
+            geometry: (i32, i32, i32, i32),
+        ) {
+            let mut snapshot = self
+                .xdg_popup_configures
+                .get(&surface_id)
+                .cloned()
+                .unwrap_or_else(default_xdg_popup_configure_snapshot);
+            snapshot.last_acked_serial = Some(serial);
+            snapshot.pending_configure_count = snapshot.pending_configure_count.saturating_sub(1);
+            snapshot.last_reposition_token = reposition_token.or(snapshot.last_reposition_token);
+            snapshot.reactive = reactive;
+            snapshot.geometry = geometry;
+            self.xdg_popup_configures.insert(surface_id, snapshot);
+        }
+
+        fn note_xdg_popup_request(
+            &mut self,
+            surface_id: String,
+            request_kind: &str,
+        ) -> SmithayXdgPopupConfigureSnapshot {
+            let mut snapshot = self
+                .xdg_popup_configures
+                .get(&surface_id)
+                .cloned()
+                .unwrap_or_else(default_xdg_popup_configure_snapshot);
+            snapshot.last_request_kind = Some(request_kind.to_owned());
+            snapshot.request_count += 1;
+            snapshot
+        }
+
+        fn note_xdg_toplevel_configure_sent(
+            &mut self,
+            surface_id: String,
+            activated: bool,
+            fullscreen: bool,
+            maximized: bool,
+        ) {
+            let mut snapshot = self
+                .xdg_toplevel_configures
+                .get(&surface_id)
+                .cloned()
+                .unwrap_or_else(default_xdg_toplevel_configure_snapshot);
+            snapshot.pending_configure_count += 1;
+            snapshot.activated = activated;
+            snapshot.fullscreen = fullscreen;
+            snapshot.maximized = maximized;
+            self.xdg_toplevel_configures.insert(surface_id, snapshot);
+        }
+
+        fn acknowledge_xdg_toplevel_configure(
+            &mut self,
+            surface_id: String,
+            serial: u32,
+            activated: bool,
+            fullscreen: bool,
+            maximized: bool,
+        ) {
+            let mut snapshot = self
+                .xdg_toplevel_configures
+                .get(&surface_id)
+                .cloned()
+                .unwrap_or_else(default_xdg_toplevel_configure_snapshot);
+            snapshot.last_acked_serial = Some(serial);
+            snapshot.pending_configure_count = snapshot.pending_configure_count.saturating_sub(1);
+            snapshot.activated = activated;
+            snapshot.fullscreen = fullscreen;
+            snapshot.maximized = maximized;
+            self.xdg_toplevel_configures.insert(surface_id, snapshot);
+        }
+
+        fn note_xdg_toplevel_request(
+            &mut self,
+            surface_id: String,
+            request_kind: &str,
+        ) -> SmithayXdgToplevelRequestSnapshot {
+            let mut snapshot = self
+                .xdg_toplevel_requests
+                .get(&surface_id)
+                .cloned()
+                .unwrap_or_else(default_xdg_toplevel_request_snapshot);
+            snapshot.last_request_kind = Some(request_kind.to_owned());
+            snapshot.request_count += 1;
+            snapshot
         }
 
         fn track_toplevel_surface(&mut self, surface: &WlSurface) {
             let surface_id = smithay_surface_id(surface);
             let window_id = self.window_id_for_surface(&surface_id);
+            self.xdg_toplevel_configures.insert(
+                surface_id.clone(),
+                xdg_toplevel_configure_snapshot_for(surface),
+            );
+            self.xdg_toplevel_metadata.insert(
+                surface_id.clone(),
+                xdg_toplevel_metadata_snapshot_for(surface),
+            );
             self.track_surface_snapshot(BackendSurfaceSnapshot::Window {
                 window_id,
                 surface_id,
@@ -276,14 +1179,57 @@ mod imp {
                     parent: parent.clone(),
                 },
             );
+            self.xdg_popup_configures.insert(
+                surface_id.clone(),
+                xdg_popup_configure_snapshot_for(surface),
+            );
 
             let parent_surface_id = popup_parent_surface_id(&parent, &surface_id);
+            let output_id = match &parent {
+                SmithayPopupParentSnapshot::Resolved { surface_id, .. } => {
+                    self.layer_output_ids.get(surface_id).cloned()
+                }
+                SmithayPopupParentSnapshot::Unresolved => None,
+            };
 
             self.track_surface_snapshot(BackendSurfaceSnapshot::Popup {
                 surface_id,
-                output_id: None,
+                output_id,
                 parent_surface_id,
             });
+        }
+
+        fn track_layer_popup_surface(&mut self, parent: &LayerSurface, popup: &PopupSurface) {
+            let parent_surface_id = smithay_surface_id(parent.wl_surface());
+            let popup_surface_id = smithay_surface_id(popup.wl_surface());
+
+            self.popup_parent_links.insert(
+                popup_surface_id.clone(),
+                SmithayPopupParentLink {
+                    parent: SmithayPopupParentSnapshot::Resolved {
+                        surface_id: parent_surface_id.clone(),
+                        window_id: None,
+                    },
+                },
+            );
+            self.xdg_popup_configures
+                .entry(popup_surface_id.clone())
+                .or_insert_with(default_xdg_popup_configure_snapshot);
+            if let Some(output_id) = self.layer_output_ids.get(&parent_surface_id).cloned() {
+                self.layer_output_ids
+                    .insert(popup_surface_id.clone(), output_id.clone());
+                self.track_surface_snapshot(BackendSurfaceSnapshot::Popup {
+                    surface_id: popup_surface_id,
+                    output_id: Some(output_id),
+                    parent_surface_id,
+                });
+            } else {
+                self.track_surface_snapshot(BackendSurfaceSnapshot::Popup {
+                    surface_id: popup_surface_id,
+                    output_id: None,
+                    parent_surface_id,
+                });
+            }
         }
 
         fn track_toplevel_surface_loss(&mut self, surface: &ToplevelSurface) {
@@ -310,15 +1256,32 @@ mod imp {
                     if surface_has_buffer(&root) {
                         self.track_toplevel_surface(&root);
                     } else if self.tracked_surfaces.contains_key(&surface_id) {
-                        self.toplevel_window_ids.remove(&surface_id);
-                        self.track_surface_loss_by_id(surface_id);
+                        self.track_surface_unmap_by_id(surface_id);
                     }
                 }
                 Some(XDG_POPUP_ROLE) => {
                     if surface_has_buffer(&root) {
                         self.track_popup_surface_by_root(&root);
                     } else if self.tracked_surfaces.contains_key(&surface_id) {
-                        self.track_surface_loss_by_id(surface_id);
+                        self.track_surface_unmap_by_id(surface_id);
+                    }
+                }
+                _ if is_layer_surface(&root) => {
+                    if surface_has_buffer(&root) {
+                        if let Some(output_id) = self.layer_output_ids.get(&surface_id).cloned() {
+                            let metadata = self
+                                .layer_metadata
+                                .get(&surface_id)
+                                .cloned()
+                                .unwrap_or_else(default_layer_surface_metadata);
+                            self.track_surface_snapshot(BackendSurfaceSnapshot::Layer {
+                                surface_id,
+                                output_id,
+                                metadata,
+                            });
+                        }
+                    } else if self.tracked_surfaces.contains_key(&surface_id) {
+                        self.track_surface_unmap_by_id(surface_id);
                     }
                 }
                 _ => {
@@ -360,14 +1323,31 @@ mod imp {
                     parent: parent.clone(),
                 },
             );
+            self.xdg_popup_configures
+                .entry(surface_id.clone())
+                .or_insert_with(default_xdg_popup_configure_snapshot);
 
             let parent_surface_id = popup_parent_surface_id(&parent, &surface_id);
+            let output_id = match &parent {
+                SmithayPopupParentSnapshot::Resolved { surface_id, .. } => {
+                    self.layer_output_ids.get(surface_id).cloned()
+                }
+                SmithayPopupParentSnapshot::Unresolved => None,
+            };
 
             self.track_surface_snapshot(BackendSurfaceSnapshot::Popup {
                 surface_id,
-                output_id: None,
+                output_id,
                 parent_surface_id,
             });
+        }
+
+        fn resolve_layer_output_id(&self, output: Option<&WlOutput>) -> Option<OutputId> {
+            output
+                .and_then(Output::from_resource)
+                .map(|output| OutputId::from(output.name()))
+                .or_else(|| self.active_output_id.clone())
+                .or_else(|| self.known_output_ids.first().cloned())
         }
 
         fn window_id_for_surface(&mut self, surface_id: &str) -> WindowId {
@@ -402,6 +1382,46 @@ mod imp {
             counts
         }
 
+        fn focused_surface_role(&self, surface_id: &str) -> Option<String> {
+            self.tracked_surfaces
+                .get(surface_id)
+                .map(|kind| match kind {
+                    SmithayTrackedSurfaceKind::Toplevel => "toplevel".into(),
+                    SmithayTrackedSurfaceKind::Popup => "popup".into(),
+                    SmithayTrackedSurfaceKind::Unmanaged => "unmanaged".into(),
+                    SmithayTrackedSurfaceKind::Layer => "layer".into(),
+                })
+        }
+
+        fn focused_window_id(&self, surface_id: &str) -> Option<WindowId> {
+            self.toplevel_window_ids
+                .get(surface_id)
+                .cloned()
+                .or_else(|| {
+                    self.popup_parent_links.get(surface_id).and_then(|parent| {
+                        match &parent.parent {
+                            SmithayPopupParentSnapshot::Resolved { window_id, .. } => {
+                                window_id.clone()
+                            }
+                            SmithayPopupParentSnapshot::Unresolved => None,
+                        }
+                    })
+                })
+        }
+
+        fn focused_output_id(&self, surface_id: &str) -> Option<OutputId> {
+            self.layer_output_ids.get(surface_id).cloned().or_else(|| {
+                self.popup_parent_links
+                    .get(surface_id)
+                    .and_then(|parent| match &parent.parent {
+                        SmithayPopupParentSnapshot::Resolved { surface_id, .. } => {
+                            self.layer_output_ids.get(surface_id).cloned()
+                        }
+                        SmithayPopupParentSnapshot::Unresolved => None,
+                    })
+            })
+        }
+
         fn known_surfaces_snapshot(&self) -> SmithayKnownSurfacesSnapshot {
             let mut toplevels = self
                 .toplevel_window_ids
@@ -409,6 +1429,21 @@ mod imp {
                 .map(|(surface_id, window_id)| SmithayKnownToplevelSurface {
                     surface_id: surface_id.clone(),
                     window_id: window_id.clone(),
+                    configure: self
+                        .xdg_toplevel_configures
+                        .get(surface_id)
+                        .cloned()
+                        .unwrap_or_else(default_xdg_toplevel_configure_snapshot),
+                    metadata: self
+                        .xdg_toplevel_metadata
+                        .get(surface_id)
+                        .cloned()
+                        .unwrap_or_else(default_xdg_toplevel_metadata_snapshot),
+                    requests: self
+                        .xdg_toplevel_requests
+                        .get(surface_id)
+                        .cloned()
+                        .unwrap_or_else(default_xdg_toplevel_request_snapshot),
                 })
                 .collect::<Vec<_>>();
             toplevels.sort_by(|left, right| left.surface_id.cmp(&right.surface_id));
@@ -424,6 +1459,11 @@ mod imp {
                             parent: parent
                                 .map(|parent| parent.parent.clone())
                                 .unwrap_or(SmithayPopupParentSnapshot::Unresolved),
+                            configure: self
+                                .xdg_popup_configures
+                                .get(surface_id)
+                                .cloned()
+                                .unwrap_or_else(default_xdg_popup_configure_snapshot),
                         }
                     })
                 })
@@ -449,6 +1489,17 @@ mod imp {
                 .filter_map(|(surface_id, kind)| {
                     (*kind == SmithayTrackedSurfaceKind::Layer).then(|| SmithayKnownLayerSurface {
                         surface_id: surface_id.clone(),
+                        output_id: self.layer_output_ids.get(surface_id).cloned(),
+                        metadata: self
+                            .layer_metadata
+                            .get(surface_id)
+                            .cloned()
+                            .unwrap_or_else(default_layer_surface_metadata),
+                        configure: self
+                            .layer_configures
+                            .get(surface_id)
+                            .cloned()
+                            .unwrap_or_else(default_layer_surface_configure_snapshot),
                     })
                 })
                 .collect::<Vec<_>>();
@@ -524,6 +1575,292 @@ mod imp {
         }
     }
 
+    fn is_layer_surface(surface: &WlSurface) -> bool {
+        with_states(surface, |states| {
+            states.data_map.get::<LayerSurfaceData>().is_some()
+        })
+    }
+
+    fn layer_surface_tier(layer: WlrLayer) -> LayerSurfaceTier {
+        match layer {
+            WlrLayer::Background => LayerSurfaceTier::Background,
+            WlrLayer::Bottom => LayerSurfaceTier::Bottom,
+            WlrLayer::Top => LayerSurfaceTier::Top,
+            WlrLayer::Overlay => LayerSurfaceTier::Overlay,
+        }
+    }
+
+    fn layer_keyboard_interactivity(
+        interactivity: WlrKeyboardInteractivity,
+    ) -> LayerKeyboardInteractivity {
+        match interactivity {
+            WlrKeyboardInteractivity::None => LayerKeyboardInteractivity::None,
+            WlrKeyboardInteractivity::Exclusive => LayerKeyboardInteractivity::Exclusive,
+            WlrKeyboardInteractivity::OnDemand => LayerKeyboardInteractivity::OnDemand,
+        }
+    }
+
+    fn layer_exclusive_zone(zone: WlrExclusiveZone) -> LayerExclusiveZone {
+        match zone {
+            WlrExclusiveZone::Neutral => LayerExclusiveZone::Neutral,
+            WlrExclusiveZone::Exclusive(value) => LayerExclusiveZone::Exclusive(value),
+            WlrExclusiveZone::DontCare => LayerExclusiveZone::DontCare,
+        }
+    }
+
+    fn layer_surface_metadata(
+        surface: &LayerSurface,
+        namespace: String,
+        layer: WlrLayer,
+    ) -> LayerSurfaceMetadata {
+        surface.with_cached_state(|state| LayerSurfaceMetadata {
+            namespace,
+            tier: layer_surface_tier(layer),
+            keyboard_interactivity: layer_keyboard_interactivity(state.keyboard_interactivity),
+            exclusive_zone: layer_exclusive_zone(state.exclusive_zone),
+        })
+    }
+
+    fn default_xdg_toplevel_configure_snapshot() -> SmithayXdgToplevelConfigureSnapshot {
+        SmithayXdgToplevelConfigureSnapshot {
+            last_acked_serial: None,
+            activated: false,
+            fullscreen: false,
+            maximized: false,
+            pending_configure_count: 0,
+        }
+    }
+
+    fn default_xdg_toplevel_metadata_snapshot() -> SmithayXdgToplevelMetadataSnapshot {
+        SmithayXdgToplevelMetadataSnapshot {
+            title: None,
+            app_id: None,
+            parent_surface_id: None,
+            min_size: None,
+            max_size: None,
+            window_geometry: None,
+        }
+    }
+
+    fn default_xdg_toplevel_request_snapshot() -> SmithayXdgToplevelRequestSnapshot {
+        SmithayXdgToplevelRequestSnapshot {
+            last_move_serial: None,
+            last_resize_serial: None,
+            last_resize_edge: None,
+            last_window_menu_serial: None,
+            last_window_menu_location: None,
+            minimize_requested: false,
+            last_request_kind: None,
+            request_count: 0,
+        }
+    }
+
+    fn default_xdg_popup_configure_snapshot() -> SmithayXdgPopupConfigureSnapshot {
+        SmithayXdgPopupConfigureSnapshot {
+            last_acked_serial: None,
+            pending_configure_count: 0,
+            last_reposition_token: None,
+            reactive: false,
+            geometry: (0, 0, 0, 0),
+            last_grab_serial: None,
+            grab_requested: false,
+            last_request_kind: None,
+            request_count: 0,
+        }
+    }
+
+    fn xdg_toplevel_configure_snapshot_for(
+        surface: &WlSurface,
+    ) -> SmithayXdgToplevelConfigureSnapshot {
+        with_states(surface, |states| {
+            states
+                .data_map
+                .get::<XdgToplevelSurfaceData>()
+                .and_then(|data| data.lock().ok())
+                .map(|data| SmithayXdgToplevelConfigureSnapshot {
+                    last_acked_serial: data
+                        .last_acked
+                        .as_ref()
+                        .map(|configure| u32::from(configure.serial)),
+                    activated: data
+                        .last_acked
+                        .as_ref()
+                        .map(|configure| {
+                            configure
+                                .state
+                                .states
+                                .contains(xdg_toplevel::State::Activated)
+                        })
+                        .unwrap_or(false),
+                    fullscreen: data
+                        .last_acked
+                        .as_ref()
+                        .map(|configure| {
+                            configure
+                                .state
+                                .states
+                                .contains(xdg_toplevel::State::Fullscreen)
+                        })
+                        .unwrap_or(false),
+                    maximized: data
+                        .last_acked
+                        .as_ref()
+                        .map(|configure| {
+                            configure
+                                .state
+                                .states
+                                .contains(xdg_toplevel::State::Maximized)
+                        })
+                        .unwrap_or(false),
+                    pending_configure_count: data.pending_configures().len(),
+                })
+                .unwrap_or_else(default_xdg_toplevel_configure_snapshot)
+        })
+    }
+
+    fn xdg_toplevel_metadata_snapshot_for(
+        surface: &WlSurface,
+    ) -> SmithayXdgToplevelMetadataSnapshot {
+        with_states(surface, |states| {
+            let mut surface_cached = states
+                .cached_state
+                .get::<smithay::wayland::shell::xdg::SurfaceCachedState>();
+            let current = surface_cached.current();
+            states
+                .data_map
+                .get::<XdgToplevelSurfaceData>()
+                .and_then(|data| data.lock().ok())
+                .map(|data| SmithayXdgToplevelMetadataSnapshot {
+                    title: data.title.clone(),
+                    app_id: data.app_id.clone(),
+                    parent_surface_id: data.parent.as_ref().map(smithay_surface_id),
+                    min_size: size_constraint_tuple(current.min_size),
+                    max_size: size_constraint_tuple(current.max_size),
+                    window_geometry: current.geometry.map(|geometry| {
+                        (
+                            geometry.loc.x,
+                            geometry.loc.y,
+                            geometry.size.w,
+                            geometry.size.h,
+                        )
+                    }),
+                })
+                .unwrap_or_else(default_xdg_toplevel_metadata_snapshot)
+        })
+    }
+
+    fn size_constraint_tuple(
+        size: smithay::utils::Size<i32, smithay::utils::Logical>,
+    ) -> Option<(i32, i32)> {
+        ((size.w > 0) || (size.h > 0)).then_some((size.w, size.h))
+    }
+
+    fn xdg_popup_configure_snapshot_for(
+        surface: &PopupSurface,
+    ) -> SmithayXdgPopupConfigureSnapshot {
+        let (last_acked_serial, pending_configure_count, last_reposition_token, reactive, geometry) =
+            with_states(surface.wl_surface(), |states| {
+                let data = states
+                    .data_map
+                    .get::<XdgPopupSurfaceData>()
+                    .and_then(|data| data.lock().ok());
+                let last_acked = data.as_ref().and_then(|data| data.last_acked.as_ref());
+                let geometry = last_acked
+                    .map(|configure| configure.state.geometry)
+                    .unwrap_or_default();
+                (
+                    last_acked.map(|configure| u32::from(configure.serial)),
+                    data.as_ref()
+                        .map(|data| data.pending_configures().len())
+                        .unwrap_or(0),
+                    last_acked.and_then(|configure| configure.reposition_token),
+                    last_acked
+                        .map(|configure| configure.state.positioner.reactive)
+                        .unwrap_or(false),
+                    geometry,
+                )
+            });
+
+        SmithayXdgPopupConfigureSnapshot {
+            last_acked_serial,
+            pending_configure_count,
+            last_reposition_token,
+            reactive,
+            geometry: (
+                geometry.loc.x,
+                geometry.loc.y,
+                geometry.size.w,
+                geometry.size.h,
+            ),
+            last_grab_serial: None,
+            grab_requested: false,
+            last_request_kind: None,
+            request_count: 0,
+        }
+    }
+
+    fn default_layer_surface_metadata() -> LayerSurfaceMetadata {
+        LayerSurfaceMetadata {
+            namespace: String::new(),
+            tier: LayerSurfaceTier::Background,
+            keyboard_interactivity: LayerKeyboardInteractivity::None,
+            exclusive_zone: LayerExclusiveZone::Neutral,
+        }
+    }
+
+    fn default_layer_surface_configure_snapshot() -> SmithayLayerSurfaceConfigureSnapshot {
+        SmithayLayerSurfaceConfigureSnapshot {
+            last_acked_serial: None,
+            pending_configure_count: 0,
+            last_configured_size: None,
+        }
+    }
+
+    fn layer_surface_configure_snapshot_for(
+        surface: &LayerSurface,
+    ) -> SmithayLayerSurfaceConfigureSnapshot {
+        surface.with_cached_state(|state| SmithayLayerSurfaceConfigureSnapshot {
+            last_acked_serial: state
+                .last_acked
+                .as_ref()
+                .map(|configure| u32::from(configure.serial)),
+            pending_configure_count: usize::from(state.last_acked.is_none()),
+            last_configured_size: state
+                .last_acked
+                .as_ref()
+                .and_then(|configure| configure.state.size)
+                .map(|size| (size.w, size.h)),
+        })
+    }
+
+    fn selection_source_kind(source: &SelectionSource) -> String {
+        selection_source_kind_from_debug_repr(&format!("{source:?}"))
+    }
+
+    fn cursor_image_snapshot(status: &CursorImageStatus) -> (String, Option<String>) {
+        match status {
+            CursorImageStatus::Hidden => ("hidden".into(), None),
+            CursorImageStatus::Named(icon) => (format!("named:{icon:?}"), None),
+            CursorImageStatus::Surface(surface) => {
+                ("surface".into(), Some(smithay_surface_id(surface)))
+            }
+        }
+    }
+
+    fn selection_source_kind_from_debug_repr(debug_repr: &str) -> String {
+        if debug_repr.contains("provider: DataDevice(") {
+            "data-device".into()
+        } else if debug_repr.contains("provider: Primary(") {
+            "primary-selection".into()
+        } else if debug_repr.contains("provider: WlrDataControl(") {
+            "wlr-data-control".into()
+        } else if debug_repr.contains("provider: ExtDataControl(") {
+            "ext-data-control".into()
+        } else {
+            "client-selection".into()
+        }
+    }
+
     fn snapshot_into_discovery_event(snapshot: BackendSurfaceSnapshot) -> BackendDiscoveryEvent {
         match snapshot {
             BackendSurfaceSnapshot::Window {
@@ -547,9 +1884,11 @@ mod imp {
             BackendSurfaceSnapshot::Layer {
                 surface_id,
                 output_id,
+                metadata,
             } => BackendDiscoveryEvent::LayerSurfaceDiscovered {
                 surface_id,
                 output_id,
+                metadata,
             },
             BackendSurfaceSnapshot::Unmanaged { surface_id } => {
                 BackendDiscoveryEvent::UnmanagedSurfaceDiscovered { surface_id }
@@ -589,13 +1928,25 @@ mod imp {
                 });
 
                 if needs_initial_configure {
-                    self.xdg_shell_state
+                    let surface_id = smithay_surface_id(&root);
+                    let sent_count = self
+                        .xdg_shell_state
                         .toplevel_surfaces()
                         .iter()
                         .filter(|surface| surface.wl_surface() == &root)
-                        .for_each(|surface| {
+                        .map(|surface| {
                             let _ = surface.send_configure();
-                        });
+                            1usize
+                        })
+                        .sum::<usize>();
+                    for _ in 0..sent_count {
+                        self.note_xdg_toplevel_configure_sent(
+                            surface_id.clone(),
+                            true,
+                            false,
+                            false,
+                        );
+                    }
                 }
             }
         }
@@ -604,6 +1955,61 @@ mod imp {
     impl ShmHandler for SpidersSmithayState {
         fn shm_state(&self) -> &ShmState {
             &self.shm_state
+        }
+    }
+
+    impl SelectionHandler for SpidersSmithayState {
+        type SelectionUserData = String;
+
+        fn new_selection(
+            &mut self,
+            ty: SelectionTarget,
+            source: Option<SelectionSource>,
+            seat: Seat<Self>,
+        ) {
+            if seat.name() != self.seat_name {
+                return;
+            }
+
+            let selection = source.map(|source| SmithaySelectionOfferSnapshot {
+                mime_types: source.mime_types(),
+                source_kind: selection_source_kind(&source),
+            });
+
+            match ty {
+                SelectionTarget::Clipboard => {
+                    self.clipboard_selection = selection;
+                }
+                SelectionTarget::Primary => {
+                    self.primary_selection = selection;
+                }
+            }
+        }
+    }
+
+    impl WaylandDndGrabHandler for SpidersSmithayState {}
+
+    impl DataDeviceHandler for SpidersSmithayState {
+        fn data_device_state(&mut self) -> &mut DataDeviceState {
+            &mut self.data_device_state
+        }
+    }
+
+    impl PrimarySelectionHandler for SpidersSmithayState {
+        fn primary_selection_state(&mut self) -> &mut PrimarySelectionState {
+            &mut self.primary_selection_state
+        }
+    }
+
+    impl WlrDataControlHandler for SpidersSmithayState {
+        fn data_control_state(&mut self) -> &mut WlrDataControlState {
+            &mut self.wlr_data_control_state
+        }
+    }
+
+    impl ExtDataControlHandler for SpidersSmithayState {
+        fn data_control_state(&mut self) -> &mut ExtDataControlState {
+            &mut self.ext_data_control_state
         }
     }
 
@@ -617,21 +2023,102 @@ mod imp {
             surface.with_pending_state(|state| {
                 state.states.set(xdg_toplevel::State::Activated);
             });
-            surface.send_configure();
+            let _ = surface.send_configure();
+            self.note_xdg_toplevel_configure_sent(
+                smithay_surface_id(surface.wl_surface()),
+                true,
+                false,
+                false,
+            );
         }
 
-        fn new_popup(&mut self, surface: PopupSurface, _positioner: PositionerState) {
+        fn new_popup(&mut self, surface: PopupSurface, positioner: PositionerState) {
             self.track_popup_surface(&surface);
+            if !surface.is_initial_configure_sent() {
+                if surface.send_configure().is_ok() {
+                    let geometry = positioner.get_geometry();
+                    self.record_xdg_popup_configure_sent(
+                        smithay_surface_id(surface.wl_surface()),
+                        None,
+                        positioner.reactive,
+                        (
+                            geometry.loc.x,
+                            geometry.loc.y,
+                            geometry.size.w,
+                            geometry.size.h,
+                        ),
+                    );
+                }
+            }
         }
 
-        fn grab(&mut self, _surface: PopupSurface, _seat: wl_seat::WlSeat, _serial: Serial) {}
+        fn move_request(
+            &mut self,
+            surface: ToplevelSurface,
+            _seat: wl_seat::WlSeat,
+            serial: Serial,
+        ) {
+            let surface_id = smithay_surface_id(surface.wl_surface());
+            let mut snapshot = self.note_xdg_toplevel_request(surface_id.clone(), "move");
+            snapshot.last_move_serial = Some(u32::from(serial));
+            self.xdg_toplevel_requests.insert(surface_id, snapshot);
+        }
+
+        fn resize_request(
+            &mut self,
+            surface: ToplevelSurface,
+            _seat: wl_seat::WlSeat,
+            serial: Serial,
+            edges: xdg_toplevel::ResizeEdge,
+        ) {
+            let surface_id = smithay_surface_id(surface.wl_surface());
+            let mut snapshot = self.note_xdg_toplevel_request(surface_id.clone(), "resize");
+            snapshot.last_resize_serial = Some(u32::from(serial));
+            snapshot.last_resize_edge = Some(format!("{edges:?}"));
+            self.xdg_toplevel_requests.insert(surface_id, snapshot);
+        }
+
+        fn grab(&mut self, surface: PopupSurface, _seat: wl_seat::WlSeat, serial: Serial) {
+            let surface_id = smithay_surface_id(surface.wl_surface());
+            let mut snapshot = self.note_xdg_popup_request(surface_id.clone(), "grab");
+            snapshot.last_grab_serial = Some(u32::from(serial));
+            snapshot.grab_requested = true;
+            self.xdg_popup_configures.insert(surface_id, snapshot);
+        }
 
         fn reposition_request(
             &mut self,
-            _surface: PopupSurface,
-            _positioner: PositionerState,
-            _token: u32,
+            surface: PopupSurface,
+            positioner: PositionerState,
+            token: u32,
         ) {
+            surface.with_pending_state(|state| {
+                state.positioner = positioner;
+                state.geometry = positioner.get_geometry();
+            });
+            let surface_id = smithay_surface_id(surface.wl_surface());
+            let previous = self.xdg_popup_configures.get(&surface_id).cloned();
+            let geometry = positioner.get_geometry();
+            let mut snapshot = self.note_xdg_popup_request(surface_id.clone(), "reposition");
+            snapshot.pending_configure_count += 1;
+            snapshot.last_reposition_token = Some(token);
+            snapshot.reactive = positioner.reactive;
+            snapshot.geometry = (
+                geometry.loc.x,
+                geometry.loc.y,
+                geometry.size.w,
+                geometry.size.h,
+            );
+            snapshot.last_grab_serial = previous
+                .as_ref()
+                .and_then(|snapshot| snapshot.last_grab_serial);
+            snapshot.grab_requested = previous
+                .as_ref()
+                .map(|snapshot| snapshot.grab_requested)
+                .unwrap_or(false);
+            self.xdg_popup_configures
+                .insert(surface_id.clone(), snapshot);
+            let _ = surface.send_repositioned(token);
         }
 
         fn toplevel_destroyed(&mut self, surface: ToplevelSurface) {
@@ -640,6 +2127,202 @@ mod imp {
 
         fn popup_destroyed(&mut self, surface: PopupSurface) {
             self.track_popup_surface_loss(&surface);
+        }
+
+        fn maximize_request(&mut self, surface: ToplevelSurface) {
+            surface.with_pending_state(|state| {
+                state.states.set(xdg_toplevel::State::Maximized);
+            });
+            let _ = surface.send_configure();
+            self.note_xdg_toplevel_configure_sent(
+                smithay_surface_id(surface.wl_surface()),
+                true,
+                false,
+                true,
+            );
+        }
+
+        fn unmaximize_request(&mut self, surface: ToplevelSurface) {
+            surface.with_pending_state(|state| {
+                state.states.unset(xdg_toplevel::State::Maximized);
+            });
+            let _ = surface.send_configure();
+            self.note_xdg_toplevel_configure_sent(
+                smithay_surface_id(surface.wl_surface()),
+                true,
+                false,
+                false,
+            );
+        }
+
+        fn fullscreen_request(&mut self, surface: ToplevelSurface, _output: Option<WlOutput>) {
+            surface.with_pending_state(|state| {
+                state.states.set(xdg_toplevel::State::Fullscreen);
+            });
+            let _ = surface.send_configure();
+            self.note_xdg_toplevel_configure_sent(
+                smithay_surface_id(surface.wl_surface()),
+                true,
+                true,
+                false,
+            );
+        }
+
+        fn unfullscreen_request(&mut self, surface: ToplevelSurface) {
+            surface.with_pending_state(|state| {
+                state.states.unset(xdg_toplevel::State::Fullscreen);
+            });
+            let _ = surface.send_configure();
+            self.note_xdg_toplevel_configure_sent(
+                smithay_surface_id(surface.wl_surface()),
+                true,
+                false,
+                false,
+            );
+        }
+
+        fn minimize_request(&mut self, surface: ToplevelSurface) {
+            let surface_id = smithay_surface_id(surface.wl_surface());
+            let mut snapshot = self.note_xdg_toplevel_request(surface_id.clone(), "minimize");
+            snapshot.minimize_requested = true;
+            self.xdg_toplevel_requests.insert(surface_id, snapshot);
+        }
+
+        fn show_window_menu(
+            &mut self,
+            surface: ToplevelSurface,
+            _seat: wl_seat::WlSeat,
+            serial: Serial,
+            location: smithay::utils::Point<i32, smithay::utils::Logical>,
+        ) {
+            let surface_id = smithay_surface_id(surface.wl_surface());
+            let mut snapshot = self.note_xdg_toplevel_request(surface_id.clone(), "window-menu");
+            snapshot.last_window_menu_serial = Some(u32::from(serial));
+            snapshot.last_window_menu_location = Some((location.x, location.y));
+            self.xdg_toplevel_requests.insert(surface_id, snapshot);
+        }
+
+        fn ack_configure(
+            &mut self,
+            surface: WlSurface,
+            configure: smithay::wayland::shell::xdg::Configure,
+        ) {
+            if matches!(get_role(&surface), Some(XDG_TOPLEVEL_ROLE)) {
+                let surface_id = smithay_surface_id(&surface);
+                match configure {
+                    smithay::wayland::shell::xdg::Configure::Toplevel(configure) => {
+                        self.acknowledge_xdg_toplevel_configure(
+                            surface_id,
+                            u32::from(configure.serial),
+                            configure
+                                .state
+                                .states
+                                .contains(xdg_toplevel::State::Activated),
+                            configure
+                                .state
+                                .states
+                                .contains(xdg_toplevel::State::Fullscreen),
+                            configure
+                                .state
+                                .states
+                                .contains(xdg_toplevel::State::Maximized),
+                        );
+                    }
+                    smithay::wayland::shell::xdg::Configure::Popup(_) => {}
+                }
+            } else if matches!(get_role(&surface), Some(XDG_POPUP_ROLE)) {
+                let surface_id = smithay_surface_id(&surface);
+                if let smithay::wayland::shell::xdg::Configure::Popup(configure) = configure {
+                    let previous = self.xdg_popup_configures.get(&surface_id).cloned();
+                    self.acknowledge_xdg_popup_configure(
+                        surface_id.clone(),
+                        u32::from(configure.serial),
+                        configure.reposition_token,
+                        configure.state.positioner.reactive,
+                        (
+                            configure.state.geometry.loc.x,
+                            configure.state.geometry.loc.y,
+                            configure.state.geometry.size.w,
+                            configure.state.geometry.size.h,
+                        ),
+                    );
+                    if let Some(snapshot) = self.xdg_popup_configures.get_mut(&surface_id) {
+                        snapshot.last_grab_serial = previous
+                            .as_ref()
+                            .and_then(|snapshot| snapshot.last_grab_serial);
+                        snapshot.grab_requested = previous
+                            .as_ref()
+                            .map(|snapshot| snapshot.grab_requested)
+                            .unwrap_or(false);
+                    }
+                }
+            }
+        }
+
+        fn app_id_changed(&mut self, surface: ToplevelSurface) {
+            let surface_id = smithay_surface_id(surface.wl_surface());
+            self.xdg_toplevel_metadata.insert(
+                surface_id,
+                xdg_toplevel_metadata_snapshot_for(surface.wl_surface()),
+            );
+        }
+
+        fn title_changed(&mut self, surface: ToplevelSurface) {
+            let surface_id = smithay_surface_id(surface.wl_surface());
+            self.xdg_toplevel_metadata.insert(
+                surface_id,
+                xdg_toplevel_metadata_snapshot_for(surface.wl_surface()),
+            );
+        }
+
+        fn parent_changed(&mut self, surface: ToplevelSurface) {
+            let surface_id = smithay_surface_id(surface.wl_surface());
+            self.xdg_toplevel_metadata.insert(
+                surface_id,
+                xdg_toplevel_metadata_snapshot_for(surface.wl_surface()),
+            );
+        }
+    }
+
+    impl WlrLayerShellHandler for SpidersSmithayState {
+        fn shell_state(&mut self) -> &mut WlrLayerShellState {
+            &mut self.layer_shell_state
+        }
+
+        fn new_layer_surface(
+            &mut self,
+            surface: LayerSurface,
+            output: Option<WlOutput>,
+            layer: WlrLayer,
+            namespace: String,
+        ) {
+            self.track_layer_surface(&surface, output, layer, namespace);
+            let serial = surface.send_configure();
+            let surface_id = smithay_surface_id(surface.wl_surface());
+            self.note_layer_configure_sent(surface_id.clone(), None);
+            let mut snapshot = self
+                .layer_configures
+                .get(&surface_id)
+                .cloned()
+                .unwrap_or_else(default_layer_surface_configure_snapshot);
+            snapshot.last_acked_serial = Some(u32::from(serial));
+            self.layer_configures.insert(surface_id, snapshot);
+        }
+
+        fn ack_configure(&mut self, surface: WlSurface, configure: LayerSurfaceConfigure) {
+            self.acknowledge_layer_configure(
+                smithay_surface_id(&surface),
+                u32::from(configure.serial),
+                configure.state.size.map(|size| (size.w, size.h)),
+            );
+        }
+
+        fn new_popup(&mut self, parent: LayerSurface, popup: PopupSurface) {
+            self.track_layer_popup_surface(&parent, &popup);
+        }
+
+        fn layer_destroyed(&mut self, surface: LayerSurface) {
+            self.track_surface_loss_by_id(smithay_surface_id(surface.wl_surface()));
         }
     }
 
@@ -652,13 +2335,47 @@ mod imp {
             &mut self.seat_state
         }
 
-        fn focus_changed(&mut self, _seat: &Seat<Self>, _focused: Option<&WlSurface>) {}
+        fn focus_changed(&mut self, seat: &Seat<Self>, focused: Option<&WlSurface>) {
+            if seat.name() != self.seat_name {
+                return;
+            }
+
+            let client =
+                focused.and_then(|surface| self.display_handle.get_client(surface.id()).ok());
+            self.focused_surface_id = focused.map(smithay_surface_id);
+            self.clipboard_focus_client_id =
+                client.as_ref().map(|client| format!("{:?}", client.id()));
+            self.primary_focus_client_id = self.clipboard_focus_client_id.clone();
+            let focused_window_id = self
+                .focused_surface_id
+                .as_ref()
+                .and_then(|surface_id| self.focused_window_id(surface_id));
+            let focused_output_id = self
+                .focused_surface_id
+                .as_ref()
+                .and_then(|surface_id| self.focused_output_id(surface_id));
+            self.pending_discovery_events
+                .push(BackendDiscoveryEvent::SeatFocusChanged {
+                    seat_name: self.seat_name.clone(),
+                    window_id: focused_window_id,
+                    output_id: focused_output_id,
+                });
+            smithay::wayland::selection::data_device::set_data_device_focus(
+                &self.display_handle,
+                seat,
+                client.clone(),
+            );
+            set_primary_focus(&self.display_handle, seat, client);
+        }
 
         fn cursor_image(
             &mut self,
             _seat: &Seat<Self>,
-            _image: smithay::input::pointer::CursorImageStatus,
+            image: smithay::input::pointer::CursorImageStatus,
         ) {
+            let (cursor_image, cursor_surface_id) = cursor_image_snapshot(&image);
+            self.cursor_image = cursor_image;
+            self.cursor_surface_id = cursor_surface_id;
         }
     }
 
@@ -666,6 +2383,11 @@ mod imp {
     delegate_shm!(SpidersSmithayState);
     delegate_seat!(SpidersSmithayState);
     delegate_xdg_shell!(SpidersSmithayState);
+    delegate_layer_shell!(SpidersSmithayState);
+    delegate_data_device!(SpidersSmithayState);
+    delegate_primary_selection!(SpidersSmithayState);
+    delegate_data_control!(SpidersSmithayState);
+    delegate_ext_data_control!(SpidersSmithayState);
 
     #[cfg(test)]
     mod tests {
@@ -679,6 +2401,23 @@ mod imp {
             assert!(state.seat.get_keyboard().is_some());
             assert!(state.seat.get_pointer().is_some());
             assert_eq!(state.seat_name, "test-seat");
+
+            let snapshot = state.snapshot();
+            assert_eq!(snapshot.seat.name, "test-seat");
+            assert!(snapshot.seat.has_keyboard);
+            assert!(snapshot.seat.has_pointer);
+            assert!(!snapshot.seat.has_touch);
+            assert!(snapshot.seat.focused_surface_id.is_none());
+            assert!(snapshot.seat.focused_surface_role.is_none());
+            assert!(snapshot.seat.focused_window_id.is_none());
+            assert!(snapshot.seat.focused_output_id.is_none());
+            assert_eq!(snapshot.seat.cursor_image, "default");
+            assert!(snapshot.seat.cursor_surface_id.is_none());
+            assert!(snapshot.outputs.known_output_ids.is_empty());
+            assert!(snapshot.outputs.active_output_id.is_none());
+            assert_eq!(snapshot.outputs.layer_surface_output_count, 0);
+            assert_eq!(snapshot.outputs.active_output_attached_surface_count, 0);
+            assert_eq!(snapshot.outputs.mapped_surface_count, 0);
         }
 
         #[test]
@@ -705,10 +2444,11 @@ mod imp {
                 window_id: WindowId::from("smithay-window-1"),
                 output_id: None,
             });
+            state.track_surface_unmap_by_id("wl-surface-11".into());
             state.track_surface_loss_by_id("wl-surface-11".into());
 
             let events = state.take_discovery_events();
-            assert_eq!(events.len(), 2);
+            assert_eq!(events.len(), 3);
             assert!(matches!(
                 &events[0],
                 BackendDiscoveryEvent::WindowSurfaceDiscovered { surface_id, .. }
@@ -716,6 +2456,11 @@ mod imp {
             ));
             assert!(matches!(
                 &events[1],
+                BackendDiscoveryEvent::SurfaceUnmapped { surface_id }
+                    if surface_id == "wl-surface-11"
+            ));
+            assert!(matches!(
+                &events[2],
                 BackendDiscoveryEvent::SurfaceLost { surface_id }
                     if surface_id == "wl-surface-11"
             ));
@@ -746,6 +2491,1034 @@ mod imp {
 
             assert_eq!(first, WindowId::from("smithay-window-1"));
             assert_eq!(second, WindowId::from("smithay-window-2"));
+        }
+
+        #[test]
+        fn smithay_state_tracks_xdg_toplevel_configure_snapshot() {
+            let display = Display::<SpidersSmithayState>::new().unwrap();
+            let mut state = SpidersSmithayState::new(&display, "test-seat").unwrap();
+
+            state.track_test_surface_snapshot(BackendSurfaceSnapshot::Window {
+                surface_id: "wl-surface-61".into(),
+                window_id: WindowId::from("smithay-window-61"),
+                output_id: None,
+            });
+            state.set_test_toplevel_configure_snapshot(
+                "wl-surface-61",
+                SmithayXdgToplevelConfigureSnapshot {
+                    last_acked_serial: Some(7),
+                    activated: true,
+                    fullscreen: false,
+                    maximized: true,
+                    pending_configure_count: 0,
+                },
+            );
+
+            let snapshot = state.snapshot();
+            assert_eq!(snapshot.known_surfaces.toplevels.len(), 1);
+            assert_eq!(
+                snapshot.known_surfaces.toplevels[0].configure,
+                SmithayXdgToplevelConfigureSnapshot {
+                    last_acked_serial: Some(7),
+                    activated: true,
+                    fullscreen: false,
+                    maximized: true,
+                    pending_configure_count: 0,
+                }
+            );
+        }
+
+        #[test]
+        fn smithay_state_tracks_xdg_toplevel_pending_configure_counts() {
+            let display = Display::<SpidersSmithayState>::new().unwrap();
+            let mut state = SpidersSmithayState::new(&display, "test-seat").unwrap();
+
+            state.track_test_surface_snapshot(BackendSurfaceSnapshot::Window {
+                surface_id: "wl-surface-61b".into(),
+                window_id: WindowId::from("smithay-window-61b"),
+                output_id: None,
+            });
+            state.record_test_xdg_toplevel_configure_sent("wl-surface-61b", true, false, false);
+            state.record_test_xdg_toplevel_configure_sent("wl-surface-61b", true, true, false);
+
+            let snapshot = state.snapshot();
+            assert_eq!(snapshot.known_surfaces.toplevels.len(), 1);
+            assert_eq!(
+                snapshot.known_surfaces.toplevels[0].configure,
+                SmithayXdgToplevelConfigureSnapshot {
+                    last_acked_serial: None,
+                    activated: true,
+                    fullscreen: true,
+                    maximized: false,
+                    pending_configure_count: 2,
+                }
+            );
+        }
+
+        #[test]
+        fn smithay_state_initial_toplevel_configure_counts_as_pending() {
+            let display = Display::<SpidersSmithayState>::new().unwrap();
+            let mut state = SpidersSmithayState::new(&display, "test-seat").unwrap();
+
+            state.track_test_surface_snapshot(BackendSurfaceSnapshot::Window {
+                surface_id: "wl-surface-init-61".into(),
+                window_id: WindowId::from("smithay-window-init-61"),
+                output_id: None,
+            });
+            state.record_test_xdg_toplevel_configure_sent("wl-surface-init-61", true, false, false);
+
+            let snapshot = state.snapshot();
+            assert_eq!(
+                snapshot.known_surfaces.toplevels[0].configure,
+                SmithayXdgToplevelConfigureSnapshot {
+                    last_acked_serial: None,
+                    activated: true,
+                    fullscreen: false,
+                    maximized: false,
+                    pending_configure_count: 1,
+                }
+            );
+        }
+
+        #[test]
+        fn smithay_state_xdg_toplevel_ack_reduces_pending_configure_count() {
+            let display = Display::<SpidersSmithayState>::new().unwrap();
+            let mut state = SpidersSmithayState::new(&display, "test-seat").unwrap();
+
+            state.track_test_surface_snapshot(BackendSurfaceSnapshot::Window {
+                surface_id: "wl-surface-61c".into(),
+                window_id: WindowId::from("smithay-window-61c"),
+                output_id: None,
+            });
+            state.record_test_xdg_toplevel_configure_sent("wl-surface-61c", true, false, true);
+            state.record_test_xdg_toplevel_configure_sent("wl-surface-61c", true, false, false);
+            state.record_test_xdg_toplevel_configure_acked(
+                "wl-surface-61c",
+                77,
+                true,
+                false,
+                false,
+            );
+
+            let snapshot = state.snapshot();
+            assert_eq!(
+                snapshot.known_surfaces.toplevels[0].configure,
+                SmithayXdgToplevelConfigureSnapshot {
+                    last_acked_serial: Some(77),
+                    activated: true,
+                    fullscreen: false,
+                    maximized: false,
+                    pending_configure_count: 1,
+                }
+            );
+        }
+
+        #[test]
+        fn smithay_state_tracks_xdg_toplevel_metadata_snapshot() {
+            let display = Display::<SpidersSmithayState>::new().unwrap();
+            let mut state = SpidersSmithayState::new(&display, "test-seat").unwrap();
+
+            state.track_test_surface_snapshot(BackendSurfaceSnapshot::Window {
+                surface_id: "wl-surface-62".into(),
+                window_id: WindowId::from("smithay-window-62"),
+                output_id: None,
+            });
+            state.xdg_toplevel_metadata.insert(
+                "wl-surface-62".into(),
+                SmithayXdgToplevelMetadataSnapshot {
+                    title: Some("terminal".into()),
+                    app_id: Some("foot".into()),
+                    parent_surface_id: Some("wl-surface-11".into()),
+                    min_size: Some((640, 480)),
+                    max_size: Some((1920, 1080)),
+                    window_geometry: Some((10, 20, 1280, 720)),
+                },
+            );
+
+            let snapshot = state.snapshot();
+            assert_eq!(snapshot.known_surfaces.toplevels.len(), 1);
+            assert_eq!(
+                snapshot.known_surfaces.toplevels[0].metadata,
+                SmithayXdgToplevelMetadataSnapshot {
+                    title: Some("terminal".into()),
+                    app_id: Some("foot".into()),
+                    parent_surface_id: Some("wl-surface-11".into()),
+                    min_size: Some((640, 480)),
+                    max_size: Some((1920, 1080)),
+                    window_geometry: Some((10, 20, 1280, 720)),
+                }
+            );
+        }
+
+        #[test]
+        fn smithay_state_tracks_xdg_toplevel_request_snapshot() {
+            let display = Display::<SpidersSmithayState>::new().unwrap();
+            let mut state = SpidersSmithayState::new(&display, "test-seat").unwrap();
+
+            state.track_test_surface_snapshot(BackendSurfaceSnapshot::Window {
+                surface_id: "wl-surface-63".into(),
+                window_id: WindowId::from("smithay-window-63"),
+                output_id: None,
+            });
+            state.xdg_toplevel_requests.insert(
+                "wl-surface-63".into(),
+                SmithayXdgToplevelRequestSnapshot {
+                    last_move_serial: Some(21),
+                    last_resize_serial: Some(22),
+                    last_resize_edge: Some("BottomRight".into()),
+                    last_window_menu_serial: Some(23),
+                    last_window_menu_location: Some((40, 50)),
+                    minimize_requested: true,
+                    last_request_kind: Some("window-menu".into()),
+                    request_count: 4,
+                },
+            );
+
+            let snapshot = state.snapshot();
+            assert_eq!(snapshot.known_surfaces.toplevels.len(), 1);
+            assert_eq!(
+                snapshot.known_surfaces.toplevels[0].requests,
+                SmithayXdgToplevelRequestSnapshot {
+                    last_move_serial: Some(21),
+                    last_resize_serial: Some(22),
+                    last_resize_edge: Some("BottomRight".into()),
+                    last_window_menu_serial: Some(23),
+                    last_window_menu_location: Some((40, 50)),
+                    minimize_requested: true,
+                    last_request_kind: Some("window-menu".into()),
+                    request_count: 4,
+                }
+            );
+        }
+
+        #[test]
+        fn smithay_state_tracks_xdg_toplevel_request_sequence() {
+            let display = Display::<SpidersSmithayState>::new().unwrap();
+            let mut state = SpidersSmithayState::new(&display, "test-seat").unwrap();
+
+            state.track_test_surface_snapshot(BackendSurfaceSnapshot::Window {
+                surface_id: "wl-surface-63b".into(),
+                window_id: WindowId::from("smithay-window-63b"),
+                output_id: None,
+            });
+
+            let mut snapshot = state.note_xdg_toplevel_request("wl-surface-63b".into(), "move");
+            snapshot.last_move_serial = Some(10);
+            state
+                .xdg_toplevel_requests
+                .insert("wl-surface-63b".into(), snapshot);
+
+            let mut snapshot = state.note_xdg_toplevel_request("wl-surface-63b".into(), "resize");
+            snapshot.last_resize_serial = Some(11);
+            snapshot.last_resize_edge = Some("Left".into());
+            state
+                .xdg_toplevel_requests
+                .insert("wl-surface-63b".into(), snapshot);
+
+            let mut snapshot =
+                state.note_xdg_toplevel_request("wl-surface-63b".into(), "window-menu");
+            snapshot.last_window_menu_serial = Some(12);
+            snapshot.last_window_menu_location = Some((20, 30));
+            state
+                .xdg_toplevel_requests
+                .insert("wl-surface-63b".into(), snapshot);
+
+            let snapshot = state.snapshot();
+            assert_eq!(
+                snapshot.known_surfaces.toplevels[0].requests,
+                SmithayXdgToplevelRequestSnapshot {
+                    last_move_serial: Some(10),
+                    last_resize_serial: Some(11),
+                    last_resize_edge: Some("Left".into()),
+                    last_window_menu_serial: Some(12),
+                    last_window_menu_location: Some((20, 30)),
+                    minimize_requested: false,
+                    last_request_kind: Some("window-menu".into()),
+                    request_count: 3,
+                }
+            );
+        }
+
+        #[test]
+        fn smithay_state_snapshot_reports_clipboard_selection() {
+            let display = Display::<SpidersSmithayState>::new().unwrap();
+            let mut state = SpidersSmithayState::new(&display, "test-seat").unwrap();
+
+            state.set_test_clipboard_selection(Some(SmithaySelectionOfferSnapshot {
+                mime_types: vec!["text/plain".into(), "text/uri-list".into()],
+                source_kind: "data-device".into(),
+            }));
+
+            let snapshot = state.snapshot();
+            assert_eq!(snapshot.clipboard_selection.seat_name, "test-seat");
+            assert_eq!(snapshot.clipboard_selection.target, "clipboard");
+            assert!(snapshot.clipboard_selection.focused_client_id.is_none());
+            assert_eq!(
+                snapshot.clipboard_selection.selection,
+                Some(SmithaySelectionOfferSnapshot {
+                    mime_types: vec!["text/plain".into(), "text/uri-list".into()],
+                    source_kind: "data-device".into(),
+                })
+            );
+        }
+
+        #[test]
+        fn smithay_state_snapshot_reports_selection_protocol_support() {
+            let display = Display::<SpidersSmithayState>::new().unwrap();
+            let state = SpidersSmithayState::new(&display, "test-seat").unwrap();
+
+            let snapshot = state.snapshot();
+            assert_eq!(
+                snapshot.selection_protocols,
+                SmithaySelectionProtocolSupportSnapshot {
+                    data_device: true,
+                    primary_selection: true,
+                    wlr_data_control: true,
+                    ext_data_control: true,
+                }
+            );
+        }
+
+        #[test]
+        fn smithay_state_snapshot_reports_clipboard_focus_client_id() {
+            let display = Display::<SpidersSmithayState>::new().unwrap();
+            let mut state = SpidersSmithayState::new(&display, "test-seat").unwrap();
+
+            state.set_test_clipboard_focus_client_id(Some("client-7"));
+
+            let snapshot = state.snapshot();
+            assert_eq!(
+                snapshot.clipboard_selection.focused_client_id.as_deref(),
+                Some("client-7")
+            );
+        }
+
+        #[test]
+        fn smithay_state_snapshot_reports_focused_surface_id() {
+            let display = Display::<SpidersSmithayState>::new().unwrap();
+            let mut state = SpidersSmithayState::new(&display, "test-seat").unwrap();
+
+            state.set_test_focused_surface_id(Some("wl-surface-77"));
+
+            let snapshot = state.snapshot();
+            assert_eq!(
+                snapshot.seat.focused_surface_id.as_deref(),
+                Some("wl-surface-77")
+            );
+        }
+
+        #[test]
+        fn smithay_state_snapshot_reports_focused_toplevel_role_and_window() {
+            let display = Display::<SpidersSmithayState>::new().unwrap();
+            let mut state = SpidersSmithayState::new(&display, "test-seat").unwrap();
+
+            state.track_test_surface_snapshot(BackendSurfaceSnapshot::Window {
+                surface_id: "wl-surface-78".into(),
+                window_id: WindowId::from("smithay-window-78"),
+                output_id: None,
+            });
+            state.set_test_focused_surface_id(Some("wl-surface-78"));
+
+            let snapshot = state.snapshot();
+            assert_eq!(
+                snapshot.seat.focused_surface_role.as_deref(),
+                Some("toplevel")
+            );
+            assert_eq!(
+                snapshot.seat.focused_window_id,
+                Some(WindowId::from("smithay-window-78"))
+            );
+            assert!(snapshot.seat.focused_output_id.is_none());
+        }
+
+        #[test]
+        fn smithay_state_snapshot_reports_focused_popup_parent_window() {
+            let display = Display::<SpidersSmithayState>::new().unwrap();
+            let mut state = SpidersSmithayState::new(&display, "test-seat").unwrap();
+
+            state.track_test_surface_snapshot(BackendSurfaceSnapshot::Window {
+                surface_id: "wl-surface-79-parent".into(),
+                window_id: WindowId::from("smithay-window-79"),
+                output_id: None,
+            });
+            state.track_test_surface_snapshot(BackendSurfaceSnapshot::Popup {
+                surface_id: "wl-surface-79-popup".into(),
+                output_id: None,
+                parent_surface_id: "wl-surface-79-parent".into(),
+            });
+            state.track_test_popup_parent("wl-surface-79-popup", "wl-surface-79-parent");
+            state.set_test_focused_surface_id(Some("wl-surface-79-popup"));
+
+            let snapshot = state.snapshot();
+            assert_eq!(snapshot.seat.focused_surface_role.as_deref(), Some("popup"));
+            assert_eq!(
+                snapshot.seat.focused_window_id,
+                Some(WindowId::from("smithay-window-79"))
+            );
+            assert!(snapshot.seat.focused_output_id.is_none());
+        }
+
+        #[test]
+        fn smithay_state_snapshot_reports_focused_output_for_layer_parented_popup() {
+            let display = Display::<SpidersSmithayState>::new().unwrap();
+            let mut state = SpidersSmithayState::new(&display, "test-seat").unwrap();
+
+            state.track_test_surface_snapshot(BackendSurfaceSnapshot::Layer {
+                surface_id: "wl-layer-focus-1".into(),
+                output_id: OutputId::from("out-3"),
+                metadata: LayerSurfaceMetadata {
+                    namespace: "panel".into(),
+                    tier: LayerSurfaceTier::Top,
+                    keyboard_interactivity: LayerKeyboardInteractivity::OnDemand,
+                    exclusive_zone: LayerExclusiveZone::Exclusive(10),
+                },
+            });
+            state.track_test_surface_snapshot(BackendSurfaceSnapshot::Popup {
+                surface_id: "wl-popup-focus-1".into(),
+                output_id: Some(OutputId::from("out-3")),
+                parent_surface_id: "wl-layer-focus-1".into(),
+            });
+            state.track_test_popup_parent("wl-popup-focus-1", "wl-layer-focus-1");
+            state.set_test_focused_surface_id(Some("wl-popup-focus-1"));
+
+            let snapshot = state.snapshot();
+            assert_eq!(snapshot.seat.focused_surface_role.as_deref(), Some("popup"));
+            assert_eq!(
+                snapshot.seat.focused_output_id,
+                Some(OutputId::from("out-3"))
+            );
+        }
+
+        #[test]
+        fn smithay_state_enqueues_seat_focus_discovery_event() {
+            let display = Display::<SpidersSmithayState>::new().unwrap();
+            let mut state = SpidersSmithayState::new(&display, "test-seat").unwrap();
+
+            state.track_test_surface_snapshot(BackendSurfaceSnapshot::Layer {
+                surface_id: "wl-focus-layer-1".into(),
+                output_id: OutputId::from("out-1"),
+                metadata: LayerSurfaceMetadata {
+                    namespace: "panel".into(),
+                    tier: LayerSurfaceTier::Top,
+                    keyboard_interactivity: LayerKeyboardInteractivity::OnDemand,
+                    exclusive_zone: LayerExclusiveZone::Exclusive(8),
+                },
+            });
+            state.record_test_seat_focus_event(Some("wl-focus-layer-1"));
+
+            let events = state.take_discovery_events();
+            assert_eq!(events.len(), 2);
+            assert!(matches!(
+                &events[1],
+                BackendDiscoveryEvent::SeatFocusChanged {
+                    seat_name,
+                    window_id,
+                    output_id,
+                } if seat_name == "test-seat"
+                    && window_id == &None
+                    && output_id == &Some(OutputId::from("out-1"))
+            ));
+        }
+
+        #[test]
+        fn smithay_state_snapshot_reports_cursor_image() {
+            let display = Display::<SpidersSmithayState>::new().unwrap();
+            let mut state = SpidersSmithayState::new(&display, "test-seat").unwrap();
+
+            state.set_test_cursor_image("named:Pointer", None);
+
+            let snapshot = state.snapshot();
+            assert_eq!(snapshot.seat.cursor_image, "named:Pointer");
+            assert!(snapshot.seat.cursor_surface_id.is_none());
+        }
+
+        #[test]
+        fn smithay_state_snapshot_reports_known_and_active_outputs() {
+            let display = Display::<SpidersSmithayState>::new().unwrap();
+            let mut state = SpidersSmithayState::new(&display, "test-seat").unwrap();
+
+            state.register_output_id(OutputId::from("out-1"), true);
+            state.register_output_id(OutputId::from("out-2"), false);
+            let _ = state.take_discovery_events();
+
+            let snapshot = state.snapshot();
+            assert_eq!(
+                snapshot.outputs.known_output_ids,
+                vec![OutputId::from("out-1"), OutputId::from("out-2")]
+            );
+            assert_eq!(
+                snapshot.outputs.active_output_id,
+                Some(OutputId::from("out-1"))
+            );
+            assert_eq!(snapshot.outputs.active_output_attached_surface_count, 0);
+        }
+
+        #[test]
+        fn smithay_state_snapshot_reports_layer_output_attachment_count() {
+            let display = Display::<SpidersSmithayState>::new().unwrap();
+            let mut state = SpidersSmithayState::new(&display, "test-seat").unwrap();
+
+            state.register_output_id(OutputId::from("out-1"), true);
+            state.track_test_surface_snapshot(BackendSurfaceSnapshot::Layer {
+                surface_id: "wl-layer-1".into(),
+                output_id: OutputId::from("out-1"),
+                metadata: LayerSurfaceMetadata {
+                    namespace: "panel".into(),
+                    tier: LayerSurfaceTier::Top,
+                    keyboard_interactivity: LayerKeyboardInteractivity::OnDemand,
+                    exclusive_zone: LayerExclusiveZone::Exclusive(16),
+                },
+            });
+
+            let snapshot = state.snapshot();
+            assert_eq!(snapshot.outputs.layer_surface_output_count, 1);
+            assert_eq!(snapshot.outputs.active_output_attached_surface_count, 1);
+            assert_eq!(snapshot.outputs.mapped_surface_count, 1);
+        }
+
+        #[test]
+        fn smithay_state_snapshot_reports_mapped_surface_count() {
+            let display = Display::<SpidersSmithayState>::new().unwrap();
+            let mut state = SpidersSmithayState::new(&display, "test-seat").unwrap();
+
+            state.track_test_surface_snapshot(BackendSurfaceSnapshot::Unmanaged {
+                surface_id: "wl-surface-map-1".into(),
+            });
+            state.track_test_surface_snapshot(BackendSurfaceSnapshot::Unmanaged {
+                surface_id: "wl-surface-map-2".into(),
+            });
+
+            let snapshot = state.snapshot();
+            assert_eq!(snapshot.outputs.mapped_surface_count, 2);
+        }
+
+        #[test]
+        fn smithay_state_enqueues_output_activation_discovery_event() {
+            let display = Display::<SpidersSmithayState>::new().unwrap();
+            let mut state = SpidersSmithayState::new(&display, "test-seat").unwrap();
+
+            state.register_output_id(OutputId::from("out-1"), false);
+            let _ = state.take_discovery_events();
+            state.activate_output_id(OutputId::from("out-1"));
+
+            let events = state.take_discovery_events();
+            assert_eq!(events.len(), 1);
+            assert!(matches!(
+                &events[0],
+                BackendDiscoveryEvent::OutputActivated { output_id }
+                    if output_id == &OutputId::from("out-1")
+            ));
+        }
+
+        #[test]
+        fn smithay_state_removes_output_and_enqueues_output_lost_event() {
+            let display = Display::<SpidersSmithayState>::new().unwrap();
+            let mut state = SpidersSmithayState::new(&display, "test-seat").unwrap();
+
+            state.register_output_id(OutputId::from("out-2"), true);
+            state.track_test_surface_snapshot(BackendSurfaceSnapshot::Layer {
+                surface_id: "wl-layer-output-lost-1".into(),
+                output_id: OutputId::from("out-2"),
+                metadata: LayerSurfaceMetadata {
+                    namespace: "panel".into(),
+                    tier: LayerSurfaceTier::Top,
+                    keyboard_interactivity: LayerKeyboardInteractivity::OnDemand,
+                    exclusive_zone: LayerExclusiveZone::Exclusive(12),
+                },
+            });
+            let _ = state.take_discovery_events();
+
+            state.remove_output_id(&OutputId::from("out-2"));
+
+            let events = state.take_discovery_events();
+            assert_eq!(events.len(), 1);
+            assert!(matches!(
+                &events[0],
+                BackendDiscoveryEvent::OutputLost { output_id }
+                    if output_id == &OutputId::from("out-2")
+            ));
+
+            let snapshot = state.snapshot();
+            assert!(snapshot.outputs.known_output_ids.is_empty());
+            assert!(snapshot.outputs.active_output_id.is_none());
+            assert_eq!(snapshot.known_surfaces.layers.len(), 1);
+            assert_eq!(snapshot.known_surfaces.layers[0].output_id, None);
+        }
+
+        #[test]
+        fn smithay_state_snapshot_reports_layer_configure_metadata() {
+            let display = Display::<SpidersSmithayState>::new().unwrap();
+            let mut state = SpidersSmithayState::new(&display, "test-seat").unwrap();
+
+            state.track_test_surface_snapshot(BackendSurfaceSnapshot::Layer {
+                surface_id: "wl-layer-configure-1".into(),
+                output_id: OutputId::from("out-1"),
+                metadata: LayerSurfaceMetadata {
+                    namespace: "panel".into(),
+                    tier: LayerSurfaceTier::Top,
+                    keyboard_interactivity: LayerKeyboardInteractivity::OnDemand,
+                    exclusive_zone: LayerExclusiveZone::Exclusive(16),
+                },
+            });
+            state.layer_configures.insert(
+                "wl-layer-configure-1".into(),
+                SmithayLayerSurfaceConfigureSnapshot {
+                    last_acked_serial: Some(42),
+                    pending_configure_count: 0,
+                    last_configured_size: Some((1280, 32)),
+                },
+            );
+
+            let snapshot = state.snapshot();
+            assert_eq!(snapshot.known_surfaces.layers.len(), 1);
+            assert_eq!(
+                snapshot.known_surfaces.layers[0].configure,
+                SmithayLayerSurfaceConfigureSnapshot {
+                    last_acked_serial: Some(42),
+                    pending_configure_count: 0,
+                    last_configured_size: Some((1280, 32)),
+                }
+            );
+        }
+
+        #[test]
+        fn smithay_state_tracks_layer_pending_configure_counts() {
+            let display = Display::<SpidersSmithayState>::new().unwrap();
+            let mut state = SpidersSmithayState::new(&display, "test-seat").unwrap();
+
+            state.track_test_surface_snapshot(BackendSurfaceSnapshot::Layer {
+                surface_id: "wl-layer-configure-3".into(),
+                output_id: OutputId::from("out-1"),
+                metadata: LayerSurfaceMetadata {
+                    namespace: "panel".into(),
+                    tier: LayerSurfaceTier::Top,
+                    keyboard_interactivity: LayerKeyboardInteractivity::OnDemand,
+                    exclusive_zone: LayerExclusiveZone::Exclusive(12),
+                },
+            });
+            state.record_test_layer_configure_sent("wl-layer-configure-3", Some((800, 24)));
+            state.record_test_layer_configure_sent("wl-layer-configure-3", Some((800, 28)));
+
+            let snapshot = state.snapshot();
+            assert_eq!(snapshot.known_surfaces.layers.len(), 1);
+            assert_eq!(
+                snapshot.known_surfaces.layers[0].configure,
+                SmithayLayerSurfaceConfigureSnapshot {
+                    last_acked_serial: None,
+                    pending_configure_count: 2,
+                    last_configured_size: Some((800, 28)),
+                }
+            );
+        }
+
+        #[test]
+        fn smithay_state_layer_ack_reduces_pending_configure_count() {
+            let display = Display::<SpidersSmithayState>::new().unwrap();
+            let mut state = SpidersSmithayState::new(&display, "test-seat").unwrap();
+
+            state.track_test_surface_snapshot(BackendSurfaceSnapshot::Layer {
+                surface_id: "wl-layer-configure-4".into(),
+                output_id: OutputId::from("out-1"),
+                metadata: LayerSurfaceMetadata {
+                    namespace: "overlay".into(),
+                    tier: LayerSurfaceTier::Overlay,
+                    keyboard_interactivity: LayerKeyboardInteractivity::Exclusive,
+                    exclusive_zone: LayerExclusiveZone::DontCare,
+                },
+            });
+            state.record_test_layer_configure_sent("wl-layer-configure-4", Some((1920, 1080)));
+            state.record_test_layer_configure_sent("wl-layer-configure-4", Some((1920, 900)));
+            state.record_test_layer_configure_acked("wl-layer-configure-4", 55, Some((1920, 900)));
+
+            let snapshot = state.snapshot();
+            assert_eq!(
+                snapshot.known_surfaces.layers[0].configure,
+                SmithayLayerSurfaceConfigureSnapshot {
+                    last_acked_serial: Some(55),
+                    pending_configure_count: 1,
+                    last_configured_size: Some((1920, 900)),
+                }
+            );
+        }
+
+        #[test]
+        fn smithay_state_removes_layer_configure_metadata_when_surface_is_lost() {
+            let display = Display::<SpidersSmithayState>::new().unwrap();
+            let mut state = SpidersSmithayState::new(&display, "test-seat").unwrap();
+
+            state.track_test_surface_snapshot(BackendSurfaceSnapshot::Layer {
+                surface_id: "wl-layer-configure-2".into(),
+                output_id: OutputId::from("out-1"),
+                metadata: LayerSurfaceMetadata {
+                    namespace: "overlay".into(),
+                    tier: LayerSurfaceTier::Overlay,
+                    keyboard_interactivity: LayerKeyboardInteractivity::Exclusive,
+                    exclusive_zone: LayerExclusiveZone::DontCare,
+                },
+            });
+            state.layer_configures.insert(
+                "wl-layer-configure-2".into(),
+                SmithayLayerSurfaceConfigureSnapshot {
+                    last_acked_serial: Some(7),
+                    pending_configure_count: 0,
+                    last_configured_size: Some((1920, 1080)),
+                },
+            );
+
+            state.track_test_surface_loss("wl-layer-configure-2");
+
+            assert!(state.snapshot().known_surfaces.layers.is_empty());
+            assert!(!state.layer_configures.contains_key("wl-layer-configure-2"));
+        }
+
+        #[test]
+        fn cursor_image_snapshot_reports_hidden_and_named_status() {
+            assert_eq!(
+                cursor_image_snapshot(&CursorImageStatus::Hidden),
+                ("hidden".into(), None)
+            );
+            assert_eq!(
+                cursor_image_snapshot(&CursorImageStatus::default_named()),
+                ("named:Default".into(), None)
+            );
+        }
+
+        #[test]
+        fn selection_source_kind_distinguishes_provider_debug_variants() {
+            assert_eq!(
+                selection_source_kind_from_debug_repr(
+                    "SelectionSource { provider: DataDevice(WlDataSource@1) }"
+                ),
+                "data-device"
+            );
+            assert_eq!(
+                selection_source_kind_from_debug_repr(
+                    "SelectionSource { provider: Primary(ZwpPrimarySelectionSourceV1@2) }"
+                ),
+                "primary-selection"
+            );
+            assert_eq!(
+                selection_source_kind_from_debug_repr(
+                    "SelectionSource { provider: WlrDataControl(ZwlrDataControlSourceV1@3) }"
+                ),
+                "wlr-data-control"
+            );
+            assert_eq!(
+                selection_source_kind_from_debug_repr(
+                    "SelectionSource { provider: ExtDataControl(ExtDataControlSourceV1@4) }"
+                ),
+                "ext-data-control"
+            );
+            assert_eq!(
+                selection_source_kind_from_debug_repr("SelectionSource { provider: Unknown }"),
+                "client-selection"
+            );
+        }
+
+        #[test]
+        fn selection_handler_updates_clipboard_snapshot_for_matching_seat() {
+            let display = Display::<SpidersSmithayState>::new().unwrap();
+            let mut state = SpidersSmithayState::new(&display, "test-seat").unwrap();
+            let seat = state.seat.clone();
+
+            SelectionHandler::new_selection(&mut state, SelectionTarget::Clipboard, None, seat);
+
+            let snapshot = state.snapshot();
+            assert_eq!(snapshot.clipboard_selection.target, "clipboard");
+            assert!(snapshot.clipboard_selection.selection.is_none());
+        }
+
+        #[test]
+        fn selection_handler_updates_primary_snapshot_for_matching_seat() {
+            let display = Display::<SpidersSmithayState>::new().unwrap();
+            let mut state = SpidersSmithayState::new(&display, "test-seat").unwrap();
+            let seat = state.seat.clone();
+
+            SelectionHandler::new_selection(&mut state, SelectionTarget::Primary, None, seat);
+
+            let snapshot = state.snapshot();
+            assert_eq!(snapshot.primary_selection.target, "primary");
+            assert!(snapshot.primary_selection.selection.is_none());
+        }
+
+        #[test]
+        fn selection_handler_ignores_non_matching_seat() {
+            let display = Display::<SpidersSmithayState>::new().unwrap();
+            let mut state = SpidersSmithayState::new(&display, "test-seat").unwrap();
+            state.set_test_clipboard_selection(Some(SmithaySelectionOfferSnapshot {
+                mime_types: vec!["text/plain".into()],
+                source_kind: "data-device".into(),
+            }));
+            state.set_test_primary_selection(Some(SmithaySelectionOfferSnapshot {
+                mime_types: vec!["text/plain".into()],
+                source_kind: "primary-selection".into(),
+            }));
+
+            let mut other_seat_state = SeatState::new();
+            let other_seat =
+                other_seat_state.new_wl_seat(&state.display_handle, "other-seat".to_owned());
+
+            SelectionHandler::new_selection(
+                &mut state,
+                SelectionTarget::Clipboard,
+                None,
+                other_seat.clone(),
+            );
+            SelectionHandler::new_selection(&mut state, SelectionTarget::Primary, None, other_seat);
+
+            let snapshot = state.snapshot();
+            assert_eq!(
+                snapshot.clipboard_selection.selection,
+                Some(SmithaySelectionOfferSnapshot {
+                    mime_types: vec!["text/plain".into()],
+                    source_kind: "data-device".into(),
+                })
+            );
+            assert_eq!(
+                snapshot.primary_selection.selection,
+                Some(SmithaySelectionOfferSnapshot {
+                    mime_types: vec!["text/plain".into()],
+                    source_kind: "primary-selection".into(),
+                })
+            );
+        }
+
+        #[test]
+        fn smithay_state_snapshot_reports_primary_selection() {
+            let display = Display::<SpidersSmithayState>::new().unwrap();
+            let mut state = SpidersSmithayState::new(&display, "test-seat").unwrap();
+
+            state.set_test_primary_selection(Some(SmithaySelectionOfferSnapshot {
+                mime_types: vec!["text/plain".into(), "text/html".into()],
+                source_kind: "primary-selection".into(),
+            }));
+
+            let snapshot = state.snapshot();
+            assert_eq!(snapshot.primary_selection.seat_name, "test-seat");
+            assert_eq!(snapshot.primary_selection.target, "primary");
+            assert!(snapshot.primary_selection.focused_client_id.is_none());
+            assert_eq!(
+                snapshot.primary_selection.selection,
+                Some(SmithaySelectionOfferSnapshot {
+                    mime_types: vec!["text/plain".into(), "text/html".into()],
+                    source_kind: "primary-selection".into(),
+                })
+            );
+        }
+
+        #[test]
+        fn smithay_state_snapshot_reports_primary_focus_client_id() {
+            let display = Display::<SpidersSmithayState>::new().unwrap();
+            let mut state = SpidersSmithayState::new(&display, "test-seat").unwrap();
+
+            state.set_test_primary_focus_client_id(Some("client-11"));
+
+            let snapshot = state.snapshot();
+            assert_eq!(
+                snapshot.primary_selection.focused_client_id.as_deref(),
+                Some("client-11")
+            );
+        }
+
+        #[test]
+        fn smithay_state_tracks_xdg_popup_configure_snapshot() {
+            let display = Display::<SpidersSmithayState>::new().unwrap();
+            let mut state = SpidersSmithayState::new(&display, "test-seat").unwrap();
+
+            state.track_test_surface_snapshot(BackendSurfaceSnapshot::Popup {
+                surface_id: "wl-popup-62".into(),
+                output_id: None,
+                parent_surface_id: "unresolved-parent-wl-popup-62".into(),
+            });
+            state.xdg_popup_configures.insert(
+                "wl-popup-62".into(),
+                SmithayXdgPopupConfigureSnapshot {
+                    last_acked_serial: Some(12),
+                    pending_configure_count: 0,
+                    last_reposition_token: Some(44),
+                    reactive: true,
+                    geometry: (10, 20, 300, 200),
+                    last_grab_serial: Some(9),
+                    grab_requested: true,
+                    last_request_kind: Some("grab".into()),
+                    request_count: 2,
+                },
+            );
+
+            let snapshot = state.snapshot();
+            assert_eq!(snapshot.known_surfaces.popups.len(), 1);
+            assert_eq!(
+                snapshot.known_surfaces.popups[0].configure,
+                SmithayXdgPopupConfigureSnapshot {
+                    last_acked_serial: Some(12),
+                    pending_configure_count: 0,
+                    last_reposition_token: Some(44),
+                    reactive: true,
+                    geometry: (10, 20, 300, 200),
+                    last_grab_serial: Some(9),
+                    grab_requested: true,
+                    last_request_kind: Some("grab".into()),
+                    request_count: 2,
+                }
+            );
+        }
+
+        #[test]
+        fn smithay_state_tracks_xdg_popup_pending_configure_counts() {
+            let display = Display::<SpidersSmithayState>::new().unwrap();
+            let mut state = SpidersSmithayState::new(&display, "test-seat").unwrap();
+
+            state.track_test_surface_snapshot(BackendSurfaceSnapshot::Popup {
+                surface_id: "wl-popup-63".into(),
+                output_id: None,
+                parent_surface_id: "unresolved-parent-wl-popup-63".into(),
+            });
+            state.record_test_xdg_popup_configure_sent(
+                "wl-popup-63",
+                Some(10),
+                true,
+                (5, 10, 200, 120),
+            );
+            state.record_test_xdg_popup_configure_sent(
+                "wl-popup-63",
+                Some(11),
+                true,
+                (5, 10, 220, 140),
+            );
+
+            let snapshot = state.snapshot();
+            assert_eq!(snapshot.known_surfaces.popups.len(), 1);
+            assert_eq!(
+                snapshot.known_surfaces.popups[0].configure,
+                SmithayXdgPopupConfigureSnapshot {
+                    last_acked_serial: None,
+                    pending_configure_count: 2,
+                    last_reposition_token: Some(11),
+                    reactive: true,
+                    geometry: (5, 10, 220, 140),
+                    last_grab_serial: None,
+                    grab_requested: false,
+                    last_request_kind: Some("reposition".into()),
+                    request_count: 2,
+                }
+            );
+        }
+
+        #[test]
+        fn smithay_state_initial_popup_configure_counts_as_pending_without_request_sequence() {
+            let display = Display::<SpidersSmithayState>::new().unwrap();
+            let mut state = SpidersSmithayState::new(&display, "test-seat").unwrap();
+
+            state.track_test_surface_snapshot(BackendSurfaceSnapshot::Popup {
+                surface_id: "wl-popup-init-63".into(),
+                output_id: None,
+                parent_surface_id: "unresolved-parent-wl-popup-init-63".into(),
+            });
+            state.record_test_initial_xdg_popup_configure_sent(
+                "wl-popup-init-63",
+                false,
+                (3, 4, 180, 110),
+            );
+
+            let snapshot = state.snapshot();
+            assert_eq!(
+                snapshot.known_surfaces.popups[0].configure,
+                SmithayXdgPopupConfigureSnapshot {
+                    last_acked_serial: None,
+                    pending_configure_count: 1,
+                    last_reposition_token: None,
+                    reactive: false,
+                    geometry: (3, 4, 180, 110),
+                    last_grab_serial: None,
+                    grab_requested: false,
+                    last_request_kind: None,
+                    request_count: 0,
+                }
+            );
+        }
+
+        #[test]
+        fn smithay_state_xdg_popup_ack_reduces_pending_configure_count() {
+            let display = Display::<SpidersSmithayState>::new().unwrap();
+            let mut state = SpidersSmithayState::new(&display, "test-seat").unwrap();
+
+            state.track_test_surface_snapshot(BackendSurfaceSnapshot::Popup {
+                surface_id: "wl-popup-64".into(),
+                output_id: None,
+                parent_surface_id: "unresolved-parent-wl-popup-64".into(),
+            });
+            state.record_test_xdg_popup_configure_sent(
+                "wl-popup-64",
+                Some(21),
+                true,
+                (0, 0, 300, 180),
+            );
+            state.record_test_xdg_popup_configure_sent(
+                "wl-popup-64",
+                Some(22),
+                true,
+                (0, 0, 320, 200),
+            );
+            state.record_test_xdg_popup_configure_acked(
+                "wl-popup-64",
+                88,
+                Some(22),
+                true,
+                (0, 0, 320, 200),
+            );
+
+            let snapshot = state.snapshot();
+            assert_eq!(
+                snapshot.known_surfaces.popups[0].configure,
+                SmithayXdgPopupConfigureSnapshot {
+                    last_acked_serial: Some(88),
+                    pending_configure_count: 1,
+                    last_reposition_token: Some(22),
+                    reactive: true,
+                    geometry: (0, 0, 320, 200),
+                    last_grab_serial: None,
+                    grab_requested: false,
+                    last_request_kind: Some("reposition".into()),
+                    request_count: 2,
+                }
+            );
+        }
+
+        #[test]
+        fn smithay_state_tracks_xdg_popup_request_sequence() {
+            let display = Display::<SpidersSmithayState>::new().unwrap();
+            let mut state = SpidersSmithayState::new(&display, "test-seat").unwrap();
+
+            state.track_test_surface_snapshot(BackendSurfaceSnapshot::Popup {
+                surface_id: "wl-popup-65".into(),
+                output_id: None,
+                parent_surface_id: "unresolved-parent-wl-popup-65".into(),
+            });
+            state.record_test_xdg_popup_request("wl-popup-65", "grab", |snapshot| {
+                snapshot.last_grab_serial = Some(13);
+                snapshot.grab_requested = true;
+            });
+            state.record_test_xdg_popup_request("wl-popup-65", "reposition", |snapshot| {
+                snapshot.last_reposition_token = Some(14);
+                snapshot.geometry = (1, 2, 140, 90);
+                snapshot.reactive = true;
+            });
+
+            let snapshot = state.snapshot();
+            assert_eq!(
+                snapshot.known_surfaces.popups[0].configure,
+                SmithayXdgPopupConfigureSnapshot {
+                    last_acked_serial: None,
+                    pending_configure_count: 0,
+                    last_reposition_token: Some(14),
+                    reactive: true,
+                    geometry: (1, 2, 140, 90),
+                    last_grab_serial: Some(13),
+                    grab_requested: true,
+                    last_request_kind: Some("reposition".into()),
+                    request_count: 2,
+                }
+            );
         }
 
         #[test]
@@ -811,12 +3584,25 @@ mod imp {
             let drained = state.snapshot();
             assert_eq!(drained.pending_discovery_event_count, 0);
             assert_eq!(drained.tracked_surface_count, 2);
+
+            state.track_surface_unmap_by_id("wl-surface-101".into());
+            let unmapped = state.snapshot();
+            assert_eq!(unmapped.pending_discovery_event_count, 1);
+
+            state.track_surface_snapshot(BackendSurfaceSnapshot::Window {
+                surface_id: "wl-surface-101".into(),
+                window_id: WindowId::from("smithay-window-1"),
+                output_id: None,
+            });
+            let remapped = state.snapshot();
+            assert_eq!(remapped.pending_discovery_event_count, 2);
         }
 
         #[test]
         fn smithay_state_snapshot_reports_role_breakdown() {
             let display = Display::<SpidersSmithayState>::new().unwrap();
             let mut state = SpidersSmithayState::new(&display, "test-seat").unwrap();
+            state.register_output_id(OutputId::from("out-1"), true);
 
             let window_id = state.window_id_for_surface("wl-surface-201");
             state.track_surface_snapshot(BackendSurfaceSnapshot::Window {
@@ -832,6 +3618,12 @@ mod imp {
             state.track_surface_snapshot(BackendSurfaceSnapshot::Layer {
                 surface_id: "wl-surface-203".into(),
                 output_id: "out-1".into(),
+                metadata: LayerSurfaceMetadata {
+                    namespace: "panel".into(),
+                    tier: LayerSurfaceTier::Top,
+                    keyboard_interactivity: LayerKeyboardInteractivity::OnDemand,
+                    exclusive_zone: LayerExclusiveZone::Exclusive(20),
+                },
             });
             state.track_surface_snapshot(BackendSurfaceSnapshot::Unmanaged {
                 surface_id: "wl-surface-204".into(),
@@ -848,6 +3640,19 @@ mod imp {
             assert_eq!(snapshot.known_surfaces.popups.len(), 1);
             assert_eq!(snapshot.known_surfaces.layers.len(), 1);
             assert_eq!(snapshot.known_surfaces.unmanaged.len(), 1);
+            assert_eq!(
+                snapshot.known_surfaces.layers[0].output_id,
+                Some(OutputId::from("out-1"))
+            );
+            assert_eq!(
+                snapshot.known_surfaces.layers[0].metadata,
+                LayerSurfaceMetadata {
+                    namespace: "panel".into(),
+                    tier: LayerSurfaceTier::Top,
+                    keyboard_interactivity: LayerKeyboardInteractivity::OnDemand,
+                    exclusive_zone: LayerExclusiveZone::Exclusive(20),
+                }
+            );
         }
 
         #[test]
@@ -929,6 +3734,12 @@ mod imp {
             state.track_surface_snapshot(BackendSurfaceSnapshot::Layer {
                 surface_id: "wl-surface-503".into(),
                 output_id: "out-1".into(),
+                metadata: LayerSurfaceMetadata {
+                    namespace: "overlay".into(),
+                    tier: LayerSurfaceTier::Overlay,
+                    keyboard_interactivity: LayerKeyboardInteractivity::Exclusive,
+                    exclusive_zone: LayerExclusiveZone::DontCare,
+                },
             });
             state.track_surface_snapshot(BackendSurfaceSnapshot::Window {
                 surface_id: "wl-surface-501".into(),
@@ -955,13 +3766,243 @@ mod imp {
                 SmithayKnownSurface::Unmanaged(surface) if surface.surface_id == "wl-surface-504"
             ));
         }
+
+        #[test]
+        fn smithay_state_unmaps_and_remaps_layer_surface_without_losing_output_attachment() {
+            let display = Display::<SpidersSmithayState>::new().unwrap();
+            let mut state = SpidersSmithayState::new(&display, "test-seat").unwrap();
+            state.register_output_id(OutputId::from("out-1"), true);
+
+            state.track_surface_snapshot(BackendSurfaceSnapshot::Layer {
+                surface_id: "wl-layer-21".into(),
+                output_id: OutputId::from("out-1"),
+                metadata: LayerSurfaceMetadata {
+                    namespace: "panel".into(),
+                    tier: LayerSurfaceTier::Top,
+                    keyboard_interactivity: LayerKeyboardInteractivity::OnDemand,
+                    exclusive_zone: LayerExclusiveZone::Exclusive(20),
+                },
+            });
+            let _ = state.take_discovery_events();
+
+            state.track_surface_unmap_by_id("wl-layer-21".into());
+            state.track_surface_snapshot(BackendSurfaceSnapshot::Layer {
+                surface_id: "wl-layer-21".into(),
+                output_id: OutputId::from("out-1"),
+                metadata: LayerSurfaceMetadata {
+                    namespace: "panel".into(),
+                    tier: LayerSurfaceTier::Top,
+                    keyboard_interactivity: LayerKeyboardInteractivity::OnDemand,
+                    exclusive_zone: LayerExclusiveZone::Exclusive(20),
+                },
+            });
+
+            let events = state.take_discovery_events();
+            assert_eq!(events.len(), 2);
+            assert!(matches!(
+                &events[0],
+                BackendDiscoveryEvent::SurfaceUnmapped { surface_id } if surface_id == "wl-layer-21"
+            ));
+            assert!(matches!(
+                &events[1],
+                BackendDiscoveryEvent::LayerSurfaceDiscovered { surface_id, output_id, .. }
+                    if surface_id == "wl-layer-21" && output_id == &OutputId::from("out-1")
+            ));
+
+            let snapshot = state.snapshot();
+            assert_eq!(snapshot.known_surfaces.layers.len(), 1);
+            assert_eq!(
+                snapshot.known_surfaces.layers[0].output_id,
+                Some(OutputId::from("out-1"))
+            );
+            assert_eq!(
+                snapshot.known_surfaces.layers[0].metadata,
+                LayerSurfaceMetadata {
+                    namespace: "panel".into(),
+                    tier: LayerSurfaceTier::Top,
+                    keyboard_interactivity: LayerKeyboardInteractivity::OnDemand,
+                    exclusive_zone: LayerExclusiveZone::Exclusive(20),
+                }
+            );
+            assert_eq!(
+                state.layer_output_id("wl-layer-21"),
+                Some(&OutputId::from("out-1"))
+            );
+        }
+
+        #[test]
+        fn smithay_state_snapshot_preserves_layer_policy_metadata() {
+            let display = Display::<SpidersSmithayState>::new().unwrap();
+            let mut state = SpidersSmithayState::new(&display, "test-seat").unwrap();
+            state.register_output_id(OutputId::from("out-1"), true);
+
+            state.track_surface_snapshot(BackendSurfaceSnapshot::Layer {
+                surface_id: "wl-layer-32".into(),
+                output_id: OutputId::from("out-1"),
+                metadata: LayerSurfaceMetadata {
+                    namespace: "lockscreen".into(),
+                    tier: LayerSurfaceTier::Overlay,
+                    keyboard_interactivity: LayerKeyboardInteractivity::Exclusive,
+                    exclusive_zone: LayerExclusiveZone::DontCare,
+                },
+            });
+
+            let snapshot = state.snapshot();
+            assert_eq!(snapshot.known_surfaces.layers.len(), 1);
+            assert_eq!(
+                snapshot.known_surfaces.layers[0].metadata,
+                LayerSurfaceMetadata {
+                    namespace: "lockscreen".into(),
+                    tier: LayerSurfaceTier::Overlay,
+                    keyboard_interactivity: LayerKeyboardInteractivity::Exclusive,
+                    exclusive_zone: LayerExclusiveZone::DontCare,
+                }
+            );
+        }
+
+        #[test]
+        fn smithay_state_removes_layer_output_attachment_when_layer_surface_is_lost() {
+            let display = Display::<SpidersSmithayState>::new().unwrap();
+            let mut state = SpidersSmithayState::new(&display, "test-seat").unwrap();
+            state.register_output_id(OutputId::from("out-1"), true);
+
+            state.track_surface_snapshot(BackendSurfaceSnapshot::Layer {
+                surface_id: "wl-layer-31".into(),
+                output_id: OutputId::from("out-1"),
+                metadata: LayerSurfaceMetadata {
+                    namespace: "background".into(),
+                    tier: LayerSurfaceTier::Background,
+                    keyboard_interactivity: LayerKeyboardInteractivity::None,
+                    exclusive_zone: LayerExclusiveZone::Neutral,
+                },
+            });
+            let _ = state.take_discovery_events();
+
+            state.track_surface_loss_by_id("wl-layer-31".into());
+
+            let events = state.take_discovery_events();
+            assert_eq!(events.len(), 1);
+            assert!(matches!(
+                &events[0],
+                BackendDiscoveryEvent::SurfaceLost { surface_id } if surface_id == "wl-layer-31"
+            ));
+            assert!(state.layer_output_id("wl-layer-31").is_none());
+            assert!(state.snapshot().known_surfaces.layers.is_empty());
+        }
+
+        #[test]
+        fn smithay_state_assigns_layer_output_to_popup_parented_to_layer_surface() {
+            let display = Display::<SpidersSmithayState>::new().unwrap();
+            let mut state = SpidersSmithayState::new(&display, "test-seat").unwrap();
+            state.register_output_id(OutputId::from("out-1"), true);
+
+            state.track_surface_snapshot(BackendSurfaceSnapshot::Layer {
+                surface_id: "wl-layer-41".into(),
+                output_id: OutputId::from("out-1"),
+                metadata: LayerSurfaceMetadata {
+                    namespace: "panel".into(),
+                    tier: LayerSurfaceTier::Top,
+                    keyboard_interactivity: LayerKeyboardInteractivity::OnDemand,
+                    exclusive_zone: LayerExclusiveZone::Exclusive(20),
+                },
+            });
+            state.track_test_popup_parent("wl-popup-41", "wl-layer-41");
+            state.track_surface_snapshot(BackendSurfaceSnapshot::Popup {
+                surface_id: "wl-popup-41".into(),
+                output_id: Some(OutputId::from("out-1")),
+                parent_surface_id: "wl-layer-41".into(),
+            });
+
+            let events = state.take_discovery_events();
+            assert!(matches!(
+                &events[1],
+                BackendDiscoveryEvent::PopupSurfaceDiscovered {
+                    surface_id,
+                    output_id,
+                    parent_surface_id,
+                } if surface_id == "wl-popup-41"
+                    && output_id == &Some(OutputId::from("out-1"))
+                    && parent_surface_id == "wl-layer-41"
+            ));
+
+            let snapshot = state.snapshot();
+            let popup = snapshot
+                .known_surfaces
+                .popups
+                .iter()
+                .find(|popup| popup.surface_id == "wl-popup-41")
+                .unwrap();
+            assert_eq!(
+                popup.parent,
+                SmithayPopupParentSnapshot::Resolved {
+                    surface_id: "wl-layer-41".into(),
+                    window_id: None,
+                }
+            );
+            assert_eq!(
+                state.layer_output_id("wl-popup-41"),
+                Some(&OutputId::from("out-1"))
+            );
+        }
+
+        #[test]
+        fn smithay_state_layer_popup_tracking_records_parent_and_output() {
+            let display = Display::<SpidersSmithayState>::new().unwrap();
+            let mut state = SpidersSmithayState::new(&display, "test-seat").unwrap();
+
+            state.track_surface_snapshot(BackendSurfaceSnapshot::Layer {
+                surface_id: "wl-layer-51".into(),
+                output_id: OutputId::from("out-2"),
+                metadata: LayerSurfaceMetadata {
+                    namespace: "panel".into(),
+                    tier: LayerSurfaceTier::Top,
+                    keyboard_interactivity: LayerKeyboardInteractivity::OnDemand,
+                    exclusive_zone: LayerExclusiveZone::Exclusive(24),
+                },
+            });
+            let _ = state.take_discovery_events();
+
+            state.track_layer_popup_surface_for_test("wl-layer-51", "wl-popup-51");
+
+            let events = state.take_discovery_events();
+            assert_eq!(events.len(), 1);
+            assert!(matches!(
+                &events[0],
+                BackendDiscoveryEvent::PopupSurfaceDiscovered {
+                    surface_id,
+                    output_id,
+                    parent_surface_id,
+                } if surface_id == "wl-popup-51"
+                    && output_id == &Some(OutputId::from("out-2"))
+                    && parent_surface_id == "wl-layer-51"
+            ));
+
+            let snapshot = state.snapshot();
+            let popup = snapshot
+                .known_surfaces
+                .popups
+                .iter()
+                .find(|popup| popup.surface_id == "wl-popup-51")
+                .unwrap();
+            assert_eq!(
+                popup.parent,
+                SmithayPopupParentSnapshot::Resolved {
+                    surface_id: "wl-layer-51".into(),
+                    window_id: None,
+                }
+            );
+        }
     }
 }
 
 #[cfg(feature = "smithay-winit")]
 pub use imp::{
-    SmithayClientState, SmithayKnownLayerSurface, SmithayKnownPopupSurface, SmithayKnownSurface,
-    SmithayKnownSurfacesSnapshot, SmithayKnownToplevelSurface, SmithayKnownUnmanagedSurface,
-    SmithayPopupParentSnapshot, SmithayStateError, SmithayStateSnapshot, SmithaySurfaceRoleCounts,
-    SpidersSmithayState,
+    SmithayClientState, SmithayClipboardSelectionSnapshot, SmithayKnownLayerSurface,
+    SmithayKnownPopupSurface, SmithayKnownSurface, SmithayKnownSurfacesSnapshot,
+    SmithayKnownToplevelSurface, SmithayKnownUnmanagedSurface,
+    SmithayLayerSurfaceConfigureSnapshot, SmithayPopupParentSnapshot,
+    SmithaySelectionOfferSnapshot, SmithayStateError, SmithayStateSnapshot,
+    SmithaySurfaceRoleCounts, SmithayXdgPopupConfigureSnapshot,
+    SmithayXdgToplevelConfigureSnapshot, SmithayXdgToplevelMetadataSnapshot,
+    SmithayXdgToplevelRequestSnapshot, SpidersSmithayState,
 };

@@ -41,6 +41,7 @@ pub enum BootstrapEvent {
     RegisterLayerSurface {
         surface_id: String,
         output_id: OutputId,
+        metadata: LayerSurfaceMetadata,
     },
     RegisterUnmanagedSurface {
         surface_id: String,
@@ -54,6 +55,11 @@ pub enum BootstrapEvent {
     MoveSurfaceToOutput {
         surface_id: String,
         output_id: OutputId,
+    },
+    FocusSeat {
+        seat_name: String,
+        window_id: Option<WindowId>,
+        output_id: Option<OutputId>,
     },
     UnmapSurface {
         surface_id: String,
@@ -180,6 +186,26 @@ impl BootstrapScenario {
         self.events.push(BootstrapEvent::RegisterLayerSurface {
             surface_id: surface_id.into(),
             output_id: output_id.into(),
+            metadata: LayerSurfaceMetadata {
+                namespace: String::new(),
+                tier: LayerSurfaceTier::Background,
+                keyboard_interactivity: topology::LayerKeyboardInteractivity::None,
+                exclusive_zone: topology::LayerExclusiveZone::Neutral,
+            },
+        });
+        self
+    }
+
+    pub fn register_layer_surface_with_metadata(
+        mut self,
+        surface_id: impl Into<String>,
+        output_id: impl Into<OutputId>,
+        metadata: LayerSurfaceMetadata,
+    ) -> Self {
+        self.events.push(BootstrapEvent::RegisterLayerSurface {
+            surface_id: surface_id.into(),
+            output_id: output_id.into(),
+            metadata,
         });
         self
     }
@@ -360,6 +386,7 @@ pub enum BackendSurfaceSnapshot {
     Layer {
         surface_id: String,
         output_id: OutputId,
+        metadata: LayerSurfaceMetadata,
     },
     Unmanaged {
         surface_id: String,
@@ -413,6 +440,11 @@ pub enum BackendDiscoveryEvent {
     OutputActivated {
         output_id: OutputId,
     },
+    SeatFocusChanged {
+        seat_name: String,
+        window_id: Option<WindowId>,
+        output_id: Option<OutputId>,
+    },
     OutputLost {
         output_id: OutputId,
     },
@@ -429,8 +461,12 @@ pub enum BackendDiscoveryEvent {
     LayerSurfaceDiscovered {
         surface_id: String,
         output_id: OutputId,
+        metadata: LayerSurfaceMetadata,
     },
     UnmanagedSurfaceDiscovered {
+        surface_id: String,
+    },
+    SurfaceUnmapped {
         surface_id: String,
     },
     SurfaceLost {
@@ -449,6 +485,15 @@ impl BackendDiscoveryEvent {
                 BootstrapEvent::RegisterOutput { output_id, active }
             }
             Self::OutputActivated { output_id } => BootstrapEvent::ActivateOutput { output_id },
+            Self::SeatFocusChanged {
+                seat_name,
+                window_id,
+                output_id,
+            } => BootstrapEvent::FocusSeat {
+                seat_name,
+                window_id,
+                output_id,
+            },
             Self::OutputLost { output_id } => BootstrapEvent::RemoveOutput { output_id },
             Self::WindowSurfaceDiscovered {
                 surface_id,
@@ -471,13 +516,16 @@ impl BackendDiscoveryEvent {
             Self::LayerSurfaceDiscovered {
                 surface_id,
                 output_id,
+                metadata,
             } => BootstrapEvent::RegisterLayerSurface {
                 surface_id,
                 output_id,
+                metadata,
             },
             Self::UnmanagedSurfaceDiscovered { surface_id } => {
                 BootstrapEvent::RegisterUnmanagedSurface { surface_id }
             }
+            Self::SurfaceUnmapped { surface_id } => BootstrapEvent::UnmapSurface { surface_id },
             Self::SurfaceLost { surface_id } => BootstrapEvent::RemoveSurface { surface_id },
         }
     }
@@ -532,9 +580,11 @@ impl BackendTopologySnapshot {
             BackendSurfaceSnapshot::Layer {
                 surface_id,
                 output_id,
+                metadata,
             } => BackendDiscoveryEvent::LayerSurfaceDiscovered {
                 surface_id,
                 output_id,
+                metadata,
             },
             BackendSurfaceSnapshot::Unmanaged { surface_id } => {
                 BackendDiscoveryEvent::UnmanagedSurfaceDiscovered { surface_id }
@@ -635,7 +685,8 @@ pub struct ControllerCommandReport {
 
 pub use session::{DomainSession, DomainSessionError, DomainUpdate};
 pub use topology::{
-    CompositorTopologyState, OutputState, SeatState, SurfaceRole, SurfaceState, TopologyError,
+    CompositorTopologyState, LayerExclusiveZone, LayerKeyboardInteractivity, LayerSurfaceMetadata,
+    LayerSurfaceTier, OutputState, SeatState, SurfaceRole, SurfaceState, TopologyError,
 };
 pub use wm::{WmState, WmStateError};
 
@@ -725,6 +776,24 @@ mod tests {
             events[0],
             BackendDiscoveryEvent::SeatDiscovered { .. }
         ));
+    }
+
+    #[test]
+    fn seat_focus_discovery_event_converts_into_bootstrap_event() {
+        let event = BackendDiscoveryEvent::SeatFocusChanged {
+            seat_name: "seat-1".into(),
+            window_id: Some(WindowId::from("w1")),
+            output_id: Some(OutputId::from("out-1")),
+        };
+
+        assert_eq!(
+            event.into_bootstrap_event(),
+            BootstrapEvent::FocusSeat {
+                seat_name: "seat-1".into(),
+                window_id: Some(WindowId::from("w1")),
+                output_id: Some(OutputId::from("out-1")),
+            }
+        );
     }
 
     #[test]

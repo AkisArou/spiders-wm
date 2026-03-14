@@ -1,7 +1,7 @@
 use spiders_config::model::Config;
 use spiders_config::runtime::LayoutRuntime;
 use spiders_config::service::ConfigRuntimeService;
-use spiders_runtime::{BootstrapEvent, StartupRegistration};
+use spiders_runtime::{BootstrapEvent, LayerSurfaceMetadata, StartupRegistration};
 use spiders_shared::ids::{OutputId, WindowId};
 use spiders_shared::wm::StateSnapshot;
 
@@ -44,6 +44,16 @@ impl<L, R> CompositorApp<L, R> {
         output_id: OutputId,
     ) -> Result<&SurfaceState, TopologyError> {
         self.session.register_layer_surface(surface_id, output_id)
+    }
+
+    pub fn register_layer_surface_with_metadata(
+        &mut self,
+        surface_id: impl Into<String>,
+        output_id: OutputId,
+        metadata: LayerSurfaceMetadata,
+    ) -> Result<&SurfaceState, TopologyError> {
+        self.session
+            .register_layer_surface_with_metadata(surface_id, output_id, metadata)
     }
 
     pub fn register_unmanaged_surface(
@@ -142,8 +152,10 @@ impl<L, R> CompositorApp<L, R> {
             BootstrapEvent::RegisterLayerSurface {
                 surface_id,
                 output_id,
+                metadata,
             } => {
-                let _ = self.register_layer_surface(surface_id, output_id)?;
+                let _ =
+                    self.register_layer_surface_with_metadata(surface_id, output_id, metadata)?;
             }
             BootstrapEvent::RegisterUnmanagedSurface { surface_id } => {
                 let _ = self.register_unmanaged_surface(surface_id)?;
@@ -159,6 +171,16 @@ impl<L, R> CompositorApp<L, R> {
                 output_id,
             } => {
                 self.move_surface_to_output(&surface_id, output_id)?;
+            }
+            BootstrapEvent::FocusSeat {
+                seat_name,
+                window_id,
+                output_id,
+            } => {
+                if self.topology().seat(&seat_name).is_none() {
+                    self.session.register_seat(seat_name.clone());
+                }
+                self.session.focus_seat(&seat_name, window_id, output_id)?;
             }
             BootstrapEvent::UnmapSurface { surface_id } => {
                 self.unmap_surface(&surface_id)?;
@@ -224,6 +246,8 @@ mod tests {
     use spiders_config::model::{Config, LayoutDefinition};
     use spiders_config::runtime::BoaLayoutRuntime;
     use spiders_config::service::ConfigRuntimeService;
+    use spiders_runtime::LayerSurfaceTier;
+    use spiders_runtime::{LayerExclusiveZone, LayerKeyboardInteractivity};
     use spiders_shared::ids::{OutputId, WindowId, WorkspaceId};
     use spiders_shared::wm::{
         LayoutRef, OutputSnapshot, OutputTransform, ShellKind, StateSnapshot, WindowSnapshot,
@@ -417,8 +441,17 @@ mod tests {
 
         app.register_popup_surface("popup-1", Some(OutputId::from("out-1")), "window-w1")
             .unwrap();
-        app.register_layer_surface("layer-1", OutputId::from("out-1"))
-            .unwrap();
+        app.register_layer_surface_with_metadata(
+            "layer-1",
+            OutputId::from("out-1"),
+            LayerSurfaceMetadata {
+                namespace: "panel".into(),
+                tier: LayerSurfaceTier::Top,
+                keyboard_interactivity: LayerKeyboardInteractivity::OnDemand,
+                exclusive_zone: LayerExclusiveZone::Exclusive(32),
+            },
+        )
+        .unwrap();
         app.register_unmanaged_surface("overlay-1").unwrap();
         app.move_surface_to_output("layer-1", OutputId::from("out-2"))
             .unwrap();
@@ -436,6 +469,15 @@ mod tests {
         assert_eq!(
             app.topology().surface("layer-1").unwrap().output_id,
             Some(OutputId::from("out-2"))
+        );
+        assert_eq!(
+            app.topology().surface("layer-1").unwrap().layer_metadata,
+            Some(LayerSurfaceMetadata {
+                namespace: "panel".into(),
+                tier: LayerSurfaceTier::Top,
+                keyboard_interactivity: LayerKeyboardInteractivity::OnDemand,
+                exclusive_zone: LayerExclusiveZone::Exclusive(32),
+            })
         );
         assert_eq!(
             app.topology().surface("overlay-1").unwrap().role,
@@ -539,6 +581,12 @@ mod tests {
             output_id: Some(OutputId::from("out-1")),
         })
         .unwrap();
+        app.apply_bootstrap_event(BootstrapEvent::FocusSeat {
+            seat_name: "seat-1".into(),
+            window_id: Some(WindowId::from("w1")),
+            output_id: Some(OutputId::from("out-1")),
+        })
+        .unwrap();
         app.apply_bootstrap_event(BootstrapEvent::RegisterPopupSurface {
             surface_id: "popup-1".into(),
             output_id: Some(OutputId::from("out-1")),
@@ -548,6 +596,12 @@ mod tests {
         app.apply_bootstrap_event(BootstrapEvent::RegisterLayerSurface {
             surface_id: "layer-1".into(),
             output_id: OutputId::from("out-2"),
+            metadata: LayerSurfaceMetadata {
+                namespace: String::new(),
+                tier: spiders_runtime::LayerSurfaceTier::Background,
+                keyboard_interactivity: spiders_runtime::LayerKeyboardInteractivity::None,
+                exclusive_zone: spiders_runtime::LayerExclusiveZone::Neutral,
+            },
         })
         .unwrap();
         app.apply_bootstrap_event(BootstrapEvent::MoveSurfaceToOutput {
@@ -578,7 +632,7 @@ mod tests {
         app.apply_bootstrap_event(BootstrapEvent::RemoveSurface {
             surface_id: "popup-1".into(),
         })
-        .unwrap();
+        .ok();
         app.apply_bootstrap_event(BootstrapEvent::RemoveOutput {
             output_id: OutputId::from("out-2"),
         })
@@ -589,5 +643,43 @@ mod tests {
         assert!(app.topology().surface("window-w1").is_none());
         assert!(app.topology().output(&OutputId::from("out-2")).is_none());
         assert!(!app.topology().surface("layer-1").unwrap().mapped);
+    }
+
+    #[test]
+    fn app_applies_seat_focus_bootstrap_event() {
+        let temp_dir = std::env::temp_dir();
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let runtime_root = temp_dir.join(format!("spiders-app-seat-focus-{unique}"));
+        let _ = fs::create_dir_all(runtime_root.join("layouts"));
+        fs::write(
+            runtime_root.join("layouts/master-stack.js"),
+            "ctx => ({ type: 'workspace', children: [{ type: 'slot', id: 'rest' }] })",
+        )
+        .unwrap();
+
+        let loader =
+            RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
+        let runtime = BoaLayoutRuntime::with_loader(loader.clone());
+        let service = ConfigRuntimeService::new(loader, runtime);
+
+        let mut app = CompositorApp::initialize(LayoutService, service, config(), state()).unwrap();
+        app.apply_bootstrap_event(BootstrapEvent::RegisterSeat {
+            seat_name: "seat-focus".into(),
+            active: true,
+        })
+        .unwrap();
+        app.apply_bootstrap_event(BootstrapEvent::FocusSeat {
+            seat_name: "seat-focus".into(),
+            window_id: Some(WindowId::from("w-focus")),
+            output_id: Some(OutputId::from("out-1")),
+        })
+        .unwrap();
+
+        let seat = app.topology().seat("seat-focus").unwrap();
+        assert_eq!(seat.focused_window_id, Some(WindowId::from("w-focus")));
+        assert_eq!(seat.focused_output_id, Some(OutputId::from("out-1")));
     }
 }

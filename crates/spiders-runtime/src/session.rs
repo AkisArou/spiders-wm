@@ -2,7 +2,9 @@ use spiders_shared::api::{CompositorEvent, FocusDirection};
 use spiders_shared::ids::{OutputId, WindowId};
 use spiders_shared::wm::{OutputSnapshot, StateSnapshot, WindowSnapshot};
 
-use crate::topology::{CompositorTopologyState, SurfaceRole, SurfaceState, TopologyError};
+use crate::topology::{
+    CompositorTopologyState, LayerSurfaceMetadata, SurfaceRole, SurfaceState, TopologyError,
+};
 use crate::wm::{WmState, WmStateError};
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -66,8 +68,26 @@ impl DomainSession {
         surface_id: impl Into<String>,
         output_id: OutputId,
     ) -> Result<&SurfaceState, TopologyError> {
+        self.register_layer_surface_with_metadata(
+            surface_id,
+            output_id,
+            LayerSurfaceMetadata {
+                namespace: String::new(),
+                tier: crate::topology::LayerSurfaceTier::Background,
+                keyboard_interactivity: crate::topology::LayerKeyboardInteractivity::None,
+                exclusive_zone: crate::topology::LayerExclusiveZone::Neutral,
+            },
+        )
+    }
+
+    pub fn register_layer_surface_with_metadata(
+        &mut self,
+        surface_id: impl Into<String>,
+        output_id: OutputId,
+        metadata: LayerSurfaceMetadata,
+    ) -> Result<&SurfaceState, TopologyError> {
         self.topology
-            .register_surface(surface_id, SurfaceRole::Layer, Some(output_id), None)
+            .register_layer_surface(surface_id, output_id, metadata)
     }
 
     pub fn register_unmanaged_surface(
@@ -143,6 +163,17 @@ impl DomainSession {
 
     pub fn activate_output(&mut self, output_id: &OutputId) -> Result<(), TopologyError> {
         self.topology.activate_output(output_id)?;
+        Ok(())
+    }
+
+    pub fn focus_seat(
+        &mut self,
+        seat_name: &str,
+        window_id: Option<WindowId>,
+        output_id: Option<OutputId>,
+    ) -> Result<(), TopologyError> {
+        self.topology
+            .focus_seat_window(seat_name, window_id, output_id)?;
         Ok(())
     }
 

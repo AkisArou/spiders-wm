@@ -6,7 +6,10 @@ pub use spiders_runtime::{
 
 #[cfg(test)]
 mod tests {
-    use spiders_runtime::BootstrapEvent;
+    use spiders_runtime::{
+        BootstrapEvent, LayerExclusiveZone, LayerKeyboardInteractivity, LayerSurfaceMetadata,
+        LayerSurfaceTier,
+    };
     use spiders_shared::ids::{OutputId, WindowId};
 
     use super::*;
@@ -23,6 +26,31 @@ mod tests {
             BootstrapEvent::RegisterSeat {
                 seat_name: "seat-1".into(),
                 active: true,
+            }
+        );
+
+        let layer_event = BackendDiscoveryEvent::LayerSurfaceDiscovered {
+            surface_id: "layer-1".into(),
+            output_id: OutputId::from("out-1"),
+            metadata: LayerSurfaceMetadata {
+                namespace: "panel".into(),
+                tier: LayerSurfaceTier::Top,
+                keyboard_interactivity: LayerKeyboardInteractivity::OnDemand,
+                exclusive_zone: LayerExclusiveZone::Exclusive(30),
+            },
+        };
+
+        assert_eq!(
+            layer_event.into_bootstrap_event(),
+            BootstrapEvent::RegisterLayerSurface {
+                surface_id: "layer-1".into(),
+                output_id: OutputId::from("out-1"),
+                metadata: LayerSurfaceMetadata {
+                    namespace: "panel".into(),
+                    tier: LayerSurfaceTier::Top,
+                    keyboard_interactivity: LayerKeyboardInteractivity::OnDemand,
+                    exclusive_zone: LayerExclusiveZone::Exclusive(30),
+                },
             }
         );
     }
@@ -46,6 +74,16 @@ mod tests {
                     window_id: WindowId::from("w1"),
                     output_id: Some(OutputId::from("out-1")),
                 },
+                BackendSurfaceSnapshot::Layer {
+                    surface_id: "layer-1".into(),
+                    output_id: OutputId::from("out-1"),
+                    metadata: LayerSurfaceMetadata {
+                        namespace: "panel".into(),
+                        tier: LayerSurfaceTier::Top,
+                        keyboard_interactivity: LayerKeyboardInteractivity::OnDemand,
+                        exclusive_zone: LayerExclusiveZone::Exclusive(30),
+                    },
+                },
                 BackendSurfaceSnapshot::Unmanaged {
                     surface_id: "overlay-1".into(),
                 },
@@ -54,13 +92,17 @@ mod tests {
 
         let events = snapshot.into_discovery_events();
 
-        assert_eq!(events.len(), 4);
+        assert_eq!(events.len(), 5);
         assert!(matches!(
             events[0],
             BackendDiscoveryEvent::SeatDiscovered { .. }
         ));
         assert!(matches!(
             events[3],
+            BackendDiscoveryEvent::LayerSurfaceDiscovered { .. }
+        ));
+        assert!(matches!(
+            events[4],
             BackendDiscoveryEvent::UnmanagedSurfaceDiscovered { .. }
         ));
     }

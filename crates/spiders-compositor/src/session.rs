@@ -2,7 +2,8 @@ use spiders_config::model::Config;
 use spiders_config::runtime::LayoutRuntime;
 use spiders_config::service::ConfigRuntimeService;
 use spiders_runtime::{
-    CompositorTopologyState, DomainSession, DomainUpdate, SurfaceState, TopologyError, WmState,
+    CompositorTopologyState, DomainSession, DomainUpdate, LayerSurfaceMetadata, SurfaceState,
+    TopologyError, WmState,
 };
 use spiders_shared::api::{CompositorEvent, FocusDirection, WmAction};
 use spiders_shared::ids::{OutputId, WindowId};
@@ -76,6 +77,16 @@ impl<L, R> CompositorSession<L, R> {
         self.domain.register_layer_surface(surface_id, output_id)
     }
 
+    pub fn register_layer_surface_with_metadata(
+        &mut self,
+        surface_id: impl Into<String>,
+        output_id: OutputId,
+        metadata: LayerSurfaceMetadata,
+    ) -> Result<&SurfaceState, TopologyError> {
+        self.domain
+            .register_layer_surface_with_metadata(surface_id, output_id, metadata)
+    }
+
     pub fn register_unmanaged_surface(
         &mut self,
         surface_id: impl Into<String>,
@@ -139,6 +150,15 @@ impl<L, R> CompositorSession<L, R> {
 
     pub fn activate_output(&mut self, output_id: &OutputId) -> Result<(), TopologyError> {
         self.domain.activate_output(output_id)
+    }
+
+    pub fn focus_seat(
+        &mut self,
+        seat_name: &str,
+        window_id: Option<WindowId>,
+        output_id: Option<OutputId>,
+    ) -> Result<(), TopologyError> {
+        self.domain.focus_seat(seat_name, window_id, output_id)
     }
 
     pub fn disable_output(&mut self, output_id: &OutputId) -> Result<(), TopologyError> {

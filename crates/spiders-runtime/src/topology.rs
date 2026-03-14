@@ -22,6 +22,39 @@ pub enum SurfaceRole {
     Unmanaged,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum LayerSurfaceTier {
+    Background,
+    Bottom,
+    Top,
+    Overlay,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum LayerKeyboardInteractivity {
+    None,
+    Exclusive,
+    OnDemand,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum LayerExclusiveZone {
+    Neutral,
+    Exclusive(u32),
+    DontCare,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct LayerSurfaceMetadata {
+    pub namespace: String,
+    pub tier: LayerSurfaceTier,
+    pub keyboard_interactivity: LayerKeyboardInteractivity,
+    pub exclusive_zone: LayerExclusiveZone,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SurfaceState {
     pub id: String,
@@ -29,6 +62,7 @@ pub struct SurfaceState {
     pub output_id: Option<OutputId>,
     pub window_id: Option<WindowId>,
     pub parent_surface_id: Option<String>,
+    pub layer_metadata: Option<LayerSurfaceMetadata>,
     pub mapped: bool,
 }
 
@@ -182,6 +216,11 @@ impl CompositorTopologyState {
             .cloned()
             .ok_or_else(|| TopologyError::SurfaceNotFound(surface_id.to_owned()))?;
 
+        let child_surface_ids = self.child_surface_ids(surface_id);
+        for child_surface_id in child_surface_ids {
+            self.unregister_surface(&child_surface_id)?;
+        }
+
         if let Some(output_id) = surface.output_id.as_ref() {
             if let Some(output) = self
                 .outputs
@@ -297,6 +336,7 @@ impl CompositorTopologyState {
                 output_id: output_id.clone(),
                 window_id: Some(window_id.clone()),
                 parent_surface_id: None,
+                layer_metadata: None,
                 mapped: true,
             });
         }
@@ -323,6 +363,38 @@ impl CompositorTopologyState {
         output_id: Option<OutputId>,
         parent_surface_id: Option<String>,
     ) -> Result<&SurfaceState, TopologyError> {
+        self.register_surface_with_layer_metadata(
+            surface_id,
+            role,
+            output_id,
+            parent_surface_id,
+            None,
+        )
+    }
+
+    pub fn register_layer_surface(
+        &mut self,
+        surface_id: impl Into<String>,
+        output_id: OutputId,
+        metadata: LayerSurfaceMetadata,
+    ) -> Result<&SurfaceState, TopologyError> {
+        self.register_surface_with_layer_metadata(
+            surface_id,
+            SurfaceRole::Layer,
+            Some(output_id),
+            None,
+            Some(metadata),
+        )
+    }
+
+    fn register_surface_with_layer_metadata(
+        &mut self,
+        surface_id: impl Into<String>,
+        role: SurfaceRole,
+        output_id: Option<OutputId>,
+        parent_surface_id: Option<String>,
+        layer_metadata: Option<LayerSurfaceMetadata>,
+    ) -> Result<&SurfaceState, TopologyError> {
         let surface_id = surface_id.into();
 
         if let Some(output_id) = output_id.as_ref() {
@@ -339,7 +411,12 @@ impl CompositorTopologyState {
                 .expect("surface exists after attachment update");
             surface.role = role;
             surface.parent_surface_id = parent_surface_id;
+            surface.layer_metadata = layer_metadata;
             surface.mapped = true;
+
+            if let Some(output_id) = output_id.as_ref() {
+                self.attach_surface_to_output(&surface_id, output_id)?;
+            }
         } else {
             self.surfaces.push(SurfaceState {
                 id: surface_id.clone(),
@@ -347,6 +424,7 @@ impl CompositorTopologyState {
                 output_id: output_id.clone(),
                 window_id: None,
                 parent_surface_id,
+                layer_metadata,
                 mapped: true,
             });
             if let Some(output_id) = output_id {
@@ -359,12 +437,34 @@ impl CompositorTopologyState {
     }
 
     pub fn unmap_surface(&mut self, surface_id: &str) -> Result<(), TopologyError> {
+        let output_id = self
+            .surface(surface_id)
+            .ok_or_else(|| TopologyError::SurfaceNotFound(surface_id.to_owned()))?
+            .output_id
+            .clone();
+
+        let child_surface_ids = self.child_surface_ids(surface_id);
+        for child_surface_id in child_surface_ids {
+            self.unmap_surface(&child_surface_id)?;
+        }
+
         let surface = self
             .surfaces
             .iter_mut()
             .find(|surface| surface.id == surface_id)
             .ok_or_else(|| TopologyError::SurfaceNotFound(surface_id.to_owned()))?;
         surface.mapped = false;
+
+        if let Some(output_id) = output_id {
+            if let Some(output) = self
+                .outputs
+                .iter_mut()
+                .find(|output| output.snapshot.id == output_id)
+            {
+                output.mapped_surface_ids.retain(|id| id != surface_id);
+            }
+        }
+
         Ok(())
     }
 
@@ -420,6 +520,14 @@ impl CompositorTopologyState {
             output.mapped_surface_ids.push(surface_id.to_owned());
         }
         Ok(())
+    }
+
+    fn child_surface_ids(&self, parent_surface_id: &str) -> Vec<String> {
+        self.surfaces
+            .iter()
+            .filter(|surface| surface.parent_surface_id.as_deref() == Some(parent_surface_id))
+            .map(|surface| surface.id.clone())
+            .collect()
     }
 
     pub fn focus_seat_window(
@@ -660,6 +768,46 @@ mod tests {
     }
 
     #[test]
+    fn topology_preserves_layer_metadata_across_remap() {
+        let mut topology = CompositorTopologyState::from_snapshot(&state());
+        topology
+            .register_layer_surface(
+                "layer-1",
+                OutputId::from("out-1"),
+                LayerSurfaceMetadata {
+                    namespace: "panel".into(),
+                    tier: LayerSurfaceTier::Top,
+                    keyboard_interactivity: LayerKeyboardInteractivity::OnDemand,
+                    exclusive_zone: LayerExclusiveZone::Exclusive(18),
+                },
+            )
+            .unwrap();
+        topology.unmap_surface("layer-1").unwrap();
+        topology
+            .register_layer_surface(
+                "layer-1",
+                OutputId::from("out-1"),
+                LayerSurfaceMetadata {
+                    namespace: "panel".into(),
+                    tier: LayerSurfaceTier::Top,
+                    keyboard_interactivity: LayerKeyboardInteractivity::OnDemand,
+                    exclusive_zone: LayerExclusiveZone::Exclusive(18),
+                },
+            )
+            .unwrap();
+
+        assert_eq!(
+            topology.surface("layer-1").unwrap().layer_metadata,
+            Some(LayerSurfaceMetadata {
+                namespace: "panel".into(),
+                tier: LayerSurfaceTier::Top,
+                keyboard_interactivity: LayerKeyboardInteractivity::OnDemand,
+                exclusive_zone: LayerExclusiveZone::Exclusive(18),
+            })
+        );
+    }
+
+    #[test]
     fn topology_unregisters_output_and_clears_links() {
         let mut snapshot = state();
         snapshot.outputs.push(OutputSnapshot {
@@ -738,6 +886,120 @@ mod tests {
 
         topology.unregister_surface("popup-1").unwrap();
 
+        assert!(topology.surface("popup-1").is_none());
+        assert!(topology
+            .output(&OutputId::from("out-1"))
+            .unwrap()
+            .mapped_surface_ids
+            .is_empty());
+    }
+
+    #[test]
+    fn topology_unmap_removes_surface_from_output_mapped_ids() {
+        let mut topology = CompositorTopologyState::from_snapshot(&state());
+        topology
+            .register_surface(
+                "popup-1",
+                SurfaceRole::Popup,
+                Some(OutputId::from("out-1")),
+                Some("window-w1".into()),
+            )
+            .unwrap();
+
+        topology.unmap_surface("popup-1").unwrap();
+
+        assert!(!topology.surface("popup-1").unwrap().mapped);
+        assert!(topology
+            .output(&OutputId::from("out-1"))
+            .unwrap()
+            .mapped_surface_ids
+            .is_empty());
+    }
+
+    #[test]
+    fn topology_remap_restores_surface_to_output_mapped_ids() {
+        let mut topology = CompositorTopologyState::from_snapshot(&state());
+        topology
+            .register_surface(
+                "popup-1",
+                SurfaceRole::Popup,
+                Some(OutputId::from("out-1")),
+                Some("window-w1".into()),
+            )
+            .unwrap();
+        topology.unmap_surface("popup-1").unwrap();
+
+        topology
+            .register_surface(
+                "popup-1",
+                SurfaceRole::Popup,
+                Some(OutputId::from("out-1")),
+                Some("window-w1".into()),
+            )
+            .unwrap();
+
+        assert!(topology.surface("popup-1").unwrap().mapped);
+        assert_eq!(
+            topology
+                .output(&OutputId::from("out-1"))
+                .unwrap()
+                .mapped_surface_ids,
+            vec!["popup-1".to_string()]
+        );
+    }
+
+    #[test]
+    fn topology_unmap_cascades_to_popup_children() {
+        let mut topology = CompositorTopologyState::from_snapshot(&state());
+        topology
+            .map_window_surface(
+                "window-1",
+                WindowId::from("w1"),
+                Some(OutputId::from("out-1")),
+            )
+            .unwrap();
+        topology
+            .register_surface(
+                "popup-1",
+                SurfaceRole::Popup,
+                Some(OutputId::from("out-1")),
+                Some("window-1".into()),
+            )
+            .unwrap();
+
+        topology.unmap_surface("window-1").unwrap();
+
+        assert!(!topology.surface("window-1").unwrap().mapped);
+        assert!(!topology.surface("popup-1").unwrap().mapped);
+        assert!(topology
+            .output(&OutputId::from("out-1"))
+            .unwrap()
+            .mapped_surface_ids
+            .is_empty());
+    }
+
+    #[test]
+    fn topology_remove_cascades_to_popup_children() {
+        let mut topology = CompositorTopologyState::from_snapshot(&state());
+        topology
+            .map_window_surface(
+                "window-1",
+                WindowId::from("w1"),
+                Some(OutputId::from("out-1")),
+            )
+            .unwrap();
+        topology
+            .register_surface(
+                "popup-1",
+                SurfaceRole::Popup,
+                Some(OutputId::from("out-1")),
+                Some("window-1".into()),
+            )
+            .unwrap();
+
+        topology.unregister_surface("window-1").unwrap();
+
+        assert!(topology.surface("window-1").is_none());
         assert!(topology.surface("popup-1").is_none());
         assert!(topology
             .output(&OutputId::from("out-1"))

@@ -18,7 +18,10 @@ mod imp {
     use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
     use smithay::reexports::wayland_server::Display;
     use smithay::utils::{Point, SERIAL_COUNTER};
-    use spiders_runtime::{ControllerCommand, ControllerReport};
+    use spiders_runtime::{
+        CompositorTopologyState, ControllerCommand, ControllerReport, OutputState, SeatState,
+        SurfaceState,
+    };
     use spiders_shared::ids::OutputId;
 
     use crate::smithay_adapter::{SmithayAdapter, SmithayOutputDescriptor, SmithaySeatDescriptor};
@@ -56,9 +59,19 @@ mod imp {
     pub struct SmithayBootstrapSnapshot {
         pub runtime: SmithayRuntimeSnapshot,
         pub controller: ControllerReport,
+        pub topology: SmithayBootstrapTopologySnapshot,
         pub topology_surface_count: usize,
         pub topology_output_count: usize,
         pub topology_seat_count: usize,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct SmithayBootstrapTopologySnapshot {
+        pub active_output_id: Option<OutputId>,
+        pub active_seat_name: Option<String>,
+        pub outputs: Vec<OutputState>,
+        pub seats: Vec<SeatState>,
+        pub surfaces: Vec<SurfaceState>,
     }
 
     #[derive(Debug)]
@@ -81,12 +94,14 @@ mod imp {
         }
 
         pub fn snapshot(&self) -> SmithayBootstrapSnapshot {
+            let topology = self.controller.app().topology();
             SmithayBootstrapSnapshot {
                 runtime: self.runtime.snapshot(),
                 controller: self.controller.report(),
-                topology_surface_count: self.controller.app().topology().surfaces.len(),
-                topology_output_count: self.controller.app().topology().outputs.len(),
-                topology_seat_count: self.controller.app().topology().seats.len(),
+                topology: snapshot_topology(topology),
+                topology_surface_count: topology.surfaces.len(),
+                topology_output_count: topology.outputs.len(),
+                topology_seat_count: topology.seats.len(),
             }
         }
 
@@ -277,6 +292,16 @@ mod imp {
         }
     }
 
+    fn snapshot_topology(topology: &CompositorTopologyState) -> SmithayBootstrapTopologySnapshot {
+        SmithayBootstrapTopologySnapshot {
+            active_output_id: topology.active_output_id.clone(),
+            active_seat_name: topology.active_seat_name.clone(),
+            outputs: topology.outputs.clone(),
+            seats: topology.seats.clone(),
+            surfaces: topology.surfaces.clone(),
+        }
+    }
+
     pub fn initialize_winit_controller<L, R>(
         runtime_service: spiders_config::service::ConfigRuntimeService<L, R>,
         config: spiders_config::model::Config,
@@ -430,8 +455,11 @@ mod imp {
         use spiders_config::model::{Config, LayoutDefinition};
         use spiders_config::runtime::BoaLayoutRuntime;
         use spiders_config::service::ConfigRuntimeService;
-        use spiders_runtime::ControllerPhase;
-        use spiders_shared::ids::{OutputId, WorkspaceId};
+        use spiders_runtime::{
+            ControllerPhase, LayerExclusiveZone, LayerKeyboardInteractivity, LayerSurfaceMetadata,
+            LayerSurfaceTier, SurfaceRole,
+        };
+        use spiders_shared::ids::{OutputId, WindowId, WorkspaceId};
         use spiders_shared::wm::{
             LayoutRef, OutputSnapshot, OutputTransform, StateSnapshot, WorkspaceSnapshot,
         };
@@ -524,6 +552,156 @@ mod imp {
             }
         }
 
+        fn assert_topology_matches_known_surfaces(snapshot: &SmithayBootstrapSnapshot) {
+            let runtime_state = &snapshot.runtime.state;
+            let topology = &snapshot.topology;
+
+            assert_eq!(
+                topology.surfaces.len(),
+                runtime_state.known_surfaces.all.len()
+            );
+
+            for toplevel in &runtime_state.known_surfaces.toplevels {
+                let surface = topology
+                    .surfaces
+                    .iter()
+                    .find(|surface| surface.id == toplevel.surface_id)
+                    .unwrap();
+                assert_eq!(surface.role, SurfaceRole::Window);
+                assert_eq!(surface.window_id.as_ref(), Some(&toplevel.window_id));
+                assert_eq!(surface.parent_surface_id, None);
+                assert!(surface.mapped);
+                assert_eq!(surface.layer_metadata, None);
+                assert!(
+                    toplevel.requests.last_resize_serial.is_none()
+                        || toplevel.requests.last_resize_edge.is_some()
+                );
+            }
+
+            for popup in &runtime_state.known_surfaces.popups {
+                let surface = topology
+                    .surfaces
+                    .iter()
+                    .find(|surface| surface.id == popup.surface_id)
+                    .unwrap();
+                assert_eq!(surface.role, SurfaceRole::Popup);
+                assert!(surface.window_id.is_none());
+                assert!(surface.mapped);
+                assert!(popup.configure.pending_configure_count <= 1);
+                if popup.configure.grab_requested {
+                    assert!(popup.configure.last_grab_serial.is_some());
+                }
+
+                match &popup.parent {
+                    crate::smithay_state::SmithayPopupParentSnapshot::Resolved {
+                        surface_id,
+                        ..
+                    } => {
+                        assert_eq!(
+                            surface.parent_surface_id.as_deref(),
+                            Some(surface_id.as_str())
+                        );
+                    }
+                    crate::smithay_state::SmithayPopupParentSnapshot::Unresolved => {
+                        assert_eq!(
+                            surface.parent_surface_id.as_deref(),
+                            Some(format!("unresolved-parent-{}", popup.surface_id).as_str())
+                        );
+                    }
+                }
+            }
+
+            for unmanaged in &runtime_state.known_surfaces.unmanaged {
+                let surface = topology
+                    .surfaces
+                    .iter()
+                    .find(|surface| surface.id == unmanaged.surface_id)
+                    .unwrap();
+                assert_eq!(surface.role, SurfaceRole::Unmanaged);
+                assert!(surface.window_id.is_none());
+                assert_eq!(surface.parent_surface_id, None);
+                assert!(surface.mapped);
+            }
+
+            for layer in &runtime_state.known_surfaces.layers {
+                let surface = topology
+                    .surfaces
+                    .iter()
+                    .find(|surface| surface.id == layer.surface_id)
+                    .unwrap();
+                assert_eq!(surface.role, SurfaceRole::Layer);
+                assert_eq!(surface.output_id, layer.output_id);
+                assert_eq!(surface.layer_metadata.as_ref(), Some(&layer.metadata));
+                assert!(surface.window_id.is_none());
+                assert_eq!(surface.parent_surface_id, None);
+                assert!(surface.mapped);
+            }
+        }
+
+        fn assert_output_summary_matches_topology(snapshot: &SmithayBootstrapSnapshot) {
+            let runtime_state = &snapshot.runtime.state;
+            let topology = &snapshot.topology;
+
+            assert!(topology.outputs.len() >= runtime_state.outputs.known_output_ids.len());
+            for output_id in &runtime_state.outputs.known_output_ids {
+                assert!(topology
+                    .outputs
+                    .iter()
+                    .any(|output| output.snapshot.id == *output_id));
+            }
+            if let Some(active_output_id) = runtime_state.outputs.active_output_id.as_ref() {
+                assert_eq!(topology.active_output_id.as_ref(), Some(active_output_id));
+            }
+            assert_eq!(
+                runtime_state.outputs.mapped_surface_count,
+                topology
+                    .surfaces
+                    .iter()
+                    .filter(|surface| surface.mapped)
+                    .count()
+            );
+
+            let topology_active_output_attached_surface_count = runtime_state
+                .outputs
+                .active_output_id
+                .as_ref()
+                .map(|active_output_id| {
+                    topology
+                        .surfaces
+                        .iter()
+                        .filter(|surface| {
+                            surface.mapped && surface.output_id.as_ref() == Some(active_output_id)
+                        })
+                        .count()
+                })
+                .unwrap_or(0);
+            assert_eq!(
+                runtime_state.outputs.active_output_attached_surface_count,
+                topology_active_output_attached_surface_count
+            );
+        }
+
+        fn assert_seat_summary_matches_topology(snapshot: &SmithayBootstrapSnapshot) {
+            let runtime_state = &snapshot.runtime.state;
+            let topology = &snapshot.topology;
+
+            if let Some(seat) = topology
+                .seats
+                .iter()
+                .find(|seat| seat.name == runtime_state.seat.name)
+            {
+                assert_eq!(
+                    topology.active_seat_name.as_deref(),
+                    Some(seat.name.as_str())
+                );
+                assert!(seat.active);
+                assert_eq!(runtime_state.seat.focused_window_id, seat.focused_window_id);
+                if let Some(focused_output_id) = runtime_state.seat.focused_output_id.as_ref() {
+                    assert_eq!(seat.focused_output_id.as_ref(), Some(focused_output_id));
+                }
+            }
+        }
+
         #[test]
         fn runtime_snapshot_exposes_state_snapshot() {
             let mut runtime = test_runtime("wayland-test-1");
@@ -538,9 +716,41 @@ mod imp {
             assert_eq!(snapshot.socket_name, "wayland-test-1");
             assert_eq!(snapshot.window_size, (1280, 720));
             assert_eq!(snapshot.state.seat_name, "smithay-test-seat");
+            assert_eq!(snapshot.state.seat.name, "smithay-test-seat");
+            assert!(snapshot.state.seat.has_keyboard);
+            assert!(snapshot.state.seat.has_pointer);
+            assert!(!snapshot.state.seat.has_touch);
+            assert!(snapshot.state.seat.focused_surface_id.is_none());
+            assert!(snapshot.state.seat.focused_surface_role.is_none());
+            assert!(snapshot.state.seat.focused_window_id.is_none());
+            assert!(snapshot.state.seat.focused_output_id.is_none());
+            assert_eq!(snapshot.state.seat.cursor_image, "default");
+            assert!(snapshot.state.seat.cursor_surface_id.is_none());
+            assert!(snapshot.state.outputs.known_output_ids.is_empty());
+            assert!(snapshot.state.outputs.active_output_id.is_none());
+            assert_eq!(snapshot.state.outputs.layer_surface_output_count, 0);
+            assert_eq!(
+                snapshot.state.outputs.active_output_attached_surface_count,
+                0
+            );
+            assert_eq!(snapshot.state.outputs.mapped_surface_count, 1);
             assert_eq!(snapshot.state.tracked_surface_count, 1);
             assert_eq!(snapshot.state.role_counts.unmanaged, 1);
             assert_eq!(snapshot.state.known_surfaces.unmanaged.len(), 1);
+            assert_eq!(snapshot.state.clipboard_selection.target, "clipboard");
+            assert!(snapshot.state.selection_protocols.data_device);
+            assert!(snapshot.state.selection_protocols.primary_selection);
+            assert!(snapshot.state.selection_protocols.wlr_data_control);
+            assert!(snapshot.state.selection_protocols.ext_data_control);
+            assert!(snapshot.state.clipboard_selection.selection.is_none());
+            assert!(snapshot
+                .state
+                .clipboard_selection
+                .focused_client_id
+                .is_none());
+            assert_eq!(snapshot.state.primary_selection.target, "primary");
+            assert!(snapshot.state.primary_selection.selection.is_none());
+            assert!(snapshot.state.primary_selection.focused_client_id.is_none());
         }
 
         #[test]
@@ -621,6 +831,1396 @@ mod imp {
                 surface.window_id,
                 Some(spiders_shared::ids::WindowId::from("smithay-window-601"))
             );
+            assert_eq!(
+                snapshot.runtime.state.known_surfaces.toplevels[0].configure,
+                crate::smithay_state::SmithayXdgToplevelConfigureSnapshot {
+                    last_acked_serial: None,
+                    activated: false,
+                    fullscreen: false,
+                    maximized: false,
+                    pending_configure_count: 0,
+                }
+            );
+            assert_eq!(
+                snapshot.runtime.state.known_surfaces.toplevels[0].metadata,
+                crate::smithay_state::SmithayXdgToplevelMetadataSnapshot {
+                    title: None,
+                    app_id: None,
+                    parent_surface_id: None,
+                    min_size: None,
+                    max_size: None,
+                    window_geometry: None,
+                }
+            );
+            assert_eq!(
+                snapshot.runtime.state.known_surfaces.toplevels[0].requests,
+                crate::smithay_state::SmithayXdgToplevelRequestSnapshot {
+                    last_move_serial: None,
+                    last_resize_serial: None,
+                    last_resize_edge: None,
+                    last_window_menu_serial: None,
+                    last_window_menu_location: None,
+                    minimize_requested: false,
+                    last_request_kind: None,
+                    request_count: 0,
+                }
+            );
+            assert_topology_matches_known_surfaces(&snapshot);
+            assert_output_summary_matches_topology(&snapshot);
+            assert_seat_summary_matches_topology(&snapshot);
+        }
+
+        #[test]
+        fn bootstrap_snapshot_exposes_rich_topology_for_mixed_surface_roles() {
+            let runtime_service = test_runtime_service();
+            let config = test_config();
+            let state = test_state_snapshot();
+            let controller =
+                crate::CompositorController::initialize(runtime_service, config, state).unwrap();
+            let mut runtime = test_runtime("wayland-test-5");
+
+            runtime.state_mut().track_test_surface_snapshot(
+                crate::backend::BackendSurfaceSnapshot::Window {
+                    surface_id: "wl-surface-701".into(),
+                    window_id: WindowId::from("smithay-window-701"),
+                    output_id: None,
+                },
+            );
+            runtime.state_mut().track_test_surface_snapshot(
+                crate::backend::BackendSurfaceSnapshot::Popup {
+                    surface_id: "wl-surface-702".into(),
+                    output_id: None,
+                    parent_surface_id: "wl-surface-701".into(),
+                },
+            );
+            runtime.state_mut().track_test_surface_snapshot(
+                crate::backend::BackendSurfaceSnapshot::Unmanaged {
+                    surface_id: "wl-surface-703".into(),
+                },
+            );
+            runtime
+                .state_mut()
+                .register_output_id(OutputId::from("out-1"), true);
+            runtime.state_mut().track_test_surface_snapshot(
+                crate::backend::BackendSurfaceSnapshot::Layer {
+                    surface_id: "wl-surface-704".into(),
+                    output_id: OutputId::from("out-1"),
+                    metadata: LayerSurfaceMetadata {
+                        namespace: "panel".into(),
+                        tier: LayerSurfaceTier::Top,
+                        keyboard_interactivity: LayerKeyboardInteractivity::OnDemand,
+                        exclusive_zone: LayerExclusiveZone::Exclusive(20),
+                    },
+                },
+            );
+
+            let report = SmithayStartupReport {
+                controller: controller.report(),
+                output_name: "smithay-test-output".into(),
+                seat_name: "smithay-test-seat".into(),
+                logical_size: (1280, 720),
+                socket_name: Some("wayland-test-5".into()),
+            };
+            let mut bootstrap = SmithayBootstrap {
+                controller,
+                runtime,
+                report,
+            };
+
+            let applied = bootstrap.apply_pending_discovery_events().unwrap();
+
+            let snapshot = bootstrap.snapshot();
+            assert_eq!(applied, 4);
+            assert_eq!(snapshot.topology_surface_count, 4);
+            assert_eq!(snapshot.topology.surfaces.len(), 4);
+            assert_eq!(
+                snapshot.topology.active_output_id,
+                Some(OutputId::from("out-1"))
+            );
+            assert_eq!(
+                snapshot.topology.active_seat_name.as_deref(),
+                Some("seat-0")
+            );
+            assert_topology_matches_known_surfaces(&snapshot);
+            assert_output_summary_matches_topology(&snapshot);
+            assert_seat_summary_matches_topology(&snapshot);
+
+            let popup = snapshot
+                .topology
+                .surfaces
+                .iter()
+                .find(|surface| surface.id == "wl-surface-702")
+                .unwrap();
+            assert_eq!(popup.parent_surface_id.as_deref(), Some("wl-surface-701"));
+            assert_eq!(popup.role, SurfaceRole::Popup);
+
+            let layer = snapshot
+                .topology
+                .surfaces
+                .iter()
+                .find(|surface| surface.id == "wl-surface-704")
+                .unwrap();
+            assert_eq!(layer.role, SurfaceRole::Layer);
+            assert_eq!(layer.output_id, Some(OutputId::from("out-1")));
+            assert_eq!(
+                layer.layer_metadata,
+                Some(LayerSurfaceMetadata {
+                    namespace: "panel".into(),
+                    tier: LayerSurfaceTier::Top,
+                    keyboard_interactivity: LayerKeyboardInteractivity::OnDemand,
+                    exclusive_zone: LayerExclusiveZone::Exclusive(20),
+                })
+            );
+        }
+
+        #[test]
+        fn runtime_snapshot_exposes_known_layer_surface_output_attachment() {
+            let mut runtime = test_runtime("wayland-test-layer-1");
+            runtime
+                .state_mut()
+                .register_output_id(OutputId::from("out-1"), true);
+            runtime.state_mut().track_test_surface_snapshot(
+                crate::backend::BackendSurfaceSnapshot::Layer {
+                    surface_id: "wl-layer-1".into(),
+                    output_id: OutputId::from("out-1"),
+                    metadata: LayerSurfaceMetadata {
+                        namespace: "background".into(),
+                        tier: LayerSurfaceTier::Background,
+                        keyboard_interactivity: LayerKeyboardInteractivity::None,
+                        exclusive_zone: LayerExclusiveZone::Neutral,
+                    },
+                },
+            );
+
+            let snapshot = runtime.snapshot();
+            assert_eq!(snapshot.state.role_counts.layer, 1);
+            assert_eq!(snapshot.state.known_surfaces.layers.len(), 1);
+            assert_eq!(
+                snapshot.state.known_surfaces.layers[0].output_id,
+                Some(OutputId::from("out-1"))
+            );
+            assert_eq!(
+                snapshot.state.known_surfaces.layers[0].metadata,
+                LayerSurfaceMetadata {
+                    namespace: "background".into(),
+                    tier: LayerSurfaceTier::Background,
+                    keyboard_interactivity: LayerKeyboardInteractivity::None,
+                    exclusive_zone: LayerExclusiveZone::Neutral,
+                }
+            );
+            assert_eq!(
+                snapshot.state.known_surfaces.layers[0]
+                    .configure
+                    .last_acked_serial,
+                None
+            );
+            assert_eq!(
+                snapshot.state.known_surfaces.layers[0]
+                    .configure
+                    .last_configured_size,
+                None
+            );
+        }
+
+        #[test]
+        fn runtime_snapshot_exposes_layer_configure_inspection() {
+            let mut runtime = test_runtime("wayland-test-layer-configure-1");
+            runtime.state_mut().track_test_surface_snapshot(
+                crate::backend::BackendSurfaceSnapshot::Layer {
+                    surface_id: "wl-layer-configure-1".into(),
+                    output_id: OutputId::from("out-1"),
+                    metadata: LayerSurfaceMetadata {
+                        namespace: "panel".into(),
+                        tier: LayerSurfaceTier::Top,
+                        keyboard_interactivity: LayerKeyboardInteractivity::OnDemand,
+                        exclusive_zone: LayerExclusiveZone::Exclusive(20),
+                    },
+                },
+            );
+            runtime.state_mut().set_test_layer_configure_snapshot(
+                "wl-layer-configure-1",
+                crate::smithay_state::SmithayLayerSurfaceConfigureSnapshot {
+                    last_acked_serial: Some(99),
+                    pending_configure_count: 0,
+                    last_configured_size: Some((1280, 36)),
+                },
+            );
+
+            let snapshot = runtime.snapshot();
+            assert_eq!(snapshot.state.known_surfaces.layers.len(), 1);
+            assert_eq!(
+                snapshot.state.known_surfaces.layers[0].configure,
+                crate::smithay_state::SmithayLayerSurfaceConfigureSnapshot {
+                    last_acked_serial: Some(99),
+                    pending_configure_count: 0,
+                    last_configured_size: Some((1280, 36)),
+                }
+            );
+        }
+
+        #[test]
+        fn runtime_snapshot_exposes_layer_pending_configure_counts() {
+            let mut runtime = test_runtime("wayland-test-layer-configure-2");
+            runtime.state_mut().track_test_surface_snapshot(
+                crate::backend::BackendSurfaceSnapshot::Layer {
+                    surface_id: "wl-layer-configure-2".into(),
+                    output_id: OutputId::from("out-1"),
+                    metadata: LayerSurfaceMetadata {
+                        namespace: "panel".into(),
+                        tier: LayerSurfaceTier::Top,
+                        keyboard_interactivity: LayerKeyboardInteractivity::OnDemand,
+                        exclusive_zone: LayerExclusiveZone::Exclusive(18),
+                    },
+                },
+            );
+            runtime
+                .state_mut()
+                .record_test_layer_configure_sent("wl-layer-configure-2", Some((1024, 30)));
+            runtime
+                .state_mut()
+                .record_test_layer_configure_sent("wl-layer-configure-2", Some((1024, 32)));
+
+            let snapshot = runtime.snapshot();
+            assert_eq!(snapshot.state.known_surfaces.layers.len(), 1);
+            assert_eq!(
+                snapshot.state.known_surfaces.layers[0].configure,
+                crate::smithay_state::SmithayLayerSurfaceConfigureSnapshot {
+                    last_acked_serial: None,
+                    pending_configure_count: 2,
+                    last_configured_size: Some((1024, 32)),
+                }
+            );
+        }
+
+        #[test]
+        fn runtime_snapshot_exposes_explicit_layer_parented_popup_tracking() {
+            let mut runtime = test_runtime("wayland-test-layer-popup-1");
+            runtime.state_mut().track_test_surface_snapshot(
+                crate::backend::BackendSurfaceSnapshot::Layer {
+                    surface_id: "wl-layer-parent-1".into(),
+                    output_id: OutputId::from("out-7"),
+                    metadata: LayerSurfaceMetadata {
+                        namespace: "panel".into(),
+                        tier: LayerSurfaceTier::Top,
+                        keyboard_interactivity: LayerKeyboardInteractivity::OnDemand,
+                        exclusive_zone: LayerExclusiveZone::Exclusive(10),
+                    },
+                },
+            );
+            let _ = runtime.state_mut().take_discovery_events();
+            runtime
+                .state_mut()
+                .track_layer_popup_surface_for_test("wl-layer-parent-1", "wl-popup-child-1");
+
+            let snapshot = runtime.snapshot();
+            let popup = snapshot
+                .state
+                .known_surfaces
+                .popups
+                .iter()
+                .find(|popup| popup.surface_id == "wl-popup-child-1")
+                .unwrap();
+            assert_eq!(
+                popup.parent,
+                crate::smithay_state::SmithayPopupParentSnapshot::Resolved {
+                    surface_id: "wl-layer-parent-1".into(),
+                    window_id: None,
+                }
+            );
+        }
+
+        #[test]
+        fn runtime_snapshot_exposes_xdg_popup_pending_configure_counts() {
+            let mut runtime = test_runtime("wayland-test-popup-configure-1");
+            runtime.state_mut().track_test_surface_snapshot(
+                crate::backend::BackendSurfaceSnapshot::Popup {
+                    surface_id: "wl-popup-configure-1".into(),
+                    output_id: None,
+                    parent_surface_id: "unresolved-parent-wl-popup-configure-1".into(),
+                },
+            );
+            runtime.state_mut().record_test_xdg_popup_configure_sent(
+                "wl-popup-configure-1",
+                Some(31),
+                true,
+                (12, 14, 240, 160),
+            );
+            runtime.state_mut().record_test_xdg_popup_configure_sent(
+                "wl-popup-configure-1",
+                Some(32),
+                true,
+                (12, 14, 260, 180),
+            );
+
+            let snapshot = runtime.snapshot();
+            assert_eq!(snapshot.state.known_surfaces.popups.len(), 1);
+            assert_eq!(
+                snapshot.state.known_surfaces.popups[0].configure,
+                crate::smithay_state::SmithayXdgPopupConfigureSnapshot {
+                    last_acked_serial: None,
+                    pending_configure_count: 2,
+                    last_reposition_token: Some(32),
+                    reactive: true,
+                    geometry: (12, 14, 260, 180),
+                    last_grab_serial: None,
+                    grab_requested: false,
+                    last_request_kind: Some("reposition".into()),
+                    request_count: 2,
+                }
+            );
+        }
+
+        #[test]
+        fn runtime_snapshot_exposes_initial_popup_pending_configure() {
+            let mut runtime = test_runtime("wayland-test-popup-configure-init");
+            runtime.state_mut().track_test_surface_snapshot(
+                crate::backend::BackendSurfaceSnapshot::Popup {
+                    surface_id: "wl-popup-configure-init".into(),
+                    output_id: None,
+                    parent_surface_id: "unresolved-parent-wl-popup-configure-init".into(),
+                },
+            );
+            runtime
+                .state_mut()
+                .record_test_initial_xdg_popup_configure_sent(
+                    "wl-popup-configure-init",
+                    false,
+                    (6, 8, 190, 120),
+                );
+
+            let snapshot = runtime.snapshot();
+            assert_eq!(snapshot.state.known_surfaces.popups.len(), 1);
+            assert_eq!(
+                snapshot.state.known_surfaces.popups[0].configure,
+                crate::smithay_state::SmithayXdgPopupConfigureSnapshot {
+                    last_acked_serial: None,
+                    pending_configure_count: 1,
+                    last_reposition_token: None,
+                    reactive: false,
+                    geometry: (6, 8, 190, 120),
+                    last_grab_serial: None,
+                    grab_requested: false,
+                    last_request_kind: None,
+                    request_count: 0,
+                }
+            );
+        }
+
+        #[test]
+        fn runtime_snapshot_exposes_xdg_popup_request_sequence() {
+            let mut runtime = test_runtime("wayland-test-popup-request-1");
+            runtime.state_mut().track_test_surface_snapshot(
+                crate::backend::BackendSurfaceSnapshot::Popup {
+                    surface_id: "wl-popup-request-1".into(),
+                    output_id: None,
+                    parent_surface_id: "unresolved-parent-wl-popup-request-1".into(),
+                },
+            );
+            runtime.state_mut().record_test_xdg_popup_request(
+                "wl-popup-request-1",
+                "grab",
+                |snapshot| {
+                    snapshot.last_grab_serial = Some(51);
+                    snapshot.grab_requested = true;
+                },
+            );
+            runtime.state_mut().record_test_xdg_popup_request(
+                "wl-popup-request-1",
+                "reposition",
+                |snapshot| {
+                    snapshot.last_reposition_token = Some(52);
+                    snapshot.reactive = true;
+                    snapshot.geometry = (8, 9, 180, 120);
+                },
+            );
+
+            let snapshot = runtime.snapshot();
+            assert_eq!(
+                snapshot.state.known_surfaces.popups[0].configure,
+                crate::smithay_state::SmithayXdgPopupConfigureSnapshot {
+                    last_acked_serial: None,
+                    pending_configure_count: 0,
+                    last_reposition_token: Some(52),
+                    reactive: true,
+                    geometry: (8, 9, 180, 120),
+                    last_grab_serial: Some(51),
+                    grab_requested: true,
+                    last_request_kind: Some("reposition".into()),
+                    request_count: 2,
+                }
+            );
+        }
+
+        #[test]
+        fn runtime_snapshot_exposes_xdg_toplevel_pending_configure_counts() {
+            let mut runtime = test_runtime("wayland-test-toplevel-configure-1");
+            runtime.state_mut().track_test_surface_snapshot(
+                crate::backend::BackendSurfaceSnapshot::Window {
+                    surface_id: "wl-toplevel-configure-1".into(),
+                    window_id: WindowId::from("smithay-window-top-1"),
+                    output_id: None,
+                },
+            );
+            runtime.state_mut().record_test_xdg_toplevel_configure_sent(
+                "wl-toplevel-configure-1",
+                true,
+                false,
+                true,
+            );
+            runtime.state_mut().record_test_xdg_toplevel_configure_sent(
+                "wl-toplevel-configure-1",
+                true,
+                false,
+                false,
+            );
+
+            let snapshot = runtime.snapshot();
+            assert_eq!(snapshot.state.known_surfaces.toplevels.len(), 1);
+            assert_eq!(
+                snapshot.state.known_surfaces.toplevels[0].configure,
+                crate::smithay_state::SmithayXdgToplevelConfigureSnapshot {
+                    last_acked_serial: None,
+                    activated: true,
+                    fullscreen: false,
+                    maximized: false,
+                    pending_configure_count: 2,
+                }
+            );
+        }
+
+        #[test]
+        fn runtime_snapshot_exposes_initial_toplevel_pending_configure() {
+            let mut runtime = test_runtime("wayland-test-toplevel-configure-init");
+            runtime.state_mut().track_test_surface_snapshot(
+                crate::backend::BackendSurfaceSnapshot::Window {
+                    surface_id: "wl-toplevel-configure-init".into(),
+                    window_id: WindowId::from("smithay-window-top-init"),
+                    output_id: None,
+                },
+            );
+            runtime.state_mut().record_test_xdg_toplevel_configure_sent(
+                "wl-toplevel-configure-init",
+                true,
+                false,
+                false,
+            );
+
+            let snapshot = runtime.snapshot();
+            assert_eq!(snapshot.state.known_surfaces.toplevels.len(), 1);
+            assert_eq!(
+                snapshot.state.known_surfaces.toplevels[0].configure,
+                crate::smithay_state::SmithayXdgToplevelConfigureSnapshot {
+                    last_acked_serial: None,
+                    activated: true,
+                    fullscreen: false,
+                    maximized: false,
+                    pending_configure_count: 1,
+                }
+            );
+        }
+
+        #[test]
+        fn runtime_snapshot_exposes_xdg_toplevel_request_sequence() {
+            let mut runtime = test_runtime("wayland-test-toplevel-request-1");
+            runtime.state_mut().track_test_surface_snapshot(
+                crate::backend::BackendSurfaceSnapshot::Window {
+                    surface_id: "wl-toplevel-request-1".into(),
+                    window_id: WindowId::from("smithay-window-request-1"),
+                    output_id: None,
+                },
+            );
+            runtime.state_mut().set_test_toplevel_request_snapshot(
+                "wl-toplevel-request-1",
+                crate::smithay_state::SmithayXdgToplevelRequestSnapshot {
+                    last_move_serial: Some(41),
+                    last_resize_serial: None,
+                    last_resize_edge: None,
+                    last_window_menu_serial: None,
+                    last_window_menu_location: None,
+                    minimize_requested: true,
+                    last_request_kind: Some("minimize".into()),
+                    request_count: 2,
+                },
+            );
+
+            let snapshot = runtime.snapshot();
+            assert_eq!(
+                snapshot.state.known_surfaces.toplevels[0].requests,
+                crate::smithay_state::SmithayXdgToplevelRequestSnapshot {
+                    last_move_serial: Some(41),
+                    last_resize_serial: None,
+                    last_resize_edge: None,
+                    last_window_menu_serial: None,
+                    last_window_menu_location: None,
+                    minimize_requested: true,
+                    last_request_kind: Some("minimize".into()),
+                    request_count: 2,
+                }
+            );
+        }
+
+        #[test]
+        fn smithay_bootstrap_preserves_layer_keyboard_and_exclusive_zone_metadata() {
+            let runtime_service = test_runtime_service();
+            let config = test_config();
+            let state = test_state_snapshot();
+            let controller =
+                crate::CompositorController::initialize(runtime_service, config, state).unwrap();
+            let mut runtime = test_runtime("wayland-test-layer-meta-1");
+            runtime
+                .state_mut()
+                .register_output_id(OutputId::from("out-1"), true);
+            runtime.state_mut().track_test_surface_snapshot(
+                crate::backend::BackendSurfaceSnapshot::Layer {
+                    surface_id: "wl-layer-meta-1".into(),
+                    output_id: OutputId::from("out-1"),
+                    metadata: LayerSurfaceMetadata {
+                        namespace: "lockscreen".into(),
+                        tier: LayerSurfaceTier::Overlay,
+                        keyboard_interactivity: LayerKeyboardInteractivity::Exclusive,
+                        exclusive_zone: LayerExclusiveZone::DontCare,
+                    },
+                },
+            );
+
+            let report = SmithayStartupReport {
+                controller: controller.report(),
+                output_name: "smithay-test-output".into(),
+                seat_name: "smithay-test-seat".into(),
+                logical_size: (1280, 720),
+                socket_name: Some("wayland-test-layer-meta-1".into()),
+            };
+            let mut bootstrap = SmithayBootstrap {
+                controller,
+                runtime,
+                report,
+            };
+
+            assert_eq!(bootstrap.apply_pending_discovery_events().unwrap(), 1);
+
+            let snapshot = bootstrap.snapshot();
+            let layer = snapshot
+                .topology
+                .surfaces
+                .iter()
+                .find(|surface| surface.id == "wl-layer-meta-1")
+                .unwrap();
+            assert_eq!(
+                layer.layer_metadata,
+                Some(LayerSurfaceMetadata {
+                    namespace: "lockscreen".into(),
+                    tier: LayerSurfaceTier::Overlay,
+                    keyboard_interactivity: LayerKeyboardInteractivity::Exclusive,
+                    exclusive_zone: LayerExclusiveZone::DontCare,
+                })
+            );
+            assert_topology_matches_known_surfaces(&snapshot);
+            assert_output_summary_matches_topology(&snapshot);
+            assert_seat_summary_matches_topology(&snapshot);
+        }
+
+        #[test]
+        fn bootstrap_unmaps_and_remaps_layer_surface_without_losing_output_attachment() {
+            let runtime_service = test_runtime_service();
+            let config = test_config();
+            let state = test_state_snapshot();
+            let controller =
+                crate::CompositorController::initialize(runtime_service, config, state).unwrap();
+            let mut runtime = test_runtime("wayland-test-layer-2");
+            runtime
+                .state_mut()
+                .register_output_id(OutputId::from("out-1"), true);
+            runtime.state_mut().track_test_surface_snapshot(
+                crate::backend::BackendSurfaceSnapshot::Layer {
+                    surface_id: "wl-layer-2".into(),
+                    output_id: OutputId::from("out-1"),
+                    metadata: LayerSurfaceMetadata {
+                        namespace: "panel".into(),
+                        tier: LayerSurfaceTier::Top,
+                        keyboard_interactivity: LayerKeyboardInteractivity::OnDemand,
+                        exclusive_zone: LayerExclusiveZone::Exclusive(20),
+                    },
+                },
+            );
+
+            let report = SmithayStartupReport {
+                controller: controller.report(),
+                output_name: "smithay-test-output".into(),
+                seat_name: "smithay-test-seat".into(),
+                logical_size: (1280, 720),
+                socket_name: Some("wayland-test-layer-2".into()),
+            };
+            let mut bootstrap = SmithayBootstrap {
+                controller,
+                runtime,
+                report,
+            };
+
+            assert_eq!(bootstrap.apply_pending_discovery_events().unwrap(), 1);
+
+            bootstrap
+                .runtime
+                .state_mut()
+                .track_test_surface_unmap("wl-layer-2");
+            assert_eq!(bootstrap.apply_pending_discovery_events().unwrap(), 1);
+
+            let unmapped = bootstrap.snapshot();
+            let layer = unmapped
+                .topology
+                .surfaces
+                .iter()
+                .find(|surface| surface.id == "wl-layer-2")
+                .unwrap();
+            assert_eq!(layer.role, SurfaceRole::Layer);
+            assert_eq!(layer.output_id, Some(OutputId::from("out-1")));
+            assert!(!layer.mapped);
+
+            bootstrap.runtime.state_mut().track_test_surface_snapshot(
+                crate::backend::BackendSurfaceSnapshot::Layer {
+                    surface_id: "wl-layer-2".into(),
+                    output_id: OutputId::from("out-1"),
+                    metadata: LayerSurfaceMetadata {
+                        namespace: "panel".into(),
+                        tier: LayerSurfaceTier::Top,
+                        keyboard_interactivity: LayerKeyboardInteractivity::OnDemand,
+                        exclusive_zone: LayerExclusiveZone::Exclusive(20),
+                    },
+                },
+            );
+            assert_eq!(bootstrap.apply_pending_discovery_events().unwrap(), 1);
+
+            let remapped = bootstrap.snapshot();
+            let layer = remapped
+                .topology
+                .surfaces
+                .iter()
+                .find(|surface| surface.id == "wl-layer-2")
+                .unwrap();
+            assert_eq!(layer.output_id, Some(OutputId::from("out-1")));
+            assert_eq!(
+                layer.layer_metadata,
+                Some(LayerSurfaceMetadata {
+                    namespace: "panel".into(),
+                    tier: LayerSurfaceTier::Top,
+                    keyboard_interactivity: LayerKeyboardInteractivity::OnDemand,
+                    exclusive_zone: LayerExclusiveZone::Exclusive(20),
+                })
+            );
+            assert!(layer.mapped);
+            assert_topology_matches_known_surfaces(&remapped);
+            assert_output_summary_matches_topology(&remapped);
+            assert_seat_summary_matches_topology(&remapped);
+        }
+
+        #[test]
+        fn bootstrap_removes_layer_surface_from_topology_when_smithay_layer_is_lost() {
+            let runtime_service = test_runtime_service();
+            let config = test_config();
+            let state = test_state_snapshot();
+            let controller =
+                crate::CompositorController::initialize(runtime_service, config, state).unwrap();
+            let mut runtime = test_runtime("wayland-test-layer-3");
+            runtime
+                .state_mut()
+                .register_output_id(OutputId::from("out-1"), true);
+            runtime.state_mut().track_test_surface_snapshot(
+                crate::backend::BackendSurfaceSnapshot::Layer {
+                    surface_id: "wl-layer-3".into(),
+                    output_id: OutputId::from("out-1"),
+                    metadata: LayerSurfaceMetadata {
+                        namespace: "overlay".into(),
+                        tier: LayerSurfaceTier::Overlay,
+                        keyboard_interactivity: LayerKeyboardInteractivity::Exclusive,
+                        exclusive_zone: LayerExclusiveZone::DontCare,
+                    },
+                },
+            );
+
+            let report = SmithayStartupReport {
+                controller: controller.report(),
+                output_name: "smithay-test-output".into(),
+                seat_name: "smithay-test-seat".into(),
+                logical_size: (1280, 720),
+                socket_name: Some("wayland-test-layer-3".into()),
+            };
+            let mut bootstrap = SmithayBootstrap {
+                controller,
+                runtime,
+                report,
+            };
+
+            assert_eq!(bootstrap.apply_pending_discovery_events().unwrap(), 1);
+            bootstrap
+                .runtime
+                .state_mut()
+                .track_test_surface_loss("wl-layer-3");
+            assert_eq!(bootstrap.apply_pending_discovery_events().unwrap(), 1);
+
+            let snapshot = bootstrap.snapshot();
+            assert!(snapshot.runtime.state.known_surfaces.layers.is_empty());
+            assert!(snapshot
+                .topology
+                .surfaces
+                .iter()
+                .all(|surface| surface.id != "wl-layer-3"));
+        }
+
+        #[test]
+        fn bootstrap_removes_topology_surface_when_smithay_surface_is_lost() {
+            let runtime_service = test_runtime_service();
+            let config = test_config();
+            let state = test_state_snapshot();
+            let controller =
+                crate::CompositorController::initialize(runtime_service, config, state).unwrap();
+            let mut runtime = test_runtime("wayland-test-6");
+
+            runtime.state_mut().track_test_surface_snapshot(
+                crate::backend::BackendSurfaceSnapshot::Window {
+                    surface_id: "wl-surface-801".into(),
+                    window_id: WindowId::from("smithay-window-801"),
+                    output_id: None,
+                },
+            );
+
+            let report = SmithayStartupReport {
+                controller: controller.report(),
+                output_name: "smithay-test-output".into(),
+                seat_name: "smithay-test-seat".into(),
+                logical_size: (1280, 720),
+                socket_name: Some("wayland-test-6".into()),
+            };
+            let mut bootstrap = SmithayBootstrap {
+                controller,
+                runtime,
+                report,
+            };
+
+            assert_eq!(bootstrap.apply_pending_discovery_events().unwrap(), 1);
+            assert!(bootstrap
+                .controller
+                .app()
+                .session()
+                .topology()
+                .surface("wl-surface-801")
+                .is_some());
+
+            bootstrap
+                .runtime
+                .state_mut()
+                .track_test_surface_loss("wl-surface-801");
+
+            assert_eq!(bootstrap.apply_pending_discovery_events().unwrap(), 1);
+
+            let snapshot = bootstrap.snapshot();
+            assert_eq!(snapshot.runtime.state.known_surfaces.toplevels.len(), 0);
+            assert_eq!(snapshot.runtime.state.tracked_surface_count, 0);
+            assert_eq!(snapshot.topology_surface_count, 0);
+            assert!(snapshot.topology.surfaces.is_empty());
+            assert!(bootstrap
+                .controller
+                .app()
+                .session()
+                .topology()
+                .surface("wl-surface-801")
+                .is_none());
+        }
+
+        #[test]
+        fn bootstrap_unmaps_and_remaps_topology_surface_when_smithay_surface_buffer_changes() {
+            let runtime_service = test_runtime_service();
+            let config = test_config();
+            let state = test_state_snapshot();
+            let controller =
+                crate::CompositorController::initialize(runtime_service, config, state).unwrap();
+            let mut runtime = test_runtime("wayland-test-7");
+
+            runtime.state_mut().track_test_surface_snapshot(
+                crate::backend::BackendSurfaceSnapshot::Window {
+                    surface_id: "wl-surface-901".into(),
+                    window_id: WindowId::from("smithay-window-901"),
+                    output_id: None,
+                },
+            );
+
+            let report = SmithayStartupReport {
+                controller: controller.report(),
+                output_name: "smithay-test-output".into(),
+                seat_name: "smithay-test-seat".into(),
+                logical_size: (1280, 720),
+                socket_name: Some("wayland-test-7".into()),
+            };
+            let mut bootstrap = SmithayBootstrap {
+                controller,
+                runtime,
+                report,
+            };
+
+            assert_eq!(bootstrap.apply_pending_discovery_events().unwrap(), 1);
+            assert!(
+                bootstrap
+                    .controller
+                    .app()
+                    .session()
+                    .topology()
+                    .surface("wl-surface-901")
+                    .unwrap()
+                    .mapped
+            );
+
+            bootstrap
+                .runtime
+                .state_mut()
+                .track_test_surface_unmap("wl-surface-901");
+            assert_eq!(bootstrap.apply_pending_discovery_events().unwrap(), 1);
+
+            let unmapped = bootstrap.snapshot();
+            let surface = unmapped
+                .topology
+                .surfaces
+                .iter()
+                .find(|surface| surface.id == "wl-surface-901")
+                .unwrap();
+            assert!(!surface.mapped);
+            assert!(unmapped
+                .topology
+                .outputs
+                .iter()
+                .find(|output| output.snapshot.id == OutputId::from("out-1"))
+                .unwrap()
+                .mapped_surface_ids
+                .is_empty());
+            assert_eq!(unmapped.runtime.state.known_surfaces.toplevels.len(), 1);
+
+            bootstrap.runtime.state_mut().track_test_surface_snapshot(
+                crate::backend::BackendSurfaceSnapshot::Window {
+                    surface_id: "wl-surface-901".into(),
+                    window_id: WindowId::from("smithay-window-901"),
+                    output_id: None,
+                },
+            );
+            assert_eq!(bootstrap.apply_pending_discovery_events().unwrap(), 1);
+
+            let remapped = bootstrap.snapshot();
+            let surface = remapped
+                .topology
+                .surfaces
+                .iter()
+                .find(|surface| surface.id == "wl-surface-901")
+                .unwrap();
+            assert!(surface.mapped);
+            assert_eq!(
+                surface.window_id.as_ref(),
+                Some(&WindowId::from("smithay-window-901"))
+            );
+            assert_topology_matches_known_surfaces(&remapped);
+        }
+
+        #[test]
+        fn bootstrap_cascades_popup_unmap_and_removal_from_parent_surface() {
+            let runtime_service = test_runtime_service();
+            let config = test_config();
+            let state = test_state_snapshot();
+            let controller =
+                crate::CompositorController::initialize(runtime_service, config, state).unwrap();
+            let mut runtime = test_runtime("wayland-test-8");
+
+            runtime.state_mut().track_test_surface_snapshot(
+                crate::backend::BackendSurfaceSnapshot::Window {
+                    surface_id: "wl-surface-1001".into(),
+                    window_id: WindowId::from("smithay-window-1001"),
+                    output_id: None,
+                },
+            );
+            runtime.state_mut().track_test_surface_snapshot(
+                crate::backend::BackendSurfaceSnapshot::Popup {
+                    surface_id: "wl-surface-1002".into(),
+                    output_id: None,
+                    parent_surface_id: "wl-surface-1001".into(),
+                },
+            );
+
+            let report = SmithayStartupReport {
+                controller: controller.report(),
+                output_name: "smithay-test-output".into(),
+                seat_name: "smithay-test-seat".into(),
+                logical_size: (1280, 720),
+                socket_name: Some("wayland-test-8".into()),
+            };
+            let mut bootstrap = SmithayBootstrap {
+                controller,
+                runtime,
+                report,
+            };
+
+            assert_eq!(bootstrap.apply_pending_discovery_events().unwrap(), 2);
+
+            bootstrap
+                .runtime
+                .state_mut()
+                .track_test_surface_unmap("wl-surface-1001");
+            assert_eq!(bootstrap.apply_pending_discovery_events().unwrap(), 1);
+
+            let unmapped = bootstrap.snapshot();
+            assert!(
+                !unmapped
+                    .topology
+                    .surfaces
+                    .iter()
+                    .find(|surface| surface.id == "wl-surface-1001")
+                    .unwrap()
+                    .mapped
+            );
+            assert!(
+                !unmapped
+                    .topology
+                    .surfaces
+                    .iter()
+                    .find(|surface| surface.id == "wl-surface-1002")
+                    .unwrap()
+                    .mapped
+            );
+
+            bootstrap
+                .runtime
+                .state_mut()
+                .track_test_surface_loss("wl-surface-1001");
+            assert_eq!(bootstrap.apply_pending_discovery_events().unwrap(), 1);
+
+            let removed = bootstrap.snapshot();
+            assert!(removed
+                .topology
+                .surfaces
+                .iter()
+                .all(|surface| surface.id != "wl-surface-1001"));
+            assert!(removed
+                .topology
+                .surfaces
+                .iter()
+                .all(|surface| surface.id != "wl-surface-1002"));
+        }
+
+        #[test]
+        fn bootstrap_preserves_output_for_popup_parented_to_layer_surface() {
+            let runtime_service = test_runtime_service();
+            let config = test_config();
+            let state = test_state_snapshot();
+            let controller =
+                crate::CompositorController::initialize(runtime_service, config, state).unwrap();
+            let mut runtime = test_runtime("wayland-test-9");
+
+            runtime
+                .state_mut()
+                .register_output_id(OutputId::from("out-1"), true);
+            runtime.state_mut().track_test_surface_snapshot(
+                crate::backend::BackendSurfaceSnapshot::Layer {
+                    surface_id: "wl-layer-51".into(),
+                    output_id: OutputId::from("out-1"),
+                    metadata: LayerSurfaceMetadata {
+                        namespace: "panel".into(),
+                        tier: LayerSurfaceTier::Top,
+                        keyboard_interactivity: LayerKeyboardInteractivity::OnDemand,
+                        exclusive_zone: LayerExclusiveZone::Exclusive(20),
+                    },
+                },
+            );
+            runtime
+                .state_mut()
+                .track_test_popup_parent("wl-popup-51", "wl-layer-51");
+            runtime.state_mut().track_test_surface_snapshot(
+                crate::backend::BackendSurfaceSnapshot::Popup {
+                    surface_id: "wl-popup-51".into(),
+                    output_id: Some(OutputId::from("out-1")),
+                    parent_surface_id: "wl-layer-51".into(),
+                },
+            );
+
+            let report = SmithayStartupReport {
+                controller: controller.report(),
+                output_name: "smithay-test-output".into(),
+                seat_name: "smithay-test-seat".into(),
+                logical_size: (1280, 720),
+                socket_name: Some("wayland-test-9".into()),
+            };
+            let mut bootstrap = SmithayBootstrap {
+                controller,
+                runtime,
+                report,
+            };
+
+            assert_eq!(bootstrap.apply_pending_discovery_events().unwrap(), 2);
+
+            let snapshot = bootstrap.snapshot();
+            let popup = snapshot
+                .topology
+                .surfaces
+                .iter()
+                .find(|surface| surface.id == "wl-popup-51")
+                .unwrap();
+            assert_eq!(popup.role, SurfaceRole::Popup);
+            assert_eq!(popup.parent_surface_id.as_deref(), Some("wl-layer-51"));
+            assert_eq!(popup.output_id, Some(OutputId::from("out-1")));
+        }
+
+        #[test]
+        fn bootstrap_snapshot_preserves_xdg_popup_configure_metadata() {
+            let runtime_service = test_runtime_service();
+            let config = test_config();
+            let state = test_state_snapshot();
+            let controller =
+                crate::CompositorController::initialize(runtime_service, config, state).unwrap();
+            let mut runtime = test_runtime("wayland-test-popup-meta-1");
+
+            runtime.state_mut().track_test_surface_snapshot(
+                crate::backend::BackendSurfaceSnapshot::Popup {
+                    surface_id: "wl-popup-meta-1".into(),
+                    output_id: None,
+                    parent_surface_id: "unresolved-parent-wl-popup-meta-1".into(),
+                },
+            );
+            runtime.state_mut().set_test_popup_configure_snapshot(
+                "wl-popup-meta-1",
+                crate::smithay_state::SmithayXdgPopupConfigureSnapshot {
+                    last_acked_serial: Some(18),
+                    pending_configure_count: 0,
+                    last_reposition_token: Some(77),
+                    reactive: true,
+                    geometry: (15, 25, 320, 180),
+                    last_grab_serial: Some(14),
+                    grab_requested: true,
+                    last_request_kind: Some("grab".into()),
+                    request_count: 2,
+                },
+            );
+
+            let report = SmithayStartupReport {
+                controller: controller.report(),
+                output_name: "smithay-test-output".into(),
+                seat_name: "smithay-test-seat".into(),
+                logical_size: (1280, 720),
+                socket_name: Some("wayland-test-popup-meta-1".into()),
+            };
+            let mut bootstrap = SmithayBootstrap {
+                controller,
+                runtime,
+                report,
+            };
+
+            assert_eq!(bootstrap.apply_pending_discovery_events().unwrap(), 1);
+
+            let snapshot = bootstrap.snapshot();
+            assert_eq!(
+                snapshot.runtime.state.known_surfaces.popups[0].configure,
+                crate::smithay_state::SmithayXdgPopupConfigureSnapshot {
+                    last_acked_serial: Some(18),
+                    pending_configure_count: 0,
+                    last_reposition_token: Some(77),
+                    reactive: true,
+                    geometry: (15, 25, 320, 180),
+                    last_grab_serial: Some(14),
+                    grab_requested: true,
+                    last_request_kind: Some("grab".into()),
+                    request_count: 2,
+                }
+            );
+            assert_topology_matches_known_surfaces(&snapshot);
+        }
+
+        #[test]
+        fn bootstrap_snapshot_preserves_xdg_toplevel_size_constraints() {
+            let runtime_service = test_runtime_service();
+            let config = test_config();
+            let state = test_state_snapshot();
+            let controller =
+                crate::CompositorController::initialize(runtime_service, config, state).unwrap();
+            let mut runtime = test_runtime("wayland-test-xdg-size-1");
+
+            runtime.state_mut().track_test_surface_snapshot(
+                crate::backend::BackendSurfaceSnapshot::Window {
+                    surface_id: "wl-surface-size-1".into(),
+                    window_id: WindowId::from("smithay-window-size-1"),
+                    output_id: None,
+                },
+            );
+            runtime.state_mut().set_test_toplevel_metadata_snapshot(
+                "wl-surface-size-1",
+                crate::smithay_state::SmithayXdgToplevelMetadataSnapshot {
+                    title: Some("settings".into()),
+                    app_id: Some("spiders.settings".into()),
+                    parent_surface_id: None,
+                    min_size: Some((800, 600)),
+                    max_size: Some((2560, 1440)),
+                    window_geometry: Some((30, 40, 1440, 900)),
+                },
+            );
+
+            let report = SmithayStartupReport {
+                controller: controller.report(),
+                output_name: "smithay-test-output".into(),
+                seat_name: "smithay-test-seat".into(),
+                logical_size: (1280, 720),
+                socket_name: Some("wayland-test-xdg-size-1".into()),
+            };
+            let mut bootstrap = SmithayBootstrap {
+                controller,
+                runtime,
+                report,
+            };
+
+            assert_eq!(bootstrap.apply_pending_discovery_events().unwrap(), 1);
+
+            let snapshot = bootstrap.snapshot();
+            assert_eq!(
+                snapshot.runtime.state.known_surfaces.toplevels[0].metadata,
+                crate::smithay_state::SmithayXdgToplevelMetadataSnapshot {
+                    title: Some("settings".into()),
+                    app_id: Some("spiders.settings".into()),
+                    parent_surface_id: None,
+                    min_size: Some((800, 600)),
+                    max_size: Some((2560, 1440)),
+                    window_geometry: Some((30, 40, 1440, 900)),
+                }
+            );
+            assert_topology_matches_known_surfaces(&snapshot);
+        }
+
+        #[test]
+        fn runtime_snapshot_exposes_clipboard_selection_inspection() {
+            let mut runtime = test_runtime("wayland-test-clipboard-1");
+            runtime.state_mut().set_test_clipboard_selection(Some(
+                crate::smithay_state::SmithaySelectionOfferSnapshot {
+                    mime_types: vec!["text/plain".into()],
+                    source_kind: "data-device".into(),
+                },
+            ));
+
+            let snapshot = runtime.snapshot();
+            assert_eq!(snapshot.state.clipboard_selection.target, "clipboard");
+            assert_eq!(
+                snapshot.state.clipboard_selection.selection,
+                Some(crate::smithay_state::SmithaySelectionOfferSnapshot {
+                    mime_types: vec!["text/plain".into()],
+                    source_kind: "data-device".into(),
+                })
+            );
+            assert!(snapshot
+                .state
+                .clipboard_selection
+                .focused_client_id
+                .is_none());
+        }
+
+        #[test]
+        fn runtime_snapshot_exposes_clipboard_focus_inspection() {
+            let mut runtime = test_runtime("wayland-test-clipboard-2");
+            runtime
+                .state_mut()
+                .set_test_clipboard_focus_client_id(Some("client-9"));
+
+            let snapshot = runtime.snapshot();
+            assert_eq!(
+                snapshot
+                    .state
+                    .clipboard_selection
+                    .focused_client_id
+                    .as_deref(),
+                Some("client-9")
+            );
+        }
+
+        #[test]
+        fn runtime_snapshot_exposes_primary_selection_inspection() {
+            let mut runtime = test_runtime("wayland-test-primary-1");
+            runtime.state_mut().set_test_primary_selection(Some(
+                crate::smithay_state::SmithaySelectionOfferSnapshot {
+                    mime_types: vec!["text/plain".into()],
+                    source_kind: "primary-selection".into(),
+                },
+            ));
+
+            let snapshot = runtime.snapshot();
+            assert_eq!(snapshot.state.primary_selection.target, "primary");
+            assert_eq!(
+                snapshot.state.primary_selection.selection,
+                Some(crate::smithay_state::SmithaySelectionOfferSnapshot {
+                    mime_types: vec!["text/plain".into()],
+                    source_kind: "primary-selection".into(),
+                })
+            );
+            assert!(snapshot.state.primary_selection.focused_client_id.is_none());
+        }
+
+        #[test]
+        fn runtime_snapshot_exposes_primary_focus_inspection() {
+            let mut runtime = test_runtime("wayland-test-primary-2");
+            runtime
+                .state_mut()
+                .set_test_primary_focus_client_id(Some("client-13"));
+
+            let snapshot = runtime.snapshot();
+            assert_eq!(
+                snapshot
+                    .state
+                    .primary_selection
+                    .focused_client_id
+                    .as_deref(),
+                Some("client-13")
+            );
+        }
+
+        #[test]
+        fn runtime_snapshot_exposes_selection_protocol_support() {
+            let runtime = test_runtime("wayland-test-selection-support");
+
+            let snapshot = runtime.snapshot();
+            assert!(snapshot.state.selection_protocols.data_device);
+            assert!(snapshot.state.selection_protocols.primary_selection);
+            assert!(snapshot.state.selection_protocols.wlr_data_control);
+            assert!(snapshot.state.selection_protocols.ext_data_control);
+        }
+
+        #[test]
+        fn runtime_snapshot_exposes_seat_focus_inspection() {
+            let mut runtime = test_runtime("wayland-test-seat-focus");
+            runtime
+                .state_mut()
+                .set_test_focused_surface_id(Some("wl-surface-501"));
+
+            let snapshot = runtime.snapshot();
+            assert_eq!(snapshot.state.seat.name, "smithay-test-seat");
+            assert_eq!(
+                snapshot.state.seat.focused_surface_id.as_deref(),
+                Some("wl-surface-501")
+            );
+        }
+
+        #[test]
+        fn runtime_snapshot_exposes_focused_role_and_window_summary() {
+            let mut runtime = test_runtime("wayland-test-seat-focus-summary");
+            runtime.state_mut().track_test_surface_snapshot(
+                crate::backend::BackendSurfaceSnapshot::Window {
+                    surface_id: "wl-surface-601".into(),
+                    window_id: WindowId::from("smithay-window-601"),
+                    output_id: None,
+                },
+            );
+            runtime
+                .state_mut()
+                .set_test_focused_surface_id(Some("wl-surface-601"));
+
+            let snapshot = runtime.snapshot();
+            assert_eq!(
+                snapshot.state.seat.focused_surface_role.as_deref(),
+                Some("toplevel")
+            );
+            assert_eq!(
+                snapshot.state.seat.focused_window_id,
+                Some(WindowId::from("smithay-window-601"))
+            );
+            assert!(snapshot.state.seat.focused_output_id.is_none());
+        }
+
+        #[test]
+        fn runtime_snapshot_exposes_focused_output_summary() {
+            let mut runtime = test_runtime("wayland-test-seat-focus-output");
+            runtime.state_mut().track_test_surface_snapshot(
+                crate::backend::BackendSurfaceSnapshot::Layer {
+                    surface_id: "wl-layer-focus-runtime-1".into(),
+                    output_id: OutputId::from("out-5"),
+                    metadata: LayerSurfaceMetadata {
+                        namespace: "panel".into(),
+                        tier: LayerSurfaceTier::Top,
+                        keyboard_interactivity: LayerKeyboardInteractivity::OnDemand,
+                        exclusive_zone: LayerExclusiveZone::Exclusive(8),
+                    },
+                },
+            );
+            runtime.state_mut().track_test_surface_snapshot(
+                crate::backend::BackendSurfaceSnapshot::Popup {
+                    surface_id: "wl-popup-focus-runtime-1".into(),
+                    output_id: Some(OutputId::from("out-5")),
+                    parent_surface_id: "wl-layer-focus-runtime-1".into(),
+                },
+            );
+            runtime
+                .state_mut()
+                .track_test_popup_parent("wl-popup-focus-runtime-1", "wl-layer-focus-runtime-1");
+            runtime
+                .state_mut()
+                .set_test_focused_surface_id(Some("wl-popup-focus-runtime-1"));
+
+            let snapshot = runtime.snapshot();
+            assert_eq!(
+                snapshot.state.seat.focused_surface_role.as_deref(),
+                Some("popup")
+            );
+            assert_eq!(
+                snapshot.state.seat.focused_output_id,
+                Some(OutputId::from("out-5"))
+            );
+        }
+
+        #[test]
+        fn runtime_snapshot_exposes_cursor_inspection() {
+            let mut runtime = test_runtime("wayland-test-seat-cursor");
+            runtime
+                .state_mut()
+                .set_test_cursor_image("named:Crosshair", None);
+
+            let snapshot = runtime.snapshot();
+            assert_eq!(snapshot.state.seat.cursor_image, "named:Crosshair");
+            assert!(snapshot.state.seat.cursor_surface_id.is_none());
+        }
+
+        #[test]
+        fn runtime_snapshot_exposes_output_inspection() {
+            let mut runtime = test_runtime("wayland-test-output-state");
+            runtime
+                .state_mut()
+                .register_output_id(OutputId::from("out-1"), true);
+            runtime
+                .state_mut()
+                .register_output_id(OutputId::from("out-2"), false);
+
+            let snapshot = runtime.snapshot();
+            assert_eq!(
+                snapshot.state.outputs.known_output_ids,
+                vec![OutputId::from("out-1"), OutputId::from("out-2")]
+            );
+            assert_eq!(
+                snapshot.state.outputs.active_output_id,
+                Some(OutputId::from("out-1"))
+            );
+            assert_eq!(
+                snapshot.state.outputs.active_output_attached_surface_count,
+                0
+            );
+        }
+
+        #[test]
+        fn runtime_snapshot_exposes_output_attachment_summary() {
+            let mut runtime = test_runtime("wayland-test-output-summary");
+            runtime
+                .state_mut()
+                .register_output_id(OutputId::from("out-1"), true);
+            runtime.state_mut().track_test_surface_snapshot(
+                crate::backend::BackendSurfaceSnapshot::Layer {
+                    surface_id: "wl-layer-summary-1".into(),
+                    output_id: OutputId::from("out-1"),
+                    metadata: LayerSurfaceMetadata {
+                        namespace: "panel".into(),
+                        tier: LayerSurfaceTier::Top,
+                        keyboard_interactivity: LayerKeyboardInteractivity::OnDemand,
+                        exclusive_zone: LayerExclusiveZone::Exclusive(12),
+                    },
+                },
+            );
+
+            let snapshot = runtime.snapshot();
+            assert_eq!(
+                snapshot.state.outputs.active_output_attached_surface_count,
+                1
+            );
+            assert_eq!(snapshot.state.outputs.mapped_surface_count, 1);
         }
 
         #[test]
@@ -652,14 +2252,193 @@ mod imp {
             assert_eq!(snapshot.topology_surface_count, 0);
             assert_eq!(bootstrap.controller.phase(), ControllerPhase::Pending);
         }
+
+        #[test]
+        fn bootstrap_applies_pending_seat_focus_discovery_events_to_controller() {
+            let runtime_service = test_runtime_service();
+            let config = test_config();
+            let state = test_state_snapshot();
+            let controller =
+                crate::CompositorController::initialize(runtime_service, config, state).unwrap();
+            let runtime = test_runtime("wayland-test-seat-focus-bootstrap");
+            let report = SmithayStartupReport {
+                controller: controller.report(),
+                output_name: "smithay-test-output".into(),
+                seat_name: "smithay-test-seat".into(),
+                logical_size: (1280, 720),
+                socket_name: Some("wayland-test-seat-focus-bootstrap".into()),
+            };
+            let mut bootstrap = SmithayBootstrap {
+                controller,
+                runtime,
+                report,
+            };
+            bootstrap.runtime.state_mut().track_test_surface_snapshot(
+                crate::backend::BackendSurfaceSnapshot::Layer {
+                    surface_id: "wl-seat-focus-1".into(),
+                    output_id: OutputId::from("out-1"),
+                    metadata: LayerSurfaceMetadata {
+                        namespace: "panel".into(),
+                        tier: LayerSurfaceTier::Top,
+                        keyboard_interactivity: LayerKeyboardInteractivity::OnDemand,
+                        exclusive_zone: LayerExclusiveZone::Exclusive(8),
+                    },
+                },
+            );
+            let _ = bootstrap.runtime.state_mut().take_discovery_events();
+            bootstrap
+                .runtime
+                .state_mut()
+                .record_test_seat_focus_event(Some("wl-seat-focus-1"));
+
+            let applied = bootstrap.apply_pending_discovery_events().unwrap();
+            let snapshot = bootstrap.snapshot();
+
+            assert_eq!(applied, 1);
+            let seat = snapshot
+                .topology
+                .seats
+                .iter()
+                .find(|seat| seat.name == "smithay-test-seat")
+                .unwrap();
+            assert_eq!(seat.focused_window_id, None);
+            assert_eq!(seat.focused_output_id, Some(OutputId::from("out-1")));
+        }
+
+        #[test]
+        fn bootstrap_applies_pending_output_activation_discovery_events_to_controller() {
+            let runtime_service = test_runtime_service();
+            let config = test_config();
+            let mut state = test_state_snapshot();
+            state.outputs.push(spiders_shared::wm::OutputSnapshot {
+                id: OutputId::from("out-2"),
+                name: "DP-1".into(),
+                logical_width: 2560,
+                logical_height: 1440,
+                scale: 1,
+                transform: spiders_shared::wm::OutputTransform::Normal,
+                enabled: true,
+                current_workspace_id: None,
+            });
+            let controller =
+                crate::CompositorController::initialize(runtime_service, config, state).unwrap();
+            let runtime = test_runtime("wayland-test-output-activate-bootstrap");
+            let report = SmithayStartupReport {
+                controller: controller.report(),
+                output_name: "smithay-test-output".into(),
+                seat_name: "smithay-test-seat".into(),
+                logical_size: (1280, 720),
+                socket_name: Some("wayland-test-output-activate-bootstrap".into()),
+            };
+            let mut bootstrap = SmithayBootstrap {
+                controller,
+                runtime,
+                report,
+            };
+            bootstrap
+                .runtime
+                .state_mut()
+                .register_output_id(OutputId::from("out-2"), false);
+            let _ = bootstrap.runtime.state_mut().take_discovery_events();
+            bootstrap
+                .runtime
+                .state_mut()
+                .activate_output_id(OutputId::from("out-2"));
+
+            let applied = bootstrap.apply_pending_discovery_events().unwrap();
+            let snapshot = bootstrap.snapshot();
+
+            assert_eq!(applied, 1);
+            assert_eq!(
+                snapshot.topology.active_output_id,
+                Some(OutputId::from("out-2"))
+            );
+        }
+
+        #[test]
+        fn bootstrap_applies_pending_output_lost_discovery_events_to_controller() {
+            let runtime_service = test_runtime_service();
+            let config = test_config();
+            let mut state = test_state_snapshot();
+            state.outputs.push(OutputSnapshot {
+                id: OutputId::from("out-2"),
+                name: "DP-1".into(),
+                logical_width: 2560,
+                logical_height: 1440,
+                scale: 1,
+                transform: OutputTransform::Normal,
+                enabled: true,
+                current_workspace_id: None,
+            });
+            let controller =
+                crate::CompositorController::initialize(runtime_service, config, state).unwrap();
+            let runtime = test_runtime("wayland-test-output-lost-bootstrap");
+            let report = SmithayStartupReport {
+                controller: controller.report(),
+                output_name: "smithay-test-output".into(),
+                seat_name: "smithay-test-seat".into(),
+                logical_size: (1280, 720),
+                socket_name: Some("wayland-test-output-lost-bootstrap".into()),
+            };
+            let mut bootstrap = SmithayBootstrap {
+                controller,
+                runtime,
+                report,
+            };
+
+            bootstrap
+                .runtime
+                .state_mut()
+                .register_output_id(OutputId::from("out-2"), false);
+            bootstrap.runtime.state_mut().track_test_surface_snapshot(
+                crate::backend::BackendSurfaceSnapshot::Layer {
+                    surface_id: "wl-output-lost-layer-1".into(),
+                    output_id: OutputId::from("out-2"),
+                    metadata: LayerSurfaceMetadata {
+                        namespace: "panel".into(),
+                        tier: LayerSurfaceTier::Top,
+                        keyboard_interactivity: LayerKeyboardInteractivity::OnDemand,
+                        exclusive_zone: LayerExclusiveZone::Exclusive(10),
+                    },
+                },
+            );
+            bootstrap
+                .runtime
+                .state_mut()
+                .activate_output_id(OutputId::from("out-2"));
+            assert_eq!(bootstrap.apply_pending_discovery_events().unwrap(), 2);
+
+            bootstrap
+                .runtime
+                .state_mut()
+                .remove_output_id(&OutputId::from("out-2"));
+
+            let applied = bootstrap.apply_pending_discovery_events().unwrap();
+            let snapshot = bootstrap.snapshot();
+
+            assert_eq!(applied, 1);
+            assert!(snapshot
+                .topology
+                .outputs
+                .iter()
+                .all(|output| output.snapshot.id != OutputId::from("out-2")));
+            assert_eq!(snapshot.topology.active_output_id, None);
+            let layer = snapshot
+                .topology
+                .surfaces
+                .iter()
+                .find(|surface| surface.id == "wl-output-lost-layer-1")
+                .unwrap();
+            assert_eq!(layer.output_id, None);
+        }
     }
 }
 
 #[cfg(feature = "smithay-winit")]
 pub use imp::{
     bootstrap_winit, bootstrap_winit_controller, initialize_winit_controller, SmithayBootstrap,
-    SmithayBootstrapSnapshot, SmithayRuntimeError, SmithayRuntimeSnapshot, SmithayStartupReport,
-    SmithayWinitRuntime,
+    SmithayBootstrapSnapshot, SmithayBootstrapTopologySnapshot, SmithayRuntimeError,
+    SmithayRuntimeSnapshot, SmithayStartupReport, SmithayWinitRuntime,
 };
 
 #[cfg(not(feature = "smithay-winit"))]

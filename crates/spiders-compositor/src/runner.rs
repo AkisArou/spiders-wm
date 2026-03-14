@@ -350,15 +350,7 @@ mod tests {
             Some("seat-1")
         );
         assert!(runner.app().topology().surface("window-w1").is_none());
-        assert_eq!(
-            runner
-                .app()
-                .topology()
-                .surface("popup-1")
-                .unwrap()
-                .output_id,
-            Some(OutputId::from("out-2"))
-        );
+        assert!(runner.app().topology().surface("popup-1").is_none());
         let trace = runner.trace();
         assert_eq!(trace.applied_events.len(), 5);
         assert_eq!(trace.diagnostics.active_seat.as_deref(), Some("seat-1"));
@@ -366,7 +358,7 @@ mod tests {
         assert_eq!(trace.diagnostics.focused_window.as_deref(), Some("w1"));
         assert!(trace.diagnostics.seat_names.contains(&"seat-1".to_string()));
         assert!(trace.diagnostics.output_ids.contains(&"out-2".to_string()));
-        assert!(trace
+        assert!(!trace
             .diagnostics
             .surface_ids
             .contains(&"popup-1".to_string()));

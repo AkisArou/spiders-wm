@@ -106,6 +106,52 @@ came from.
 that turns future smithay callbacks/snapshots into controller commands without
 linking smithay objects into domain state.
 
+When the smithay bootstrap path exports typed known-surface snapshots, the
+controller-facing topology produced by draining pending discovery events should
+preserve the same surface identity and role information. In particular, bootstrap
+inspection should be able to assert:
+
+- stable toplevel `window_id` to `surface_id` mapping
+- typed xdg toplevel configure state snapshotting for states the bootstrap path
+  actively drives (for example activated/maximized/fullscreen plus ack serial
+  visibility when known)
+- xdg toplevel configure inspection may also include pending configure count when
+  smithay has sent toplevel configures that are not yet acked
+- that includes initial xdg toplevel configures emitted from the smithay commit
+  path before the client has acked its first configure
+- typed xdg toplevel metadata snapshotting for fields like title, app id, and
+  parent toplevel linkage when smithay reports them
+- xdg toplevel metadata inspection may also include client-provided size
+  constraints such as min/max size when they are available from smithay role data
+- xdg toplevel metadata inspection may include client-provided window geometry
+  when smithay cached xdg surface state exposes it
+- typed xdg toplevel request snapshotting for compositor-handled requests like
+  move, resize, minimize, and window-menu invocation when smithay reports them
+- those xdg toplevel request snapshots may also expose coarse sequencing details
+  such as the last request kind observed and a small request count for diagnostics/tests
+- typed xdg popup configure snapshotting for reposition token, geometry, and
+  reactive-positioner state when smithay drives popup configure/reposition flow
+- xdg popup configure inspection may also include pending configure count when
+  smithay popup configure/reposition flow has sent configures that are not yet acked
+- that includes the initial xdg popup configure emitted when a popup enters the
+  compositor-managed lifecycle before any reposition-specific requests occur
+- xdg popup inspection may also expose coarse request sequencing details for
+  popup grabs and reposition requests, such as last request kind and request count
+- typed popup request snapshotting should also cover grab intent/serial when the
+  xdg popup lifecycle reaches compositor-managed popup grabs
+- popup `parent_surface_id` linkage, including explicit unresolved-parent state
+- mapped presence while a known surface is tracked
+- explicit unmap transitions when a known surface loses its mapped/buffered state
+- full surface removal after smithay surface-loss events are drained
+- parent-driven popup cascade behavior, where unmapping or removing a parent
+  surface also unmaps or removes topology-visible child popups
+- popup parent resolution is not limited to xdg toplevels; layer surfaces can
+  also act as stable popup parents, and popup output attachment should follow the
+  resolved layer parent when known
+- when layer-shell explicitly reports a new popup for a layer parent, smithay-side
+  inspection should preserve that parent linkage and output inheritance through
+  the layer-shell-specific hook as well as the generic popup tracking path
+
 The first real smithay slice should stay intentionally small:
 
 - use a feature-gated winit-backed smithay runtime scaffold
@@ -153,6 +199,11 @@ These snapshots should stay backend-light and test-friendly. They are useful for
 asserting bootstrap/discovery flow in tests without needing full rendering or a
 long-running smithay event loop.
 
+`SmithayBootstrapSnapshot` may therefore include both the smithay-owned runtime
+view and a cloned backend-agnostic topology view from the controller/session
+side, so tests can compare the translated topology against the smithay known-
+surface model without exposing raw smithay handles.
+
 The initial seat setup should also include keyboard capability creation so the
 bootstrap state matches the first real runtime owner more closely.
 
@@ -165,6 +216,111 @@ including:
 - commit-time surface lifecycle tracking for xdg and unmanaged surfaces
 - typed snapshot/export of known smithay surfaces, including explicit popup
   parent resolution state
+- topology-level preservation of that translated xdg surface identity across the
+  smithay -> controller bootstrap boundary
+- explicit unmap propagation into backend-agnostic topology before final removal
+- full surface removal from both smithay known-surface state and controller
+  topology once xdg loss/removal events are drained
+
+The next protocol slice now includes an initial layer-shell discovery boundary:
+
+- layer-shell global initialization in smithay bootstrap state
+- typed layer-surface discovery translated into backend-agnostic layer topology
+- output attachment resolution for discovered layer surfaces using stable output ids
+- minimal typed layer metadata translation, currently namespace plus requested
+  layer tier
+- layer metadata may also carry small policy-relevant fields from smithay such as
+  keyboard interactivity and exclusive-zone intent, but only as stable typed
+  values owned by this repository
+- layer inspection may also carry a small configure snapshot when smithay layer
+  configure/ack flow is observed, including last acked serial, pending configure
+  count, and configured size
+- bootstrap snapshots that can compare smithay-known layer surfaces against
+  controller topology without exposing smithay layer handles
+- layer-surface unmap/remap/removal transitions should preserve stable surface
+  identity and output attachment until final removal
+
+An initial clipboard/data-device inspection boundary may also exist entirely on
+the smithay side when it is useful for diagnostics and tests, for example:
+
+- data-device global initialization in smithay bootstrap state
+- typed clipboard selection inspection scoped to a seat
+- clipboard inspection may also include the currently focused client identity for
+  the seat when smithay data-device focus is updated from seat focus changes
+- stable snapshot export of selection mime types and coarse source kind
+- no raw selection protocol objects crossing into backend-agnostic runtime state
+
+The same inspection-only approach may also extend to primary selection when the
+smithay bootstrap seam needs parity with clipboard focus/selection diagnostics,
+for example:
+
+- primary-selection global initialization in smithay bootstrap state
+- typed primary selection inspection scoped to a seat
+- primary selection inspection may also include the currently focused client
+  identity for the seat when smithay primary-selection focus follows seat focus
+  changes
+- stable snapshot export of primary-selection mime types and coarse source kind;
+  when smithay selection provider details are observable, that coarse kind may
+  distinguish data-device, primary-selection, wlr-data-control, and ext-data-control
+- no raw primary-selection protocol objects crossing into backend-agnostic
+  runtime state
+
+Selection-manager protocol support may also be exported as small capability
+flags in smithay bootstrap/runtime inspection snapshots when that helps tests and
+diagnostics assert that the expected globals were initialized. This can include:
+
+- wl data-device support
+- primary-selection support
+- wlr data-control support
+- ext data-control support
+
+Those capability flags are bootstrap/runtime diagnostics only; they do not imply
+that backend-agnostic runtime state owns selection protocol semantics.
+
+Smithay bootstrap/runtime inspection may also expose a small seat/input snapshot
+for the compositor-owned seat, including:
+
+- seat name
+- coarse capability presence such as keyboard, pointer, and touch
+- currently focused surface id when smithay seat focus changes are observed
+- coarse focused-surface summary such as focused role and resolved window id when
+  focus can be tied back to a known toplevel or popup parent chain
+- focused output id when the focused surface can be tied back to a smithay-known
+  output attachment
+- coarse cursor-image inspection such as hidden, named cursor, or cursor-surface
+  mode, plus cursor surface id when the cursor image is surface-backed
+
+This remains a smithay-side diagnostic seam only and should not replace the
+backend-agnostic topology/session seat model.
+
+Smithay bootstrap/runtime inspection may also expose a similarly small output
+snapshot for diagnostics, including:
+
+- known output ids discovered by the smithay bootstrap owner
+- the currently active output id when one has been selected
+- a coarse count of layer-surface output attachments tracked on the smithay side
+- coarse active-output and mapped-surface counts when smithay-owned attachment
+  bookkeeping can summarize how many surfaces are attached or currently mapped
+
+This output snapshot is also diagnostics only and should stay separate from the
+backend-agnostic topology output model.
+
+When both smithay-side output summaries and backend-agnostic topology snapshots
+are available during bootstrap tests, they should stay in parity for shared
+coarse facts such as active output identity and mapped/attached surface counts.
+
+The same parity rule also applies to overlapping seat facts, such as active seat
+identity and focused window summaries, when both smithay diagnostics and
+backend-agnostic topology snapshots export them.
+
+Smithay-driven seat focus changes may also cross the bootstrap seam as small
+discovery/bootstrap events when that is the cleanest way to keep backend-agnostic
+topology focus state in sync during bootstrap/runtime tests. Those events may
+carry seat name plus optional focused window/output ids only.
+
+Likewise, smithay-owned output activation changes may cross the same seam as
+small typed output-activation events when runtime/bootstrap tests need topology
+active-output state to follow smithay state changes after initial registration.
 
 That slice is only a startup/discovery proof, not full surface or rendering
 integration.

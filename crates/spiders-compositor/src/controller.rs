@@ -469,6 +469,163 @@ mod tests {
     }
 
     #[test]
+    fn controller_accepts_surface_unmapped_discovery_event() {
+        let mut controller =
+            CompositorController::initialize(runtime_service(), config(), state()).unwrap();
+
+        controller
+            .apply_discovery_event(BackendDiscoveryEvent::WindowSurfaceDiscovered {
+                surface_id: "window-w1".into(),
+                window_id: WindowId::from("w1"),
+                output_id: Some(OutputId::from("out-1")),
+            })
+            .unwrap();
+        controller
+            .apply_discovery_event(BackendDiscoveryEvent::SurfaceUnmapped {
+                surface_id: "window-w1".into(),
+            })
+            .unwrap();
+
+        let surface = controller
+            .app()
+            .session()
+            .topology()
+            .surface("window-w1")
+            .unwrap();
+        assert!(!surface.mapped);
+        assert!(controller
+            .app()
+            .session()
+            .topology()
+            .output(&OutputId::from("out-1"))
+            .unwrap()
+            .mapped_surface_ids
+            .is_empty());
+    }
+
+    #[test]
+    fn controller_accepts_seat_focus_discovery_event() {
+        let mut controller =
+            CompositorController::initialize(runtime_service(), config(), state()).unwrap();
+
+        controller
+            .apply_discovery_event(BackendDiscoveryEvent::SeatDiscovered {
+                seat_name: "seat-backend".into(),
+                active: true,
+            })
+            .unwrap();
+        controller
+            .apply_discovery_event(BackendDiscoveryEvent::SeatFocusChanged {
+                seat_name: "seat-backend".into(),
+                window_id: Some(WindowId::from("w-focused")),
+                output_id: Some(OutputId::from("out-1")),
+            })
+            .unwrap();
+
+        let seat = controller
+            .app()
+            .session()
+            .topology()
+            .seat("seat-backend")
+            .unwrap();
+        assert_eq!(seat.focused_window_id, Some(WindowId::from("w-focused")));
+        assert_eq!(seat.focused_output_id, Some(OutputId::from("out-1")));
+    }
+
+    #[test]
+    fn controller_cascades_parent_surface_unmap_to_popup_children() {
+        let mut controller =
+            CompositorController::initialize(runtime_service(), config(), state()).unwrap();
+
+        controller
+            .apply_discovery_event(BackendDiscoveryEvent::WindowSurfaceDiscovered {
+                surface_id: "window-w1".into(),
+                window_id: WindowId::from("w1"),
+                output_id: Some(OutputId::from("out-1")),
+            })
+            .unwrap();
+        controller
+            .apply_discovery_event(BackendDiscoveryEvent::PopupSurfaceDiscovered {
+                surface_id: "popup-w1".into(),
+                output_id: Some(OutputId::from("out-1")),
+                parent_surface_id: "window-w1".into(),
+            })
+            .unwrap();
+
+        controller
+            .apply_discovery_event(BackendDiscoveryEvent::SurfaceUnmapped {
+                surface_id: "window-w1".into(),
+            })
+            .unwrap();
+
+        let topology = controller.app().session().topology();
+        assert!(!topology.surface("window-w1").unwrap().mapped);
+        assert!(!topology.surface("popup-w1").unwrap().mapped);
+    }
+
+    #[test]
+    fn controller_cascades_parent_surface_removal_to_popup_children() {
+        let mut controller =
+            CompositorController::initialize(runtime_service(), config(), state()).unwrap();
+
+        controller
+            .apply_discovery_event(BackendDiscoveryEvent::WindowSurfaceDiscovered {
+                surface_id: "window-w1".into(),
+                window_id: WindowId::from("w1"),
+                output_id: Some(OutputId::from("out-1")),
+            })
+            .unwrap();
+        controller
+            .apply_discovery_event(BackendDiscoveryEvent::PopupSurfaceDiscovered {
+                surface_id: "popup-w1".into(),
+                output_id: Some(OutputId::from("out-1")),
+                parent_surface_id: "window-w1".into(),
+            })
+            .unwrap();
+
+        controller
+            .apply_discovery_event(BackendDiscoveryEvent::SurfaceLost {
+                surface_id: "window-w1".into(),
+            })
+            .unwrap();
+
+        let topology = controller.app().session().topology();
+        assert!(topology.surface("window-w1").is_none());
+        assert!(topology.surface("popup-w1").is_none());
+    }
+
+    #[test]
+    fn controller_preserves_layer_output_for_popup_parented_to_layer_surface() {
+        let mut controller =
+            CompositorController::initialize(runtime_service(), config(), state()).unwrap();
+
+        controller
+            .apply_discovery_event(BackendDiscoveryEvent::LayerSurfaceDiscovered {
+                surface_id: "layer-1".into(),
+                output_id: OutputId::from("out-1"),
+                metadata: spiders_runtime::LayerSurfaceMetadata {
+                    namespace: "panel".into(),
+                    tier: spiders_runtime::LayerSurfaceTier::Top,
+                    keyboard_interactivity: spiders_runtime::LayerKeyboardInteractivity::OnDemand,
+                    exclusive_zone: spiders_runtime::LayerExclusiveZone::Exclusive(24),
+                },
+            })
+            .unwrap();
+        controller
+            .apply_discovery_event(BackendDiscoveryEvent::PopupSurfaceDiscovered {
+                surface_id: "popup-layer-1".into(),
+                output_id: Some(OutputId::from("out-1")),
+                parent_surface_id: "layer-1".into(),
+            })
+            .unwrap();
+
+        let topology = controller.app().session().topology();
+        let popup = topology.surface("popup-layer-1").unwrap();
+        assert_eq!(popup.parent_surface_id.as_deref(), Some("layer-1"));
+        assert_eq!(popup.output_id, Some(OutputId::from("out-1")));
+    }
+
+    #[test]
     fn controller_accepts_backend_topology_snapshot() {
         let mut controller =
             CompositorController::initialize(runtime_service(), config(), state()).unwrap();
