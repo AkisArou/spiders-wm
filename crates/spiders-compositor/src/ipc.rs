@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::os::unix::net::UnixStream;
 
 use spiders_config::runtime::LayoutRuntime;
@@ -26,6 +27,7 @@ pub enum CompositorIpcError {
 pub struct CompositorIpcHost {
     server: IpcServerState,
     listener: std::os::unix::net::UnixListener,
+    clients: BTreeMap<spiders_ipc::IpcClientId, UnixStream>,
 }
 
 impl CompositorIpcHost {
@@ -33,6 +35,7 @@ impl CompositorIpcHost {
         Ok(Self {
             server: IpcServerState::new(),
             listener: bind_listener(path)?,
+            clients: BTreeMap::new(),
         })
     }
 
@@ -48,49 +51,126 @@ impl CompositorIpcHost {
         self.server.add_client()
     }
 
+    pub fn attach_client_stream(&mut self, stream: UnixStream) -> spiders_ipc::IpcClientId {
+        let client_id = self.server.add_client();
+        self.clients.insert(client_id, stream);
+        client_id
+    }
+
+    pub fn accept_client(&mut self) -> Result<spiders_ipc::IpcClientId, CompositorIpcError> {
+        let (stream, _) = self
+            .listener
+            .accept()
+            .map_err(|error| CompositorIpcError::Transport(IpcTransportError::Io(error)))?;
+        Ok(self.attach_client_stream(stream))
+    }
+
     pub fn remove_client(
         &mut self,
         client_id: spiders_ipc::IpcClientId,
     ) -> Option<spiders_ipc::IpcSession> {
+        self.clients.remove(&client_id);
         self.server.remove_client(client_id)
     }
 
     pub fn serve_client_once<L, R>(
         &mut self,
         client_id: spiders_ipc::IpcClientId,
-        stream: &mut UnixStream,
         controller: &mut CompositorController<L, R>,
     ) -> Result<spiders_ipc::IpcResponse, CompositorIpcError>
     where
         L: spiders_config::loader::LayoutSourceLoader,
         R: LayoutRuntime,
     {
-        let request = spiders_ipc::recv_request(stream)?;
+        let request = {
+            let stream = self
+                .clients
+                .get_mut(&client_id)
+                .ok_or(UnknownClientError { client_id })?;
+            spiders_ipc::recv_request(stream)?
+        };
+
         let result = self.server.handle_request(client_id, request)?;
-        let response = match result {
-            IpcServerHandleResult::Response { response, .. } => response,
+        let (response, emitted_events) = match result {
+            IpcServerHandleResult::Response { response, .. } => (response, Vec::new()),
             IpcServerHandleResult::Query {
                 client_id,
                 request_id,
                 query,
-            } => self.server.query_response(
-                client_id,
-                request_id,
-                query_response(controller, query),
-            )?,
+            } => (
+                self.server.query_response(
+                    client_id,
+                    request_id,
+                    query_response(controller, query),
+                )?,
+                Vec::new(),
+            ),
             IpcServerHandleResult::Action {
                 client_id,
                 request_id,
                 action,
             } => {
-                controller.apply_ipc_action(&action)?;
-                self.server.action_accepted(client_id, request_id)?
+                let update = controller.apply_ipc_action(&action)?;
+                (
+                    self.server.action_accepted(client_id, request_id)?,
+                    update.events,
+                )
             }
         };
 
-        spiders_ipc::send_response(stream, &response)?;
+        {
+            let stream = self
+                .clients
+                .get_mut(&client_id)
+                .ok_or(UnknownClientError { client_id })?;
+            spiders_ipc::send_response(stream, &response)?;
+        }
+
+        self.broadcast_events(emitted_events)?;
 
         Ok(response)
+    }
+
+    pub fn broadcast_event(
+        &mut self,
+        event: spiders_shared::api::CompositorEvent,
+    ) -> Result<Vec<spiders_ipc::IpcClientId>, CompositorIpcError> {
+        let responses = self.server.broadcast_event(event);
+        let mut delivered = Vec::new();
+        let mut dropped = Vec::new();
+
+        for (client_id, response) in responses {
+            match self.clients.get_mut(&client_id) {
+                Some(stream) => match spiders_ipc::send_response(stream, &response) {
+                    Ok(()) => delivered.push(client_id),
+                    Err(_) => dropped.push(client_id),
+                },
+                None => dropped.push(client_id),
+            }
+        }
+
+        for client_id in dropped {
+            self.remove_client(client_id);
+        }
+
+        Ok(delivered)
+    }
+
+    pub fn broadcast_events(
+        &mut self,
+        events: impl IntoIterator<Item = spiders_shared::api::CompositorEvent>,
+    ) -> Result<Vec<spiders_ipc::IpcClientId>, CompositorIpcError> {
+        let mut delivered = Vec::new();
+
+        for event in events {
+            for client_id in self.broadcast_event(event)? {
+                if !delivered.contains(&client_id) {
+                    delivered.push(client_id);
+                }
+            }
+        }
+
+        Ok(delivered)
     }
 }
 
@@ -131,7 +211,10 @@ mod tests {
     use spiders_config::model::{Config, LayoutDefinition};
     use spiders_config::runtime::BoaLayoutRuntime;
     use spiders_config::service::ConfigRuntimeService;
-    use spiders_ipc::{recv_response, send_request, IpcClientMessage, IpcEnvelope};
+    use spiders_ipc::{
+        recv_response, send_request, IpcClientMessage, IpcEnvelope, IpcServerMessage,
+        IpcSubscriptionTopic,
+    };
     use spiders_shared::api::WmAction;
     use spiders_shared::ids::{OutputId, WindowId, WorkspaceId};
     use spiders_shared::wm::{
@@ -230,20 +313,17 @@ mod tests {
     fn ipc_host_serves_live_query_from_controller_state() {
         let path = unique_socket_path("query");
         let mut host = CompositorIpcHost::bind(&path).unwrap();
-        let client_id = host.add_client();
         let mut controller = controller();
 
         let mut client = UnixStream::connect(&path).unwrap();
-        let (mut server_stream, _) = host.listener().accept().unwrap();
+        let client_id = host.accept_client().unwrap();
 
         send_request(
             &mut client,
             &IpcEnvelope::new(IpcClientMessage::Query(QueryRequest::TagNames)),
         )
         .unwrap();
-        let response = host
-            .serve_client_once(client_id, &mut server_stream, &mut controller)
-            .unwrap();
+        let response = host.serve_client_once(client_id, &mut controller).unwrap();
         let decoded = recv_response(&client).unwrap();
 
         assert_eq!(response, decoded);
@@ -252,7 +332,6 @@ mod tests {
             spiders_ipc::IpcServerMessage::Query(QueryResponse::TagNames(_))
         ));
 
-        drop(server_stream);
         drop(client);
         let _ = host.remove_client(client_id);
         std::fs::remove_file(path).unwrap();
@@ -262,20 +341,17 @@ mod tests {
     fn ipc_host_serves_live_action_against_controller_state() {
         let path = unique_socket_path("action");
         let mut host = CompositorIpcHost::bind(&path).unwrap();
-        let client_id = host.add_client();
         let mut controller = controller();
 
         let mut client = UnixStream::connect(&path).unwrap();
-        let (mut server_stream, _) = host.listener().accept().unwrap();
+        let client_id = host.accept_client().unwrap();
 
         send_request(
             &mut client,
             &IpcEnvelope::new(IpcClientMessage::Action(WmAction::ToggleFloating)),
         )
         .unwrap();
-        let response = host
-            .serve_client_once(client_id, &mut server_stream, &mut controller)
-            .unwrap();
+        let response = host.serve_client_once(client_id, &mut controller).unwrap();
         let decoded = recv_response(&client).unwrap();
 
         assert_eq!(response, decoded);
@@ -293,9 +369,105 @@ mod tests {
                 .floating
         );
 
-        drop(server_stream);
         drop(client);
         let _ = host.remove_client(client_id);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn ipc_host_broadcasts_subscribed_action_events_to_other_clients() {
+        let path = unique_socket_path("broadcast-action-events");
+        let mut host = CompositorIpcHost::bind(&path).unwrap();
+        let mut controller = controller();
+
+        let mut subscriber = UnixStream::connect(&path).unwrap();
+        let subscriber_id = host.accept_client().unwrap();
+        send_request(
+            &mut subscriber,
+            &IpcEnvelope::new(IpcClientMessage::subscribe([
+                IpcSubscriptionTopic::Windows,
+                IpcSubscriptionTopic::Focus,
+            ])),
+        )
+        .unwrap();
+        let subscribed = host
+            .serve_client_once(subscriber_id, &mut controller)
+            .unwrap();
+        assert!(matches!(
+            subscribed.message,
+            IpcServerMessage::Subscribed { .. }
+        ));
+        let _ = recv_response(&subscriber).unwrap();
+
+        let mut actor = UnixStream::connect(&path).unwrap();
+        let actor_id = host.accept_client().unwrap();
+        send_request(
+            &mut actor,
+            &IpcEnvelope::new(IpcClientMessage::Action(WmAction::ToggleFloating)),
+        )
+        .unwrap();
+        let action_response = host.serve_client_once(actor_id, &mut controller).unwrap();
+        assert!(matches!(
+            action_response.message,
+            IpcServerMessage::ActionAccepted
+        ));
+        let _ = recv_response(&actor).unwrap();
+
+        let event = recv_response(&subscriber).unwrap();
+        assert!(matches!(event.message, IpcServerMessage::Event { .. }));
+
+        drop(actor);
+        drop(subscriber);
+        let _ = host.remove_client(actor_id);
+        let _ = host.remove_client(subscriber_id);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn ipc_host_broadcast_event_targets_matching_subscribers() {
+        let path = unique_socket_path("broadcast-manual-event");
+        let mut host = CompositorIpcHost::bind(&path).unwrap();
+        let mut controller = controller();
+
+        let mut layout_client = UnixStream::connect(&path).unwrap();
+        let layout_client_id = host.accept_client().unwrap();
+        send_request(
+            &mut layout_client,
+            &IpcEnvelope::new(IpcClientMessage::subscribe([IpcSubscriptionTopic::Layout])),
+        )
+        .unwrap();
+        let _ = host
+            .serve_client_once(layout_client_id, &mut controller)
+            .unwrap();
+        let _ = recv_response(&layout_client).unwrap();
+
+        let mut focus_client = UnixStream::connect(&path).unwrap();
+        let focus_client_id = host.accept_client().unwrap();
+        send_request(
+            &mut focus_client,
+            &IpcEnvelope::new(IpcClientMessage::subscribe([IpcSubscriptionTopic::Focus])),
+        )
+        .unwrap();
+        let _ = host
+            .serve_client_once(focus_client_id, &mut controller)
+            .unwrap();
+        let _ = recv_response(&focus_client).unwrap();
+
+        let delivered = host
+            .broadcast_event(spiders_shared::api::CompositorEvent::LayoutChange {
+                workspace_id: None,
+                layout: None,
+            })
+            .unwrap();
+
+        assert_eq!(delivered, vec![layout_client_id]);
+        let event = recv_response(&layout_client).unwrap();
+        assert!(matches!(event.message, IpcServerMessage::Event { .. }));
+
+        drop(layout_client);
+        drop(focus_client);
+        let _ = host.remove_client(layout_client_id);
+        let _ = host.remove_client(focus_client_id);
         std::fs::remove_file(path).unwrap();
     }
 
