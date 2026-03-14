@@ -254,19 +254,7 @@ impl<L> BoaLayoutRuntime<L> {
 }
 
 impl<L: JsLayoutSourceLoader> BoaLayoutRuntime<L> {
-    pub fn selected_layout(
-        &self,
-        config: &Config,
-        workspace: &spiders_shared::wm::WorkspaceSnapshot,
-    ) -> Result<Option<SelectedLayout>, RuntimeError> {
-        config
-            .resolve_selected_layout(workspace)
-            .map_err(|error| RuntimeError::Config {
-                message: error.to_string(),
-            })
-    }
-
-    pub fn load_selected_layout(
+    pub fn prepare_layout(
         &self,
         config: &Config,
         workspace: &spiders_shared::wm::WorkspaceSnapshot,
@@ -278,25 +266,16 @@ impl<L: JsLayoutSourceLoader> BoaLayoutRuntime<L> {
 impl LayoutRuntime for StubLayoutRuntime {
     type Config = Config;
 
-    fn selected_layout(
-        &self,
-        config: &Self::Config,
-        workspace: &spiders_shared::wm::WorkspaceSnapshot,
-    ) -> Result<Option<SelectedLayout>, RuntimeError> {
-        config
-            .resolve_selected_layout(workspace)
-            .map_err(|error| RuntimeError::Config {
-                message: error.to_string(),
-            })
-    }
-
-    fn load_selected_layout(
+    fn prepare_layout(
         &self,
         config: &Self::Config,
         workspace: &spiders_shared::wm::WorkspaceSnapshot,
     ) -> Result<Option<RuntimeArtifact>, RuntimeError> {
-        Ok(self
-            .selected_layout(config, workspace)?
+        Ok(config
+            .resolve_selected_layout(workspace)
+            .map_err(|error| RuntimeError::Config {
+                message: error.to_string(),
+            })?
             .map(|selected| RuntimeArtifact {
                 selected,
                 runtime_source: String::new(),
@@ -331,20 +310,12 @@ impl LayoutRuntime for StubLayoutRuntime {
 impl<L: JsLayoutSourceLoader> LayoutRuntime for BoaLayoutRuntime<L> {
     type Config = Config;
 
-    fn selected_layout(
-        &self,
-        config: &Self::Config,
-        workspace: &spiders_shared::wm::WorkspaceSnapshot,
-    ) -> Result<Option<SelectedLayout>, RuntimeError> {
-        BoaLayoutRuntime::selected_layout(self, config, workspace)
-    }
-
-    fn load_selected_layout(
+    fn prepare_layout(
         &self,
         config: &Self::Config,
         workspace: &spiders_shared::wm::WorkspaceSnapshot,
     ) -> Result<Option<RuntimeArtifact>, RuntimeError> {
-        BoaLayoutRuntime::load_selected_layout(self, config, workspace)
+        BoaLayoutRuntime::prepare_layout(self, config, workspace)
     }
 
     fn build_context(
@@ -549,7 +520,7 @@ mod tests {
         };
 
         let loaded = runtime
-            .load_selected_layout(&config, &workspace())
+            .prepare_layout(&config, &workspace())
             .unwrap()
             .unwrap();
         let layout = runtime

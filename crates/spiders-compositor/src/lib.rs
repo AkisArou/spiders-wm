@@ -226,17 +226,14 @@ impl LayoutService {
         let Some(workspace) = state.current_workspace() else {
             return Ok(None);
         };
-        let Some(selected_layout) = runtime.selected_layout(config, workspace)? else {
+        let Some(loaded_layout) = runtime.prepare_layout(config, workspace)? else {
             return Ok(None);
         };
-        let Some(loaded_layout) = runtime.load_selected_layout(config, workspace)? else {
-            return Ok(None);
-        };
-        let context = runtime.build_context(state, workspace, Some(selected_layout.clone()));
+        let context = runtime.build_context(state, workspace, Some(loaded_layout.selected.clone()));
         let source = runtime.evaluate_layout(&loaded_layout, &context)?;
         let validated = ValidatedLayoutTree::new(source)?;
         let resolved = validated.resolve(windows)?;
-        let request = build_request_from_context(context, selected_layout, resolved.root);
+        let request = build_request_from_context(context, loaded_layout.selected, resolved.root);
 
         Ok(Some(compute_layout_from_request(&request)?))
     }
@@ -580,8 +577,7 @@ mod tests {
             spiders_runtime_js::loader::RuntimePathResolver::new(".", &runtime_root),
         );
         let runtime = spiders_runtime_js::runtime::BoaLayoutRuntime::with_loader(loader.clone());
-        let mut runtime_service =
-            spiders_config::service::ConfigRuntimeService::new(runtime);
+        let mut runtime_service = spiders_config::service::ConfigRuntimeService::new(runtime);
         let config = layout_config("", "layouts/master-stack.js");
         let state = state_snapshot(800, 600);
 

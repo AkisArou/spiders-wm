@@ -381,7 +381,8 @@ mod tests {
         }
     }
 
-    fn runtime_service() -> ConfigRuntimeService<BoaLayoutRuntime<RuntimeProjectLayoutSourceLoader>> {
+    fn runtime_service() -> ConfigRuntimeService<BoaLayoutRuntime<RuntimeProjectLayoutSourceLoader>>
+    {
         let temp_dir = std::env::temp_dir();
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)

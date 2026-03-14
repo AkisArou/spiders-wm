@@ -69,13 +69,7 @@ impl From<RuntimeArtifact> for LoadedLayout {
 pub trait LayoutRuntime: std::fmt::Debug {
     type Config;
 
-    fn selected_layout(
-        &self,
-        config: &Self::Config,
-        workspace: &WorkspaceSnapshot,
-    ) -> Result<Option<SelectedLayout>, RuntimeError>;
-
-    fn load_selected_layout(
+    fn prepare_layout(
         &self,
         config: &Self::Config,
         workspace: &WorkspaceSnapshot,

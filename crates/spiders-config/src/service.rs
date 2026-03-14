@@ -66,7 +66,7 @@ where
                 }),
             };
 
-            if let Err(error) = self.runtime.load_selected_layout(config, &workspace) {
+            if let Err(error) = self.runtime.prepare_layout(config, &workspace) {
                 errors.push(format!("{}: {error}", layout.name));
             }
         }
@@ -79,7 +79,7 @@ where
         config: &Config,
         workspace: &spiders_shared::wm::WorkspaceSnapshot,
     ) -> Result<Option<&RuntimeArtifact>, ConfigRuntimeServiceError> {
-        let Some(loaded) = self.runtime.load_selected_layout(config, workspace)? else {
+        let Some(loaded) = self.runtime.prepare_layout(config, workspace)? else {
             return Ok(None);
         };
 
@@ -147,19 +147,7 @@ mod tests {
     impl LayoutRuntime for StubRuntime {
         type Config = Config;
 
-        fn selected_layout(
-            &self,
-            config: &Self::Config,
-            workspace: &WorkspaceSnapshot,
-        ) -> Result<Option<SelectedLayout>, RuntimeError> {
-            config
-                .resolve_selected_layout(workspace)
-                .map_err(|error| RuntimeError::Config {
-                    message: error.to_string(),
-                })
-        }
-
-        fn load_selected_layout(
+        fn prepare_layout(
             &self,
             _config: &Self::Config,
             _workspace: &WorkspaceSnapshot,
@@ -219,15 +207,7 @@ mod tests {
     impl LayoutRuntime for StubAuthoredRuntime {
         type Config = Config;
 
-        fn selected_layout(
-            &self,
-            config: &Self::Config,
-            workspace: &WorkspaceSnapshot,
-        ) -> Result<Option<SelectedLayout>, RuntimeError> {
-            StubRuntime { loaded: None, error_message: None }.selected_layout(config, workspace)
-        }
-
-        fn load_selected_layout(
+        fn prepare_layout(
             &self,
             _config: &Self::Config,
             _workspace: &WorkspaceSnapshot,
@@ -247,7 +227,11 @@ mod tests {
             workspace: &WorkspaceSnapshot,
             selected_layout: Option<SelectedLayout>,
         ) -> spiders_shared::wm::LayoutEvaluationContext {
-            StubRuntime { loaded: None, error_message: None }.build_context(state, workspace, selected_layout)
+            StubRuntime {
+                loaded: None,
+                error_message: None,
+            }
+            .build_context(state, workspace, selected_layout)
         }
 
         fn evaluate_layout(
@@ -255,7 +239,11 @@ mod tests {
             loaded_layout: &RuntimeArtifact,
             context: &spiders_shared::wm::LayoutEvaluationContext,
         ) -> Result<SourceLayoutNode, RuntimeError> {
-            StubRuntime { loaded: None, error_message: None }.evaluate_layout(loaded_layout, context)
+            StubRuntime {
+                loaded: None,
+                error_message: None,
+            }
+            .evaluate_layout(loaded_layout, context)
         }
 
         fn contract(&self) -> LayoutModuleContract {
