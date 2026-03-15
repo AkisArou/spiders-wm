@@ -56,6 +56,10 @@ impl<R> CompositorSession<R> {
         self.domain.state()
     }
 
+    pub fn config(&self) -> &Config {
+        self.runtime.config()
+    }
+
     pub fn current_layout(&self) -> Option<&WorkspaceLayoutState> {
         self.runtime.current_layout()
     }

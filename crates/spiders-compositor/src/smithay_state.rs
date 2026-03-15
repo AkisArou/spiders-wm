@@ -65,6 +65,7 @@ mod imp {
     };
     use smithay::wayland::shm::{ShmHandler, ShmState};
     use smithay::wayland::socket::ListeningSocketSource;
+    use spiders_config::model::Binding;
     use spiders_effects::TitlebarEffects;
     use spiders_shared::api::WmAction;
     use spiders_shared::ids::{OutputId, WindowId};
@@ -410,6 +411,7 @@ mod imp {
         popup_parent_links: HashMap<String, SmithayPopupParentLink>,
         pending_discovery_events: Vec<BackendDiscoveryEvent>,
         pending_workspace_actions: Vec<WmAction>,
+        bindings: Vec<Binding>,
     }
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -516,7 +518,16 @@ mod imp {
                 popup_parent_links: HashMap::new(),
                 pending_discovery_events: Vec::new(),
                 pending_workspace_actions: Vec::new(),
+                bindings: Vec::new(),
             })
+        }
+
+        pub fn set_bindings(&mut self, bindings: Vec<Binding>) {
+            self.bindings = bindings;
+        }
+
+        pub fn bindings(&self) -> &[Binding] {
+            &self.bindings
         }
 
         pub fn bind_auto_socket_source(&self) -> Result<ListeningSocketSource, SmithayStateError> {
@@ -1137,7 +1148,7 @@ mod imp {
             self.active_titlebar_interaction.is_some()
         }
 
-        pub fn focus_window_from_titlebar(&mut self, window_id: &WindowId) {
+        pub fn set_keyboard_focus_for_window(&mut self, window_id: &WindowId) {
             let Some(surface) = self
                 .xdg_shell_state
                 .toplevel_surfaces()
@@ -1155,6 +1166,10 @@ mod imp {
             if let Some(keyboard) = self.seat.get_keyboard() {
                 keyboard.set_focus(self, Some(surface.wl_surface().clone()), serial);
             }
+        }
+
+        pub fn focus_window_from_titlebar(&mut self, window_id: &WindowId) {
+            self.set_keyboard_focus_for_window(window_id);
             self.queue_workspace_action(WmAction::FocusWindow {
                 window_id: window_id.clone(),
             });
@@ -1827,6 +1842,10 @@ mod imp {
         }
 
         fn track_surface_snapshot(&mut self, snapshot: BackendSurfaceSnapshot) {
+            let snapshot_window_id = match &snapshot {
+                BackendSurfaceSnapshot::Window { window_id, .. } => Some(window_id.clone()),
+                _ => None,
+            };
             let (surface_id, kind) = match &snapshot {
                 BackendSurfaceSnapshot::Window { surface_id, .. } => {
                     (surface_id.clone(), SmithayTrackedSurfaceKind::Toplevel)
@@ -1881,6 +1900,15 @@ mod imp {
 
             self.pending_discovery_events
                 .push(snapshot_into_discovery_event(snapshot));
+
+            if self.focused_surface_id.is_none() {
+                if let Some(window_id) = snapshot_window_id.as_ref() {
+                    self.set_keyboard_focus_for_window(window_id);
+                    self.queue_workspace_action(WmAction::FocusWindow {
+                        window_id: window_id.clone(),
+                    });
+                }
+            }
         }
 
         fn track_surface_unmap_by_id(&mut self, surface_id: String) {
@@ -3132,6 +3160,10 @@ mod imp {
             {
                 self.update_toplevel_surface_pending_state(&surface, render);
             }
+            self.set_keyboard_focus_for_window(&window_id);
+            self.queue_workspace_action(WmAction::FocusWindow {
+                window_id: window_id.clone(),
+            });
             let _ = surface.send_configure();
             self.note_xdg_toplevel_configure_sent(surface_id, true, false, false);
         }

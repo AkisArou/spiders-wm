@@ -25,7 +25,7 @@ mod imp {
         send_frames_surface_tree, surface_presentation_feedback_flags_from_states,
         take_presentation_feedback_surface_tree, OutputPresentationFeedback,
     };
-    use smithay::input::keyboard::FilterResult;
+    use smithay::input::keyboard::{xkb, FilterResult, Keysym, ModifiersState};
     use smithay::input::pointer::CursorIcon;
     use smithay::input::pointer::{ButtonEvent, MotionEvent};
     use smithay::output::{Mode, Output, PhysicalProperties, Subpixel};
@@ -265,6 +265,7 @@ mod imp {
             let commands = self.runtime.drain_pending_discovery_commands();
             let applied = self.apply_pending_discovery_commands(commands)?;
             self.apply_pending_workspace_actions()?;
+            self.sync_focus_state()?;
             Ok(applied)
         }
 
@@ -273,6 +274,11 @@ mod imp {
             let mut applied = 0;
 
             for action in actions {
+                if let WmAction::Spawn { command } = &action {
+                    spawn_shell_command(command, self.runtime.socket_name())?;
+                    applied += 1;
+                    continue;
+                }
                 self.controller.apply_ipc_action(&action).map_err(|error| {
                     SmithayRuntimeError::Winit(format!("workspace action failed: {error}"))
                 })?;
@@ -285,6 +291,48 @@ mod imp {
             }
 
             Ok(applied)
+        }
+
+        fn sync_focus_state(&mut self) -> Result<(), SmithayRuntimeError> {
+            let controller_state = self.controller.state_snapshot();
+            let focused_window_id = controller_state
+                .focused_window_id
+                .clone()
+                .or_else(|| controller_state.visible_window_ids.first().cloned());
+
+            let Some(window_id) = focused_window_id else {
+                return Ok(());
+            };
+
+            if controller_state.focused_window_id.is_none() {
+                self.controller
+                    .apply_ipc_action(&WmAction::FocusWindow {
+                        window_id: window_id.clone(),
+                    })
+                    .map_err(|error| {
+                        SmithayRuntimeError::Winit(format!("workspace action failed: {error}"))
+                    })?;
+                refresh_workspace_export_from_controller(
+                    &self.controller,
+                    self.runtime.state_mut(),
+                );
+                self.report.controller = self.controller.report();
+            }
+
+            let runtime_focus = self
+                .runtime
+                .state()
+                .snapshot()
+                .seat
+                .focused_window_id
+                .clone();
+            if runtime_focus.as_ref() != Some(&window_id) {
+                self.runtime
+                    .state_mut()
+                    .set_keyboard_focus_for_window(&window_id);
+            }
+
+            Ok(())
         }
 
         pub fn apply_adapter_event(
@@ -1033,7 +1081,24 @@ mod imp {
                     event.state(),
                     serial,
                     event.time_msec(),
-                    |_, _, _| FilterResult::Forward,
+                    |state, modifiers, handle| {
+                        if event.state() == smithay::backend::input::KeyState::Pressed {
+                            let keysym = handle.modified_sym();
+                            if let Some(action) = state
+                                .bindings()
+                                .iter()
+                                .find(|binding| {
+                                    binding_matches(&binding.trigger, *modifiers, keysym)
+                                })
+                                .map(|binding| binding.action.clone())
+                            {
+                                state.queue_workspace_action(action);
+                                return FilterResult::Intercept(());
+                            }
+                        }
+
+                        FilterResult::Forward
+                    },
                 );
 
                 Ok(())
@@ -1117,6 +1182,56 @@ mod imp {
             seats: topology.seats.clone(),
             surfaces: topology.surfaces.clone(),
         }
+    }
+
+    fn spawn_shell_command(
+        command: &str,
+        wayland_display: &str,
+    ) -> Result<(), SmithayRuntimeError> {
+        std::process::Command::new("sh")
+            .arg("-lc")
+            .arg(command)
+            .env("WAYLAND_DISPLAY", wayland_display)
+            .spawn()
+            .map(|_| ())
+            .map_err(|error| SmithayRuntimeError::Winit(format!("spawn failed: {error}")))
+    }
+
+    fn binding_matches(trigger: &str, modifiers: ModifiersState, keysym: Keysym) -> bool {
+        let mut needs_alt = false;
+        let mut needs_ctrl = false;
+        let mut needs_shift = false;
+        let mut needs_logo = false;
+        let mut key = None;
+
+        for part in trigger.split('+') {
+            match part {
+                "alt" => needs_alt = true,
+                "ctrl" | "control" => needs_ctrl = true,
+                "shift" => needs_shift = true,
+                "logo" | "super" | "meta" => needs_logo = true,
+                other => key = Some(other),
+            }
+        }
+
+        if modifiers.alt != needs_alt
+            || modifiers.ctrl != needs_ctrl
+            || modifiers.shift != needs_shift
+            || modifiers.logo != needs_logo
+        {
+            return false;
+        }
+
+        let Some(expected_key) = key else {
+            return false;
+        };
+
+        let actual = xkb::keysym_get_name(keysym);
+        if actual == expected_key {
+            return true;
+        }
+
+        actual.eq_ignore_ascii_case(expected_key)
     }
 
     fn logical_output_size(size: (i32, i32), scale_factor: f64) -> (u32, u32) {
@@ -1307,6 +1422,7 @@ mod imp {
         let display =
             Display::new().map_err(|error| SmithayRuntimeError::Winit(error.to_string()))?;
         let mut smithay_state = SpidersSmithayState::new(&display, "smithay-winit")?;
+        smithay_state.set_bindings(controller.app().session().config().bindings.clone());
         let socket = smithay_state.bind_socket_source(options.socket_name.as_deref())?;
         let socket_name = socket.socket_name().to_string_lossy().into_owned();
 

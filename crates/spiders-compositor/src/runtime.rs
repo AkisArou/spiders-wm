@@ -89,6 +89,10 @@ impl<R> CompositorRuntimeState<R> {
         &self.startup.state
     }
 
+    pub fn config(&self) -> &Config {
+        &self.startup.runtime.config
+    }
+
     pub fn startup_session(&self) -> &StartupSession<R> {
         &self.startup
     }
