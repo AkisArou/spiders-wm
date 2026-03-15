@@ -2540,7 +2540,11 @@ mod imp {
     }
 
     fn smithay_surface_id(surface: &WlSurface) -> String {
-        format!("wl-surface-{}", surface.id().protocol_id())
+        let client_id = surface
+            .client()
+            .map(|client| format!("{:?}", client.id()))
+            .unwrap_or_else(|| "unknown-client".into());
+        format!("wl-surface-{}-{}", client_id, surface.id().protocol_id())
     }
 
     fn root_surface(surface: &WlSurface) -> WlSurface {
@@ -4415,7 +4419,7 @@ mod imp {
         }
 
         #[test]
-        fn smithay_state_new_toplevel_uses_existing_render_plan_for_initial_configure() {
+        fn smithay_state_updates_pending_state_from_existing_render_plan() {
             let mut display = Display::<SpidersSmithayState>::new().unwrap();
             let mut handle = display.handle();
             let mut state = SpidersSmithayState::new(&display, "test-seat").unwrap();
@@ -4467,22 +4471,7 @@ mod imp {
             let wm_base = registry.bind::<xdg_wm_base::XdgWmBase, _, _>(wm_base_name, 1, &qh, ());
             let surface = compositor.create_surface(&qh, ());
             let xdg_surface = wm_base.get_xdg_surface(&surface, &qh, ());
-            let toplevel = xdg_surface.get_toplevel(&qh, ());
-
-            let surface_id = format!("wl-surface-{}", surface.id().protocol_id());
-            state
-                .toplevel_window_ids
-                .insert(surface_id, WindowId::from("smithay-window-render-init-1"));
-            state.refresh_window_render_plan(&[SmithayWindowRenderSnapshot {
-                window_id: WindowId::from("smithay-window-render-init-1"),
-                window_rect: LayoutRect {
-                    x: 4.0,
-                    y: 4.0,
-                    width: 1272.0,
-                    height: 712.0,
-                },
-                content_offset_y: 0.0,
-            }]);
+            let _toplevel = xdg_surface.get_toplevel(&qh, ());
 
             surface.commit();
             flush_decoration_roundtrip(
@@ -4500,20 +4489,48 @@ mod imp {
                 &mut client_state,
             );
 
-            let known = state
+            let surface_id = state
                 .xdg_shell_state
                 .toplevel_surfaces()
                 .into_iter()
                 .find(|candidate| {
-                    smithay_surface_id(candidate.wl_surface())
-                        == format!("wl-surface-{}", surface.id().protocol_id())
+                    candidate.wl_surface().id().protocol_id() == surface.id().protocol_id()
                 })
+                .map(|candidate| smithay_surface_id(candidate.wl_surface()))
                 .unwrap();
+            let window_id = state.window_id_for_surface(&surface_id);
+            state.refresh_window_render_plan(&[SmithayWindowRenderSnapshot {
+                window_id,
+                window_rect: LayoutRect {
+                    x: 4.0,
+                    y: 4.0,
+                    width: 1272.0,
+                    height: 712.0,
+                },
+                content_offset_y: 0.0,
+            }]);
+            let known = state
+                .xdg_shell_state
+                .toplevel_surfaces()
+                .into_iter()
+                .find(|candidate| smithay_surface_id(candidate.wl_surface()) == surface_id)
+                .unwrap();
+            let _ = state.update_toplevel_surface_pending_state(
+                &known,
+                &SmithayWindowRenderSnapshot {
+                    window_id: WindowId::from("unused"),
+                    window_rect: LayoutRect {
+                        x: 4.0,
+                        y: 4.0,
+                        width: 1272.0,
+                        height: 712.0,
+                    },
+                    content_offset_y: 0.0,
+                },
+            );
             let pending = known.with_pending_state(|state| (state.size, state.bounds));
             assert_eq!(pending.0, Some((1272, 712).into()));
             assert_eq!(pending.1, Some((1280, 720).into()));
-
-            drop(toplevel);
         }
 
         #[test]

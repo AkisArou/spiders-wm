@@ -134,7 +134,8 @@ pub fn compute_layout_from_styled(
         .map_err(|_| LayoutPipelineError::Taffy)?;
 
     Ok(LaidOutTree {
-        root: collect_layout(&taffy, root_id, &root).map_err(|_| LayoutPipelineError::Taffy)?,
+        root: collect_layout(&taffy, root_id, &root, 0.0, 0.0)
+            .map_err(|_| LayoutPipelineError::Taffy)?,
     })
 }
 
@@ -200,29 +201,32 @@ fn collect_layout(
     taffy: &TaffyTree<()>,
     node_id: TaffyNodeId,
     node: &NodeComputedStyle,
+    parent_x: f32,
+    parent_y: f32,
 ) -> Result<LaidOutNode, taffy::tree::TaffyError> {
     let layout = *taffy.layout(node_id)?;
+    let geometry = geometry_from_layout(layout, parent_x, parent_y);
     let child_ids = taffy.children(node_id)?;
     let children = node
         .children
         .iter()
         .zip(child_ids.iter())
-        .map(|(child, child_id)| collect_layout(taffy, *child_id, child))
+        .map(|(child, child_id)| collect_layout(taffy, *child_id, child, geometry.x, geometry.y))
         .collect::<Result<Vec<_>, _>>()?;
 
     Ok(LaidOutNode {
         node: node.node.clone(),
         computed: node.computed.clone(),
         taffy_style: node.taffy_style.clone(),
-        geometry: geometry_from_layout(layout),
+        geometry,
         children,
     })
 }
 
-fn geometry_from_layout(layout: TaffyLayout) -> LayoutGeometry {
+fn geometry_from_layout(layout: TaffyLayout, parent_x: f32, parent_y: f32) -> LayoutGeometry {
     LayoutGeometry {
-        x: layout.location.x,
-        y: layout.location.y,
+        x: parent_x + layout.location.x,
+        y: parent_y + layout.location.y,
         width: layout.size.width,
         height: layout.size.height,
     }
@@ -367,7 +371,7 @@ mod tests {
         assert_eq!(laid_out.root.children[0].geometry.width, 480.0);
         assert_eq!(laid_out.root.children[0].geometry.height, 280.0);
         assert_eq!(laid_out.root.children[0].children[0].geometry.height, 80.0);
-        assert_eq!(laid_out.root.children[0].children[1].geometry.y, 100.0);
+        assert_eq!(laid_out.root.children[0].children[1].geometry.y, 110.0);
         assert_eq!(laid_out.root.children[0].children[1].geometry.height, 180.0);
     }
 

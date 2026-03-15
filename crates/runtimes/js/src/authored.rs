@@ -149,23 +149,6 @@ fn write_runtime_cache(
         }
         expected_paths.insert(destination);
     }
-    for app in &project.layout_apps {
-        if let Some(stylesheet) = &app.stylesheet_path {
-            let relative = app
-                .entry_path
-                .strip_prefix(&app.root_dir)
-                .unwrap()
-                .parent()
-                .unwrap()
-                .join("index.css");
-            let destination = runtime_root.join(relative);
-            if copy_stylesheet_if_stale(stylesheet, &destination, force_rebuild)? {
-                update.copied_stylesheets += 1;
-            }
-            expected_paths.insert(destination);
-        }
-    }
-
     update.pruned_files = prune_stale_runtime_cache(runtime_root, &expected_paths)?;
 
     Ok(update)
@@ -202,15 +185,17 @@ fn write_compiled_app(
         .modules
         .values()
         .filter_map(|record| match &record.id {
-            crate::graph::ModuleId::File(path)
-                if matches!(record.kind, crate::graph::ModuleKind::Script) =>
-            {
-                Some(runtime_root.join(runtime_relative_path(
+            crate::graph::ModuleId::File(path) => match record.kind {
+                crate::graph::ModuleKind::Script => Some(runtime_root.join(runtime_relative_path(
                     path,
                     &graph.app.root_dir,
                     runtime_entry_path.file_name().and_then(|name| name.to_str()),
-                )))
-            }
+                ))),
+                crate::graph::ModuleKind::Stylesheet => {
+                    Some(runtime_root.join(runtime_static_relative_path(path, &graph.app.root_dir)))
+                }
+                crate::graph::ModuleKind::Virtual => None,
+            },
             _ => None,
         })
         .collect::<Vec<_>>();
@@ -262,6 +247,41 @@ fn write_compiled_app(
         written_files += 1;
     }
 
+    if let Some(stylesheet_path) = app.stylesheet_path.as_ref() {
+        let destination = runtime_root.join(runtime_static_relative_path(
+            stylesheet_path,
+            &graph.app.root_dir,
+        ));
+        if let Some(parent) = destination.parent() {
+            std::fs::create_dir_all(parent).map_err(|_| LayoutConfigError::ReadConfig {
+                path: parent.to_path_buf(),
+            })?;
+        }
+        std::fs::write(&destination, &compiled.stylesheet).map_err(|_| LayoutConfigError::ReadConfig {
+            path: destination.clone(),
+        })?;
+        written_files += 1;
+    }
+
+    for stylesheet in &plan.stylesheet_modules {
+        if app.stylesheet_path.as_ref() == Some(stylesheet) {
+            continue;
+        }
+        let destination = runtime_root.join(runtime_static_relative_path(
+            stylesheet,
+            &graph.app.root_dir,
+        ));
+        if let Some(parent) = destination.parent() {
+            std::fs::create_dir_all(parent).map_err(|_| LayoutConfigError::ReadConfig {
+                path: parent.to_path_buf(),
+            })?;
+        }
+        std::fs::copy(stylesheet, &destination).map_err(|_| LayoutConfigError::ReadConfig {
+            path: destination.clone(),
+        })?;
+        written_files += 1;
+    }
+
     Ok(CompiledRuntimeAppOutputs {
         paths: expected_paths,
         written_files,
@@ -273,15 +293,16 @@ fn app_cache_is_fresh(
     runtime_root: &Path,
     runtime_entry_path: &Path,
 ) -> bool {
+    let plan = AppBuildPlan::from_graph(graph);
     let source_files = graph
         .modules
         .values()
         .filter_map(|record| match &record.id {
             crate::graph::ModuleId::File(path)
-                if matches!(record.kind, crate::graph::ModuleKind::Script) =>
-            {
-                Some(path)
-            }
+                if matches!(
+                    record.kind,
+                    crate::graph::ModuleKind::Script | crate::graph::ModuleKind::Stylesheet
+                ) => Some(path),
             _ => None,
         })
         .collect::<Vec<_>>();
@@ -298,20 +319,46 @@ fn app_cache_is_fresh(
     };
 
     source_files.iter().all(|path| {
-        let relative = runtime_relative_path(
-            path,
-            &graph.app.root_dir,
-            runtime_entry_path
-                .file_name()
-                .and_then(|name| name.to_str()),
-        );
+        let relative = if path.extension().and_then(|ext| ext.to_str()) == Some("css") {
+            runtime_static_relative_path(path, &graph.app.root_dir)
+        } else {
+            runtime_relative_path(
+                path,
+                &graph.app.root_dir,
+                runtime_entry_path
+                    .file_name()
+                    .and_then(|name| name.to_str()),
+            )
+        };
         let destination = runtime_root.join(relative);
         std::fs::metadata(destination)
             .ok()
             .and_then(|metadata| metadata.modified().ok())
             .map(|modified| modified >= newest_source)
             .unwrap_or(false)
-    })
+    }) && generated_stylesheet_matches_cached(&plan, graph, runtime_root)
+}
+
+fn generated_stylesheet_matches_cached(
+    plan: &AppBuildPlan,
+    graph: &crate::graph::ModuleGraph,
+    runtime_root: &Path,
+) -> bool {
+    let Some(stylesheet_path) = graph.app.stylesheet_path.as_ref() else {
+        return true;
+    };
+
+    let destination = runtime_root.join(runtime_static_relative_path(stylesheet_path, &graph.app.root_dir));
+    let expected = plan
+        .stylesheet_modules
+        .iter()
+        .map(std::fs::read_to_string)
+        .collect::<Result<Vec<_>, _>>()
+        .ok()
+        .map(|chunks| chunks.join("\n"));
+    let actual = std::fs::read_to_string(destination).ok();
+
+    expected.is_some() && expected == actual
 }
 
 fn runtime_destination_for_specifier(
@@ -344,6 +391,10 @@ fn runtime_relative_path(
         }
     }
     destination
+}
+
+fn runtime_static_relative_path(source_path: &Path, authored_root: &Path) -> PathBuf {
+    source_path.strip_prefix(authored_root).unwrap().to_path_buf()
 }
 
 fn rewrite_module_for_runtime(

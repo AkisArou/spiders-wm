@@ -336,24 +336,15 @@ fn parse_imports(path: &Path, source: &str) -> Result<Vec<ImportedModule>, Graph
     for statement in &parsed.program.body {
         match statement {
             Statement::ImportDeclaration(decl) => {
-                let import = classify_import_specifier(decl.source.value.as_str());
-                if !matches!(import.kind, ImportedModuleKind::Stylesheet) {
-                    imports.push(import);
-                }
+                imports.push(classify_import_specifier(decl.source.value.as_str()));
             }
             Statement::ExportNamedDeclaration(decl) => {
                 if let Some(source) = &decl.source {
-                    let import = classify_import_specifier(source.value.as_str());
-                    if !matches!(import.kind, ImportedModuleKind::Stylesheet) {
-                        imports.push(import);
-                    }
+                    imports.push(classify_import_specifier(source.value.as_str()));
                 }
             }
             Statement::ExportAllDeclaration(decl) => {
-                let import = classify_import_specifier(decl.source.value.as_str());
-                if !matches!(import.kind, ImportedModuleKind::Stylesheet) {
-                    imports.push(import);
-                }
+                imports.push(classify_import_specifier(decl.source.value.as_str()));
             }
             _ => {}
         }
@@ -413,7 +404,7 @@ mod tests {
     }
 
     #[test]
-    fn graph_builder_ignores_css_imports_and_keeps_virtual_imports() {
+    fn graph_builder_tracks_css_imports_and_keeps_virtual_imports() {
         let root = unique_root("graph");
         fs::create_dir_all(root.join("config")).unwrap();
         fs::write(
@@ -447,6 +438,9 @@ mod tests {
         assert!(graph
             .modules
             .contains_key(&ModuleId::Virtual("spiders-wm/config".into())));
+        assert!(graph
+            .modules
+            .contains_key(&ModuleId::File(root.join("index.css"))));
         assert_eq!(
             graph.order.first(),
             Some(&ModuleId::File(root.join("config.ts")))

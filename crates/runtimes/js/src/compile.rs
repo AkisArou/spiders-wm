@@ -76,6 +76,26 @@ impl AppBuildPlan {
                 continue;
             };
 
+            if module.kind != ModuleKind::Stylesheet {
+                continue;
+            }
+
+            let ModuleId::File(path) = &module.id else {
+                continue;
+            };
+
+            if stylesheet_modules.iter().any(|existing| existing == path) {
+                continue;
+            }
+
+            stylesheet_modules.push(path.clone());
+        }
+
+        for module_id in &graph.order {
+            let Some(module) = graph.modules.get(module_id) else {
+                continue;
+            };
+
             match (&module.id, module.kind) {
                 (ModuleId::File(path), ModuleKind::Script) => {
                     if matches!(
@@ -395,7 +415,10 @@ mod tests {
             .contains(&root.join("layouts/master-stack/index.css")));
         assert_eq!(
             plan.stylesheet_modules,
-            vec![root.join("layouts/master-stack/index.css")]
+            vec![
+                root.join("layouts/master-stack/index.css"),
+                root.join("components/StackGroup.css")
+            ]
         );
     }
 
@@ -581,6 +604,6 @@ mod tests {
             Some("components/StackGroup.ts")
         );
         assert!(compiled.stylesheet.contains(".layout {}"));
-        assert!(!compiled.stylesheet.contains(".stack {}"));
+        assert!(compiled.stylesheet.contains(".stack {}"));
     }
 }

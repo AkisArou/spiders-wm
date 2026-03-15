@@ -675,6 +675,61 @@ mod tests {
     }
 
     #[test]
+    fn test_config_master_stack_two_windows_splits_master_and_stack() {
+        let service = LayoutService;
+        let loader = spiders_runtime_js::loader::RuntimeProjectLayoutSourceLoader::new(
+            spiders_runtime_js::loader::RuntimePathResolver::new(
+                "/home/akisarou/projects/spiders-wm",
+                "/home/akisarou/projects/spiders-wm/test_config/.spiders-wm-build",
+            ),
+        );
+        let runtime =
+            spiders_runtime_js::runtime::QuickJsPreparedLayoutRuntime::with_loader(loader);
+        let mut authoring_layout_service =
+            spiders_config::authoring_layout::AuthoringLayoutService::with_paths(
+                runtime,
+                spiders_config::model::ConfigPaths::new(
+                    "/home/akisarou/projects/spiders-wm/test_config/config.ts",
+                    "/home/akisarou/projects/spiders-wm/test_config/.spiders-wm-build/config.js",
+                ),
+            );
+        let config = authoring_layout_service
+            .load_config_with_cache_update(&spiders_config::model::ConfigPaths::new(
+                "/home/akisarou/projects/spiders-wm/test_config/config.ts",
+                "/home/akisarou/projects/spiders-wm/test_config/.spiders-wm-build/config.js",
+            ))
+            .unwrap()
+            .0;
+        let mut state = state_snapshot(1280, 800);
+        state.windows = vec![mapped_window("w1"), mapped_window("w2")];
+        state.visible_window_ids = vec![WindowId::from("w1"), WindowId::from("w2")];
+
+        let startup = service
+            .bootstrap_runtime(&mut authoring_layout_service, &config, &state)
+            .unwrap()
+            .unwrap();
+
+        let first = startup
+            .response
+            .root
+            .find_by_window_id(&WindowId::from("w1"))
+            .unwrap();
+        let second = startup
+            .response
+            .root
+            .find_by_window_id(&WindowId::from("w2"))
+            .unwrap();
+
+        assert_eq!(first.rect().x, 4.0);
+        assert_eq!(first.rect().y, 4.0);
+        assert_eq!(first.rect().height, 792.0);
+        assert_eq!(second.rect().y, 4.0);
+        assert!(second.rect().height > 0.0);
+        assert!(first.rect().width > second.rect().width);
+        assert!(first.rect().x < second.rect().x);
+    }
+
+    #[test]
     fn layout_service_initializes_startup_runtime_state() {
         let service = LayoutService;
         let temp_dir = std::env::temp_dir();
