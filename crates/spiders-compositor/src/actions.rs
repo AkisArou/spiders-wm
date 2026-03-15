@@ -1,8 +1,9 @@
 use spiders_config::model::Config;
 use spiders_shared::api::{CompositorEvent, LayoutCycleDirection, WmAction};
+use spiders_shared::ids::WindowId;
 use spiders_shared::runtime::AuthoringLayoutRuntime;
 
-use crate::runtime::CompositorRuntimeState;
+use crate::runtime::{CompositorRuntimeState, WindowPlacement};
 use crate::wm::{WmState, WmStateError};
 use crate::CompositorLayoutError;
 
@@ -157,8 +158,21 @@ where
         }
         WmAction::CloseFocusedWindow => {
             let focused = wm_state.focused_window_id()?.clone();
+            let next_focus =
+                preferred_focus_after_close(runtime.current_window_placements(), &focused);
             recompute = true;
-            wm_state.destroy_window(&focused)?
+            let mut events = wm_state.destroy_window(&focused)?;
+            if let Some(next_focus) = next_focus {
+                if wm_state
+                    .snapshot()
+                    .windows
+                    .iter()
+                    .any(|window| window.id == next_focus)
+                {
+                    events.push(wm_state.focus_window(&next_focus)?);
+                }
+            }
+            events
         }
     };
 
@@ -169,6 +183,84 @@ where
     }
 
     Ok(ActionOutcome::new(events, recompute))
+}
+
+fn preferred_focus_after_close(
+    placements: Vec<WindowPlacement>,
+    closed_window_id: &WindowId,
+) -> Option<WindowId> {
+    let closed_rect = placements
+        .iter()
+        .find(|placement| &placement.window_id == closed_window_id)?
+        .rect;
+
+    placements
+        .into_iter()
+        .filter(|placement| placement.window_id != *closed_window_id)
+        .map(|placement| {
+            let candidate = placement.rect;
+            let vertical_overlap = overlap_1d(
+                closed_rect.y,
+                closed_rect.y + closed_rect.height,
+                candidate.y,
+                candidate.y + candidate.height,
+            );
+            let horizontal_overlap = overlap_1d(
+                closed_rect.x,
+                closed_rect.x + closed_rect.width,
+                candidate.x,
+                candidate.x + candidate.width,
+            );
+
+            let rank = if horizontal_overlap > 0.0
+                && candidate.y + candidate.height <= closed_rect.y
+            {
+                (
+                    0u8,
+                    (closed_rect.y - (candidate.y + candidate.height)).round() as i32,
+                )
+            } else if horizontal_overlap > 0.0 && candidate.y >= closed_rect.y + closed_rect.height
+            {
+                (
+                    1u8,
+                    (candidate.y - (closed_rect.y + closed_rect.height)).round() as i32,
+                )
+            } else if vertical_overlap > 0.0 && candidate.x + candidate.width <= closed_rect.x {
+                (
+                    2u8,
+                    (closed_rect.x - (candidate.x + candidate.width)).round() as i32,
+                )
+            } else if vertical_overlap > 0.0 && candidate.x >= closed_rect.x + closed_rect.width {
+                (
+                    3u8,
+                    (candidate.x - (closed_rect.x + closed_rect.width)).round() as i32,
+                )
+            } else {
+                let dx = rect_center_x(candidate) - rect_center_x(closed_rect);
+                let dy = rect_center_y(candidate) - rect_center_y(closed_rect);
+                (4u8, (dx * dx + dy * dy).round() as i32)
+            };
+
+            (rank, placement.window_id)
+        })
+        .min_by(|(left_rank, left_id), (right_rank, right_id)| {
+            left_rank
+                .cmp(right_rank)
+                .then_with(|| left_id.cmp(right_id))
+        })
+        .map(|(_, window_id)| window_id)
+}
+
+fn overlap_1d(a_start: f32, a_end: f32, b_start: f32, b_end: f32) -> f32 {
+    (a_end.min(b_end) - a_start.max(b_start)).max(0.0)
+}
+
+fn rect_center_x(rect: spiders_shared::layout::LayoutRect) -> f32 {
+    rect.x + rect.width / 2.0
+}
+
+fn rect_center_y(rect: spiders_shared::layout::LayoutRect) -> f32 {
+    rect.y + rect.height / 2.0
 }
 
 fn cycle_layout_name(
@@ -457,6 +549,47 @@ mod tests {
             .windows
             .iter()
             .all(|window| window.id != WindowId::from("w1")));
+    }
+
+    #[test]
+    fn close_focus_prefers_stacked_window_above_before_master_column() {
+        let next = preferred_focus_after_close(
+            vec![
+                crate::runtime::WindowPlacement {
+                    window_id: WindowId::from("w1"),
+                    mode: crate::runtime::WindowPlacementMode::Tiled,
+                    rect: spiders_shared::layout::LayoutRect {
+                        x: 4.0,
+                        y: 4.0,
+                        width: 747.0,
+                        height: 1539.0,
+                    },
+                },
+                crate::runtime::WindowPlacement {
+                    window_id: WindowId::from("w2"),
+                    mode: crate::runtime::WindowPlacementMode::Tiled,
+                    rect: spiders_shared::layout::LayoutRect {
+                        x: 755.0,
+                        y: 4.0,
+                        width: 498.0,
+                        height: 767.0,
+                    },
+                },
+                crate::runtime::WindowPlacement {
+                    window_id: WindowId::from("w3"),
+                    mode: crate::runtime::WindowPlacementMode::Tiled,
+                    rect: spiders_shared::layout::LayoutRect {
+                        x: 755.0,
+                        y: 776.0,
+                        width: 498.0,
+                        height: 767.0,
+                    },
+                },
+            ],
+            &WindowId::from("w3"),
+        );
+
+        assert_eq!(next, Some(WindowId::from("w2")));
     }
 
     #[test]
