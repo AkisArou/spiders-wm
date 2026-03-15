@@ -1,4 +1,4 @@
-import type { InputsConfig } from "spider-wm/config";
+import type { InputsConfig } from "spiders-wm/config";
 
 export const inputs: InputsConfig = {
   "type:keyboard": {

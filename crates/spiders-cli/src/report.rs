@@ -38,6 +38,15 @@ pub struct BuildConfigReport {
 }
 
 #[derive(Debug, Serialize, PartialEq, Eq)]
+pub struct WinitRunReport {
+    pub status: &'static str,
+    pub wayland_display: String,
+    pub output_name: String,
+    pub seat_name: String,
+    pub logical_size: (i32, i32),
+}
+
+#[derive(Debug, Serialize, PartialEq, Eq)]
 pub struct ErrorReport {
     pub status: &'static str,
     pub phase: &'static str,

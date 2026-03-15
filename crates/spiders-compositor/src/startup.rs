@@ -1,5 +1,5 @@
-use spiders_config::model::Config;
 use spiders_config::authoring_layout::AuthoringLayoutService;
+use spiders_config::model::Config;
 use spiders_layout::ast::ValidatedLayoutTree;
 use spiders_layout::pipeline::compute_layout_from_request;
 use spiders_shared::ids::WorkspaceId;
@@ -89,8 +89,11 @@ impl<R: AuthoringLayoutRuntime<Config = Config>> StartupSequence<R> {
     }
 
     pub fn bootstrap(self) -> Result<StartupConfig<R>, CompositorLayoutError> {
-        self.service
-            .initialize_startup_config(self.authoring_layout_service, self.config, self.state)
+        self.service.initialize_startup_config(
+            self.authoring_layout_service,
+            self.config,
+            self.state,
+        )
     }
 }
 
@@ -246,7 +249,8 @@ mod tests {
             RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
         let runtime = QuickJsPreparedLayoutRuntime::with_loader(loader.clone());
         let authoring_layout_service = AuthoringLayoutService::new(runtime);
-        let sequence = StartupSequence::new(LayoutService, authoring_layout_service, config(), state());
+        let sequence =
+            StartupSequence::new(LayoutService, authoring_layout_service, config(), state());
 
         let startup = sequence.bootstrap().unwrap();
 
@@ -296,7 +300,8 @@ mod tests {
         let authoring_layout_service = AuthoringLayoutService::new(runtime);
 
         let session =
-            initialize_startup_session(&LayoutService, authoring_layout_service, config(), state()).unwrap();
+            initialize_startup_session(&LayoutService, authoring_layout_service, config(), state())
+                .unwrap();
 
         assert_eq!(
             session.startup_workspace_id(),
@@ -410,9 +415,14 @@ mod tests {
             tag_names: vec!["1".into(), "2".into()],
         };
 
-        let startup = bootstrap_runtime(&LayoutService, &mut authoring_layout_service, &config, &state)
-            .unwrap()
-            .unwrap();
+        let startup = bootstrap_runtime(
+            &LayoutService,
+            &mut authoring_layout_service,
+            &config,
+            &state,
+        )
+        .unwrap()
+        .unwrap();
 
         assert_eq!(startup.response.root.window_nodes().len(), 1);
         assert!(startup

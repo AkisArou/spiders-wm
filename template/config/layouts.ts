@@ -1,4 +1,4 @@
-import type { LayoutsConfig } from "spider-wm/config";
+import type { LayoutsConfig } from "spiders-wm/config";
 
 export const layouts = {
   default: "master-stack",

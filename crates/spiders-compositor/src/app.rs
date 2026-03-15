@@ -1,5 +1,5 @@
-use spiders_config::model::Config;
 use spiders_config::authoring_layout::AuthoringLayoutService;
+use spiders_config::model::Config;
 use spiders_shared::ids::{OutputId, WindowId};
 use spiders_shared::runtime::AuthoringLayoutRuntime;
 use spiders_shared::wm::StateSnapshot;
@@ -254,8 +254,8 @@ mod tests {
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use spiders_config::model::{Config, LayoutDefinition};
     use spiders_config::authoring_layout::AuthoringLayoutService;
+    use spiders_config::model::{Config, LayoutDefinition};
     use spiders_runtime_js::loader::{RuntimePathResolver, RuntimeProjectLayoutSourceLoader};
     use spiders_runtime_js::runtime::QuickJsPreparedLayoutRuntime;
     use spiders_shared::ids::{OutputId, WindowId, WorkspaceId};

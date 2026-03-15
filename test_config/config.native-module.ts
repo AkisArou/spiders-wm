@@ -1,5 +1,5 @@
-import type { SpiderWMConfig } from "spider-wm/config";
-import { events, query, wm } from "spider-wm/api";
+import type { SpiderWMConfig } from "spiders-wm/config";
+import { events, query, wm } from "spiders-wm/api";
 
 import { bindings } from "./config/bindings";
 import { inputs } from "./config/inputs";

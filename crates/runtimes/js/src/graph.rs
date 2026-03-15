@@ -287,7 +287,7 @@ impl ModuleGraphBuilder {
         import: &ImportedModule,
     ) -> Result<ModuleId, GraphError> {
         if matches!(import.kind, ImportedModuleKind::Virtual)
-            || import.specifier.starts_with("spider-wm/")
+            || import.specifier.starts_with("spiders-wm/")
         {
             return Ok(ModuleId::Virtual(import.specifier.clone()));
         }
@@ -363,7 +363,7 @@ fn parse_imports(path: &Path, source: &str) -> Result<Vec<ImportedModule>, Graph
 }
 
 fn classify_import_specifier(specifier: &str) -> ImportedModule {
-    let kind = if specifier.starts_with("spider-wm/") {
+    let kind = if specifier.starts_with("spiders-wm/") {
         ImportedModuleKind::Virtual
     } else if specifier.ends_with(".css") {
         ImportedModuleKind::Stylesheet
@@ -421,7 +421,7 @@ mod tests {
             r#"
                 import { bindings } from "./config/bindings";
                 import "./index.css";
-                import type { SpiderWMConfig } from "spider-wm/config";
+                import type { SpiderWMConfig } from "spiders-wm/config";
                 export default { bindings } satisfies SpiderWMConfig;
             "#,
         )
@@ -446,7 +446,7 @@ mod tests {
             .contains_key(&ModuleId::File(root.join("config/bindings.ts"))));
         assert!(graph
             .modules
-            .contains_key(&ModuleId::Virtual("spider-wm/config".into())));
+            .contains_key(&ModuleId::Virtual("spiders-wm/config".into())));
         assert_eq!(
             graph.order.first(),
             Some(&ModuleId::File(root.join("config.ts")))

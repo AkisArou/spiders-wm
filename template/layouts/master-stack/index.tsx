@@ -1,4 +1,4 @@
-import type { LayoutContext } from "spider-wm/layout";
+import type { LayoutContext } from "spiders-wm/layout";
 
 import { MasterSlot } from "./components/MasterSlot";
 import { StackGroup } from "../../components/StackGroup";

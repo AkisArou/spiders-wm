@@ -1,3 +1,3 @@
 {
-  "extends": "./.spider-wm/tsconfig.base.json"
+  "extends": "./.spiders-wm/tsconfig.base.json"
 }

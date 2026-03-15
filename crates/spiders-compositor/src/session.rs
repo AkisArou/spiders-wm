@@ -1,5 +1,5 @@
-use spiders_config::model::Config;
 use spiders_config::authoring_layout::AuthoringLayoutService;
+use spiders_config::model::Config;
 use spiders_shared::api::{CompositorEvent, FocusDirection, WmAction};
 use spiders_shared::ids::{OutputId, WindowId};
 use spiders_shared::runtime::AuthoringLayoutRuntime;
@@ -385,8 +385,8 @@ mod tests {
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use spiders_config::model::{Config, LayoutDefinition};
     use spiders_config::authoring_layout::AuthoringLayoutService;
+    use spiders_config::model::{Config, LayoutDefinition};
     use spiders_runtime_js::loader::{RuntimePathResolver, RuntimeProjectLayoutSourceLoader};
     use spiders_runtime_js::runtime::QuickJsPreparedLayoutRuntime;
     use spiders_shared::api::{CompositorEvent, FocusDirection, WmAction};
@@ -507,7 +507,8 @@ mod tests {
         }
     }
 
-    fn session() -> CompositorSession<QuickJsPreparedLayoutRuntime<RuntimeProjectLayoutSourceLoader>> {
+    fn session() -> CompositorSession<QuickJsPreparedLayoutRuntime<RuntimeProjectLayoutSourceLoader>>
+    {
         let temp_dir = std::env::temp_dir();
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)

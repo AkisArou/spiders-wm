@@ -486,6 +486,46 @@ fn cli_ipc_monitor_reports_streamed_events_in_json_mode() {
     let _ = std::fs::remove_file(path);
 }
 
+#[test]
+fn cli_winit_run_reports_requested_socket_name_in_json_mode() {
+    let (_, authored_config) = runtime_fixture_paths();
+    let prepared_config = write_prepared_config("spiders-cli-winit-run.json");
+    let socket_name = format!(
+        "spiders-cli-test-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    );
+
+    let output = Command::new(cli_bin())
+        .arg("winit-run")
+        .arg("--json")
+        .arg("--socket-name")
+        .arg(&socket_name)
+        .env("SPIDERS_WM_AUTHORED_CONFIG", authored_config)
+        .env("SPIDERS_WM_CACHE_DIR", prepared_config.parent().unwrap())
+        .env("SPIDERS_WM_WINIT_EXIT_AFTER_STARTUP", "1")
+        .env("WAYLAND_DISPLAY", "wayland-0")
+        .env("WLR_BACKENDS", "")
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let first_line = stdout.lines().next().unwrap_or_default();
+    let json: serde_json::Value = serde_json::from_str(first_line).unwrap();
+    assert_eq!(json["status"], "ok");
+    assert_eq!(json["wayland_display"], socket_name);
+    assert_eq!(json["output_name"], "smithay-winit-output");
+    assert_eq!(json["seat_name"], "smithay-winit");
+
+    let socket_path = std::env::temp_dir().join(&socket_name);
+    let _ = std::fs::remove_file(socket_path);
+    let _ = std::fs::remove_file(prepared_config);
+}
+
 fn unique_socket_path(label: &str) -> std::path::PathBuf {
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

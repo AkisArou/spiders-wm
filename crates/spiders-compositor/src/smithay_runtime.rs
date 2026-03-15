@@ -38,6 +38,7 @@ mod imp {
     use smithay::reexports::wayland_server::Display;
     use smithay::utils::{Clock, Monotonic, Point, Rectangle, Transform, SERIAL_COUNTER};
     use smithay::wayland::presentation::Refresh;
+    use spiders_config::model::Config;
     use spiders_shared::api::WmAction;
     use spiders_shared::ids::OutputId;
     use spiders_shared::runtime::AuthoringLayoutRuntime;
@@ -114,6 +115,11 @@ mod imp {
         pub socket_name: Option<String>,
     }
 
+    #[derive(Debug, Clone, Default, PartialEq, Eq)]
+    pub struct SmithayWinitOptions {
+        pub socket_name: Option<String>,
+    }
+
     #[derive(Debug, Clone, PartialEq, Eq)]
     pub struct SmithayRuntimeSnapshot {
         pub socket_name: String,
@@ -155,6 +161,14 @@ mod imp {
             self.runtime.run_startup_cycle()?;
 
             self.apply_pending_discovery_events()?;
+            Ok(())
+        }
+
+        pub fn run_until_exit(&mut self) -> Result<(), SmithayRuntimeError> {
+            while !self.runtime.should_stop() {
+                self.run_startup_cycle()?;
+                std::thread::sleep(Duration::from_millis(16));
+            }
             Ok(())
         }
 
@@ -292,6 +306,7 @@ mod imp {
         presentation_state: PresentationRenderState,
         backend: Option<WinitGraphicsBackend<GlesRenderer>>,
         winit: Option<WinitEventLoop>,
+        stopped: bool,
     }
 
     impl SmithayWinitRuntime<'_> {
@@ -321,6 +336,10 @@ mod imp {
                 window_size: self.window_size,
                 state: self.state().snapshot(),
             }
+        }
+
+        pub fn should_stop(&self) -> bool {
+            self.stopped
         }
 
         pub fn run_startup_cycle(&mut self) -> Result<(), SmithayRuntimeError> {
@@ -462,6 +481,7 @@ mod imp {
             let status = winit.dispatch_new_events(|event| pending_events.push(event));
             if let smithay::reexports::winit::platform::pump_events::PumpStatus::Exit(_) = status {
                 self.loop_signal.stop();
+                self.stopped = true;
             }
 
             let mut window_size = self.window_size;
@@ -1140,8 +1160,25 @@ mod imp {
     where
         R: AuthoringLayoutRuntime<Config = Config>,
     {
+        bootstrap_winit_with_options(
+            authoring_layout_service,
+            config,
+            state,
+            SmithayWinitOptions::default(),
+        )
+    }
+
+    pub fn bootstrap_winit_with_options<R>(
+        authoring_layout_service: spiders_config::authoring_layout::AuthoringLayoutService<R>,
+        config: spiders_config::model::Config,
+        state: spiders_shared::wm::StateSnapshot,
+        options: SmithayWinitOptions,
+    ) -> Result<SmithayBootstrap<R>, SmithayRuntimeError>
+    where
+        R: AuthoringLayoutRuntime<Config = Config>,
+    {
         let mut controller = initialize_winit_controller(authoring_layout_service, config, state)?;
-        let (runtime, report) = bootstrap_winit_controller(&mut controller)?;
+        let (runtime, report) = bootstrap_winit_controller_with_options(&mut controller, options)?;
 
         Ok(SmithayBootstrap {
             controller,
@@ -1156,12 +1193,22 @@ mod imp {
     where
         R: AuthoringLayoutRuntime<Config = Config>,
     {
+        bootstrap_winit_controller_with_options(controller, SmithayWinitOptions::default())
+    }
+
+    pub fn bootstrap_winit_controller_with_options<R>(
+        controller: &mut crate::CompositorController<R>,
+        options: SmithayWinitOptions,
+    ) -> Result<(SmithayWinitRuntime<'static>, SmithayStartupReport), SmithayRuntimeError>
+    where
+        R: AuthoringLayoutRuntime<Config = Config>,
+    {
         let event_loop = EventLoop::<SpidersSmithayState>::try_new()
             .map_err(|error| SmithayRuntimeError::Winit(error.to_string()))?;
         let display =
             Display::new().map_err(|error| SmithayRuntimeError::Winit(error.to_string()))?;
         let mut smithay_state = SpidersSmithayState::new(&display, "smithay-winit")?;
-        let socket = smithay_state.bind_auto_socket_source()?;
+        let socket = smithay_state.bind_socket_source(options.socket_name.as_deref())?;
         let socket_name = socket.socket_name().to_string_lossy().into_owned();
 
         event_loop
@@ -1251,6 +1298,7 @@ mod imp {
             presentation_state: PresentationRenderState::new(),
             backend: Some(backend),
             winit: Some(winit),
+            stopped: false,
         };
 
         Ok((
@@ -1270,8 +1318,8 @@ mod imp {
         use std::fs;
         use std::time::{SystemTime, UNIX_EPOCH};
 
-        use spiders_config::model::{Config, LayoutDefinition};
         use spiders_config::authoring_layout::AuthoringLayoutService;
+        use spiders_config::model::{Config, LayoutDefinition};
         use spiders_runtime_js::loader::{RuntimePathResolver, RuntimeProjectLayoutSourceLoader};
         use spiders_runtime_js::runtime::QuickJsPreparedLayoutRuntime;
         use spiders_shared::ids::{OutputId, WindowId, WorkspaceId};
@@ -1287,7 +1335,7 @@ mod imp {
 
         type TestLoader = RuntimeProjectLayoutSourceLoader;
         type TestLayoutRuntime = QuickJsPreparedLayoutRuntime<TestLoader>;
-        type TestBootstrap = SmithayBootstrap<TestLoader, TestLayoutRuntime>;
+        type TestBootstrap = SmithayBootstrap<TestLayoutRuntime>;
 
         fn test_state_snapshot() -> StateSnapshot {
             StateSnapshot {
@@ -1336,10 +1384,7 @@ mod imp {
             }
         }
 
-        fn test_authoring_layout_service() -> AuthoringLayoutService<
-            RuntimeProjectLayoutSourceLoader,
-            QuickJsPreparedLayoutRuntime<RuntimeProjectLayoutSourceLoader>,
-        > {
+        fn test_authoring_layout_service() -> AuthoringLayoutService<TestLayoutRuntime> {
             let unique = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
@@ -1379,6 +1424,7 @@ mod imp {
                 presentation_state: PresentationRenderState::new(),
                 backend: None,
                 winit: None,
+                stopped: false,
             }
         }
 
@@ -1390,7 +1436,8 @@ mod imp {
             let authoring_layout_service = test_authoring_layout_service();
             let config = test_config();
             let controller =
-                crate::CompositorController::initialize(authoring_layout_service, config, state).unwrap();
+                crate::CompositorController::initialize(authoring_layout_service, config, state)
+                    .unwrap();
             let runtime = test_runtime(socket_name);
             let report = SmithayStartupReport {
                 controller: controller.report(),
@@ -1614,7 +1661,8 @@ mod imp {
             let config = test_config();
             let state = test_state_snapshot();
             let controller =
-                crate::CompositorController::initialize(authoring_layout_service, config, state).unwrap();
+                crate::CompositorController::initialize(authoring_layout_service, config, state)
+                    .unwrap();
             let runtime = test_runtime("wayland-test-2");
             let report = SmithayStartupReport {
                 controller: controller.report(),
@@ -1643,7 +1691,8 @@ mod imp {
             let config = test_config();
             let state = test_state_snapshot();
             let controller =
-                crate::CompositorController::initialize(authoring_layout_service, config, state).unwrap();
+                crate::CompositorController::initialize(authoring_layout_service, config, state)
+                    .unwrap();
             let mut runtime = test_runtime("wayland-test-3");
             runtime.state_mut().track_test_surface_snapshot(
                 crate::backend::BackendSurfaceSnapshot::Window {
@@ -2884,7 +2933,8 @@ mod imp {
             let config = test_config();
             let state = test_state_snapshot();
             let controller =
-                crate::CompositorController::initialize(authoring_layout_service, config, state).unwrap();
+                crate::CompositorController::initialize(authoring_layout_service, config, state)
+                    .unwrap();
             let mut runtime = test_runtime("wayland-test-layer-2");
             runtime
                 .state_mut()
@@ -3059,7 +3109,8 @@ mod imp {
             let config = test_config();
             let state = test_state_snapshot();
             let controller =
-                crate::CompositorController::initialize(authoring_layout_service, config, state).unwrap();
+                crate::CompositorController::initialize(authoring_layout_service, config, state)
+                    .unwrap();
             let mut runtime = test_runtime("wayland-test-7");
 
             runtime.state_mut().track_test_surface_snapshot(
@@ -3149,7 +3200,8 @@ mod imp {
             let config = test_config();
             let state = test_state_snapshot();
             let controller =
-                crate::CompositorController::initialize(authoring_layout_service, config, state).unwrap();
+                crate::CompositorController::initialize(authoring_layout_service, config, state)
+                    .unwrap();
             let mut runtime = test_runtime("wayland-test-8");
 
             runtime.state_mut().track_test_surface_snapshot(
@@ -3281,7 +3333,8 @@ mod imp {
             let config = test_config();
             let state = test_state_snapshot();
             let controller =
-                crate::CompositorController::initialize(authoring_layout_service, config, state).unwrap();
+                crate::CompositorController::initialize(authoring_layout_service, config, state)
+                    .unwrap();
             let mut runtime = test_runtime("wayland-test-popup-meta-1");
 
             runtime.state_mut().track_test_surface_snapshot(
@@ -3345,7 +3398,8 @@ mod imp {
             let config = test_config();
             let state = test_state_snapshot();
             let controller =
-                crate::CompositorController::initialize(authoring_layout_service, config, state).unwrap();
+                crate::CompositorController::initialize(authoring_layout_service, config, state)
+                    .unwrap();
             let mut runtime = test_runtime("wayland-test-xdg-size-1");
 
             runtime.state_mut().track_test_surface_snapshot(
@@ -3655,7 +3709,8 @@ mod imp {
             let config = test_config();
             let state = test_state_snapshot();
             let controller =
-                crate::CompositorController::initialize(authoring_layout_service, config, state).unwrap();
+                crate::CompositorController::initialize(authoring_layout_service, config, state)
+                    .unwrap();
             let runtime = test_runtime("wayland-test-4");
             let report = SmithayStartupReport {
                 controller: controller.report(),
@@ -3685,7 +3740,8 @@ mod imp {
             let config = test_config();
             let state = test_state_snapshot();
             let controller =
-                crate::CompositorController::initialize(authoring_layout_service, config, state).unwrap();
+                crate::CompositorController::initialize(authoring_layout_service, config, state)
+                    .unwrap();
             let runtime = test_runtime("wayland-test-seat-focus-bootstrap");
             let report = SmithayStartupReport {
                 controller: controller.report(),
@@ -3749,7 +3805,8 @@ mod imp {
                 current_workspace_id: None,
             });
             let controller =
-                crate::CompositorController::initialize(authoring_layout_service, config, state).unwrap();
+                crate::CompositorController::initialize(authoring_layout_service, config, state)
+                    .unwrap();
             let runtime = test_runtime("wayland-test-output-activate-bootstrap");
             let report = SmithayStartupReport {
                 controller: controller.report(),
@@ -3801,7 +3858,8 @@ mod imp {
                 current_workspace_id: None,
             });
             let controller =
-                crate::CompositorController::initialize(authoring_layout_service, config, state).unwrap();
+                crate::CompositorController::initialize(authoring_layout_service, config, state)
+                    .unwrap();
             let runtime = test_runtime("wayland-test-output-lost-bootstrap");
             let report = SmithayStartupReport {
                 controller: controller.report(),
@@ -3884,7 +3942,8 @@ mod imp {
                     }),
                 });
             let controller =
-                crate::CompositorController::initialize(authoring_layout_service, config, state).unwrap();
+                crate::CompositorController::initialize(authoring_layout_service, config, state)
+                    .unwrap();
             let runtime = test_runtime("wayland-test-workspace-activate-bootstrap");
             let report = SmithayStartupReport {
                 controller: controller.report(),
@@ -3959,7 +4018,8 @@ mod imp {
                     }),
                 });
             let controller =
-                crate::CompositorController::initialize(authoring_layout_service, config, state).unwrap();
+                crate::CompositorController::initialize(authoring_layout_service, config, state)
+                    .unwrap();
             let runtime = test_runtime("wayland-test-workspace-assign-bootstrap");
             let report = SmithayStartupReport {
                 controller: controller.report(),
@@ -4030,7 +4090,8 @@ mod imp {
                 .push(WindowId::from("smithay-window-1"));
 
             let controller =
-                crate::CompositorController::initialize(authoring_layout_service, config, state).unwrap();
+                crate::CompositorController::initialize(authoring_layout_service, config, state)
+                    .unwrap();
             let runtime = test_runtime("wayland-test-decoration-policy-export");
             let report = SmithayStartupReport {
                 controller: controller.report(),
@@ -4083,10 +4144,11 @@ mod imp {
 
 #[cfg(feature = "smithay-winit")]
 pub use imp::{
-    bootstrap_winit, bootstrap_winit_controller, initialize_smithay_workspace_export,
-    initialize_winit_controller, SmithayBootstrap, SmithayBootstrapSnapshot,
-    SmithayBootstrapTopologySnapshot, SmithayRuntimeError, SmithayRuntimeSnapshot,
-    SmithayStartupReport, SmithayWinitRuntime,
+    bootstrap_winit, bootstrap_winit_controller, bootstrap_winit_controller_with_options,
+    bootstrap_winit_with_options, initialize_smithay_workspace_export, initialize_winit_controller,
+    SmithayBootstrap, SmithayBootstrapSnapshot, SmithayBootstrapTopologySnapshot,
+    SmithayRuntimeError, SmithayRuntimeSnapshot, SmithayStartupReport, SmithayWinitOptions,
+    SmithayWinitRuntime,
 };
 
 #[cfg(not(feature = "smithay-winit"))]

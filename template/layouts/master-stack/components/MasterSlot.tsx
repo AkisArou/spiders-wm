@@ -1,4 +1,4 @@
-import type { SlotProps } from "spider-wm/layout";
+import type { SlotProps } from "spiders-wm/layout";
 
 type MasterSlotProps = Omit<SlotProps, "id" | "class">;
 

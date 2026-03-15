@@ -11,7 +11,7 @@ const flattenChildren = (input, out) => {
   }
 };
 
-export const Fragment = Symbol("spider-wm.fragment");
+export const Fragment = Symbol("spiders-wm.fragment");
 
 function createNode(type, props, ...children) {
   const normalizedChildren = [];

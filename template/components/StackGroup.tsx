@@ -1,5 +1,4 @@
-import "./StackGroup.css";
-import type { GroupProps, LayoutContext } from "spider-wm/layout";
+import type { GroupProps, LayoutContext } from "spiders-wm/layout";
 
 import { StackSlot } from "./common/StackSlot";
 

@@ -523,6 +523,16 @@ mod imp {
             ListeningSocketSource::new_auto().map_err(Into::into)
         }
 
+        pub fn bind_socket_source(
+            &self,
+            socket_name: Option<&str>,
+        ) -> Result<ListeningSocketSource, SmithayStateError> {
+            match socket_name {
+                Some(name) => ListeningSocketSource::with_name(name).map_err(Into::into),
+                None => self.bind_auto_socket_source(),
+            }
+        }
+
         pub fn take_discovery_events(&mut self) -> Vec<BackendDiscoveryEvent> {
             std::mem::take(&mut self.pending_discovery_events)
         }

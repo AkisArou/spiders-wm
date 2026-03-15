@@ -1,5 +1,5 @@
-import * as actions from "spider-wm/actions";
-import type { BindingsConfig } from "spider-wm/config";
+import * as actions from "spiders-wm/actions";
+import type { BindingsConfig } from "spiders-wm/config";
 
 export const bindings = {
   mod: "super",

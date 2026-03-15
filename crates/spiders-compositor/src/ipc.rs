@@ -312,8 +312,8 @@ mod tests {
     use std::os::unix::net::UnixStream;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use spiders_config::model::{Config, LayoutDefinition};
     use spiders_config::authoring_layout::AuthoringLayoutService;
+    use spiders_config::model::{Config, LayoutDefinition};
     use spiders_ipc::{
         recv_response, send_request, IpcClientMessage, IpcEnvelope, IpcServerMessage,
         IpcSubscriptionTopic,
@@ -394,7 +394,8 @@ mod tests {
         }
     }
 
-    fn controller() -> CompositorController<QuickJsPreparedLayoutRuntime<RuntimeProjectLayoutSourceLoader>> {
+    fn controller(
+    ) -> CompositorController<QuickJsPreparedLayoutRuntime<RuntimeProjectLayoutSourceLoader>> {
         let temp_dir = std::env::temp_dir();
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)

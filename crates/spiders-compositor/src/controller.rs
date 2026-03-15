@@ -1,5 +1,5 @@
-use spiders_config::model::Config;
 use spiders_config::authoring_layout::AuthoringLayoutService;
+use spiders_config::model::Config;
 use spiders_shared::api::WmAction;
 use spiders_shared::ids::{OutputId, WorkspaceId};
 use spiders_shared::runtime::AuthoringLayoutRuntime;
@@ -117,9 +117,12 @@ impl<R: AuthoringLayoutRuntime<Config = Config>> CompositorController<R> {
         script: &BootstrapScript,
     ) -> Result<Self, BootstrapRunnerError> {
         match script.startup() {
-            Some(startup) => {
-                Self::initialize_with_registration(authoring_layout_service, config, state, startup.clone())
-            }
+            Some(startup) => Self::initialize_with_registration(
+                authoring_layout_service,
+                config,
+                state,
+                startup.clone(),
+            ),
             None => Self::initialize(authoring_layout_service, config, state),
         }
     }
@@ -304,8 +307,8 @@ mod tests {
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use spiders_config::model::{Config, LayoutDefinition};
     use spiders_config::authoring_layout::AuthoringLayoutService;
+    use spiders_config::model::{Config, LayoutDefinition};
     use spiders_runtime_js::loader::{RuntimePathResolver, RuntimeProjectLayoutSourceLoader};
     use spiders_runtime_js::runtime::QuickJsPreparedLayoutRuntime;
     use spiders_shared::ids::{OutputId, WindowId, WorkspaceId};
@@ -381,7 +384,8 @@ mod tests {
         }
     }
 
-    fn authoring_layout_service() -> AuthoringLayoutService<QuickJsPreparedLayoutRuntime<RuntimeProjectLayoutSourceLoader>>
+    fn authoring_layout_service(
+    ) -> AuthoringLayoutService<QuickJsPreparedLayoutRuntime<RuntimeProjectLayoutSourceLoader>>
     {
         let temp_dir = std::env::temp_dir();
         let unique = SystemTime::now()
@@ -474,7 +478,8 @@ mod tests {
     #[test]
     fn controller_accepts_backend_discovery_event() {
         let mut controller =
-            CompositorController::initialize(authoring_layout_service(), config(), state()).unwrap();
+            CompositorController::initialize(authoring_layout_service(), config(), state())
+                .unwrap();
 
         controller
             .apply_discovery_event(BackendDiscoveryEvent::SeatDiscovered {
@@ -497,7 +502,8 @@ mod tests {
     #[test]
     fn controller_command_returns_command_report() {
         let mut controller =
-            CompositorController::initialize(authoring_layout_service(), config(), state()).unwrap();
+            CompositorController::initialize(authoring_layout_service(), config(), state())
+                .unwrap();
 
         let report = controller
             .apply_command(ControllerCommand::DiscoveryEvent(
@@ -514,7 +520,8 @@ mod tests {
     #[test]
     fn controller_accepts_surface_unmapped_discovery_event() {
         let mut controller =
-            CompositorController::initialize(authoring_layout_service(), config(), state()).unwrap();
+            CompositorController::initialize(authoring_layout_service(), config(), state())
+                .unwrap();
 
         controller
             .apply_discovery_event(BackendDiscoveryEvent::WindowSurfaceDiscovered {
@@ -549,7 +556,8 @@ mod tests {
     #[test]
     fn controller_accepts_seat_focus_discovery_event() {
         let mut controller =
-            CompositorController::initialize(authoring_layout_service(), config(), state()).unwrap();
+            CompositorController::initialize(authoring_layout_service(), config(), state())
+                .unwrap();
 
         controller
             .apply_discovery_event(BackendDiscoveryEvent::SeatDiscovered {
@@ -578,7 +586,8 @@ mod tests {
     #[test]
     fn controller_cascades_parent_surface_unmap_to_popup_children() {
         let mut controller =
-            CompositorController::initialize(authoring_layout_service(), config(), state()).unwrap();
+            CompositorController::initialize(authoring_layout_service(), config(), state())
+                .unwrap();
 
         controller
             .apply_discovery_event(BackendDiscoveryEvent::WindowSurfaceDiscovered {
@@ -609,7 +618,8 @@ mod tests {
     #[test]
     fn controller_cascades_parent_surface_removal_to_popup_children() {
         let mut controller =
-            CompositorController::initialize(authoring_layout_service(), config(), state()).unwrap();
+            CompositorController::initialize(authoring_layout_service(), config(), state())
+                .unwrap();
 
         controller
             .apply_discovery_event(BackendDiscoveryEvent::WindowSurfaceDiscovered {
@@ -640,7 +650,8 @@ mod tests {
     #[test]
     fn controller_preserves_layer_output_for_popup_parented_to_layer_surface() {
         let mut controller =
-            CompositorController::initialize(authoring_layout_service(), config(), state()).unwrap();
+            CompositorController::initialize(authoring_layout_service(), config(), state())
+                .unwrap();
 
         controller
             .apply_discovery_event(BackendDiscoveryEvent::LayerSurfaceDiscovered {
@@ -671,7 +682,8 @@ mod tests {
     #[test]
     fn controller_accepts_backend_topology_snapshot() {
         let mut controller =
-            CompositorController::initialize(authoring_layout_service(), config(), state()).unwrap();
+            CompositorController::initialize(authoring_layout_service(), config(), state())
+                .unwrap();
 
         controller
             .apply_discovery_snapshot(BackendTopologySnapshot {
@@ -731,7 +743,8 @@ mod tests {
     #[test]
     fn controller_report_tracks_backend_snapshot_metadata() {
         let mut controller =
-            CompositorController::initialize(authoring_layout_service(), config(), state()).unwrap();
+            CompositorController::initialize(authoring_layout_service(), config(), state())
+                .unwrap();
 
         controller
             .apply_discovery_snapshot(BackendTopologySnapshot {

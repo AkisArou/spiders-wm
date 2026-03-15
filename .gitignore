@@ -3,7 +3,7 @@ node_modules/
 .DS_Store
 *.swp
 *.swo
-template/.spider-wm/
-test_config/.spider-wm/
-template/.spider-wm-build/
-test_config/.spider-wm-build/
+template/.spiders-wm/
+test_config/.spiders-wm/
+template/.spiders-wm-build/
+test_config/.spiders-wm-build/

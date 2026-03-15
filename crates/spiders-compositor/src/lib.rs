@@ -20,8 +20,8 @@ pub mod topology;
 pub mod transcript;
 pub mod wm;
 
-use spiders_config::model::{Config, LayoutConfigError};
 use spiders_config::authoring_layout::{AuthoringLayoutService, AuthoringLayoutServiceError};
+use spiders_config::model::{Config, LayoutConfigError};
 use spiders_effects::EffectsCssParseError;
 use spiders_layout::ast::{LayoutValidationError, ValidatedLayoutTree};
 use spiders_layout::pipeline::{compute_layout_from_request, LayoutPipelineError};
@@ -80,7 +80,10 @@ pub use smithay_adapter::{
     SmithayAdapter, SmithayAdapterEvent, SmithayOutputDescriptor, SmithaySeatDescriptor,
 };
 #[cfg(feature = "smithay-winit")]
-pub use smithay_runtime::{bootstrap_winit, SmithayBootstrap, SmithayWinitRuntime};
+pub use smithay_runtime::{
+    bootstrap_winit, bootstrap_winit_with_options, SmithayBootstrap, SmithayWinitOptions,
+    SmithayWinitRuntime,
+};
 #[cfg(feature = "smithay-winit")]
 pub use smithay_runtime::{initialize_smithay_workspace_export, initialize_winit_controller};
 pub use smithay_runtime::{
@@ -576,8 +579,10 @@ mod tests {
         let loader = spiders_runtime_js::loader::RuntimeProjectLayoutSourceLoader::new(
             spiders_runtime_js::loader::RuntimePathResolver::new(".", &runtime_root),
         );
-        let runtime = spiders_runtime_js::runtime::QuickJsPreparedLayoutRuntime::with_loader(loader.clone());
-        let mut authoring_layout_service = spiders_config::authoring_layout::AuthoringLayoutService::new(runtime);
+        let runtime =
+            spiders_runtime_js::runtime::QuickJsPreparedLayoutRuntime::with_loader(loader.clone());
+        let mut authoring_layout_service =
+            spiders_config::authoring_layout::AuthoringLayoutService::new(runtime);
         let config = layout_config("", "layouts/master-stack.js");
         let state = state_snapshot(800, 600);
 
@@ -617,8 +622,10 @@ mod tests {
         let loader = spiders_runtime_js::loader::RuntimeProjectLayoutSourceLoader::new(
             spiders_runtime_js::loader::RuntimePathResolver::new(".", &runtime_root),
         );
-        let runtime = spiders_runtime_js::runtime::QuickJsPreparedLayoutRuntime::with_loader(loader.clone());
-        let authoring_layout_service = spiders_config::authoring_layout::AuthoringLayoutService::new(runtime);
+        let runtime =
+            spiders_runtime_js::runtime::QuickJsPreparedLayoutRuntime::with_loader(loader.clone());
+        let authoring_layout_service =
+            spiders_config::authoring_layout::AuthoringLayoutService::new(runtime);
         let config = layout_config("", "layouts/master-stack.js");
         let state = state_snapshot(800, 600);
 
@@ -669,8 +676,10 @@ mod tests {
         let loader = spiders_runtime_js::loader::RuntimeProjectLayoutSourceLoader::new(
             spiders_runtime_js::loader::RuntimePathResolver::new(".", &runtime_root),
         );
-        let runtime = spiders_runtime_js::runtime::QuickJsPreparedLayoutRuntime::with_loader(loader.clone());
-        let authoring_layout_service = spiders_config::authoring_layout::AuthoringLayoutService::new(runtime);
+        let runtime =
+            spiders_runtime_js::runtime::QuickJsPreparedLayoutRuntime::with_loader(loader.clone());
+        let authoring_layout_service =
+            spiders_config::authoring_layout::AuthoringLayoutService::new(runtime);
         let config = layout_config("", "layouts/master-stack.js");
         let state = state_snapshot(800, 600);
 
@@ -726,8 +735,10 @@ mod tests {
         let loader = spiders_runtime_js::loader::RuntimeProjectLayoutSourceLoader::new(
             spiders_runtime_js::loader::RuntimePathResolver::new(".", &runtime_root),
         );
-        let runtime = spiders_runtime_js::runtime::QuickJsPreparedLayoutRuntime::with_loader(loader.clone());
-        let authoring_layout_service = spiders_config::authoring_layout::AuthoringLayoutService::new(runtime);
+        let runtime =
+            spiders_runtime_js::runtime::QuickJsPreparedLayoutRuntime::with_loader(loader.clone());
+        let authoring_layout_service =
+            spiders_config::authoring_layout::AuthoringLayoutService::new(runtime);
         let config = layout_config("", "layouts/master-stack.js");
         let state = state_snapshot(800, 600);
 
@@ -771,8 +782,10 @@ mod tests {
         let loader = spiders_runtime_js::loader::RuntimeProjectLayoutSourceLoader::new(
             spiders_runtime_js::loader::RuntimePathResolver::new(".", &runtime_root),
         );
-        let runtime = spiders_runtime_js::runtime::QuickJsPreparedLayoutRuntime::with_loader(loader.clone());
-        let authoring_layout_service = spiders_config::authoring_layout::AuthoringLayoutService::new(runtime);
+        let runtime =
+            spiders_runtime_js::runtime::QuickJsPreparedLayoutRuntime::with_loader(loader.clone());
+        let authoring_layout_service =
+            spiders_config::authoring_layout::AuthoringLayoutService::new(runtime);
         let config = layout_config("", "layouts/master-stack.js");
         let state = state_snapshot(800, 600);
 

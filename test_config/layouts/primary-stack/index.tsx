@@ -1,4 +1,4 @@
-import { LayoutContext } from "spider-wm/layout";
+import { LayoutContext } from "spiders-wm/layout";
 import "./index.css"
 
 export default function layout(ctx: LayoutContext) {

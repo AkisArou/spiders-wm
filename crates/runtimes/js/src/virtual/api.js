@@ -1,5 +1,5 @@
 const unsupported = (name) => () => {
-  throw new Error(`spider-wm/api runtime stub does not implement ${name}`);
+  throw new Error(`spiders-wm/api runtime stub does not implement ${name}`);
 };
 
 export const events = {

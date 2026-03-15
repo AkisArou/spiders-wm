@@ -2,7 +2,7 @@ import type { ActionDescriptor } from "./actions";
 
 export type AttachDirection = "after" | "before";
 export type Direction = "left" | "right" | "up" | "down";
-/** Modifier names accepted by spider-wm and mapped to wlroots modifier bits. */
+/** Modifier names accepted by spiders-wm and mapped to wlroots modifier bits. */
 export type ModifierName = "super" | "logo" | "mod4" | "shift" | "ctrl" | "control" | "alt" | "mod1";
 export type ModifierToken = ModifierName | "mod";
 export type LetterKey =
@@ -41,7 +41,7 @@ export type Key = NamedKey | (string & {});
 export type BindingKey = ModifierToken | Key;
 export type Binding = [BindingKey, ...BindingKey[]];
 /**
- * Input match keys are spider-wm config keys: `*`, `type:<kind>`, or an exact
+ * Input match keys are spiders-wm config keys: `*`, `type:<kind>`, or an exact
  * device identifier string.
  */
 export type InputMatch =
@@ -50,13 +50,13 @@ export type InputMatch =
   | string;
 
 export interface OutputConfig {
-  /** Output mode string in spider-wm format: WIDTHxHEIGHT[@REFRESHHz]. */
+  /** Output mode string in spiders-wm format: WIDTHxHEIGHT[@REFRESHHz]. */
   mode?: string;
   /** wlroots output scale. */
   scale?: number;
   /** wl_output transform name. */
   transform?: "normal" | "90" | "180" | "270" | "flipped" | "flipped-90" | "flipped-180" | "flipped-270";
-  /** Output layout position in spider-wm format: XxY or X,Y. */
+  /** Output layout position in spiders-wm format: XxY or X,Y. */
   position?: string;
   /** wlroots adaptive sync toggle. */
   adaptive_sync?: boolean;
@@ -116,7 +116,7 @@ export interface TouchpadInputConfig extends PointerInputConfig {
 
 export interface TouchInputConfig extends InputConfig {}
 
-/** Mapping of spider-wm input match keys to input config entries. */
+/** Mapping of spiders-wm input match keys to input config entries. */
 export interface InputsConfig {
   [name: string]: InputConfig | undefined;
   "*"?: InputConfig;

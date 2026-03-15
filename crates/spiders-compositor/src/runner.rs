@@ -1,5 +1,5 @@
-use spiders_config::model::Config;
 use spiders_config::authoring_layout::AuthoringLayoutService;
+use spiders_config::model::Config;
 use spiders_shared::runtime::AuthoringLayoutRuntime;
 use spiders_shared::wm::StateSnapshot;
 use spiders_wm::{
@@ -127,7 +127,12 @@ impl<R: AuthoringLayoutRuntime<Config = Config>> BootstrapRunner<R> {
         state: StateSnapshot,
     ) -> Result<Self, BootstrapRunnerError> {
         Ok(Self {
-            app: CompositorApp::initialize(layout_service, authoring_layout_service, config, state)?,
+            app: CompositorApp::initialize(
+                layout_service,
+                authoring_layout_service,
+                config,
+                state,
+            )?,
             applied_events: Vec::new(),
         })
     }
@@ -205,8 +210,8 @@ mod tests {
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use spiders_config::model::{Config, LayoutDefinition};
     use spiders_config::authoring_layout::AuthoringLayoutService;
+    use spiders_config::model::{Config, LayoutDefinition};
     use spiders_runtime_js::loader::{RuntimePathResolver, RuntimeProjectLayoutSourceLoader};
     use spiders_runtime_js::runtime::QuickJsPreparedLayoutRuntime;
     use spiders_shared::ids::{OutputId, WindowId, WorkspaceId};

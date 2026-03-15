@@ -235,7 +235,7 @@ fn write_compiled_app(
 
     let mut written_files = 0usize;
     for module in &module_graph.modules {
-        if module.specifier.starts_with("spider-wm/") {
+        if module.specifier.starts_with("spiders-wm/") {
             continue;
         }
         let destination = runtime_destination_for_specifier(
@@ -373,6 +373,9 @@ fn rewrite_module_for_runtime(
         .resolved_imports
         .iter()
         .map(|(specifier, target)| {
+            if target.starts_with("spiders-wm/") {
+                return (specifier.clone(), target.clone());
+            }
             let target_destination = runtime_destination_for_specifier(
                 target,
                 runtime_root,
@@ -1106,7 +1109,7 @@ mod tests {
         fs::write(
             root.join("config.ts"),
             r#"
-                import type { SpiderWMConfig } from "spider-wm/config";
+                import type { SpiderWMConfig } from "spiders-wm/config";
                 import { bindings } from "./config/bindings";
                 import { inputs } from "./config/inputs";
                 import { layouts } from "./config/layouts";
@@ -1124,7 +1127,7 @@ mod tests {
         fs::write(
             root.join("config/bindings.ts"),
             r#"
-                import * as actions from "spider-wm/actions";
+                import * as actions from "spiders-wm/actions";
                 export const bindings = {
                   mod: "alt",
                   entries: [
@@ -1275,5 +1278,62 @@ mod tests {
         assert!(cache_root.join("layouts/master-stack/index.js").exists());
         assert!(!cache_root.join("stale.js").exists());
         assert!(!cache_root.join("stale.css").exists());
+    }
+
+    #[test]
+    fn load_prepared_config_preserves_virtual_actions_imports() {
+        let root = unique_root("prepared-virtual-actions");
+        let cache_root = root.join("runtime-cache");
+        fs::create_dir_all(root.join("config")).unwrap();
+        fs::create_dir_all(root.join("layouts/master-stack")).unwrap();
+        fs::write(
+            root.join("config.ts"),
+            r#"
+                import type { SpiderWMConfig } from "spiders-wm/config";
+                import { bindings } from "./config/bindings";
+
+                export default {
+                  bindings,
+                  layouts: { default: "master-stack" },
+                } satisfies SpiderWMConfig;
+            "#,
+        )
+        .unwrap();
+        fs::write(
+            root.join("config/bindings.ts"),
+            r#"
+                import * as actions from "spiders-wm/actions";
+
+                export const bindings = {
+                  mod: "alt",
+                  entries: [{ bind: ["mod", "Return"], action: actions.spawn("foot") }],
+                };
+            "#,
+        )
+        .unwrap();
+        fs::write(
+            root.join("layouts/master-stack/index.ts"),
+            r#"
+                export default function layout() {
+                  return { type: "workspace", children: [] };
+                }
+            "#,
+        )
+        .unwrap();
+
+        let runtime_entry = cache_root.join("config.js");
+        rebuild_prepared_config(root.join("config.ts"), &runtime_entry).unwrap();
+
+        let prepared_bindings = fs::read_to_string(cache_root.join("config/bindings.js")).unwrap();
+        assert!(prepared_bindings.contains("\"spiders-wm/actions\""));
+
+        let config = load_prepared_config(&runtime_entry).unwrap();
+        assert_eq!(config.bindings.len(), 1);
+        assert_eq!(
+            config.bindings[0].action,
+            WmAction::Spawn {
+                command: "foot".into(),
+            }
+        );
     }
 }
