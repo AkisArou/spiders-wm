@@ -143,7 +143,12 @@ fn write_runtime_cache(
     }
 
     if let Some(stylesheet) = &project.global_stylesheet_path {
-        let destination = runtime_root.join("index.css");
+        let destination = runtime_root.join(
+            stylesheet
+                .file_name()
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from("effects.css")),
+        );
         if copy_stylesheet_if_stale(stylesheet, &destination, force_rebuild)? {
             update.copied_stylesheets += 1;
         }

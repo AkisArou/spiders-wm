@@ -40,7 +40,7 @@ mod imp {
     use smithay::wayland::presentation::Refresh;
     use spiders_config::model::Config;
     use spiders_shared::api::WmAction;
-    use spiders_shared::ids::OutputId;
+    use spiders_shared::ids::{OutputId, WindowId};
     use spiders_shared::runtime::AuthoringLayoutRuntime;
     use spiders_shared::wm::OutputSnapshot;
     use spiders_wm::{
@@ -505,14 +505,22 @@ mod imp {
         }
 
         fn render_if_needed(&mut self) -> Result<(), SmithayRuntimeError> {
-            let (should_render, render_items, window_items, output, surfaces) = {
+            let (should_render, render_items, window_items, decoration_policies, output, surfaces) = {
                 let state = self.state_mut();
                 let should_render = state.take_redraw_request();
                 let render_items = state.current_titlebar_render_plan().to_vec();
                 let window_items = state.current_window_render_plan().to_vec();
+                let decoration_policies = state.current_window_decoration_policies();
                 let output = state.active_smithay_output();
                 let surfaces = state.renderable_toplevel_surfaces();
-                (should_render, render_items, window_items, output, surfaces)
+                (
+                    should_render,
+                    render_items,
+                    window_items,
+                    decoration_policies,
+                    output,
+                    surfaces,
+                )
             };
 
             if !should_render {
@@ -546,6 +554,7 @@ mod imp {
                     output_scale,
                     &render_items,
                     &window_items,
+                    &decoration_policies,
                     &surfaces,
                 );
                 render_state
@@ -647,9 +656,17 @@ mod imp {
         output_scale: smithay::utils::Scale<f64>,
         titlebars: &[TitlebarRenderItem],
         windows: &[SmithayWindowRenderSnapshot],
+        decoration_policies: &[(WindowId, SmithayWindowDecorationPolicySnapshot)],
         surfaces: &[SmithayRenderableToplevelSurface],
     ) -> Vec<CompositorRenderElement<GlesRenderer>> {
         let mut elements = Vec::new();
+
+        elements.extend(
+            windows
+                .iter()
+                .flat_map(|window| build_window_border_elements(window, decoration_policies))
+                .map(CompositorRenderElement::from),
+        );
 
         for window in windows {
             let Some(surface) = surfaces
@@ -820,6 +837,61 @@ mod imp {
         ))
     }
 
+    fn build_window_border_elements(
+        item: &SmithayWindowRenderSnapshot,
+        decoration_policies: &[(WindowId, SmithayWindowDecorationPolicySnapshot)],
+    ) -> Vec<SolidColorRenderElement> {
+        let Some(style) = decoration_policies
+            .iter()
+            .find(|(window_id, _)| *window_id == item.window_id)
+            .map(|(_, policy)| &policy.window_style)
+        else {
+            return Vec::new();
+        };
+
+        let Some(width) = style.border_width.as_deref().and_then(parse_px_i32) else {
+            return Vec::new();
+        };
+        let Some(mut color) = style.border_color.as_deref().and_then(parse_hex_color) else {
+            return Vec::new();
+        };
+        if let Some(opacity) = style.opacity.as_deref().and_then(parse_opacity_f32) {
+            color = Color32F::new(
+                color.r(),
+                color.g(),
+                color.b(),
+                (color.a() * opacity).clamp(0.0, 1.0),
+            );
+        }
+
+        let x = item.window_rect.x.round() as i32;
+        let y = item.window_rect.y.round() as i32;
+        let w = item.window_rect.width.max(0.0).round() as i32;
+        let h = item.window_rect.height.max(0.0).round() as i32;
+        if w <= 0 || h <= 0 {
+            return Vec::new();
+        }
+
+        let vertical_height = (h - 2 * width).max(0);
+        let rects = [
+            Rectangle::new((x, y).into(), (w, width).into()),
+            Rectangle::new((x, y + h - width).into(), (w, width).into()),
+            Rectangle::new((x, y + width).into(), (width, vertical_height).into()),
+            Rectangle::new(
+                (x + w - width, y + width).into(),
+                (width, vertical_height).into(),
+            ),
+        ];
+
+        rects
+            .into_iter()
+            .filter(|rect| rect.size.w > 0 && rect.size.h > 0)
+            .map(|rect| {
+                SolidColorRenderElement::new(Id::new(), rect, 1usize, color, Kind::Unspecified)
+            })
+            .collect()
+    }
+
     fn titlebar_font_scale(item: &TitlebarRenderItem) -> i32 {
         let size = item
             .style
@@ -946,6 +1018,14 @@ mod imp {
     fn parse_px_i32(value: &str) -> Option<i32> {
         let value = value.trim().strip_suffix("px").unwrap_or(value).trim();
         value.parse::<i32>().ok().filter(|value| *value > 0)
+    }
+
+    fn parse_opacity_f32(value: &str) -> Option<f32> {
+        value
+            .trim()
+            .parse::<f32>()
+            .ok()
+            .map(|value| value.clamp(0.0, 1.0))
     }
 
     fn post_repaint(
@@ -1111,6 +1191,16 @@ mod imp {
                 if state.has_active_titlebar_interaction() {
                     state.update_titlebar_interaction();
                     return Ok(());
+                }
+
+                if state.sloppyfocus() {
+                    if let Some(window_id) = state.window_at_point(location.x, location.y) {
+                        let focused = state.snapshot().seat.focused_window_id.clone();
+                        if focused.as_ref() != Some(&window_id) {
+                            state.set_keyboard_focus_for_window(&window_id);
+                            state.queue_workspace_action(WmAction::FocusWindow { window_id });
+                        }
+                    }
                 }
 
                 let pointer = state.seat.get_pointer().ok_or_else(|| {
@@ -1319,6 +1409,7 @@ mod imp {
                         SmithayWindowDecorationPolicySnapshot {
                             decorations_visible: policy.decorations_visible,
                             titlebar_visible: policy.titlebar_visible,
+                            window_style: policy.window_style,
                             titlebar_style: policy.titlebar_style,
                         },
                     )
@@ -1423,6 +1514,15 @@ mod imp {
             Display::new().map_err(|error| SmithayRuntimeError::Winit(error.to_string()))?;
         let mut smithay_state = SpidersSmithayState::new(&display, "smithay-winit")?;
         smithay_state.set_bindings(controller.app().session().config().bindings.clone());
+        smithay_state.set_sloppyfocus(
+            controller
+                .app()
+                .session()
+                .config()
+                .options
+                .sloppyfocus
+                .unwrap_or(false),
+        );
         let socket = smithay_state.bind_socket_source(options.socket_name.as_deref())?;
         let socket_name = socket.socket_name().to_string_lossy().into_owned();
 

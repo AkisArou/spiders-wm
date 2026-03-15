@@ -167,11 +167,15 @@ pub fn discover_project_apps(
     Ok(DiscoveredProject {
         config_app,
         layout_apps,
-        global_stylesheet_path: root_dir
-            .join("index.css")
-            .exists()
-            .then(|| root_dir.join("index.css")),
+        global_stylesheet_path: discover_global_stylesheet(&root_dir),
     })
+}
+
+fn discover_global_stylesheet(root_dir: &Path) -> Option<PathBuf> {
+    ["effects.css", "index.css"]
+        .into_iter()
+        .map(|name| root_dir.join(name))
+        .find(|path| path.exists())
 }
 
 fn discover_layout_entry(layout_dir: &Path) -> Option<PathBuf> {
@@ -401,6 +405,27 @@ mod tests {
         assert_eq!(project.layout_apps[0].name, "master-stack");
         assert!(project.global_stylesheet_path.is_some());
         assert!(project.layout_apps[0].stylesheet_path.is_some());
+    }
+
+    #[test]
+    fn discovers_effects_css_before_root_index_css() {
+        let root = unique_root("effects");
+        fs::create_dir_all(root.join("layouts/master-stack")).unwrap();
+        fs::write(root.join("config.ts"), "export default {};").unwrap();
+        fs::write(root.join("index.css"), "workspace {}").unwrap();
+        fs::write(root.join("effects.css"), "window { border-width: 2px; }").unwrap();
+        fs::write(
+            root.join("layouts/master-stack/index.tsx"),
+            "export default function layout() { return null; }",
+        )
+        .unwrap();
+
+        let project = discover_project_apps(root.join("config.ts")).unwrap();
+
+        assert_eq!(
+            project.global_stylesheet_path,
+            Some(root.join("effects.css"))
+        );
     }
 
     #[test]

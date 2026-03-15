@@ -1,6 +1,6 @@
 use spiders_effects::{
     compute_effect_style, parse_effect_stylesheet, EffectPseudoState, EffectStyle,
-    EffectStyleSheet, EffectTarget, EffectsCssParseError, TitlebarEffects,
+    EffectStyleSheet, EffectTarget, EffectsCssParseError, TitlebarEffects, WindowEffects,
 };
 use spiders_shared::ids::WindowId;
 use spiders_shared::wm::{StateSnapshot, WindowSnapshot, WorkspaceSnapshot};
@@ -15,6 +15,7 @@ pub struct WindowEffectsState {
 pub struct WindowDecorationPolicy {
     pub decorations_visible: bool,
     pub titlebar_visible: bool,
+    pub window_style: WindowEffects,
     pub titlebar_style: TitlebarEffects,
 }
 
@@ -94,6 +95,7 @@ pub fn window_decoration_policy_for_style(style: &EffectStyle) -> WindowDecorati
     WindowDecorationPolicy {
         decorations_visible: decoration_visible(style),
         titlebar_visible: titlebar_visible(style),
+        window_style: style.window.clone(),
         titlebar_style: style.titlebar.clone(),
     }
 }
@@ -227,5 +229,24 @@ mod tests {
         assert!(!policy.decorations_visible);
         assert!(!policy.titlebar_visible);
         assert_eq!(policy.titlebar_style.background.as_deref(), Some("#111"));
+    }
+
+    #[test]
+    fn parses_window_border_effect_properties() {
+        let mut effects = EffectsRuntimeState::from_stylesheet(
+            r#"
+                workspace { transition-property: transform, opacity; }
+                window { border-width: 2px; border-color: #222222; opacity: 0.94; }
+                window:focused { border-color: #285577; opacity: 1; }
+            "#,
+        )
+        .unwrap();
+
+        effects.recompute_for_workspace(&state(), &workspace());
+        let style = effects.window_style(&WindowId::from("win-1")).unwrap();
+
+        assert_eq!(style.window.border_width.as_deref(), Some("2px"));
+        assert_eq!(style.window.border_color.as_deref(), Some("#285577"));
+        assert_eq!(style.window.opacity.as_deref(), Some("1"));
     }
 }

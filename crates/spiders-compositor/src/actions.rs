@@ -180,6 +180,8 @@ where
 
     if recompute {
         runtime.recompute_current_layout()?;
+    } else {
+        runtime.refresh_view_state()?;
     }
 
     Ok(ActionOutcome::new(events, recompute))

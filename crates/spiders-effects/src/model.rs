@@ -75,6 +75,26 @@ pub enum Appearance {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct WindowEffects {
     pub appearance: Option<Appearance>,
+    pub border_width: Option<String>,
+    pub border_color: Option<String>,
+    pub opacity: Option<String>,
+    pub border_radius: Option<String>,
+    pub box_shadow: Option<String>,
+    pub backdrop_filter: Option<String>,
+    pub animation: Option<String>,
+    pub transition: Option<String>,
+    pub transform: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct WorkspaceEffects {
+    pub opacity: Option<String>,
+    pub transform: Option<String>,
+    pub animation: Option<String>,
+    pub transition: Option<String>,
+    pub transition_property: Option<String>,
+    pub transition_duration: Option<String>,
+    pub transition_timing_function: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -99,6 +119,22 @@ pub struct TitlebarEffects {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CompiledEffectDeclaration {
     Appearance(Appearance),
+    WindowBorderWidth(String),
+    WindowBorderColor(String),
+    WindowOpacity(String),
+    WindowBorderRadius(String),
+    WindowBoxShadow(String),
+    WindowBackdropFilter(String),
+    WindowAnimation(String),
+    WindowTransition(String),
+    WindowTransform(String),
+    WorkspaceOpacity(String),
+    WorkspaceTransform(String),
+    WorkspaceAnimation(String),
+    WorkspaceTransition(String),
+    WorkspaceTransitionProperty(String),
+    WorkspaceTransitionDuration(String),
+    WorkspaceTransitionTimingFunction(String),
     TitlebarBackground(String),
     TitlebarColor(String),
     TitlebarHeight(String),
@@ -118,6 +154,7 @@ pub enum CompiledEffectDeclaration {
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct EffectStyle {
+    pub workspace: WorkspaceEffects,
     pub window: WindowEffects,
     pub titlebar: TitlebarEffects,
 }
@@ -155,7 +192,8 @@ pub enum EffectsCssValueError {
 }
 
 pub fn parse_effect_stylesheet(input: &str) -> Result<EffectStyleSheet, EffectsCssParseError> {
-    let mut input = ParserInput::new(input);
+    let sanitized = strip_ignored_at_rules(input);
+    let mut input = ParserInput::new(&sanitized);
     let mut parser = Parser::new(&mut input);
     let mut rule_parser = EffectsCssParser;
     let parser = StyleSheetParser::new(&mut parser, &mut rule_parser);
@@ -166,6 +204,40 @@ pub fn parse_effect_stylesheet(input: &str) -> Result<EffectStyleSheet, EffectsC
     }
 
     Ok(EffectStyleSheet { rules })
+}
+
+fn strip_ignored_at_rules(input: &str) -> String {
+    let mut output = String::with_capacity(input.len());
+    let mut cursor = 0;
+
+    while let Some(relative) = input[cursor..].find("@keyframes") {
+        let start = cursor + relative;
+        output.push_str(&input[cursor..start]);
+
+        let Some(block_start_rel) = input[start..].find('{') else {
+            cursor = input.len();
+            break;
+        };
+        let mut depth = 0i32;
+        let mut end = start + block_start_rel;
+        for (idx, ch) in input[end..].char_indices() {
+            match ch {
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        end += idx + ch.len_utf8();
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        cursor = end;
+    }
+
+    output.push_str(&input[cursor..]);
+    output
 }
 
 pub fn compile_effect_declaration(
@@ -179,6 +251,60 @@ pub fn compile_effect_declaration(
                     &declaration.property,
                     &declaration.value,
                 )?))
+            }
+            "border-width" if selector.subject == EffectSelectorSubject::Window => Ok(
+                CompiledEffectDeclaration::WindowBorderWidth(declaration.value.clone()),
+            ),
+            "border-color" if selector.subject == EffectSelectorSubject::Window => Ok(
+                CompiledEffectDeclaration::WindowBorderColor(declaration.value.clone()),
+            ),
+            "opacity" if selector.subject == EffectSelectorSubject::Window => Ok(
+                CompiledEffectDeclaration::WindowOpacity(declaration.value.clone()),
+            ),
+            "border-radius" if selector.subject == EffectSelectorSubject::Window => Ok(
+                CompiledEffectDeclaration::WindowBorderRadius(declaration.value.clone()),
+            ),
+            "box-shadow" if selector.subject == EffectSelectorSubject::Window => Ok(
+                CompiledEffectDeclaration::WindowBoxShadow(declaration.value.clone()),
+            ),
+            "backdrop-filter" if selector.subject == EffectSelectorSubject::Window => Ok(
+                CompiledEffectDeclaration::WindowBackdropFilter(declaration.value.clone()),
+            ),
+            "animation" if selector.subject == EffectSelectorSubject::Window => Ok(
+                CompiledEffectDeclaration::WindowAnimation(declaration.value.clone()),
+            ),
+            "transition" if selector.subject == EffectSelectorSubject::Window => Ok(
+                CompiledEffectDeclaration::WindowTransition(declaration.value.clone()),
+            ),
+            "transform" if selector.subject == EffectSelectorSubject::Window => Ok(
+                CompiledEffectDeclaration::WindowTransform(declaration.value.clone()),
+            ),
+            "opacity" if selector.subject == EffectSelectorSubject::Workspace => Ok(
+                CompiledEffectDeclaration::WorkspaceOpacity(declaration.value.clone()),
+            ),
+            "transform" if selector.subject == EffectSelectorSubject::Workspace => Ok(
+                CompiledEffectDeclaration::WorkspaceTransform(declaration.value.clone()),
+            ),
+            "animation" if selector.subject == EffectSelectorSubject::Workspace => Ok(
+                CompiledEffectDeclaration::WorkspaceAnimation(declaration.value.clone()),
+            ),
+            "transition" if selector.subject == EffectSelectorSubject::Workspace => Ok(
+                CompiledEffectDeclaration::WorkspaceTransition(declaration.value.clone()),
+            ),
+            "transition-property" if selector.subject == EffectSelectorSubject::Workspace => Ok(
+                CompiledEffectDeclaration::WorkspaceTransitionProperty(declaration.value.clone()),
+            ),
+            "transition-duration" if selector.subject == EffectSelectorSubject::Workspace => Ok(
+                CompiledEffectDeclaration::WorkspaceTransitionDuration(declaration.value.clone()),
+            ),
+            "transition-timing-function"
+                if selector.subject == EffectSelectorSubject::Workspace =>
+            {
+                Ok(
+                    CompiledEffectDeclaration::WorkspaceTransitionTimingFunction(
+                        declaration.value.clone(),
+                    ),
+                )
             }
             _ => Err(EffectsCssValueError::InvalidTarget {
                 property: declaration.property.clone(),
@@ -296,6 +422,52 @@ impl EffectStyle {
     pub fn apply(&mut self, declaration: CompiledEffectDeclaration) {
         match declaration {
             CompiledEffectDeclaration::Appearance(value) => self.window.appearance = Some(value),
+            CompiledEffectDeclaration::WindowBorderWidth(value) => {
+                self.window.border_width = Some(value)
+            }
+            CompiledEffectDeclaration::WindowBorderColor(value) => {
+                self.window.border_color = Some(value)
+            }
+            CompiledEffectDeclaration::WindowOpacity(value) => self.window.opacity = Some(value),
+            CompiledEffectDeclaration::WindowBorderRadius(value) => {
+                self.window.border_radius = Some(value)
+            }
+            CompiledEffectDeclaration::WindowBoxShadow(value) => {
+                self.window.box_shadow = Some(value)
+            }
+            CompiledEffectDeclaration::WindowBackdropFilter(value) => {
+                self.window.backdrop_filter = Some(value)
+            }
+            CompiledEffectDeclaration::WindowAnimation(value) => {
+                self.window.animation = Some(value)
+            }
+            CompiledEffectDeclaration::WindowTransition(value) => {
+                self.window.transition = Some(value)
+            }
+            CompiledEffectDeclaration::WindowTransform(value) => {
+                self.window.transform = Some(value)
+            }
+            CompiledEffectDeclaration::WorkspaceOpacity(value) => {
+                self.workspace.opacity = Some(value)
+            }
+            CompiledEffectDeclaration::WorkspaceTransform(value) => {
+                self.workspace.transform = Some(value)
+            }
+            CompiledEffectDeclaration::WorkspaceAnimation(value) => {
+                self.workspace.animation = Some(value)
+            }
+            CompiledEffectDeclaration::WorkspaceTransition(value) => {
+                self.workspace.transition = Some(value)
+            }
+            CompiledEffectDeclaration::WorkspaceTransitionProperty(value) => {
+                self.workspace.transition_property = Some(value)
+            }
+            CompiledEffectDeclaration::WorkspaceTransitionDuration(value) => {
+                self.workspace.transition_duration = Some(value)
+            }
+            CompiledEffectDeclaration::WorkspaceTransitionTimingFunction(value) => {
+                self.workspace.transition_timing_function = Some(value)
+            }
             CompiledEffectDeclaration::TitlebarBackground(value) => {
                 self.titlebar.background = Some(value)
             }
@@ -655,6 +827,17 @@ fn parse_pseudo_element(name: &str) -> Result<EffectPseudoElement, EffectsCssPar
 fn validate_effect_property(property: &str) -> Result<(), EffectsCssParseError> {
     match property {
         "appearance"
+        | "border-width"
+        | "border-color"
+        | "opacity"
+        | "border-radius"
+        | "backdrop-filter"
+        | "animation"
+        | "transition"
+        | "transform"
+        | "transition-property"
+        | "transition-duration"
+        | "transition-timing-function"
         | "background"
         | "color"
         | "height"
@@ -668,8 +851,7 @@ fn validate_effect_property(property: &str) -> Result<(), EffectsCssParseError> 
         | "letter-spacing"
         | "text-transform"
         | "text-align"
-        | "box-shadow"
-        | "border-radius" => Ok(()),
+        | "box-shadow" => Ok(()),
         _ => Err(EffectsCssParseError::UnsupportedProperty {
             property: property.to_owned(),
         }),

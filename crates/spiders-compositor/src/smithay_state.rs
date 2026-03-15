@@ -66,7 +66,7 @@ mod imp {
     use smithay::wayland::shm::{ShmHandler, ShmState};
     use smithay::wayland::socket::ListeningSocketSource;
     use spiders_config::model::Binding;
-    use spiders_effects::TitlebarEffects;
+    use spiders_effects::{TitlebarEffects, WindowEffects};
     use spiders_shared::api::WmAction;
     use spiders_shared::ids::{OutputId, WindowId};
     use spiders_shared::layout::LayoutRect;
@@ -114,6 +114,7 @@ mod imp {
     pub struct SmithayWindowDecorationPolicySnapshot {
         pub decorations_visible: bool,
         pub titlebar_visible: bool,
+        pub window_style: WindowEffects,
         pub titlebar_style: TitlebarEffects,
     }
 
@@ -170,6 +171,7 @@ mod imp {
             Self {
                 decorations_visible: true,
                 titlebar_visible: true,
+                window_style: WindowEffects::default(),
                 titlebar_style: TitlebarEffects::default(),
             }
         }
@@ -412,6 +414,7 @@ mod imp {
         pending_discovery_events: Vec<BackendDiscoveryEvent>,
         pending_workspace_actions: Vec<WmAction>,
         bindings: Vec<Binding>,
+        sloppyfocus: bool,
     }
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -519,6 +522,7 @@ mod imp {
                 pending_discovery_events: Vec::new(),
                 pending_workspace_actions: Vec::new(),
                 bindings: Vec::new(),
+                sloppyfocus: false,
             })
         }
 
@@ -528,6 +532,14 @@ mod imp {
 
         pub fn bindings(&self) -> &[Binding] {
             &self.bindings
+        }
+
+        pub fn set_sloppyfocus(&mut self, sloppyfocus: bool) {
+            self.sloppyfocus = sloppyfocus;
+        }
+
+        pub fn sloppyfocus(&self) -> bool {
+            self.sloppyfocus
         }
 
         pub fn bind_auto_socket_source(&self) -> Result<ListeningSocketSource, SmithayStateError> {
@@ -906,6 +918,34 @@ mod imp {
             &self.window_render_plan
         }
 
+        pub fn current_window_decoration_policies(
+            &self,
+        ) -> Vec<(WindowId, SmithayWindowDecorationPolicySnapshot)> {
+            self.toplevel_window_ids
+                .iter()
+                .filter_map(|(surface_id, window_id)| {
+                    self.xdg_toplevel_decoration_policies
+                        .get(surface_id)
+                        .cloned()
+                        .map(|policy| (window_id.clone(), policy))
+                })
+                .collect()
+        }
+
+        pub fn window_at_point(&self, x: f64, y: f64) -> Option<WindowId> {
+            self.window_render_plan
+                .iter()
+                .rev()
+                .find(|window| {
+                    let rect = window.window_rect;
+                    x >= f64::from(rect.x)
+                        && x < f64::from(rect.x + rect.width)
+                        && y >= f64::from(rect.y)
+                        && y < f64::from(rect.y + rect.height)
+                })
+                .map(|window| window.window_id.clone())
+        }
+
         pub fn is_floating_window(&self, window_id: &WindowId) -> bool {
             self.floating_window_ids.contains(window_id)
         }
@@ -1207,7 +1247,7 @@ mod imp {
         fn apply_window_decoration_policy(
             &mut self,
             surface_id: &str,
-            policy: &SmithayWindowDecorationPolicySnapshot,
+            _policy: &SmithayWindowDecorationPolicySnapshot,
         ) {
             let Some(surface) = self
                 .xdg_shell_state
@@ -1219,11 +1259,7 @@ mod imp {
                 return;
             };
 
-            let mode = if policy.decorations_visible {
-                zxdg_toplevel_decoration_v1::Mode::ServerSide
-            } else {
-                zxdg_toplevel_decoration_v1::Mode::ClientSide
-            };
+            let mode = zxdg_toplevel_decoration_v1::Mode::ServerSide;
 
             surface.with_pending_state(|state| {
                 state.decoration_mode = Some(mode);
@@ -3854,6 +3890,7 @@ mod imp {
                         background: Some("#111".into()),
                         ..TitlebarEffects::default()
                     },
+                    ..SmithayWindowDecorationPolicySnapshot::default()
                 },
             )]);
 
@@ -3902,6 +3939,7 @@ mod imp {
                     decorations_visible: false,
                     titlebar_visible: false,
                     titlebar_style: TitlebarEffects::default(),
+                    ..SmithayWindowDecorationPolicySnapshot::default()
                 },
             )]);
 
@@ -3943,6 +3981,7 @@ mod imp {
                         background: Some("#222".into()),
                         ..TitlebarEffects::default()
                     },
+                    ..SmithayWindowDecorationPolicySnapshot::default()
                 },
             )]);
 
@@ -4192,7 +4231,7 @@ mod imp {
         }
 
         #[test]
-        fn smithay_state_protocol_emits_client_side_decoration_mode_when_policy_disables_ssd() {
+        fn smithay_state_protocol_keeps_server_side_mode_when_policy_hides_titlebar() {
             let mut display = Display::<SpidersSmithayState>::new().unwrap();
             let mut handle = display.handle();
             let mut state = SpidersSmithayState::new(&display, "test-seat").unwrap();
@@ -4277,6 +4316,7 @@ mod imp {
                     decorations_visible: false,
                     titlebar_visible: false,
                     titlebar_style: TitlebarEffects::default(),
+                    ..SmithayWindowDecorationPolicySnapshot::default()
                 },
             )]);
 
@@ -4295,7 +4335,7 @@ mod imp {
                 &mut client_state,
             );
 
-            assert!(client_state
+            assert!(!client_state
                 .decoration_modes
                 .iter()
                 .any(|mode| *mode == zxdg_toplevel_decoration_v1::Mode::ClientSide));

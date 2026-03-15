@@ -289,6 +289,7 @@ impl<R: AuthoringLayoutRuntime<Config = Config>> CompositorSession<R> {
             .map_err(map_domain_error)?;
         self.runtime
             .update_from_wm_state(self.domain.state().clone());
+        self.runtime.refresh_view_state()?;
         Ok(self.session_update(update))
     }
 
@@ -336,6 +337,7 @@ impl<R: AuthoringLayoutRuntime<Config = Config>> CompositorSession<R> {
             .map_err(map_domain_error)?;
         self.runtime
             .update_from_wm_state(self.domain.state().clone());
+        self.runtime.refresh_view_state()?;
         Ok(self.session_update(update))
     }
 
@@ -643,6 +645,131 @@ mod tests {
             session.state().focused_window_id,
             Some(WindowId::from("w1"))
         );
+    }
+
+    #[test]
+    fn session_focus_window_refreshes_focused_border_policy_without_relayout() {
+        let mut config = config();
+        config.layouts[0].effects_stylesheet =
+            "window { border-width: 2px; border-color: #222222; } window:focused { border-color: #285577; }".into();
+
+        let temp_dir = std::env::temp_dir();
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let runtime_root = temp_dir.join(format!("spiders-session-focus-effects-{unique}"));
+        let _ = fs::create_dir_all(runtime_root.join("layouts"));
+        fs::write(
+            runtime_root.join("layouts/master-stack.js"),
+            "ctx => ({ type: 'workspace', children: [{ type: 'slot', id: 'rest' }] })",
+        )
+        .unwrap();
+        fs::write(
+            runtime_root.join("layouts/columns.js"),
+            "ctx => ({ type: 'workspace', children: [{ type: 'slot', id: 'rest' }] })",
+        )
+        .unwrap();
+
+        let loader =
+            RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
+        let runtime = QuickJsPreparedLayoutRuntime::with_loader(loader.clone());
+        let service = AuthoringLayoutService::new(runtime);
+
+        let mut snapshot = state();
+        snapshot.focused_window_id = None;
+        snapshot.windows[0].focused = false;
+        snapshot.visible_window_ids = vec![WindowId::from("w1")];
+
+        let mut session =
+            CompositorSession::initialize(LayoutService, service, config, snapshot).unwrap();
+        session.register_seat("seat-0");
+
+        let update = session.focus_window(&WindowId::from("w1")).unwrap();
+
+        assert!(!update.recomputed_layout);
+        let policy = update
+            .decoration_policies
+            .iter()
+            .find(|(window_id, _)| window_id == &WindowId::from("w1"))
+            .map(|(_, policy)| policy)
+            .unwrap();
+        assert_eq!(policy.window_style.border_color.as_deref(), Some("#285577"));
+    }
+
+    #[test]
+    fn session_map_window_recomputes_layout_with_focused_border_policy() {
+        let mut config = config();
+        config.layouts[0].effects_stylesheet =
+            "window { border-width: 2px; border-color: #222222; } window:focused { border-color: #285577; }".into();
+
+        let temp_dir = std::env::temp_dir();
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let runtime_root = temp_dir.join(format!("spiders-session-map-effects-{unique}"));
+        let _ = fs::create_dir_all(runtime_root.join("layouts"));
+        fs::write(
+            runtime_root.join("layouts/master-stack.js"),
+            "ctx => ({ type: 'workspace', children: [{ type: 'slot', id: 'rest' }] })",
+        )
+        .unwrap();
+        fs::write(
+            runtime_root.join("layouts/columns.js"),
+            "ctx => ({ type: 'workspace', children: [{ type: 'slot', id: 'rest' }] })",
+        )
+        .unwrap();
+
+        let loader =
+            RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
+        let runtime = QuickJsPreparedLayoutRuntime::with_loader(loader.clone());
+        let service = AuthoringLayoutService::new(runtime);
+
+        let mut snapshot = state();
+        snapshot.focused_window_id = None;
+        snapshot.windows[0].focused = false;
+        snapshot.visible_window_ids = vec![];
+
+        let mut session =
+            CompositorSession::initialize(LayoutService, service, config, snapshot).unwrap();
+        session.register_seat("seat-0");
+
+        let _ = session
+            .map_window(WindowSnapshot {
+                id: WindowId::from("w3"),
+                shell: ShellKind::XdgToplevel,
+                app_id: Some("foot".into()),
+                title: Some("Foot".into()),
+                class: None,
+                instance: None,
+                role: None,
+                window_type: None,
+                mapped: false,
+                floating: false,
+                floating_rect: None,
+                fullscreen: false,
+                focused: false,
+                urgent: false,
+                output_id: Some(OutputId::from("out-1")),
+                workspace_id: Some(WorkspaceId::from("ws-1")),
+                tags: vec!["1".into()],
+            })
+            .unwrap();
+
+        let update = session.focus_window(&WindowId::from("w3")).unwrap();
+
+        let policy = update
+            .decoration_policies
+            .iter()
+            .find(|(window_id, _)| window_id == &WindowId::from("w3"))
+            .map(|(_, policy)| policy)
+            .unwrap();
+        assert_eq!(
+            session.state().focused_window_id,
+            Some(WindowId::from("w3"))
+        );
+        assert_eq!(policy.window_style.border_color.as_deref(), Some("#285577"));
     }
 
     #[test]

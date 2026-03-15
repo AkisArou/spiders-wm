@@ -100,6 +100,20 @@ impl<R> CompositorRuntimeState<R> {
     pub fn update_from_wm_state(&mut self, state: StateSnapshot) {
         self.startup.state = state;
     }
+
+    pub fn refresh_effects_for_current_workspace(&mut self) {
+        let state = self.startup.state.clone();
+        let Some(layout) = self.current_layout.as_mut() else {
+            return;
+        };
+
+        let Some(workspace) = state.workspace_by_id(&layout.workspace_id) else {
+            layout.effects.windows.clear();
+            return;
+        };
+
+        layout.effects.recompute_for_workspace(&state, workspace);
+    }
 }
 
 impl<R: AuthoringLayoutRuntime<Config = Config>> CompositorRuntimeState<R> {
@@ -122,6 +136,22 @@ impl<R: AuthoringLayoutRuntime<Config = Config>> CompositorRuntimeState<R> {
             .map(WorkspaceLayoutState::from_startup);
         self.startup.runtime.startup_layout = startup_layout;
         Ok(())
+    }
+
+    pub fn refresh_view_state(&mut self) -> Result<bool, CompositorLayoutError> {
+        let current_workspace_id = self.startup.state.current_workspace_id.clone();
+        let layout_workspace_id = self
+            .current_layout
+            .as_ref()
+            .map(|layout| layout.workspace_id.clone());
+
+        if layout_workspace_id != current_workspace_id {
+            self.recompute_current_layout()?;
+            return Ok(true);
+        }
+
+        self.refresh_effects_for_current_workspace();
+        Ok(false)
     }
 
     pub fn window_decoration_policy(
