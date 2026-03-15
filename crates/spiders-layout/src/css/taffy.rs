@@ -771,6 +771,8 @@ fn parse_length_percentage(
 ) -> Result<LengthPercentage, CssValueError> {
     let components = normalized_components(value);
     match components.as_slice() {
+        [CssValueToken::Integer(0)] => Ok(LengthPercentage::Px(0.0)),
+        [CssValueToken::Number(number)] if *number == 0.0 => Ok(LengthPercentage::Px(0.0)),
         [CssValueToken::Dimension(dimension)] => {
             parse_dimension_length_percentage(property, dimension)
         }

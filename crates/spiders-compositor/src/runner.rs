@@ -7,6 +7,7 @@ use spiders_wm::{
     BootstrapScenario, StartupRegistration,
 };
 
+use crate::actions::ActionError;
 use crate::app::CompositorApp;
 use crate::topology::TopologyError;
 use crate::{CompositorLayoutError, LayoutService};
@@ -157,7 +158,17 @@ impl<R: AuthoringLayoutRuntime<Config = Config>> BootstrapRunner<R> {
     }
 
     pub fn apply_event(&mut self, event: BootstrapEvent) -> Result<(), BootstrapRunnerError> {
-        self.app.apply_bootstrap_event(event.clone())?;
+        match self.app.apply_runtime_bootstrap_event(event.clone()) {
+            Ok(()) => {}
+            Err(ActionError::Layout(error)) => return Err(BootstrapRunnerError::Layout(error)),
+            Err(ActionError::WmState(error)) => {
+                return Err(BootstrapRunnerError::Layout(
+                    CompositorLayoutError::Runtime(spiders_shared::runtime::RuntimeError::Other {
+                        message: error.to_string(),
+                    }),
+                ))
+            }
+        }
         self.applied_events.push(event);
         Ok(())
     }

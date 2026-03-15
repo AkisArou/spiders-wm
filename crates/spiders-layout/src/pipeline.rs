@@ -120,9 +120,9 @@ pub fn compute_layout_from_styled(
     width: f32,
     height: f32,
 ) -> Result<LaidOutTree, LayoutPipelineError> {
+    let root = root_node_with_space(&styled.root, width, height);
     let mut taffy = TaffyTree::new();
-    let root_id =
-        build_taffy_tree(&mut taffy, &styled.root).map_err(|_| LayoutPipelineError::Taffy)?;
+    let root_id = build_taffy_tree(&mut taffy, &root).map_err(|_| LayoutPipelineError::Taffy)?;
     taffy
         .compute_layout(
             root_id,
@@ -134,9 +134,17 @@ pub fn compute_layout_from_styled(
         .map_err(|_| LayoutPipelineError::Taffy)?;
 
     Ok(LaidOutTree {
-        root: collect_layout(&taffy, root_id, &styled.root)
-            .map_err(|_| LayoutPipelineError::Taffy)?,
+        root: collect_layout(&taffy, root_id, &root).map_err(|_| LayoutPipelineError::Taffy)?,
     })
+}
+
+fn root_node_with_space(node: &NodeComputedStyle, width: f32, height: f32) -> NodeComputedStyle {
+    let mut root = node.clone();
+    root.taffy_style.size = taffy::geometry::Size {
+        width: taffy::style::Dimension::length(width),
+        height: taffy::style::Dimension::length(height),
+    };
+    root
 }
 
 pub fn build_styled_layout_tree_from_sheet(
@@ -457,5 +465,41 @@ mod tests {
                 },
             }
         );
+    }
+
+    #[test]
+    fn pipeline_sizes_workspace_root_to_request_space() {
+        let tree = ResolvedLayoutNode::Workspace {
+            meta: LayoutNodeMeta::default(),
+            children: vec![ResolvedLayoutNode::Group {
+                meta: LayoutNodeMeta {
+                    id: Some("frame".into()),
+                    ..LayoutNodeMeta::default()
+                },
+                children: vec![ResolvedLayoutNode::Window {
+                    meta: LayoutNodeMeta {
+                        id: Some("master".into()),
+                        class: vec!["master-slot".into()],
+                        ..LayoutNodeMeta::default()
+                    },
+                    window_id: Some(WindowId::from("win-1")),
+                }],
+            }],
+        };
+
+        let laid_out = compute_layout(
+            &tree,
+            "#frame { display: flex; padding: 4px; width: 100%; height: 100%; } .master-slot { flex-basis: 0px; flex-grow: 1; min-width: 0px; }",
+            1280.0,
+            720.0,
+        )
+        .unwrap();
+
+        assert_eq!(laid_out.root.geometry.width, 1280.0);
+        assert_eq!(laid_out.root.geometry.height, 720.0);
+        assert_eq!(laid_out.root.children[0].geometry.width, 1280.0);
+        assert_eq!(laid_out.root.children[0].geometry.height, 720.0);
+        assert_eq!(laid_out.root.children[0].children[0].geometry.width, 1272.0);
+        assert_eq!(laid_out.root.children[0].children[0].geometry.height, 712.0);
     }
 }

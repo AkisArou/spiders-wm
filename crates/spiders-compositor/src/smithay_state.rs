@@ -801,10 +801,94 @@ mod imp {
                 })
                 .collect::<Vec<_>>();
 
+            self.sync_toplevel_render_plan_configures(&plan);
+
             if self.window_render_plan != plan {
                 self.window_render_plan = plan;
                 self.needs_redraw = true;
             }
+        }
+
+        fn sync_toplevel_render_plan_configures(&mut self, plan: &[SmithayWindowRenderSnapshot]) {
+            let surfaces = self.xdg_shell_state.toplevel_surfaces().to_vec();
+            let toplevels = surfaces
+                .into_iter()
+                .filter_map(|surface| {
+                    let surface_id = smithay_surface_id(surface.wl_surface());
+                    let window_id = self.toplevel_window_ids.get(&surface_id)?.clone();
+                    let render = plan
+                        .iter()
+                        .find(|item| item.window_id == window_id)?
+                        .clone();
+                    Some((surface_id, surface, render))
+                })
+                .collect::<Vec<_>>();
+
+            for (surface_id, surface, render) in toplevels {
+                self.sync_toplevel_surface_render_configure(&surface_id, &surface, &render);
+            }
+        }
+
+        fn sync_toplevel_surface_render_configure(
+            &mut self,
+            surface_id: &str,
+            surface: &ToplevelSurface,
+            render: &SmithayWindowRenderSnapshot,
+        ) {
+            let changed = self.update_toplevel_surface_pending_state(surface, render);
+
+            if changed && surface.is_initial_configure_sent() {
+                surface.send_pending_configure();
+                let configure = self
+                    .xdg_toplevel_configures
+                    .get(surface_id)
+                    .cloned()
+                    .unwrap_or_else(default_xdg_toplevel_configure_snapshot);
+                self.note_xdg_toplevel_configure_sent(
+                    surface_id.to_owned(),
+                    configure.activated,
+                    configure.fullscreen,
+                    configure.maximized,
+                );
+            }
+        }
+
+        fn update_toplevel_surface_pending_state(
+            &self,
+            surface: &ToplevelSurface,
+            render: &SmithayWindowRenderSnapshot,
+        ) -> bool {
+            let width = render.window_rect.width.round().max(1.0) as i32;
+            let height = (render.window_rect.height - render.content_offset_y)
+                .round()
+                .max(1.0) as i32;
+            let size = Some((width, height).into());
+            let bounds = self
+                .output_bounds_for_point(render.window_rect.x, render.window_rect.y)
+                .or_else(|| self.active_output_bounds())
+                .map(|rect| {
+                    (
+                        rect.width.round().max(1.0) as i32,
+                        rect.height.round().max(1.0) as i32,
+                    )
+                        .into()
+                });
+
+            surface.with_pending_state(|state| {
+                let mut changed = false;
+
+                if state.size != size {
+                    state.size = size;
+                    changed = true;
+                }
+
+                if state.bounds != bounds {
+                    state.bounds = bounds;
+                    changed = true;
+                }
+
+                changed
+            })
         }
 
         pub fn current_window_render_plan(&self) -> &[SmithayWindowRenderSnapshot] {
@@ -1153,7 +1237,10 @@ mod imp {
                 snapshots.push(BackendSurfaceSnapshot::Window {
                     surface_id: toplevel.surface_id.clone(),
                     window_id: toplevel.window_id.clone(),
-                    output_id: self.focused_output_id(&toplevel.surface_id),
+                    output_id: self
+                        .focused_output_id(&toplevel.surface_id)
+                        .or_else(|| self.active_output_id.clone())
+                        .or_else(|| self.known_output_ids.first().cloned()),
                 });
             }
 
@@ -1696,9 +1783,18 @@ mod imp {
                         .active_output_id
                         .as_ref()
                         .map(|active_output_id| {
-                            self.layer_output_ids
-                                .values()
-                                .filter(|output_id| *output_id == active_output_id)
+                            self.backend_surface_snapshots()
+                                .into_iter()
+                                .filter(|surface| match surface {
+                                    BackendSurfaceSnapshot::Window { output_id, .. }
+                                    | BackendSurfaceSnapshot::Popup { output_id, .. } => {
+                                        output_id.as_ref() == Some(active_output_id)
+                                    }
+                                    BackendSurfaceSnapshot::Layer { output_id, .. } => {
+                                        output_id == active_output_id
+                                    }
+                                    BackendSurfaceSnapshot::Unmanaged { .. } => false,
+                                })
                                 .count()
                         })
                         .unwrap_or(0),
@@ -3015,6 +3111,7 @@ mod imp {
         fn new_toplevel(&mut self, surface: ToplevelSurface) {
             self.track_toplevel_surface(surface.wl_surface());
             let surface_id = smithay_surface_id(surface.wl_surface());
+            let window_id = self.window_id_for_surface(&surface_id);
             let policy = self
                 .xdg_toplevel_decoration_policies
                 .get(&surface_id)
@@ -3024,6 +3121,13 @@ mod imp {
             surface.with_pending_state(|state| {
                 state.states.set(xdg_toplevel::State::Activated);
             });
+            if let Some(render) = self
+                .window_render_plan
+                .iter()
+                .find(|render| render.window_id == window_id)
+            {
+                self.update_toplevel_surface_pending_state(&surface, render);
+            }
             let _ = surface.send_configure();
             self.note_xdg_toplevel_configure_sent(surface_id, true, false, false);
         }
@@ -3434,7 +3538,9 @@ mod imp {
         use spiders_shared::ids::WorkspaceId;
         use spiders_shared::wm::{OutputSnapshot, ShellKind, WindowSnapshot, WorkspaceSnapshot};
         use wayland_client::protocol::{wl_compositor, wl_registry, wl_surface};
-        use wayland_client::{delegate_noop, Connection, Dispatch, EventQueue, QueueHandle, WEnum};
+        use wayland_client::{
+            delegate_noop, Connection, Dispatch, EventQueue, Proxy, QueueHandle, WEnum,
+        };
         use wayland_protocols::xdg::decoration::zv1::client::{
             zxdg_decoration_manager_v1, zxdg_toplevel_decoration_v1,
         };
@@ -4257,6 +4363,157 @@ mod imp {
                     pending_configure_count: 1,
                 }
             );
+        }
+
+        #[test]
+        fn smithay_state_refresh_window_render_plan_tracks_configure_size() {
+            let display = Display::<SpidersSmithayState>::new().unwrap();
+            let mut state = SpidersSmithayState::new(&display, "test-seat").unwrap();
+
+            state.register_output_snapshot(
+                OutputId::from("out-1"),
+                "HDMI-A-1",
+                Some((0, 0)),
+                Some((1280, 720)),
+                true,
+            );
+            state.track_test_surface_snapshot(BackendSurfaceSnapshot::Window {
+                surface_id: "wl-surface-render-1".into(),
+                window_id: WindowId::from("smithay-window-render-1"),
+                output_id: Some(OutputId::from("out-1")),
+            });
+            state.record_test_xdg_toplevel_configure_sent(
+                "wl-surface-render-1",
+                true,
+                false,
+                false,
+            );
+
+            state.refresh_window_render_plan(&[SmithayWindowRenderSnapshot {
+                window_id: WindowId::from("smithay-window-render-1"),
+                window_rect: LayoutRect {
+                    x: 12.0,
+                    y: 24.0,
+                    width: 800.0,
+                    height: 600.0,
+                },
+                content_offset_y: 28.0,
+            }]);
+
+            let snapshot = state.snapshot();
+            assert_eq!(snapshot.known_surfaces.toplevels.len(), 1);
+            assert_eq!(
+                snapshot.known_surfaces.toplevels[0].configure,
+                SmithayXdgToplevelConfigureSnapshot {
+                    last_acked_serial: None,
+                    activated: true,
+                    fullscreen: false,
+                    maximized: false,
+                    pending_configure_count: 1,
+                }
+            );
+        }
+
+        #[test]
+        fn smithay_state_new_toplevel_uses_existing_render_plan_for_initial_configure() {
+            let mut display = Display::<SpidersSmithayState>::new().unwrap();
+            let mut handle = display.handle();
+            let mut state = SpidersSmithayState::new(&display, "test-seat").unwrap();
+
+            state.register_output_snapshot(
+                OutputId::from("out-1"),
+                "HDMI-A-1",
+                Some((0, 0)),
+                Some((1280, 720)),
+                true,
+            );
+
+            let (client_stream, server_stream) = UnixStream::pair().unwrap();
+            client_stream.set_nonblocking(true).unwrap();
+            server_stream.set_nonblocking(true).unwrap();
+            handle
+                .insert_client(server_stream, Arc::new(SmithayClientState::default()))
+                .unwrap();
+
+            let conn = Connection::from_socket(client_stream).unwrap();
+            let mut queue = conn.new_event_queue::<DecorationClientState>();
+            let qh = queue.handle();
+            let registry = conn.display().get_registry(&qh, ());
+            let mut client_state = DecorationClientState::default();
+
+            flush_decoration_roundtrip(
+                &conn,
+                &mut display,
+                &mut state,
+                &mut queue,
+                &mut client_state,
+            );
+
+            let compositor_name = client_state
+                .globals
+                .iter()
+                .find(|(_, interface, _)| interface == "wl_compositor")
+                .map(|(name, _, _)| *name)
+                .unwrap();
+            let wm_base_name = client_state
+                .globals
+                .iter()
+                .find(|(_, interface, _)| interface == "xdg_wm_base")
+                .map(|(name, _, _)| *name)
+                .unwrap();
+
+            let compositor =
+                registry.bind::<wl_compositor::WlCompositor, _, _>(compositor_name, 1, &qh, ());
+            let wm_base = registry.bind::<xdg_wm_base::XdgWmBase, _, _>(wm_base_name, 1, &qh, ());
+            let surface = compositor.create_surface(&qh, ());
+            let xdg_surface = wm_base.get_xdg_surface(&surface, &qh, ());
+            let toplevel = xdg_surface.get_toplevel(&qh, ());
+
+            let surface_id = format!("wl-surface-{}", surface.id().protocol_id());
+            state
+                .toplevel_window_ids
+                .insert(surface_id, WindowId::from("smithay-window-render-init-1"));
+            state.refresh_window_render_plan(&[SmithayWindowRenderSnapshot {
+                window_id: WindowId::from("smithay-window-render-init-1"),
+                window_rect: LayoutRect {
+                    x: 4.0,
+                    y: 4.0,
+                    width: 1272.0,
+                    height: 712.0,
+                },
+                content_offset_y: 0.0,
+            }]);
+
+            surface.commit();
+            flush_decoration_roundtrip(
+                &conn,
+                &mut display,
+                &mut state,
+                &mut queue,
+                &mut client_state,
+            );
+            flush_decoration_roundtrip(
+                &conn,
+                &mut display,
+                &mut state,
+                &mut queue,
+                &mut client_state,
+            );
+
+            let known = state
+                .xdg_shell_state
+                .toplevel_surfaces()
+                .into_iter()
+                .find(|candidate| {
+                    smithay_surface_id(candidate.wl_surface())
+                        == format!("wl-surface-{}", surface.id().protocol_id())
+                })
+                .unwrap();
+            let pending = known.with_pending_state(|state| (state.size, state.bounds));
+            assert_eq!(pending.0, Some((1272, 712).into()));
+            assert_eq!(pending.1, Some((1280, 720).into()));
+
+            drop(toplevel);
         }
 
         #[test]
@@ -5508,6 +5765,33 @@ mod imp {
                     exclusive_zone: LayerExclusiveZone::Exclusive(20),
                 }
             );
+        }
+
+        #[test]
+        fn smithay_state_backend_surface_snapshots_default_toplevel_to_active_output() {
+            let display = Display::<SpidersSmithayState>::new().unwrap();
+            let mut state = SpidersSmithayState::new(&display, "test-seat").unwrap();
+            state.register_output_id(OutputId::from("out-1"), true);
+            let _ = state.take_discovery_events();
+
+            state.track_test_surface_snapshot(BackendSurfaceSnapshot::Window {
+                surface_id: "wl-surface-active-output-1".into(),
+                window_id: WindowId::from("smithay-window-active-output-1"),
+                output_id: None,
+            });
+
+            let snapshots = state.backend_surface_snapshots();
+            assert!(matches!(
+                snapshots.iter().find(|snapshot| matches!(
+                    snapshot,
+                    BackendSurfaceSnapshot::Window { surface_id, .. } if surface_id == "wl-surface-active-output-1"
+                )),
+                Some(BackendSurfaceSnapshot::Window {
+                    surface_id,
+                    output_id: Some(output_id),
+                    ..
+                }) if surface_id == "wl-surface-active-output-1" && output_id == &OutputId::from("out-1")
+            ));
         }
 
         #[test]

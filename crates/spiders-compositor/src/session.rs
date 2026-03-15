@@ -127,11 +127,15 @@ impl<R> CompositorSession<R> {
     }
 
     pub fn register_output_snapshot(&mut self, output: spiders_shared::wm::OutputSnapshot) {
+        self.domain.wm_mut().insert_output(output.clone());
         self.domain.register_output_snapshot(output);
     }
 
     pub fn register_backend_output_snapshot(&mut self, output: spiders_shared::wm::OutputSnapshot) {
+        self.domain.wm_mut().insert_output(output.clone());
         self.domain.register_backend_output_snapshot(output);
+        self.runtime
+            .update_from_wm_state(self.domain.state().clone());
     }
 
     pub fn register_output_by_id(&mut self, output_id: &OutputId) -> Result<(), TopologyError> {
@@ -253,6 +257,21 @@ impl<R: AuthoringLayoutRuntime<Config = Config>> CompositorSession<R> {
 
     pub fn map_window(&mut self, window: WindowSnapshot) -> Result<SessionUpdate, ActionError> {
         let update = self.domain.map_window(window).map_err(map_domain_error)?;
+        self.runtime
+            .update_from_wm_state(self.domain.state().clone());
+        self.runtime.recompute_current_layout()?;
+        Ok(self.session_update(update))
+    }
+
+    pub fn map_window_to_surface(
+        &mut self,
+        surface_id: impl Into<String>,
+        window: WindowSnapshot,
+    ) -> Result<SessionUpdate, ActionError> {
+        let update = self
+            .domain
+            .map_window_to_surface(surface_id, window)
+            .map_err(map_domain_error)?;
         self.runtime
             .update_from_wm_state(self.domain.state().clone());
         self.runtime.recompute_current_layout()?;

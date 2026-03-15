@@ -237,6 +237,38 @@ mod tests {
     }
 
     #[test]
+    fn supports_unitless_zero_for_size_values() {
+        let sheet =
+            parse_stylesheet("window { flex-basis: 0; min-width: 0; min-height: 0; padding: 0; }")
+                .unwrap();
+        let node = runtime_window_with_meta(LayoutNodeMeta::default());
+
+        let style = compute_style(&sheet, &node).unwrap();
+
+        assert_eq!(
+            style.flex_basis,
+            Some(SizeValue::LengthPercentage(LengthPercentage::Px(0.0)))
+        );
+        assert_eq!(
+            style.min_width,
+            Some(SizeValue::LengthPercentage(LengthPercentage::Px(0.0)))
+        );
+        assert_eq!(
+            style.min_height,
+            Some(SizeValue::LengthPercentage(LengthPercentage::Px(0.0)))
+        );
+        assert_eq!(
+            style.padding,
+            Some(BoxEdges {
+                top: LengthPercentage::Px(0.0),
+                right: LengthPercentage::Px(0.0),
+                bottom: LengthPercentage::Px(0.0),
+                left: LengthPercentage::Px(0.0),
+            })
+        );
+    }
+
+    #[test]
     fn later_matching_rules_override_earlier_declarations() {
         let sheet = parse_stylesheet(
             "window { width: 40%; gap: 8px; } .stack { width: 60%; } #main { gap: 12px; }",

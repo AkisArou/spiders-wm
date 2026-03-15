@@ -316,28 +316,115 @@ fn winit_run_command(
         )
     });
 
-    if should_exit_winit_after_startup() {
-        return std::process::ExitCode::SUCCESS;
-    }
-
-    match runtime_bootstrap.run_until_exit() {
-        Ok(()) => std::process::ExitCode::SUCCESS,
-        Err(error) => {
+    let debug_snapshot_path = winit_debug_snapshot_path();
+    if let Some(path) = debug_snapshot_path.as_deref() {
+        if let Err(error) = write_winit_debug_snapshot(path, &runtime_bootstrap) {
             emit(
                 output_mode,
                 &ErrorReport {
                     status: "error",
                     phase: "runtime",
                     runtime_ready: cli.ready,
-                    prepared_config: Some(prepared_config),
+                    prepared_config: Some(prepared_config.clone()),
                     errors: None,
-                    message: Some(error.to_string()),
+                    message: Some(error),
                 },
-                || format!("winit run runtime error: {error}"),
+                || "winit run snapshot write error".into(),
             );
-            std::process::ExitCode::from(1)
+            return std::process::ExitCode::from(1);
         }
     }
+
+    if should_exit_winit_after_startup() {
+        return std::process::ExitCode::SUCCESS;
+    }
+
+    loop {
+        match runtime_bootstrap.run_startup_cycle() {
+            Ok(()) => {}
+            Err(error) => {
+                emit(
+                    output_mode,
+                    &ErrorReport {
+                        status: "error",
+                        phase: "runtime",
+                        runtime_ready: cli.ready,
+                        prepared_config: Some(prepared_config),
+                        errors: None,
+                        message: Some(error.to_string()),
+                    },
+                    || format!("winit run runtime error: {error}"),
+                );
+                return std::process::ExitCode::from(1);
+            }
+        }
+
+        if let Some(path) = debug_snapshot_path.as_deref() {
+            if let Err(error) = write_winit_debug_snapshot(path, &runtime_bootstrap) {
+                emit(
+                    output_mode,
+                    &ErrorReport {
+                        status: "error",
+                        phase: "runtime",
+                        runtime_ready: cli.ready,
+                        prepared_config: Some(prepared_config),
+                        errors: None,
+                        message: Some(error),
+                    },
+                    || "winit run snapshot write error".into(),
+                );
+                return std::process::ExitCode::from(1);
+            }
+        }
+
+        if runtime_bootstrap.runtime.should_stop() {
+            return std::process::ExitCode::SUCCESS;
+        }
+
+        std::thread::sleep(std::time::Duration::from_millis(16));
+    }
+}
+
+fn winit_debug_snapshot_path() -> Option<std::path::PathBuf> {
+    std::env::var_os("SPIDERS_WM_WINIT_DEBUG_SNAPSHOT_PATH").map(std::path::PathBuf::from)
+}
+
+fn write_winit_debug_snapshot<R>(
+    path: &std::path::Path,
+    runtime_bootstrap: &spiders_compositor::SmithayBootstrap<R>,
+) -> Result<(), String>
+where
+    R: spiders_shared::runtime::AuthoringLayoutRuntime<Config = spiders_config::model::Config>,
+{
+    let snapshot = runtime_bootstrap.snapshot();
+    let controller_state = runtime_bootstrap.controller.state_snapshot();
+    let window_placements = runtime_bootstrap
+        .controller
+        .app()
+        .session()
+        .current_window_placements();
+    let titlebar_plan = runtime_bootstrap
+        .controller
+        .app()
+        .session()
+        .current_titlebar_render_plan();
+    let current_layout = runtime_bootstrap
+        .controller
+        .app()
+        .session()
+        .current_layout()
+        .cloned();
+    let runtime_outputs = &snapshot.runtime.state.outputs;
+    let debug = format!(
+        "runtime_bootstrap_snapshot = {snapshot:#?}\n\ncontroller_state = {controller_state:#?}\n\nruntime_outputs = {runtime_outputs:#?}\n\ncurrent_layout = {current_layout:#?}\n\nwindow_placements = {window_placements:#?}\n\ntitlebar_plan = {titlebar_plan:#?}\n"
+    );
+
+    std::fs::write(path, debug).map_err(|error| {
+        format!(
+            "failed to write winit debug snapshot to {}: {error}",
+            path.display()
+        )
+    })
 }
 
 fn should_exit_winit_after_startup() -> bool {
@@ -957,9 +1044,9 @@ fn synthetic_winit_state(
 
     let workspace_id = WorkspaceId::from("winit-workspace");
     let output_id = OutputId::from("smithay-winit-output");
-    let effective_layout = config.layouts.first().map(|layout| LayoutRef {
-        name: layout.name.clone(),
-    });
+    let active_tag = "1";
+    let effective_layout = synthetic_winit_layout_name(config, &output_id.to_string(), active_tag)
+        .map(|name| LayoutRef { name });
 
     StateSnapshot {
         focused_window_id: None,
@@ -981,7 +1068,7 @@ fn synthetic_winit_state(
             id: workspace_id,
             name: "winit".into(),
             output_id: Some(OutputId::from("smithay-winit-output")),
-            active_tags: vec!["1".into()],
+            active_tags: vec![active_tag.into()],
             focused: true,
             visible: true,
             effective_layout,
@@ -990,6 +1077,27 @@ fn synthetic_winit_state(
         visible_window_ids: Vec::new(),
         tag_names: vec!["1".into()],
     }
+}
+
+fn synthetic_winit_layout_name(
+    config: &spiders_config::model::Config,
+    output_name: &str,
+    active_tag: &str,
+) -> Option<String> {
+    config
+        .layout_selection
+        .per_monitor
+        .get(output_name)
+        .cloned()
+        .or_else(|| {
+            config
+                .tags
+                .iter()
+                .position(|tag| tag == active_tag)
+                .and_then(|index| config.layout_selection.per_tag.get(index).cloned())
+        })
+        .or_else(|| config.layout_selection.default.clone())
+        .or_else(|| config.layouts.first().map(|layout| layout.name.clone()))
 }
 
 fn run_ipc_smoke() -> Result<IpcSmokeReport, String> {

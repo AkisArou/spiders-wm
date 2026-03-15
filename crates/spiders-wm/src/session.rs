@@ -200,10 +200,18 @@ impl DomainSession {
         &mut self,
         window: WindowSnapshot,
     ) -> Result<DomainUpdate, DomainSessionError> {
+        self.map_window_to_surface(format!("window-{}", window.id), window)
+    }
+
+    pub fn map_window_to_surface(
+        &mut self,
+        surface_id: impl Into<String>,
+        window: WindowSnapshot,
+    ) -> Result<DomainUpdate, DomainSessionError> {
+        let surface_id = surface_id.into();
         let output_id = window.output_id.clone();
         let window_id = window.id.clone();
         let event = self.wm.map_window(window);
-        let surface_id = format!("window-{window_id}");
         self.topology
             .map_window_surface(surface_id, window_id, output_id)?;
         Ok(self.domain_update(vec![event], true))
@@ -384,6 +392,50 @@ mod tests {
 
         assert!(update.recomputed_layout);
         assert!(session.topology().surface("window-w2").is_some());
+    }
+
+    #[test]
+    fn domain_session_maps_window_to_existing_surface_id() {
+        let mut session = DomainSession::new(
+            WmState::from_snapshot(state().clone()),
+            CompositorTopologyState::from_snapshot(&state()),
+        );
+
+        let update = session
+            .map_window_to_surface(
+                "wl-surface-77",
+                WindowSnapshot {
+                    id: WindowId::from("w2"),
+                    shell: ShellKind::XdgToplevel,
+                    app_id: Some("foot".into()),
+                    title: Some("Terminal".into()),
+                    class: None,
+                    instance: None,
+                    role: None,
+                    window_type: None,
+                    mapped: false,
+                    floating: false,
+                    floating_rect: None,
+                    fullscreen: false,
+                    focused: false,
+                    urgent: false,
+                    output_id: Some(OutputId::from("out-1")),
+                    workspace_id: Some(WorkspaceId::from("ws-1")),
+                    tags: vec!["1".into()],
+                },
+            )
+            .unwrap();
+
+        assert!(update.recomputed_layout);
+        assert!(session.topology().surface("wl-surface-77").is_some());
+        assert_eq!(
+            session
+                .topology()
+                .surface("wl-surface-77")
+                .unwrap()
+                .window_id,
+            Some(WindowId::from("w2"))
+        );
     }
 
     #[test]

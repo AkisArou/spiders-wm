@@ -43,46 +43,109 @@ impl DecodePath {
     }
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Clone, Default)]
 struct JsAuthoredNodeMeta {
     #[serde(default)]
     id: Option<String>,
     #[serde(default)]
-    class: Vec<String>,
+    class: JsClassName,
     #[serde(default)]
     name: Option<String>,
     #[serde(default)]
     data: BTreeMap<String, String>,
 }
 
+#[derive(Debug, Deserialize, Clone, Default)]
+#[serde(untagged)]
+enum JsClassName {
+    #[default]
+    Missing,
+    One(String),
+    Many(Vec<String>),
+}
+
+impl JsClassName {
+    fn into_vec(self) -> Vec<String> {
+        match self {
+            Self::Missing => Vec::new(),
+            Self::One(value) => value
+                .split_ascii_whitespace()
+                .filter(|value| !value.is_empty())
+                .map(str::to_owned)
+                .collect(),
+            Self::Many(values) => values,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Clone, Default)]
+struct JsAuthoredNodeProps {
+    #[serde(flatten)]
+    meta: JsAuthoredNodeMeta,
+    #[serde(default, rename = "match")]
+    match_expr: Option<String>,
+    #[serde(default)]
+    take: Option<SlotTake>,
+}
+
+impl JsAuthoredNodeProps {
+    fn merge(self, nested: JsAuthoredNodeProps) -> Self {
+        Self {
+            meta: self.meta.merge(nested.meta),
+            match_expr: nested.match_expr.or(self.match_expr),
+            take: nested.take.or(self.take),
+        }
+    }
+}
+
+impl JsAuthoredNodeMeta {
+    fn merge(self, nested: JsAuthoredNodeMeta) -> Self {
+        Self {
+            id: nested.id.or(self.id),
+            class: match nested.class {
+                JsClassName::Missing => self.class,
+                other => other,
+            },
+            name: nested.name.or(self.name),
+            data: if nested.data.is_empty() {
+                self.data
+            } else {
+                nested.data
+            },
+        }
+    }
+}
+
 #[derive(Debug, Deserialize, Clone)]
 #[serde(tag = "type", rename_all = "kebab-case")]
 enum JsAuthoredLayoutNode {
     Workspace {
+        #[serde(default)]
+        props: Option<JsAuthoredNodeProps>,
         #[serde(flatten)]
-        meta: JsAuthoredNodeMeta,
+        legacy: JsAuthoredNodeProps,
         #[serde(default)]
         children: Vec<JsAuthoredLayoutNode>,
     },
     Group {
+        #[serde(default)]
+        props: Option<JsAuthoredNodeProps>,
         #[serde(flatten)]
-        meta: JsAuthoredNodeMeta,
+        legacy: JsAuthoredNodeProps,
         #[serde(default)]
         children: Vec<JsAuthoredLayoutNode>,
     },
     Window {
+        #[serde(default)]
+        props: Option<JsAuthoredNodeProps>,
         #[serde(flatten)]
-        meta: JsAuthoredNodeMeta,
-        #[serde(default, rename = "match")]
-        match_expr: Option<String>,
+        legacy: JsAuthoredNodeProps,
     },
     Slot {
-        #[serde(flatten)]
-        meta: JsAuthoredNodeMeta,
-        #[serde(default, rename = "match")]
-        match_expr: Option<String>,
         #[serde(default)]
-        take: SlotTake,
+        props: Option<JsAuthoredNodeProps>,
+        #[serde(flatten)]
+        legacy: JsAuthoredNodeProps,
     },
 }
 
@@ -419,34 +482,60 @@ fn decode_authored_layout_node_from_node(
     path: &DecodePath,
 ) -> Result<AuthoredLayoutNode, String> {
     Ok(match node {
-        JsAuthoredLayoutNode::Workspace { meta, children } => AuthoredLayoutNode::Workspace {
-            meta: decode_meta(meta),
-            children: decode_children(children, &path.field("children"))?,
-        },
-        JsAuthoredLayoutNode::Group { meta, children } => AuthoredLayoutNode::Group {
-            meta: decode_meta(meta),
-            children: decode_children(children, &path.field("children"))?,
-        },
-        JsAuthoredLayoutNode::Window { meta, match_expr } => AuthoredLayoutNode::Window {
-            meta: decode_meta(meta),
-            match_expr,
-        },
-        JsAuthoredLayoutNode::Slot {
-            meta,
-            match_expr,
-            take,
-        } => AuthoredLayoutNode::Slot {
-            meta: decode_meta(meta),
-            match_expr,
-            take,
-        },
+        JsAuthoredLayoutNode::Workspace {
+            props,
+            legacy,
+            children,
+        } => {
+            let props = merge_node_props(props, legacy);
+            AuthoredLayoutNode::Workspace {
+                meta: decode_meta(props.meta),
+                children: decode_children(children, &path.field("children"))?,
+            }
+        }
+        JsAuthoredLayoutNode::Group {
+            props,
+            legacy,
+            children,
+        } => {
+            let props = merge_node_props(props, legacy);
+            AuthoredLayoutNode::Group {
+                meta: decode_meta(props.meta),
+                children: decode_children(children, &path.field("children"))?,
+            }
+        }
+        JsAuthoredLayoutNode::Window { props, legacy } => {
+            let props = merge_node_props(props, legacy);
+            AuthoredLayoutNode::Window {
+                meta: decode_meta(props.meta),
+                match_expr: props.match_expr,
+            }
+        }
+        JsAuthoredLayoutNode::Slot { props, legacy } => {
+            let props = merge_node_props(props, legacy);
+            AuthoredLayoutNode::Slot {
+                meta: decode_meta(props.meta),
+                match_expr: props.match_expr,
+                take: props.take.unwrap_or_default(),
+            }
+        }
     })
+}
+
+fn merge_node_props(
+    props: Option<JsAuthoredNodeProps>,
+    legacy: JsAuthoredNodeProps,
+) -> JsAuthoredNodeProps {
+    match props {
+        Some(props) => legacy.merge(props),
+        None => legacy,
+    }
 }
 
 fn decode_meta(meta: JsAuthoredNodeMeta) -> AuthoredNodeMeta {
     AuthoredNodeMeta {
         id: meta.id,
-        class: meta.class,
+        class: meta.class.into_vec(),
         name: meta.name,
         data: meta.data,
     }
@@ -456,6 +545,7 @@ fn decode_meta(meta: JsAuthoredNodeMeta) -> AuthoredNodeMeta {
 mod tests {
     use std::fs;
 
+    use serde_json::json;
     use spiders_config::model::{Config, LayoutDefinition};
     use spiders_shared::ids::{OutputId, WorkspaceId};
     use spiders_shared::wm::{
@@ -525,6 +615,46 @@ mod tests {
             .unwrap();
 
         assert!(matches!(layout, SourceLayoutNode::Workspace { .. }));
+    }
+
+    #[test]
+    fn decode_authored_layout_node_preserves_jsx_props_metadata() {
+        let value = json!({
+            "type": "workspace",
+            "props": { "id": "root" },
+            "children": [{
+                "type": "group",
+                "props": { "id": "frame" },
+                "children": [{
+                    "type": "slot",
+                    "props": { "id": "master", "class": "master-slot", "take": 1 },
+                    "children": []
+                }]
+            }]
+        });
+
+        let decoded = decode_authored_layout_node(&value, &DecodePath::root()).unwrap();
+
+        let AuthoredLayoutNode::Workspace { meta, children } = decoded else {
+            panic!("expected workspace root");
+        };
+        assert_eq!(meta.id.as_deref(), Some("root"));
+
+        let AuthoredLayoutNode::Group {
+            meta: group_meta,
+            children: group_children,
+        } = &children[0]
+        else {
+            panic!("expected frame group");
+        };
+        assert_eq!(group_meta.id.as_deref(), Some("frame"));
+
+        let AuthoredLayoutNode::Slot { meta, take, .. } = &group_children[0] else {
+            panic!("expected master slot");
+        };
+        assert_eq!(meta.id.as_deref(), Some("master"));
+        assert_eq!(meta.class, vec!["master-slot".to_owned()]);
+        assert_eq!(*take, SlotTake::Count(1));
     }
 
     #[test]

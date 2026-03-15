@@ -2,9 +2,10 @@ use spiders_config::authoring_layout::AuthoringLayoutService;
 use spiders_config::model::Config;
 use spiders_shared::ids::{OutputId, WindowId};
 use spiders_shared::runtime::AuthoringLayoutRuntime;
-use spiders_shared::wm::StateSnapshot;
+use spiders_shared::wm::{ShellKind, StateSnapshot, WindowSnapshot};
 use spiders_wm::{BootstrapEvent, LayerSurfaceMetadata, StartupRegistration};
 
+use crate::actions::ActionError;
 use crate::session::CompositorSession;
 use crate::topology::{CompositorTopologyState, SurfaceState, TopologyError};
 use crate::WindowDecorationPolicy;
@@ -112,6 +113,107 @@ impl<R> CompositorApp<R> {
         self.session.unregister_window_surface(window_id)
     }
 
+    fn inferred_workspace_for_output(
+        &self,
+        output_id: Option<&OutputId>,
+    ) -> Option<spiders_shared::ids::WorkspaceId> {
+        output_id
+            .and_then(|output_id| {
+                self.state()
+                    .outputs
+                    .iter()
+                    .find(|output| output.id == *output_id)
+                    .and_then(|output| output.current_workspace_id.clone())
+            })
+            .or_else(|| self.state().current_workspace_id.clone())
+    }
+
+    fn inferred_tags_for_workspace(
+        &self,
+        workspace_id: Option<&spiders_shared::ids::WorkspaceId>,
+    ) -> Vec<String> {
+        workspace_id
+            .and_then(|workspace_id| self.state().workspace_by_id(workspace_id))
+            .map(|workspace| workspace.active_tags.clone())
+            .unwrap_or_default()
+    }
+
+    fn backend_window_snapshot(
+        &self,
+        surface_id: &str,
+        window_id: WindowId,
+        output_id: Option<OutputId>,
+    ) -> WindowSnapshot {
+        let output_id = output_id.or_else(|| self.state().current_output_id.clone());
+        let workspace_id = self.inferred_workspace_for_output(output_id.as_ref());
+        let tags = self.inferred_tags_for_workspace(workspace_id.as_ref());
+
+        WindowSnapshot {
+            id: window_id,
+            shell: ShellKind::XdgToplevel,
+            app_id: None,
+            title: Some(surface_id.to_owned()),
+            class: None,
+            instance: None,
+            role: None,
+            window_type: None,
+            mapped: true,
+            floating: false,
+            floating_rect: None,
+            fullscreen: false,
+            focused: false,
+            urgent: false,
+            output_id,
+            workspace_id,
+            tags,
+        }
+    }
+}
+
+impl<R: AuthoringLayoutRuntime<Config = Config>> CompositorApp<R> {
+    pub fn apply_runtime_bootstrap_event(
+        &mut self,
+        event: BootstrapEvent,
+    ) -> Result<(), ActionError> {
+        match event {
+            BootstrapEvent::RegisterWindowSurface {
+                surface_id,
+                window_id,
+                output_id,
+            } => {
+                let known_window = self
+                    .state()
+                    .windows
+                    .iter()
+                    .any(|window| window.id == window_id);
+
+                if known_window {
+                    let _ = self
+                        .session
+                        .register_window_surface(surface_id, window_id, output_id)
+                        .map_err(|error| {
+                            ActionError::Layout(CompositorLayoutError::Runtime(
+                                spiders_shared::runtime::RuntimeError::Other {
+                                    message: error.to_string(),
+                                },
+                            ))
+                        })?;
+                } else {
+                    let window = self.backend_window_snapshot(&surface_id, window_id, output_id);
+                    let _ = self.session.map_window_to_surface(surface_id, window)?;
+                }
+                Ok(())
+            }
+            other => self.apply_bootstrap_event(other).map_err(|error| {
+                ActionError::Layout(CompositorLayoutError::Runtime(
+                    spiders_shared::runtime::RuntimeError::Other {
+                        message: error.to_string(),
+                    },
+                ))
+            }),
+        }
+    }
+
     pub fn apply_bootstrap_event(&mut self, event: BootstrapEvent) -> Result<(), TopologyError> {
         match event {
             BootstrapEvent::RegisterSeat { seat_name, active } => {
@@ -204,9 +306,7 @@ impl<R> CompositorApp<R> {
 
         Ok(())
     }
-}
 
-impl<R: AuthoringLayoutRuntime<Config = Config>> CompositorApp<R> {
     pub fn initialize(
         layout_service: LayoutService,
         authoring_layout_service: AuthoringLayoutService<R>,
@@ -504,6 +604,112 @@ mod tests {
             app.topology().surface("overlay-1").unwrap().role,
             crate::SurfaceRole::Unmanaged
         );
+    }
+
+    #[test]
+    fn app_register_window_surface_maps_backend_window_into_state() {
+        let temp_dir = std::env::temp_dir();
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let runtime_root = temp_dir.join(format!("spiders-app-backend-window-{unique}"));
+        let _ = fs::create_dir_all(runtime_root.join("layouts"));
+        fs::write(
+            runtime_root.join("layouts/master-stack.js"),
+            "ctx => ({ type: 'workspace', children: [{ type: 'slot', id: 'rest' }] })",
+        )
+        .unwrap();
+
+        let loader =
+            RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
+        let runtime = QuickJsPreparedLayoutRuntime::with_loader(loader.clone());
+        let service = AuthoringLayoutService::new(runtime);
+
+        let mut snapshot = state();
+        snapshot.windows.clear();
+        snapshot.visible_window_ids.clear();
+        snapshot.focused_window_id = None;
+
+        let mut app =
+            CompositorApp::initialize(LayoutService, service, config(), snapshot).unwrap();
+
+        app.apply_runtime_bootstrap_event(BootstrapEvent::RegisterWindowSurface {
+            surface_id: "wl-surface-test-1".into(),
+            window_id: WindowId::from("smithay-window-1"),
+            output_id: Some(OutputId::from("out-1")),
+        })
+        .unwrap();
+
+        let window = app
+            .state()
+            .windows
+            .iter()
+            .find(|window| window.id == WindowId::from("smithay-window-1"))
+            .unwrap();
+        assert!(window.mapped);
+        assert_eq!(window.output_id, Some(OutputId::from("out-1")));
+        assert_eq!(window.workspace_id, Some(WorkspaceId::from("ws-1")));
+        assert!(app
+            .state()
+            .visible_window_ids
+            .iter()
+            .any(|window_id| window_id == &WindowId::from("smithay-window-1")));
+        assert!(app.session.current_layout().is_some());
+        assert_eq!(
+            app.topology()
+                .surface("wl-surface-test-1")
+                .unwrap()
+                .window_id,
+            Some(WindowId::from("smithay-window-1"))
+        );
+    }
+
+    #[test]
+    fn app_register_window_surface_defaults_backend_window_to_current_output() {
+        let temp_dir = std::env::temp_dir();
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let runtime_root = temp_dir.join(format!(
+            "spiders-app-backend-window-default-output-{unique}"
+        ));
+        let _ = fs::create_dir_all(runtime_root.join("layouts"));
+        fs::write(
+            runtime_root.join("layouts/master-stack.js"),
+            "ctx => ({ type: 'workspace', children: [{ type: 'slot', id: 'rest' }] })",
+        )
+        .unwrap();
+
+        let loader =
+            RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
+        let runtime = QuickJsPreparedLayoutRuntime::with_loader(loader.clone());
+        let service = AuthoringLayoutService::new(runtime);
+
+        let mut snapshot = state();
+        snapshot.windows.clear();
+        snapshot.visible_window_ids.clear();
+        snapshot.focused_window_id = None;
+
+        let mut app =
+            CompositorApp::initialize(LayoutService, service, config(), snapshot).unwrap();
+
+        app.apply_runtime_bootstrap_event(BootstrapEvent::RegisterWindowSurface {
+            surface_id: "wl-surface-test-2".into(),
+            window_id: WindowId::from("smithay-window-2"),
+            output_id: None,
+        })
+        .unwrap();
+
+        let window = app
+            .state()
+            .windows
+            .iter()
+            .find(|window| window.id == WindowId::from("smithay-window-2"))
+            .unwrap();
+        assert_eq!(window.output_id, Some(OutputId::from("out-1")));
+        assert_eq!(window.workspace_id, Some(WorkspaceId::from("ws-1")));
     }
 
     #[test]

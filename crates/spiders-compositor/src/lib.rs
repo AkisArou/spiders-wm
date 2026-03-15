@@ -288,6 +288,28 @@ mod tests {
 
     use super::*;
 
+    fn mapped_window(id: &str) -> WindowSnapshot {
+        WindowSnapshot {
+            id: WindowId::from(id),
+            shell: ShellKind::XdgToplevel,
+            app_id: Some("foot".into()),
+            title: Some("foot".into()),
+            class: None,
+            instance: None,
+            role: None,
+            window_type: None,
+            mapped: true,
+            floating: false,
+            floating_rect: None,
+            fullscreen: false,
+            focused: true,
+            urgent: false,
+            output_id: Some(OutputId::from("out-1")),
+            workspace_id: Some(WorkspaceId::from("ws-1")),
+            tags: vec!["1".into()],
+        }
+    }
+
     fn workspace_snapshot() -> WorkspaceSnapshot {
         WorkspaceSnapshot {
             id: WorkspaceId::from("ws-1"),
@@ -604,6 +626,52 @@ mod tests {
         ));
 
         let _ = fs::remove_file(module_path);
+    }
+
+    #[test]
+    fn test_config_master_stack_single_window_fills_workspace() {
+        let service = LayoutService;
+        let loader = spiders_runtime_js::loader::RuntimeProjectLayoutSourceLoader::new(
+            spiders_runtime_js::loader::RuntimePathResolver::new(
+                "/home/akisarou/projects/spiders-wm",
+                "/home/akisarou/projects/spiders-wm/test_config/.spiders-wm-build",
+            ),
+        );
+        let runtime =
+            spiders_runtime_js::runtime::QuickJsPreparedLayoutRuntime::with_loader(loader);
+        let mut authoring_layout_service =
+            spiders_config::authoring_layout::AuthoringLayoutService::with_paths(
+                runtime,
+                spiders_config::model::ConfigPaths::new(
+                    "/home/akisarou/projects/spiders-wm/test_config/config.ts",
+                    "/home/akisarou/projects/spiders-wm/test_config/.spiders-wm-build/config.js",
+                ),
+            );
+        let config = authoring_layout_service
+            .load_config_with_cache_update(&spiders_config::model::ConfigPaths::new(
+                "/home/akisarou/projects/spiders-wm/test_config/config.ts",
+                "/home/akisarou/projects/spiders-wm/test_config/.spiders-wm-build/config.js",
+            ))
+            .unwrap()
+            .0;
+        let mut state = state_snapshot(1280, 800);
+        state.windows = vec![mapped_window("w1")];
+        state.visible_window_ids = vec![WindowId::from("w1")];
+
+        let startup = service
+            .bootstrap_runtime(&mut authoring_layout_service, &config, &state)
+            .unwrap()
+            .unwrap();
+        let window = startup
+            .response
+            .root
+            .find_by_window_id(&WindowId::from("w1"))
+            .unwrap();
+
+        assert_eq!(window.rect().x, 4.0);
+        assert_eq!(window.rect().y, 4.0);
+        assert_eq!(window.rect().width, 1272.0);
+        assert_eq!(window.rect().height, 792.0);
     }
 
     #[test]

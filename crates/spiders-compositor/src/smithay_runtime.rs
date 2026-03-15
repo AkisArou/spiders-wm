@@ -28,7 +28,7 @@ mod imp {
     use smithay::input::keyboard::FilterResult;
     use smithay::input::pointer::CursorIcon;
     use smithay::input::pointer::{ButtonEvent, MotionEvent};
-    use smithay::output::{Mode, Output, PhysicalProperties, Scale, Subpixel};
+    use smithay::output::{Mode, Output, PhysicalProperties, Subpixel};
     use smithay::reexports::calloop::generic::Generic;
     use smithay::reexports::calloop::{
         EventLoop, Interest, LoopSignal, Mode as CalloopMode, PostAction,
@@ -159,9 +159,86 @@ mod imp {
     {
         pub fn run_startup_cycle(&mut self) -> Result<(), SmithayRuntimeError> {
             self.runtime.run_startup_cycle()?;
+            self.sync_runtime_output_size()?;
 
             self.apply_pending_discovery_events()?;
             Ok(())
+        }
+
+        fn sync_runtime_output_size(&mut self) -> Result<(), SmithayRuntimeError> {
+            let window_size = self.runtime.window_size;
+            let controller_state = self.controller.state_snapshot();
+            let output_id = controller_state
+                .current_output_id
+                .clone()
+                .or_else(|| {
+                    controller_state
+                        .outputs
+                        .first()
+                        .map(|output| output.id.clone())
+                })
+                .or_else(|| {
+                    self.runtime
+                        .state()
+                        .snapshot()
+                        .outputs
+                        .active_output_id
+                        .clone()
+                })
+                .unwrap_or_else(|| OutputId::from("smithay-winit-output"));
+
+            let current_output = controller_state
+                .outputs
+                .iter()
+                .find(|output| output.id == output_id)
+                .cloned();
+
+            let width = window_size.0.max(0) as u32;
+            let height = window_size.1.max(0) as u32;
+
+            if current_output.as_ref().is_some_and(|output| {
+                output.logical_width == width && output.logical_height == height
+            }) {
+                return Ok(());
+            }
+
+            self.apply_controller_command(ControllerCommand::DiscoveryEvent(
+                crate::backend::BackendDiscoveryEvent::OutputSnapshotDiscovered {
+                    output: OutputSnapshot {
+                        id: output_id.clone(),
+                        name: current_output
+                            .as_ref()
+                            .map(|output| output.name.clone())
+                            .unwrap_or_else(|| output_id.to_string()),
+                        logical_x: current_output
+                            .as_ref()
+                            .map(|output| output.logical_x)
+                            .unwrap_or(0),
+                        logical_y: current_output
+                            .as_ref()
+                            .map(|output| output.logical_y)
+                            .unwrap_or(0),
+                        logical_width: width,
+                        logical_height: height,
+                        scale: current_output
+                            .as_ref()
+                            .map(|output| output.scale)
+                            .unwrap_or(1),
+                        transform: current_output
+                            .as_ref()
+                            .map(|output| output.transform)
+                            .unwrap_or(spiders_shared::wm::OutputTransform::Normal),
+                        enabled: current_output
+                            .as_ref()
+                            .map(|output| output.enabled)
+                            .unwrap_or(true),
+                        current_workspace_id: current_output
+                            .as_ref()
+                            .and_then(|output| output.current_workspace_id.clone()),
+                    },
+                    active: true,
+                },
+            ))
         }
 
         pub fn run_until_exit(&mut self) -> Result<(), SmithayRuntimeError> {
@@ -413,9 +490,12 @@ mod imp {
                 let (renderer, mut framebuffer) = backend
                     .bind()
                     .map_err(|error| SmithayRuntimeError::Winit(error.to_string()))?;
+                let output_scale =
+                    smithay::utils::Scale::from(output.current_scale().fractional_scale());
                 let elements = build_compositor_render_elements(
                     render_state,
                     renderer,
+                    output_scale,
                     &render_items,
                     &window_items,
                     &surfaces,
@@ -516,6 +596,7 @@ mod imp {
     fn build_compositor_render_elements(
         render_state: &mut TitlebarRenderState,
         renderer: &mut GlesRenderer,
+        output_scale: smithay::utils::Scale<f64>,
         titlebars: &[TitlebarRenderItem],
         windows: &[SmithayWindowRenderSnapshot],
         surfaces: &[SmithayRenderableToplevelSurface],
@@ -541,7 +622,7 @@ mod imp {
                 renderer,
                 surface.surface.wl_surface(),
                 location,
-                1.0,
+                output_scale,
                 1.0,
                 Kind::Unspecified,
             ));
@@ -1038,14 +1119,31 @@ mod imp {
         }
     }
 
-    fn smithay_output_snapshot(output_name: &str, size: (i32, i32)) -> OutputSnapshot {
+    fn logical_output_size(size: (i32, i32), scale_factor: f64) -> (u32, u32) {
+        let scale = if scale_factor.is_finite() && scale_factor > 0.0 {
+            scale_factor
+        } else {
+            1.0
+        };
+
+        let width = ((size.0.max(0) as f64) / scale).round().max(0.0) as u32;
+        let height = ((size.1.max(0) as f64) / scale).round().max(0.0) as u32;
+        (width, height)
+    }
+
+    fn smithay_output_snapshot(
+        output_name: &str,
+        size: (i32, i32),
+        scale_factor: f64,
+    ) -> OutputSnapshot {
+        let logical_size = logical_output_size(size, scale_factor);
         OutputSnapshot {
             id: OutputId::from(output_name),
             name: output_name.into(),
             logical_x: 0,
             logical_y: 0,
-            logical_width: size.0.max(0) as u32,
-            logical_height: size.1.max(0) as u32,
+            logical_width: logical_size.0,
+            logical_height: logical_size.1,
             scale: 1,
             transform: spiders_shared::wm::OutputTransform::Normal,
             enabled: true,
@@ -1057,6 +1155,7 @@ mod imp {
         seat_name: &str,
         output_name: &str,
         size: (i32, i32),
+        scale_factor: f64,
     ) -> ControllerCommand {
         SmithayAdapter::translate_snapshot(
             1,
@@ -1064,7 +1163,7 @@ mod imp {
                 initial_winit_seat_descriptor(seat_name),
             )],
             vec![crate::backend::BackendOutputSnapshot {
-                snapshot: smithay_output_snapshot(output_name, size),
+                snapshot: smithay_output_snapshot(output_name, size, scale_factor),
                 active: true,
             }],
             Vec::new(),
@@ -1237,6 +1336,8 @@ mod imp {
         let (backend, winit) = winit::init::<GlesRenderer>()
             .map_err(|error| SmithayRuntimeError::Winit(error.to_string()))?;
         let size = backend.window_size();
+        let scale_factor = backend.scale_factor();
+        let logical_size = logical_output_size((size.w, size.h), scale_factor);
 
         let seat_name = String::from("smithay-winit");
         let output_name = String::from("smithay-winit-output");
@@ -1254,11 +1355,12 @@ mod imp {
             size: (size.w, size.h).into(),
             refresh: 60_000,
         };
+        let output_scale = smithay::output::Scale::Fractional(scale_factor);
 
         smithay_output.change_current_state(
             Some(mode),
-            Some(Transform::Normal),
-            Some(Scale::Integer(1)),
+            Some(Transform::Flipped180),
+            Some(output_scale),
             Some((0, 0).into()),
         );
         smithay_output.set_preferred(mode);
@@ -1269,15 +1371,20 @@ mod imp {
             OutputId::from(output_name.as_str()),
             smithay_output,
             None,
-            Some((size.w.max(0) as u32, size.h.max(0) as u32)),
+            Some(logical_size),
             true,
         );
 
-        let command = initial_winit_discovery_command(&seat_name, &output_name, (size.w, size.h));
+        let command = initial_winit_discovery_command(
+            &seat_name,
+            &output_name,
+            (size.w, size.h),
+            scale_factor,
+        );
 
         match command {
             ControllerCommand::DiscoverySnapshot(snapshot) => {
-                let _ = (size.w, size.h);
+                let _ = (size.w, size.h, logical_size);
                 controller.apply_command(ControllerCommand::DiscoverySnapshot(snapshot))?;
             }
             other => {
@@ -1307,7 +1414,7 @@ mod imp {
                 controller: controller.report(),
                 output_name,
                 seat_name,
-                logical_size: (size.w, size.h),
+                logical_size: (logical_size.0 as i32, logical_size.1 as i32),
                 socket_name: Some(socket_name),
             },
         ))
@@ -2046,6 +2153,7 @@ mod imp {
                 "smithay-winit",
                 "smithay-winit-output",
                 (1280, 720),
+                1.0,
             );
 
             let ControllerCommand::DiscoverySnapshot(snapshot) = command else {
@@ -2076,7 +2184,7 @@ mod imp {
         fn smithay_output_snapshot_matches_state_output_registration_metadata() {
             let display = Display::<SpidersSmithayState>::new().unwrap();
             let mut state = SpidersSmithayState::new(&display, "smithay-winit").unwrap();
-            let output = super::smithay_output_snapshot("smithay-winit-output", (1280, 720));
+            let output = super::smithay_output_snapshot("smithay-winit-output", (1280, 720), 1.0);
             let smithay_output = Output::new(
                 output.name.clone(),
                 PhysicalProperties {
