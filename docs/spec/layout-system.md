@@ -139,28 +139,38 @@ preserve intended placement.
 
 Structural layout CSS applies after claim resolution.
 
-V1 selector support should include at least:
+Current selector support includes:
 
 - `workspace`
 - `group`
 - `window`
 - `#id`
 - `.class`
+- `window[key="value"]`-style exact-match attributes on runtime metadata
 
-Potential future selectors such as attributes may be added later, but should not
-block V1.
+Selector matching remains intentionally constrained to simple structural forms.
 
 ## CSS-To-`taffy` Mapping
 
 The layout engine should map supported structural CSS into `taffy` style values.
 
-V1 should focus on the subset required for existing layouts, especially:
+The layout engine maps supported structural CSS into `taffy` style values using
+an internal CSS domain model and a separate `taffy` backend.
+
+Current support includes the main flex/grid/box-model subset needed for authored
+structural layouts, including:
 
 - `display`
+- `box-sizing`
+- `aspect-ratio`
 - `flex-direction`
+- `flex-wrap`
 - `flex-grow`
 - `flex-shrink`
 - `flex-basis`
+- `position`
+- `inset`, `top`, `right`, `bottom`, `left`
+- `overflow`, `overflow-x`, `overflow-y`
 - `width`
 - `height`
 - `min-width`
@@ -168,9 +178,20 @@ V1 should focus on the subset required for existing layouts, especially:
 - `max-width`
 - `max-height`
 - `gap`
-- padding and margin if needed for existing layout behavior
+- `row-gap`
+- `column-gap`
+- `align-items`, `align-self`, `justify-items`, `justify-self`
+- `align-content`, `justify-content`
+- `grid-template-rows`, `grid-template-columns`
+- `grid-auto-rows`, `grid-auto-columns`, `grid-auto-flow`
+- `grid-template-areas`
+- `grid-row`, `grid-column`
+- `grid-row-start`, `grid-row-end`, `grid-column-start`, `grid-column-end`
+- named grid lines, named spans, and `repeat(...)` in grid templates
+- `border-width`, `padding`, `margin`
 
-The rewrite does not need full browser CSS support.
+The rewrite does not aim for full browser CSS support. Structural layout CSS is
+still separate from effects CSS, and unsupported properties should fail clearly.
 
 ## Validation Rules
 

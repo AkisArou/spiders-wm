@@ -166,6 +166,41 @@ fn normalize_match(
     }
 }
 
+fn resolved_window_meta(
+    meta: &spiders_shared::layout::LayoutNodeMeta,
+    window: Option<&WindowSnapshot>,
+) -> spiders_shared::layout::LayoutNodeMeta {
+    let mut resolved = meta.clone();
+
+    let Some(window) = window else {
+        return resolved;
+    };
+
+    let mut insert = |key: &str, value: Option<&str>| {
+        if let Some(value) = value {
+            resolved.data.insert(key.to_owned(), value.to_owned());
+        }
+    };
+
+    insert("app_id", window.app_id.as_deref());
+    insert("title", window.title.as_deref());
+    insert("class", window.class.as_deref());
+    insert("instance", window.instance.as_deref());
+    insert("role", window.role.as_deref());
+    insert("window_type", window.window_type.as_deref());
+    resolved.data.insert(
+        "shell".to_owned(),
+        match window.shell {
+            spiders_shared::wm::ShellKind::XdgToplevel => "xdg_toplevel",
+            spiders_shared::wm::ShellKind::X11 => "x11",
+            spiders_shared::wm::ShellKind::Unknown => "unknown",
+        }
+        .to_owned(),
+    );
+
+    resolved
+}
+
 fn resolve_node(
     node: &SourceLayoutNode,
     windows: &[WindowSnapshot],
@@ -187,17 +222,16 @@ fn resolve_node(
                 .collect(),
         }],
         SourceLayoutNode::Window { meta, window_match } => {
-            let claimed_window_id = windows
+            let claimed_window = windows
                 .iter()
                 .find(|window| can_claim_window(window_match.as_ref(), window, claimed))
-                .map(|window| {
+                .inspect(|window| {
                     claimed.insert(window.id.to_string());
-                    window.id.clone()
                 });
 
             vec![ResolvedLayoutNode::Window {
-                meta: meta.clone(),
-                window_id: claimed_window_id,
+                meta: resolved_window_meta(meta, claimed_window),
+                window_id: claimed_window.map(|window| window.id.clone()),
             }]
         }
         SourceLayoutNode::Slot {
@@ -220,10 +254,11 @@ fn resolve_node(
                 .into_iter()
                 .take(limit)
                 .map(|window_id| {
+                    let window = windows.iter().find(|window| window.id == window_id);
                     claimed.insert(window_id.to_string());
 
                     ResolvedLayoutNode::Window {
-                        meta: meta.clone(),
+                        meta: resolved_window_meta(meta, window),
                         window_id: Some(window_id),
                     }
                 })
@@ -564,6 +599,13 @@ mod tests {
                     ResolvedLayoutNode::Window {
                         meta: LayoutNodeMeta {
                             class: vec!["stack".into()],
+                            data: [
+                                ("app_id".into(), "firefox".into()),
+                                ("shell".into(), "xdg_toplevel".into()),
+                                ("title".into(), "one".into()),
+                            ]
+                            .into_iter()
+                            .collect(),
                             ..LayoutNodeMeta::default()
                         },
                         window_id: Some(WindowId::from("w1")),
@@ -571,6 +613,13 @@ mod tests {
                     ResolvedLayoutNode::Window {
                         meta: LayoutNodeMeta {
                             class: vec!["stack".into()],
+                            data: [
+                                ("app_id".into(), "firefox".into()),
+                                ("shell".into(), "xdg_toplevel".into()),
+                                ("title".into(), "two".into()),
+                            ]
+                            .into_iter()
+                            .collect(),
                             ..LayoutNodeMeta::default()
                         },
                         window_id: Some(WindowId::from("w2")),
@@ -630,6 +679,13 @@ mod tests {
                     ResolvedLayoutNode::Window {
                         meta: LayoutNodeMeta {
                             id: Some("primary".into()),
+                            data: [
+                                ("app_id".into(), "firefox".into()),
+                                ("shell".into(), "xdg_toplevel".into()),
+                                ("title".into(), "one".into()),
+                            ]
+                            .into_iter()
+                            .collect(),
                             ..LayoutNodeMeta::default()
                         },
                         window_id: Some(WindowId::from("w1")),
@@ -637,6 +693,13 @@ mod tests {
                     ResolvedLayoutNode::Window {
                         meta: LayoutNodeMeta {
                             id: Some("rest".into()),
+                            data: [
+                                ("app_id".into(), "firefox".into()),
+                                ("shell".into(), "xdg_toplevel".into()),
+                                ("title".into(), "two".into()),
+                            ]
+                            .into_iter()
+                            .collect(),
                             ..LayoutNodeMeta::default()
                         },
                         window_id: Some(WindowId::from("w2")),

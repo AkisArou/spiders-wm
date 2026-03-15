@@ -6,7 +6,10 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
-cssparser = "0.36.0"
 spiders-shared = { path = "../spiders-shared" }
+swc_common = "19.0.0"
+swc_css_ast = "19.0.0"
+swc_css_codegen = "19.0.0"
+swc_css_parser = "19.0.0"
 taffy = "0.9.2"
 thiserror.workspace = true
