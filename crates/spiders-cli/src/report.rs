@@ -1,6 +1,7 @@
 use serde::Serialize;
-use spiders_wm::{BootstrapDiagnostics, BootstrapEvent, ControllerPhase, StartupRegistration};
 use spiders_shared::api::{CompositorEvent, QueryRequest, QueryResponse, WmAction};
+use spiders_shared::runtime::RuntimeRefreshSummary;
+use spiders_wm::{BootstrapDiagnostics, BootstrapEvent, ControllerPhase, StartupRegistration};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum OutputMode {
@@ -13,7 +14,7 @@ pub struct DiscoveryReport {
     pub status: &'static str,
     pub runtime_ready: bool,
     pub authored_config: String,
-    pub runtime_config: String,
+    pub prepared_config: String,
 }
 
 #[derive(Debug, Serialize, PartialEq, Eq)]
@@ -21,7 +22,19 @@ pub struct SuccessCheckReport {
     pub status: &'static str,
     pub runtime_ready: bool,
     pub layouts: usize,
-    pub runtime_config: String,
+    pub prepared_config: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prepared_config_update: Option<RuntimeRefreshSummary>,
+}
+
+#[derive(Debug, Serialize, PartialEq, Eq)]
+pub struct BuildConfigReport {
+    pub status: &'static str,
+    pub runtime_ready: bool,
+    pub authored_config: String,
+    pub prepared_config: String,
+    pub layouts: usize,
+    pub prepared_config_update: RuntimeRefreshSummary,
 }
 
 #[derive(Debug, Serialize, PartialEq, Eq)]
@@ -30,7 +43,7 @@ pub struct ErrorReport {
     pub phase: &'static str,
     pub runtime_ready: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub runtime_config: Option<String>,
+    pub prepared_config: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub errors: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -42,7 +55,7 @@ pub struct BootstrapReport {
     pub status: &'static str,
     pub runtime_ready: bool,
     pub authored_config: String,
-    pub runtime_config: String,
+    pub prepared_config: String,
     pub controller_phase: ControllerPhase,
     pub active_seat: Option<String>,
     pub active_output: Option<String>,
@@ -58,6 +71,8 @@ pub struct BootstrapReport {
     pub mapped_surface_count: usize,
     pub applied_events: usize,
     pub startup: StartupRegistration,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prepared_config_update: Option<RuntimeRefreshSummary>,
 }
 
 #[derive(Debug, Serialize, PartialEq, Eq)]
@@ -65,13 +80,15 @@ pub struct BootstrapFailureReport {
     pub status: &'static str,
     pub runtime_ready: bool,
     pub authored_config: String,
-    pub runtime_config: String,
+    pub prepared_config: String,
     pub controller_phase: ControllerPhase,
     pub error: String,
     pub failed_event: Option<BootstrapEvent>,
     pub applied_events: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub diagnostics: Option<BootstrapDiagnostics>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prepared_config_update: Option<RuntimeRefreshSummary>,
 }
 
 #[derive(Debug, Serialize, PartialEq, Eq)]
@@ -131,7 +148,7 @@ mod tests {
             status: "error",
             phase: "load",
             runtime_ready: true,
-            runtime_config: None,
+            prepared_config: None,
             errors: None,
             message: Some("boom".into()),
         };
@@ -141,7 +158,7 @@ mod tests {
         assert_eq!(json["status"], "error");
         assert_eq!(json["phase"], "load");
         assert!(json.get("errors").is_none());
-        assert!(json.get("runtime_config").is_none());
+        assert!(json.get("prepared_config").is_none());
     }
 
     #[test]
@@ -150,7 +167,7 @@ mod tests {
             status: "ok",
             runtime_ready: true,
             authored_config: "/tmp/authored.js".into(),
-            runtime_config: "/tmp/runtime.json".into(),
+            prepared_config: "/tmp/runtime.js".into(),
             controller_phase: ControllerPhase::Running,
             active_seat: Some("seat-0".into()),
             active_output: Some("out-1".into()),
@@ -171,6 +188,7 @@ mod tests {
                 active_seat: Some("seat-0".into()),
                 active_output: Some(spiders_shared::ids::OutputId::from("out-1")),
             },
+            prepared_config_update: None,
         };
 
         let json = serde_json::to_value(report).unwrap();
@@ -190,7 +208,7 @@ mod tests {
             status: "error",
             runtime_ready: true,
             authored_config: "/tmp/authored.js".into(),
-            runtime_config: "/tmp/runtime.json".into(),
+            prepared_config: "/tmp/runtime.js".into(),
             controller_phase: ControllerPhase::Degraded,
             error: "boom".into(),
             failed_event: Some(BootstrapEvent::RemoveOutput {
@@ -198,6 +216,7 @@ mod tests {
             }),
             applied_events: 1,
             diagnostics: None,
+            prepared_config_update: None,
         };
 
         let json = serde_json::to_value(report).unwrap();

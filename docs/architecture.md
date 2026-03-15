@@ -12,15 +12,15 @@ The compositor has five main layers:
 
 1. backend and Wayland integration via `smithay`
 2. window manager domain state in Rust
-3. config and layout evaluation through `boa_engine`
+3. config and layout evaluation through `rquickjs`
 4. layout and effects computation in Rust
 5. IPC, workspace export, and helper tooling
 
 ## High-Level Data Flow
 
 1. Rust boots `smithay`, outputs, inputs, seat state, and shell integrations.
-2. Rust loads compiled user config and layout bundles.
-3. `boa_engine` evaluates config and layout entry modules inside a restricted runtime.
+2. Rust loads cached transpiled user config and layout JavaScript modules.
+3. `rquickjs` evaluates config and layout entry modules inside a restricted runtime.
 4. Rust validates config objects and layout AST results.
 5. Rust resolves layout claims against live windows.
 6. Rust applies layout CSS to structural nodes.
@@ -111,8 +111,8 @@ See also: `docs/spec/compositor-bootstrap.md`
 
 Owns:
 
-- loading compiled config JS
-- exposing stable host modules to `boa_engine`
+- loading cached transpiled config modules
+- exposing stable host modules to `rquickjs`
 - validating config shape
 - dispatching config event subscribers
 - executing action requests from JS through typed Rust command bridges
@@ -158,7 +158,7 @@ Suggested responsibilities:
 
 - `spiders-shared`: shared types, ids, enums, serialization shapes
 - `spiders-layout`: AST, validation, CSS layout, claim resolution, `taffy` mapping
-- `spiders-config`: config parsing, `boa_engine` integration, host modules, action bridge
+- `spiders-config`: config parsing, `rquickjs` integration, host modules, action bridge
 - `spiders-effects`: effects stylesheet model and `keyframe`-backed animation state machine
 - `spiders-ipc`: IPC protocol and server/client helpers
 - `spiders-compositor`: `smithay` integration and WM runtime
@@ -182,7 +182,7 @@ Suggested responsibilities:
 
 ## Main Risk Areas
 
-- `boa_engine` module embedding and host interop ergonomics
+- `rquickjs` module embedding and host interop ergonomics
 - maintaining responsive compositor behavior while running JS safely
 - matching enough CSS/Yoga behavior with `taffy`-backed layout semantics
 - designing IPC once instead of repeatedly refactoring it

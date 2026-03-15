@@ -319,7 +319,7 @@ mod tests {
         IpcSubscriptionTopic,
     };
     use spiders_runtime_js::loader::{RuntimePathResolver, RuntimeProjectLayoutSourceLoader};
-    use spiders_runtime_js::runtime::BoaPreparedLayoutRuntime;
+    use spiders_runtime_js::runtime::QuickJsPreparedLayoutRuntime;
     use spiders_shared::api::WmAction;
     use spiders_shared::ids::{OutputId, WindowId, WorkspaceId};
     use spiders_shared::wm::{
@@ -336,7 +336,7 @@ mod tests {
                 module: "layouts/master-stack.js".into(),
                 stylesheet: String::new(),
                 effects_stylesheet: String::new(),
-                runtime_source: None,
+                runtime_graph: None,
             }],
             ..Config::default()
         }
@@ -394,7 +394,7 @@ mod tests {
         }
     }
 
-    fn controller() -> CompositorController<BoaPreparedLayoutRuntime<RuntimeProjectLayoutSourceLoader>> {
+    fn controller() -> CompositorController<QuickJsPreparedLayoutRuntime<RuntimeProjectLayoutSourceLoader>> {
         let temp_dir = std::env::temp_dir();
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -410,7 +410,7 @@ mod tests {
 
         let loader =
             RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
-        let runtime = BoaPreparedLayoutRuntime::with_loader(loader.clone());
+        let runtime = QuickJsPreparedLayoutRuntime::with_loader(loader.clone());
         let service = AuthoringLayoutService::new(runtime);
 
         CompositorController::initialize(service, config(), state()).unwrap()
@@ -536,7 +536,7 @@ mod tests {
         .unwrap();
         let loader =
             RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
-        let runtime = BoaPreparedLayoutRuntime::with_loader(loader.clone());
+        let runtime = QuickJsPreparedLayoutRuntime::with_loader(loader.clone());
         let service = AuthoringLayoutService::new(runtime);
         let mut startup_state = state();
         startup_state.outputs.push(OutputSnapshot {

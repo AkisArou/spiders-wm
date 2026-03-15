@@ -174,7 +174,7 @@ mod tests {
 
     use spiders_config::authoring_layout::AuthoringLayoutService;
     use spiders_runtime_js::loader::{RuntimePathResolver, RuntimeProjectLayoutSourceLoader};
-    use spiders_runtime_js::runtime::BoaPreparedLayoutRuntime;
+    use spiders_runtime_js::runtime::QuickJsPreparedLayoutRuntime;
     use spiders_shared::ids::{OutputId, WindowId, WorkspaceId};
     use spiders_shared::wm::{
         OutputSnapshot, OutputTransform, ShellKind, StateSnapshot, WindowSnapshot,
@@ -224,7 +224,7 @@ mod tests {
                 module: "layouts/master-stack.js".into(),
                 stylesheet: String::new(),
                 effects_stylesheet: String::new(),
-                runtime_source: None,
+                runtime_graph: None,
             }],
             ..Config::default()
         }
@@ -244,7 +244,7 @@ mod tests {
 
         let loader =
             RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
-        let runtime = BoaPreparedLayoutRuntime::with_loader(loader.clone());
+        let runtime = QuickJsPreparedLayoutRuntime::with_loader(loader.clone());
         let authoring_layout_service = AuthoringLayoutService::new(runtime);
         let sequence = StartupSequence::new(LayoutService, authoring_layout_service, config(), state());
 
@@ -292,7 +292,7 @@ mod tests {
 
         let loader =
             RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
-        let runtime = BoaPreparedLayoutRuntime::with_loader(loader.clone());
+        let runtime = QuickJsPreparedLayoutRuntime::with_loader(loader.clone());
         let authoring_layout_service = AuthoringLayoutService::new(runtime);
 
         let session =
@@ -336,7 +336,7 @@ mod tests {
 
         let loader =
             RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
-        let runtime = BoaPreparedLayoutRuntime::with_loader(loader.clone());
+        let runtime = QuickJsPreparedLayoutRuntime::with_loader(loader.clone());
         let mut authoring_layout_service = AuthoringLayoutService::new(runtime);
         let config = config();
         let state = StateSnapshot {

@@ -1273,7 +1273,7 @@ mod imp {
         use spiders_config::model::{Config, LayoutDefinition};
         use spiders_config::authoring_layout::AuthoringLayoutService;
         use spiders_runtime_js::loader::{RuntimePathResolver, RuntimeProjectLayoutSourceLoader};
-        use spiders_runtime_js::runtime::BoaPreparedLayoutRuntime;
+        use spiders_runtime_js::runtime::QuickJsPreparedLayoutRuntime;
         use spiders_shared::ids::{OutputId, WindowId, WorkspaceId};
         use spiders_shared::wm::{
             LayoutRef, OutputSnapshot, OutputTransform, StateSnapshot, WorkspaceSnapshot,
@@ -1286,7 +1286,7 @@ mod imp {
         use super::*;
 
         type TestLoader = RuntimeProjectLayoutSourceLoader;
-        type TestLayoutRuntime = BoaPreparedLayoutRuntime<TestLoader>;
+        type TestLayoutRuntime = QuickJsPreparedLayoutRuntime<TestLoader>;
         type TestBootstrap = SmithayBootstrap<TestLoader, TestLayoutRuntime>;
 
         fn test_state_snapshot() -> StateSnapshot {
@@ -1330,7 +1330,7 @@ mod imp {
                     module: "layouts/master-stack.js".into(),
                     stylesheet: String::new(),
                     effects_stylesheet: String::new(),
-                    runtime_source: None,
+                    runtime_graph: None,
                 }],
                 ..Config::default()
             }
@@ -1338,7 +1338,7 @@ mod imp {
 
         fn test_authoring_layout_service() -> AuthoringLayoutService<
             RuntimeProjectLayoutSourceLoader,
-            BoaPreparedLayoutRuntime<RuntimeProjectLayoutSourceLoader>,
+            QuickJsPreparedLayoutRuntime<RuntimeProjectLayoutSourceLoader>,
         > {
             let unique = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
@@ -1359,7 +1359,7 @@ mod imp {
 
             let loader =
                 RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
-            let runtime = BoaPreparedLayoutRuntime::with_loader(loader.clone());
+            let runtime = QuickJsPreparedLayoutRuntime::with_loader(loader.clone());
             AuthoringLayoutService::new(runtime)
         }
 

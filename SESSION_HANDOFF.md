@@ -17,7 +17,7 @@ Fixed technology choices:
 
 - compositor core: `smithay`
 - layout engine: `taffy`
-- JS engine: `boa_engine`
+- JS engine: `rquickjs`
 - animation engine: `keyframe`
 - CSS parsing foundation: `cssparser`
 
@@ -30,7 +30,7 @@ The repo now contains real implementation slices, not just planning scaffolds.
 Implemented foundations include:
 
 - shared Rust WM/layout/runtime types
-- `boa_engine`-backed layout evaluation and config runtime plumbing
+- `rquickjs`-backed layout evaluation and config runtime plumbing
 - validated layout resolution plus CSS-to-`taffy` geometry computation
 - CLI config checking and bootstrap event fixture support
 - backend-agnostic bootstrap/controller/host/session boundaries
@@ -70,7 +70,7 @@ Workspace crates:
 - Rust-only rewrite
 - `smithay` instead of `wlroots`
 - `taffy` instead of Yoga
-- `boa_engine` instead of QuickJS
+- `rquickjs` instead of `boa_engine`
 - `keyframe` for animation timelines and interpolation
 - `cssparser` for compositor CSS parsing
 - preserve JS/TS config and layout authoring model
@@ -84,7 +84,7 @@ reference during implementation:
 - `/home/akisarou/projects/niri` - compositor reference, especially for
   `smithay`-oriented architecture and animation patterns
 - `/home/akisarou/projects/keyframe` - animation crate source
-- `/home/akisarou/projects/boa` - `boa_engine` embedding/runtime reference
+- `/home/akisarou/projects/boa` - historical `boa_engine` embedding/runtime reference
 - `/home/akisarou/projects/smithay` - compositor framework and example compositors
 - `/home/akisarou/projects/taffy` - layout engine internals and behavior
 - `/home/akisarou/projects/rust-cssparser` - CSS parser source reference

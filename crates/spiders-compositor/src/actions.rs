@@ -40,7 +40,11 @@ where
     let mut recompute = false;
 
     let events = match action {
-        WmAction::Spawn { .. } | WmAction::ReloadConfig => Vec::new(),
+        WmAction::Spawn { .. } => Vec::new(),
+        WmAction::ReloadConfig => {
+            runtime.reload_config()?;
+            return Ok(ActionOutcome::new(Vec::new(), true));
+        }
         WmAction::SetLayout { name } => {
             let workspace_id = wm_state.current_workspace_id()?.clone();
             let event = wm_state.set_layout_for_workspace(&workspace_id, name)?;
@@ -194,10 +198,10 @@ mod tests {
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use spiders_config::model::{Config, LayoutDefinition};
     use spiders_config::authoring_layout::AuthoringLayoutService;
+    use spiders_config::model::{Config, ConfigPaths, LayoutDefinition};
     use spiders_runtime_js::loader::{RuntimePathResolver, RuntimeProjectLayoutSourceLoader};
-    use spiders_runtime_js::runtime::BoaPreparedLayoutRuntime;
+    use spiders_runtime_js::runtime::QuickJsPreparedLayoutRuntime;
     use spiders_shared::api::{CompositorEvent, FocusDirection, WmAction};
     use spiders_shared::ids::{OutputId, WindowId, WorkspaceId};
     use spiders_shared::wm::{
@@ -216,14 +220,14 @@ mod tests {
                     module: "layouts/master-stack.js".into(),
                     stylesheet: String::new(),
                     effects_stylesheet: String::new(),
-                    runtime_source: None,
+                    runtime_graph: None,
                 },
                 LayoutDefinition {
                     name: "columns".into(),
                     module: "layouts/columns.js".into(),
                     stylesheet: String::new(),
                     effects_stylesheet: String::new(),
-                    runtime_source: None,
+                    runtime_graph: None,
                 },
             ],
             ..Config::default()
@@ -316,7 +320,8 @@ mod tests {
         }
     }
 
-    fn runtime_state() -> CompositorRuntimeState<BoaPreparedLayoutRuntime<RuntimeProjectLayoutSourceLoader>>
+    fn runtime_state(
+    ) -> CompositorRuntimeState<QuickJsPreparedLayoutRuntime<RuntimeProjectLayoutSourceLoader>>
     {
         let temp_dir = std::env::temp_dir();
         let unique = SystemTime::now()
@@ -338,12 +343,63 @@ mod tests {
 
         let loader =
             RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
-        let runtime = BoaPreparedLayoutRuntime::with_loader(loader.clone());
+        let runtime = QuickJsPreparedLayoutRuntime::with_loader(loader.clone());
         let service = AuthoringLayoutService::new(runtime);
 
         LayoutService
             .initialize_runtime_state(service, config(), state())
             .unwrap()
+    }
+
+    fn runtime_state_with_reloadable_cache(
+    ) -> CompositorRuntimeState<QuickJsPreparedLayoutRuntime<RuntimeProjectLayoutSourceLoader>>
+    {
+        let temp_dir = std::env::temp_dir();
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let project_root = temp_dir.join(format!("spiders-action-reload-{unique}"));
+        let cache_root = project_root.join("cache");
+        let _ = fs::create_dir_all(project_root.join("layouts/master-stack"));
+        fs::write(
+            project_root.join("config.ts"),
+            r#"
+                export default {
+                  layouts: { default: "master-stack" },
+                };
+            "#,
+        )
+        .unwrap();
+        fs::write(
+            project_root.join("layouts/master-stack/index.ts"),
+            r#"
+                export default function layout() {
+                  return { type: "workspace", children: [{ type: "window", id: "main" }] };
+                }
+            "#,
+        )
+        .unwrap();
+
+        let paths = ConfigPaths::new(project_root.join("config.ts"), cache_root.join("config.js"));
+        let service = spiders_runtime_js::build_authoring_layout_service(&paths);
+        let config = service.load_config(&paths).unwrap();
+        let runtime = LayoutService
+            .initialize_runtime_state(service, config, state())
+            .unwrap();
+
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        fs::write(
+            project_root.join("layouts/master-stack/index.ts"),
+            r#"
+                export default function layout() {
+                  return { type: "workspace", children: [] };
+                }
+            "#,
+        )
+        .unwrap();
+
+        runtime
     }
 
     #[test]
@@ -401,6 +457,26 @@ mod tests {
             .windows
             .iter()
             .all(|window| window.id != WindowId::from("w1")));
+    }
+
+    #[test]
+    fn reload_config_action_rebuilds_runtime_cache_before_relayout() {
+        let mut runtime = runtime_state_with_reloadable_cache();
+        let mut wm_state = WmState::from_snapshot(state());
+
+        let outcome = apply_action(&mut runtime, &mut wm_state, &WmAction::ReloadConfig).unwrap();
+
+        assert!(outcome.recomputed_layout);
+        assert_eq!(
+            runtime
+                .current_layout()
+                .unwrap()
+                .response
+                .root
+                .window_nodes()
+                .len(),
+            0
+        );
     }
 
     #[test]

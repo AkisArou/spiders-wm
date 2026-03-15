@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use spiders_shared::api::WmAction;
 use spiders_shared::layout::LayoutRequest;
 use spiders_shared::layout::{LayoutSpace, ResolvedLayoutNode};
+use spiders_shared::runtime::JavaScriptModuleGraph;
 use spiders_shared::wm::{
     LayoutRef, OutputSnapshot, SelectedLayout, StateSnapshot, WorkspaceSnapshot,
 };
@@ -79,7 +80,7 @@ pub struct LayoutDefinition {
     #[serde(default)]
     pub effects_stylesheet: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub runtime_source: Option<String>,
+    pub runtime_graph: Option<JavaScriptModuleGraph>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -157,23 +158,22 @@ pub enum LayoutConfigError {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConfigPaths {
     pub authored_config: PathBuf,
-    pub runtime_config: PathBuf,
+    pub prepared_config: PathBuf,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ConfigDiscoveryOptions {
     pub home_dir: Option<PathBuf>,
     pub config_dir_override: Option<PathBuf>,
-    pub data_dir_override: Option<PathBuf>,
+    pub cache_dir_override: Option<PathBuf>,
     pub authored_config_override: Option<PathBuf>,
-    pub runtime_config_override: Option<PathBuf>,
 }
 
 impl ConfigPaths {
-    pub fn new(authored_config: impl Into<PathBuf>, runtime_config: impl Into<PathBuf>) -> Self {
+    pub fn new(authored_config: impl Into<PathBuf>, prepared_config: impl Into<PathBuf>) -> Self {
         Self {
             authored_config: authored_config.into(),
-            runtime_config: runtime_config.into(),
+            prepared_config: prepared_config.into(),
         }
     }
 
@@ -181,17 +181,9 @@ impl ConfigPaths {
         let ConfigDiscoveryOptions {
             home_dir,
             config_dir_override,
-            data_dir_override,
+            cache_dir_override,
             authored_config_override,
-            runtime_config_override,
         } = options;
-
-        if let (Some(authored_config), Some(runtime_config)) = (
-            authored_config_override.clone(),
-            runtime_config_override.clone(),
-        ) {
-            return Ok(Self::new(authored_config, runtime_config));
-        }
 
         let home_dir = home_dir
             .or_else(|| std::env::var_os("HOME").map(PathBuf::from))
@@ -201,8 +193,7 @@ impl ConfigPaths {
 
         let config_root =
             config_dir_override.unwrap_or_else(|| home_dir.join(".config/spiders-wm"));
-        let data_root =
-            data_dir_override.unwrap_or_else(|| home_dir.join(".local/share/spiders-wm"));
+        let cache_root = cache_dir_override.unwrap_or_else(|| home_dir.join(".cache/spiders-wm"));
 
         let authored_config = authored_config_override.unwrap_or_else(|| {
             if config_root.join("config.ts").exists() {
@@ -211,12 +202,11 @@ impl ConfigPaths {
                 config_root.join("config.js")
             }
         });
-        let runtime_config =
-            runtime_config_override.unwrap_or_else(|| data_root.join("config.json"));
+        let prepared_config = cache_root.join("config.js");
 
         Ok(Self {
             authored_config,
-            runtime_config,
+            prepared_config,
         })
     }
 }
@@ -374,7 +364,7 @@ mod tests {
                 module: "layouts/master-stack.js".into(),
                 stylesheet: "workspace { display: flex; }".into(),
                 effects_stylesheet: String::new(),
-                runtime_source: None,
+                runtime_graph: None,
             }],
             ..Config::default()
         };
@@ -393,7 +383,7 @@ mod tests {
                 module: "layouts/master-stack.js".into(),
                 stylesheet: "workspace { display: flex; }".into(),
                 effects_stylesheet: String::new(),
-                runtime_source: None,
+                runtime_graph: None,
             }],
             ..Config::default()
         };
@@ -423,7 +413,7 @@ mod tests {
                 module: "layouts/master-stack.js".into(),
                 stylesheet: "workspace { display: flex; }".into(),
                 effects_stylesheet: String::new(),
-                runtime_source: None,
+                runtime_graph: None,
             }],
             ..Config::default()
         };
@@ -451,7 +441,7 @@ mod tests {
                 module: "layouts/master-stack.js".into(),
                 stylesheet: "workspace { display: flex; }".into(),
                 effects_stylesheet: String::new(),
-                runtime_source: None,
+                runtime_graph: None,
             }],
             ..Config::default()
         };
@@ -526,7 +516,7 @@ mod tests {
         let temp_dir = std::env::temp_dir();
         let home_dir = temp_dir.join("spiders-config-discovery-home");
         let config_dir = home_dir.join(".config/spiders-wm");
-        let data_dir = home_dir.join(".local/share/spiders-wm");
+        let data_dir = home_dir.join(".cache/spiders-wm");
         let _ = fs::create_dir_all(&config_dir);
         let _ = fs::create_dir_all(&data_dir);
         fs::write(config_dir.join("config.ts"), "export default {};").unwrap();
@@ -541,8 +531,8 @@ mod tests {
             .authored_config
             .ends_with(".config/spiders-wm/config.ts"));
         assert!(paths
-            .runtime_config
-            .ends_with(".local/share/spiders-wm/config.json"));
+            .prepared_config
+            .ends_with(".cache/spiders-wm/config.js"));
 
         let _ = fs::remove_file(config_dir.join("config.ts"));
     }
@@ -551,40 +541,34 @@ mod tests {
     fn discovery_prefers_override_directories() {
         let temp_dir = std::env::temp_dir();
         let config_dir = temp_dir.join("spiders-config-override-config");
-        let data_dir = temp_dir.join("spiders-config-override-data");
+        let cache_dir = temp_dir.join("spiders-config-override-cache");
         let _ = fs::create_dir_all(&config_dir);
-        let _ = fs::create_dir_all(&data_dir);
+        let _ = fs::create_dir_all(&cache_dir);
         fs::write(config_dir.join("config.js"), "module.exports = {};").unwrap();
 
         let paths = ConfigPaths::discover(ConfigDiscoveryOptions {
             home_dir: Some(temp_dir.clone()),
             config_dir_override: Some(config_dir.clone()),
-            data_dir_override: Some(data_dir.clone()),
+            cache_dir_override: Some(cache_dir.clone()),
             authored_config_override: None,
-            runtime_config_override: None,
         })
         .unwrap();
 
         assert_eq!(paths.authored_config, config_dir.join("config.js"));
-        assert_eq!(paths.runtime_config, data_dir.join("config.json"));
+        assert_eq!(paths.prepared_config, cache_dir.join("config.js"));
 
         let _ = fs::remove_file(config_dir.join("config.js"));
     }
 
     #[test]
-    fn discovery_supports_direct_file_overrides() {
+    fn config_paths_new_supports_direct_file_overrides() {
         let temp_dir = std::env::temp_dir();
         let authored = temp_dir.join("spiders-direct-authored.js");
-        let runtime = temp_dir.join("spiders-direct-runtime.json");
+        let runtime = temp_dir.join("spiders-direct-runtime.js");
 
-        let paths = ConfigPaths::discover(ConfigDiscoveryOptions {
-            authored_config_override: Some(authored.clone()),
-            runtime_config_override: Some(runtime.clone()),
-            ..ConfigDiscoveryOptions::default()
-        })
-        .unwrap();
+        let paths = ConfigPaths::new(authored.clone(), runtime.clone());
 
         assert_eq!(paths.authored_config, authored);
-        assert_eq!(paths.runtime_config, runtime);
+        assert_eq!(paths.prepared_config, runtime);
     }
 }

@@ -3,18 +3,18 @@
 ## Overview
 
 The Rust rewrite keeps JavaScript or TypeScript-authored configuration and layout
-definitions, but moves the runtime implementation to Rust with `boa_engine` as
+definitions, but moves the runtime implementation to Rust with `rquickjs` as
 the embedded JS engine.
 
-The compositor runtime loads compiled JavaScript bundles. It does not transpile
-TS or TSX internally.
+The compositor runtime loads executable JavaScript modules. TypeScript and TSX
+are transpiled into cached JavaScript files so runtime execution stays in JS.
 
 ## Core Design Rules
 
 - authored source may be `config.ts` or `config.js`
 - authored layouts may be `index.tsx`, `index.ts`, or `index.js`
-- runtime loads compiled JavaScript bundles
-- JS executes inside `boa_engine` with a limited host API
+- runtime loads executable cached JavaScript modules
+- JS executes inside `rquickjs` with a limited host API
 - JS does not receive raw compositor objects
 - JS actions cross into Rust through explicit typed commands
 
@@ -28,9 +28,23 @@ Preferred authored config paths:
 - `~/.config/spiders-wm/config.ts`
 - `~/.config/spiders-wm/config.js`
 
-Preferred compiled runtime path:
+Preferred cached runtime entry path:
 
-- `~/.local/share/spiders-wm/config.js`
+- `~/.cache/spiders-wm/config.js`
+
+Preferred cache layout mirrors authored module structure under the prepared-config cache
+root, for example:
+
+- `~/.cache/spiders-wm/config.js`
+- `~/.cache/spiders-wm/layouts/<name>/index.js`
+- `~/.cache/spiders-wm/index.css`
+- `~/.cache/spiders-wm/layouts/<name>/index.css`
+
+Cache policy should stay simple in V1:
+
+- startup/load syncs the cache when entries are missing or older than source files
+- explicit build/reload may rebuild all authored apps into the cache
+- no hash manifest or dependency database is required in V1
 
 The Rust side should also expose explicit path objects for discovered authored and
 runtime config locations, so startup code can pass filesystem intent around
@@ -74,16 +88,16 @@ V1 config-facing layout definitions should include at least:
 Runtime-loaded source should be treated as distinct from the user-facing module
 identifier/path. The config/runtime boundary may carry both:
 
-- `module`: stable identifier or source path
-- `runtime_source?`: loaded compiled JavaScript source
+- `module`: selected entry module specifier or path
+- `runtime_graph?`: optional prepared in-memory JavaScript module graph
 
 The preferred runtime architecture is to resolve `module` to loaded source via an
 explicit loader boundary, rather than teaching every runtime consumer how to
 discover or fetch source text.
 
-An inline-source loader is acceptable for tests and bootstrap code, but the
-runtime direction should be a filesystem- or artifact-backed loader that reads
-compiled JavaScript from the resolved module path.
+An inline graph loader is acceptable for tests and bootstrap code, but the
+runtime direction should be a filesystem-backed loader that reads cached
+transpiled JavaScript modules from the resolved module path.
 
 `WorkspaceSnapshot.effective_layout.name` selects one of these definitions. Rust
 then builds a `LayoutRequest` using the selected definition's stylesheet and the
@@ -95,9 +109,9 @@ The selected runtime payload should be representable as shared data with at leas
 - `module`
 - `stylesheet`
 
-Loaded runtime artifacts should be represented separately from static config
+Loaded prepared configs should be represented separately from static config
 definitions. A config-selected layout identifies what to load; a runtime-loaded
-layout artifact carries the resolved compiled source.
+prepared layout carries the resolved cached JS source.
 
 State-driven orchestration should be able to derive the current workspace and
 output from `StateSnapshot`, resolve the selected layout definition, and build a
@@ -106,7 +120,7 @@ output from `StateSnapshot`, resolve the selected layout definition, and build a
 A higher-level config runtime service should own:
 
 - module path resolution
-- runtime artifact loading
+- prepared config loading
 - loaded layout caching
 - JS layout evaluation for a selected workspace
 
@@ -165,13 +179,13 @@ The Rust config/runtime boundary should expose a trait-like evaluation surface t
 2. builds the layout evaluation context
 3. evaluates the compiled JS module into a structural layout tree
 
-Before `boa_engine` integration lands, placeholder implementations may keep step 3
+Before `rquickjs` integration lands, placeholder implementations may keep step 3
 explicitly unimplemented as long as the contract is stable and tested.
 
 The initial JS module contract should assume a single selected export named
 `default`, and that export should be callable with `ctx` as its only argument.
-V1 Rust runtime handling may begin with a narrow shell that evaluates module
-source in `boa_engine`, invokes the callable export with the serialized layout
+V1 Rust runtime handling may begin with a narrow shell that loads a prepared
+module graph in `rquickjs`, invokes the callable export with the serialized layout
 evaluation context, and then passes the resulting JS value into a Rust-side
 conversion layer for `AuthoredLayoutNode` normalization.
 
@@ -197,6 +211,12 @@ The rewrite should preserve these event names unless a spec change is made:
 - `config-reloaded`
 
 Payloads should stay data-oriented and serializable.
+
+Config modules are live runtime modules, not data-only manifests. On startup and
+on config reload, the compositor should evaluate the cached `config.js` entry,
+allow module side effects such as event subscription registration, read the
+`default` export as declarative config data, and dispose previous subscriptions
+before installing the new config runtime.
 
 ## Query API
 
@@ -252,9 +272,9 @@ descriptors.
 The external builder is responsible for:
 
 - resolving source entries
-- bundling relative JS/TS/TSX imports
-- bundling imported CSS
-- emitting runtime JS bundles
+- resolving relative JS/TS/TSX imports into prepared runtime modules
+- emitting transpiled runtime JS files into a cache directory
+- collecting conventional root `index.css` stylesheets
 - generating editor-facing support files if needed
 
 The compositor runtime should stay independent from the exact source build tool.
@@ -265,7 +285,7 @@ V1 is acceptable when:
 
 - a user can author `config.ts`
 - a user can author layouts in JS, TS, or TSX
-- compiled JS bundles load in `boa_engine`
+- cached transpiled JS modules load in `rquickjs`
 - config events and actions work through stable host APIs
 - invalid config and JS runtime errors are reported clearly without crashing the
   compositor where practical

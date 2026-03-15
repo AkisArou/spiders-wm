@@ -39,7 +39,7 @@ impl RuntimePathResolver {
 pub enum LayoutLoadError {
     #[error(transparent)]
     Config(#[from] LayoutConfigError),
-    #[error("layout module `{module}` source is unavailable")]
+    #[error("layout module `{module}` graph is unavailable")]
     MissingRuntimeSource { module: String },
 }
 
@@ -72,11 +72,11 @@ impl RuntimeProjectLayoutSourceLoader {
         layout: &LayoutDefinition,
     ) -> Result<PreparedLayout, LayoutLoadError> {
         let module_path = self.resolver.resolve_module_path(&layout.module);
-        if let Some(runtime_source) = layout.runtime_source.clone() {
+        if let Some(runtime_graph) = layout.runtime_graph.clone() {
             return Ok(loaded_layout_definition(
                 layout,
                 module_path.to_string_lossy().into_owned(),
-                runtime_source,
+                runtime_graph,
             ));
         }
         let runtime_source = std::fs::read_to_string(&module_path).map_err(|_| {
@@ -88,7 +88,7 @@ impl RuntimeProjectLayoutSourceLoader {
         Ok(loaded_layout_definition(
             layout,
             module_path.to_string_lossy().into_owned(),
-            runtime_source,
+            single_module_graph(module_path.to_string_lossy().into_owned(), runtime_source),
         ))
     }
 }
@@ -120,11 +120,11 @@ impl FsLayoutSourceLoader {
         &self,
         layout: &LayoutDefinition,
     ) -> Result<PreparedLayout, LayoutLoadError> {
-        if let Some(runtime_source) = layout.runtime_source.clone() {
+        if let Some(runtime_graph) = layout.runtime_graph.clone() {
             return Ok(loaded_layout_definition(
                 layout,
                 layout.module.clone(),
-                runtime_source,
+                runtime_graph,
             ));
         }
         let runtime_source = std::fs::read_to_string(&layout.module).map_err(|_| {
@@ -136,7 +136,7 @@ impl FsLayoutSourceLoader {
         Ok(loaded_layout_definition(
             layout,
             layout.module.clone(),
-            runtime_source,
+            single_module_graph(layout.module.clone(), runtime_source),
         ))
     }
 }
@@ -180,10 +180,8 @@ impl JsLayoutSourceLoader for RuntimeProjectLayoutSourceLoader {
 pub fn loaded_layout_definition(
     layout: &LayoutDefinition,
     module: String,
-    runtime_source: String,
+    runtime_graph: spiders_shared::runtime::JavaScriptModuleGraph,
 ) -> PreparedLayout {
-    let runtime_source = layout.runtime_source.clone().unwrap_or(runtime_source);
-
     PreparedLayout {
         selected: SelectedLayout {
             name: layout.name.clone(),
@@ -191,7 +189,33 @@ pub fn loaded_layout_definition(
             stylesheet: layout.stylesheet.clone(),
             effects_stylesheet: layout.effects_stylesheet.clone(),
         },
-        runtime_source,
+        runtime_graph: layout.runtime_graph.clone().unwrap_or(runtime_graph),
+    }
+}
+
+fn single_module_graph(
+    module: String,
+    source: String,
+) -> spiders_shared::runtime::JavaScriptModuleGraph {
+    spiders_shared::runtime::JavaScriptModuleGraph {
+        entry: module.clone(),
+        modules: vec![spiders_shared::runtime::JavaScriptModule {
+            specifier: module,
+            source: normalize_runtime_module_source(&source),
+            resolved_imports: Default::default(),
+        }],
+    }
+}
+
+fn normalize_runtime_module_source(source: &str) -> String {
+    let trimmed = source.trim();
+    if trimmed.contains("export default")
+        || trimmed.contains("export {")
+        || trimmed.contains("export function")
+    {
+        source.to_owned()
+    } else {
+        format!("export default ({trimmed});")
     }
 }
 
@@ -233,7 +257,7 @@ mod tests {
                 module: "layouts/master-stack.js".into(),
                 stylesheet: "workspace { display: flex; }".into(),
                 effects_stylesheet: String::new(),
-                runtime_source: None,
+                runtime_graph: None,
             }],
             ..Config::default()
         };
@@ -259,7 +283,7 @@ mod tests {
                 module: "layouts/master-stack.js".into(),
                 stylesheet: "workspace { display: flex; }".into(),
                 effects_stylesheet: String::new(),
-                runtime_source: None,
+                runtime_graph: None,
             }],
             ..Config::default()
         };
@@ -288,15 +312,17 @@ mod tests {
             module: module_path.to_string_lossy().into_owned(),
             stylesheet: "workspace { display: flex; }".into(),
             effects_stylesheet: String::new(),
-            runtime_source: None,
+            runtime_graph: None,
         };
 
         let loaded = loader.load_definition(&definition).unwrap();
 
         assert_eq!(loaded.selected.module, definition.module);
+        assert_eq!(loaded.runtime_graph.entry, definition.module);
+        assert_eq!(loaded.runtime_graph.modules.len(), 1);
         assert_eq!(
-            loaded.runtime_source,
-            "ctx => ({ type: 'workspace', children: [] })"
+            loaded.runtime_graph.modules[0].source,
+            "export default (ctx => ({ type: 'workspace', children: [] }));"
         );
 
         let _ = fs::remove_file(module_path);
@@ -347,13 +373,13 @@ mod tests {
             module: "layouts/master-stack.js".into(),
             stylesheet: String::new(),
             effects_stylesheet: String::new(),
-            runtime_source: None,
+            runtime_graph: None,
         };
 
         let loaded = loader.load_definition(&definition).unwrap();
 
         assert_eq!(loaded.selected.module, module_path.to_string_lossy());
-        assert!(loaded.runtime_source.contains("workspace"));
+        assert!(loaded.runtime_graph.modules[0].source.contains("workspace"));
     }
 
     #[test]
@@ -371,12 +397,14 @@ mod tests {
             module: "layouts/fallback.js".into(),
             stylesheet: String::new(),
             effects_stylesheet: String::new(),
-            runtime_source: None,
+            runtime_graph: None,
         };
 
         let loaded = loader.load_definition(&definition).unwrap();
 
         assert!(loaded.selected.module.ends_with("layouts/fallback.js"));
-        assert!(loaded.runtime_source.contains("fallback-group"));
+        assert!(loaded.runtime_graph.modules[0]
+            .source
+            .contains("fallback-group"));
     }
 }

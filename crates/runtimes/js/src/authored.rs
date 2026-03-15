@@ -1,19 +1,27 @@
-use std::collections::BTreeMap;
-use std::path::Path;
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::{Path, PathBuf};
 
-use boa_engine::{Context as JsContext, Source};
+use oxc::span::SourceType;
 use serde_json::Value;
 use spiders_shared::api::{FocusDirection, WmAction};
 
-use crate::compile::{bundle_app, compile_app, AppBuildPlan};
+use crate::compile::{compile_app, compiled_app_to_module_graph, AppBuildPlan};
 use crate::graph::{discover_project_apps, ModuleGraphBuilder};
+use crate::module_graph_runtime::evaluate_entry_export_to_json;
 use spiders_config::model::{
     Binding, Config, ConfigOptions, InputConfig, LayoutConfigError, LayoutDefinition,
     LayoutSelectionConfig, OutputConfig, WindowRule,
 };
 
 pub fn load_authored_config(path: impl AsRef<Path>) -> Result<Config, LayoutConfigError> {
-    let path = path.as_ref();
+    load_project_config(path.as_ref())
+}
+
+pub fn load_prepared_config(path: impl AsRef<Path>) -> Result<Config, LayoutConfigError> {
+    load_project_config(path.as_ref())
+}
+
+fn load_project_config(path: &Path) -> Result<Config, LayoutConfigError> {
     let project =
         discover_project_apps(path).map_err(|error| LayoutConfigError::CompileAuthoredConfig {
             path: path.to_path_buf(),
@@ -32,14 +40,13 @@ pub fn load_authored_config(path: impl AsRef<Path>) -> Result<Config, LayoutConf
             path: path.to_path_buf(),
             message: error.to_string(),
         })?;
-    let bundled_config = bundle_app(&config_graph, &compiled_config).map_err(|error| {
-        LayoutConfigError::CompileAuthoredConfig {
+    let config_runtime_graph = compiled_app_to_module_graph(&config_graph, &compiled_config)
+        .map_err(|error| LayoutConfigError::CompileAuthoredConfig {
             path: path.to_path_buf(),
             message: error.to_string(),
-        }
-    })?;
+        })?;
 
-    let config_value = evaluate_bundled_config(path, &bundled_config.javascript)?;
+    let config_value = evaluate_compiled_config(path, &config_runtime_graph)?;
     let mut config = decode_config_value(path, &config_value)?;
 
     let global_stylesheet = project
@@ -66,7 +73,7 @@ pub fn load_authored_config(path: impl AsRef<Path>) -> Result<Config, LayoutConf
                 path: app.entry_path.clone(),
                 message: error.to_string(),
             })?;
-        let bundled = bundle_app(&graph, &compiled).map_err(|error| {
+        let runtime_graph = compiled_app_to_module_graph(&graph, &compiled).map_err(|error| {
             LayoutConfigError::CompileAuthoredConfig {
                 path: app.entry_path.clone(),
                 message: error.to_string(),
@@ -75,28 +82,100 @@ pub fn load_authored_config(path: impl AsRef<Path>) -> Result<Config, LayoutConf
 
         layout_defs.push(LayoutDefinition {
             name: app.name.clone(),
-            module: layout_runtime_module_path(&app.name),
-            stylesheet: bundled.stylesheet,
+            module: runtime_graph.entry.clone(),
+            stylesheet: compiled.stylesheet,
             effects_stylesheet: global_stylesheet.clone(),
-            runtime_source: Some(bundled.javascript),
+            runtime_graph: Some(runtime_graph),
         });
     }
 
+    validate_layout_selection(path, &config.layout_selection, &layout_defs)?;
     config.layouts = layout_defs;
     Ok(config)
 }
 
-fn evaluate_bundled_config(path: &Path, source: &str) -> Result<Value, LayoutConfigError> {
-    let mut js = JsContext::default();
-    let value = js.eval(Source::from_bytes(source)).map_err(|error| {
-        LayoutConfigError::EvaluateAuthoredConfig {
-            path: path.to_path_buf(),
+pub fn refresh_prepared_config(
+    authored_path: impl AsRef<Path>,
+    runtime_path: impl AsRef<Path>,
+) -> Result<JsRuntimeCacheUpdate, LayoutConfigError> {
+    write_runtime_cache(authored_path.as_ref(), runtime_path.as_ref(), false)
+}
+
+pub fn rebuild_prepared_config(
+    authored_path: impl AsRef<Path>,
+    runtime_path: impl AsRef<Path>,
+) -> Result<JsRuntimeCacheUpdate, LayoutConfigError> {
+    write_runtime_cache(authored_path.as_ref(), runtime_path.as_ref(), true)
+}
+
+fn write_runtime_cache(
+    authored_path: &Path,
+    runtime_path: &Path,
+    force_rebuild: bool,
+) -> Result<JsRuntimeCacheUpdate, LayoutConfigError> {
+    let runtime_root = runtime_path.parent().unwrap_or_else(|| Path::new("."));
+    let mut update = JsRuntimeCacheUpdate::default();
+    let mut expected_paths = BTreeSet::new();
+    let project = discover_project_apps(authored_path).map_err(|error| {
+        LayoutConfigError::CompileAuthoredConfig {
+            path: authored_path.to_path_buf(),
             message: error.to_string(),
         }
     })?;
 
-    value
-        .to_json(&mut js)
+    let config_outputs = write_compiled_app(
+        &project.config_app,
+        runtime_root,
+        runtime_path,
+        force_rebuild,
+    )?;
+    update.rebuilt_files += config_outputs.written_files;
+    expected_paths.extend(config_outputs.paths);
+    for app in &project.layout_apps {
+        let outputs = write_compiled_app(
+            app,
+            runtime_root,
+            runtime_path,
+            force_rebuild,
+        )?;
+        update.rebuilt_files += outputs.written_files;
+        expected_paths.extend(outputs.paths);
+    }
+
+    if let Some(stylesheet) = &project.global_stylesheet_path {
+        let destination = runtime_root.join("index.css");
+        if copy_stylesheet_if_stale(stylesheet, &destination, force_rebuild)? {
+            update.copied_stylesheets += 1;
+        }
+        expected_paths.insert(destination);
+    }
+    for app in &project.layout_apps {
+        if let Some(stylesheet) = &app.stylesheet_path {
+            let relative = app
+                .entry_path
+                .strip_prefix(&app.root_dir)
+                .unwrap()
+                .parent()
+                .unwrap()
+                .join("index.css");
+            let destination = runtime_root.join(relative);
+            if copy_stylesheet_if_stale(stylesheet, &destination, force_rebuild)? {
+                update.copied_stylesheets += 1;
+            }
+            expected_paths.insert(destination);
+        }
+    }
+
+    update.pruned_files = prune_stale_runtime_cache(runtime_root, &expected_paths)?;
+
+    Ok(update)
+}
+
+fn evaluate_compiled_config(
+    path: &Path,
+    graph: &spiders_shared::runtime::JavaScriptModuleGraph,
+) -> Result<Value, LayoutConfigError> {
+    evaluate_entry_export_to_json(graph, &graph.entry, "default")
         .map_err(|error| LayoutConfigError::EvaluateAuthoredConfig {
             path: path.to_path_buf(),
             message: error.to_string(),
@@ -105,6 +184,375 @@ fn evaluate_bundled_config(path: &Path, source: &str) -> Result<Value, LayoutCon
             path: path.to_path_buf(),
             message: "config app returned undefined".into(),
         })
+}
+
+fn write_compiled_app(
+    app: &crate::graph::DiscoveredApp,
+    runtime_root: &Path,
+    runtime_entry_path: &Path,
+    force_rebuild: bool,
+) -> Result<CompiledRuntimeAppOutputs, LayoutConfigError> {
+    let graph = ModuleGraphBuilder::new().build(app).map_err(|error| {
+        LayoutConfigError::CompileAuthoredConfig {
+            path: app.entry_path.clone(),
+            message: error.to_string(),
+        }
+    })?;
+    let expected_paths = graph
+        .modules
+        .values()
+        .filter_map(|record| match &record.id {
+            crate::graph::ModuleId::File(path)
+                if matches!(record.kind, crate::graph::ModuleKind::Script) =>
+            {
+                Some(runtime_root.join(runtime_relative_path(
+                    path,
+                    &graph.app.root_dir,
+                    runtime_entry_path.file_name().and_then(|name| name.to_str()),
+                )))
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    if !force_rebuild && app_cache_is_fresh(&graph, runtime_root, runtime_entry_path) {
+        return Ok(CompiledRuntimeAppOutputs {
+            paths: expected_paths,
+            written_files: 0,
+        });
+    }
+    let plan = AppBuildPlan::from_graph(&graph);
+    let compiled =
+        compile_app(&plan).map_err(|error| LayoutConfigError::CompileAuthoredConfig {
+            path: app.entry_path.clone(),
+            message: error.to_string(),
+        })?;
+    let module_graph = compiled_app_to_module_graph(&graph, &compiled).map_err(|error| {
+        LayoutConfigError::CompileAuthoredConfig {
+            path: app.entry_path.clone(),
+            message: error.to_string(),
+        }
+    })?;
+
+    let mut written_files = 0usize;
+    for module in &module_graph.modules {
+        if module.specifier.starts_with("spider-wm/") {
+            continue;
+        }
+        let destination = runtime_destination_for_specifier(
+            &module.specifier,
+            runtime_root,
+            runtime_entry_path,
+            &graph.app.root_dir,
+        );
+        let rewritten = rewrite_module_for_runtime(
+            &module,
+            &destination,
+            runtime_root,
+            runtime_entry_path,
+            &graph.app.root_dir,
+        )?;
+        if let Some(parent) = destination.parent() {
+            std::fs::create_dir_all(parent).map_err(|_| LayoutConfigError::ReadConfig {
+                path: parent.to_path_buf(),
+            })?;
+        }
+        std::fs::write(&destination, rewritten).map_err(|_| LayoutConfigError::ReadConfig {
+            path: destination.clone(),
+        })?;
+        written_files += 1;
+    }
+
+    Ok(CompiledRuntimeAppOutputs {
+        paths: expected_paths,
+        written_files,
+    })
+}
+
+fn app_cache_is_fresh(
+    graph: &crate::graph::ModuleGraph,
+    runtime_root: &Path,
+    runtime_entry_path: &Path,
+) -> bool {
+    let source_files = graph
+        .modules
+        .values()
+        .filter_map(|record| match &record.id {
+            crate::graph::ModuleId::File(path)
+                if matches!(record.kind, crate::graph::ModuleKind::Script) =>
+            {
+                Some(path)
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    if source_files.is_empty() {
+        return false;
+    }
+
+    let newest_source = source_files
+        .iter()
+        .filter_map(|path| std::fs::metadata(path).ok()?.modified().ok())
+        .max();
+    let Some(newest_source) = newest_source else {
+        return false;
+    };
+
+    source_files.iter().all(|path| {
+        let relative = runtime_relative_path(
+            path,
+            &graph.app.root_dir,
+            runtime_entry_path
+                .file_name()
+                .and_then(|name| name.to_str()),
+        );
+        let destination = runtime_root.join(relative);
+        std::fs::metadata(destination)
+            .ok()
+            .and_then(|metadata| metadata.modified().ok())
+            .map(|modified| modified >= newest_source)
+            .unwrap_or(false)
+    })
+}
+
+fn runtime_destination_for_specifier(
+    specifier: &str,
+    runtime_root: &Path,
+    runtime_entry_path: &Path,
+    authored_root: &Path,
+) -> PathBuf {
+    let entry_relative = runtime_relative_path(
+        &authored_root.join(specifier),
+        authored_root,
+        runtime_entry_path
+            .file_name()
+            .and_then(|name| name.to_str()),
+    );
+    runtime_root.join(entry_relative)
+}
+
+fn runtime_relative_path(
+    source_path: &Path,
+    authored_root: &Path,
+    config_file_name: Option<&str>,
+) -> PathBuf {
+    let relative = source_path.strip_prefix(authored_root).unwrap();
+    let mut destination = relative.to_path_buf();
+    destination.set_extension("js");
+    if relative.parent().is_none() {
+        if let Some(config_file_name) = config_file_name {
+            destination = PathBuf::from(config_file_name);
+        }
+    }
+    destination
+}
+
+fn rewrite_module_for_runtime(
+    module: &spiders_shared::runtime::JavaScriptModule,
+    destination: &Path,
+    runtime_root: &Path,
+    runtime_entry_path: &Path,
+    authored_root: &Path,
+) -> Result<String, LayoutConfigError> {
+    let source_path = authored_root.join(&module.specifier);
+    let source_type = SourceType::from_path(&source_path)
+        .or_else(|_| SourceType::from_path(Path::new("module.js")))
+        .map_err(|_| LayoutConfigError::CompileAuthoredConfig {
+            path: source_path.clone(),
+            message: "failed to infer source type".into(),
+        })?;
+    let allocator = oxc::allocator::Allocator::default();
+    let parsed = oxc::parser::Parser::new(&allocator, &module.source, source_type).parse();
+    if !parsed.errors.is_empty() {
+        return Err(LayoutConfigError::CompileAuthoredConfig {
+            path: source_path,
+            message: "failed to parse compiled module".into(),
+        });
+    }
+
+    let replacements = module
+        .resolved_imports
+        .iter()
+        .map(|(specifier, target)| {
+            let target_destination = runtime_destination_for_specifier(
+                target,
+                runtime_root,
+                runtime_entry_path,
+                authored_root,
+            );
+            let mut relative =
+                relative_path_from(destination.parent().unwrap(), &target_destination)
+                    .to_string_lossy()
+                    .replace('\\', "/");
+            if !relative.starts_with('.') {
+                relative = format!("./{relative}");
+            }
+            (specifier.clone(), relative)
+        })
+        .collect::<BTreeMap<_, _>>();
+
+    let mut out = String::new();
+    let mut cursor = 0usize;
+    for statement in &parsed.program.body {
+        match statement {
+            oxc::ast::ast::Statement::ImportDeclaration(decl) => {
+                let span = decl.source.span;
+                out.push_str(&module.source[cursor..span.start as usize]);
+                out.push_str(
+                    &serde_json::to_string(
+                        replacements
+                            .get(decl.source.value.as_str())
+                            .map(String::as_str)
+                            .unwrap_or(decl.source.value.as_str()),
+                    )
+                    .unwrap(),
+                );
+                cursor = span.end as usize;
+            }
+            oxc::ast::ast::Statement::ExportNamedDeclaration(decl) => {
+                if let Some(source) = &decl.source {
+                    let span = source.span;
+                    out.push_str(&module.source[cursor..span.start as usize]);
+                    out.push_str(
+                        &serde_json::to_string(
+                            replacements
+                                .get(source.value.as_str())
+                                .map(String::as_str)
+                                .unwrap_or(source.value.as_str()),
+                        )
+                        .unwrap(),
+                    );
+                    cursor = span.end as usize;
+                }
+            }
+            oxc::ast::ast::Statement::ExportAllDeclaration(decl) => {
+                let span = decl.source.span;
+                out.push_str(&module.source[cursor..span.start as usize]);
+                out.push_str(
+                    &serde_json::to_string(
+                        replacements
+                            .get(decl.source.value.as_str())
+                            .map(String::as_str)
+                            .unwrap_or(decl.source.value.as_str()),
+                    )
+                    .unwrap(),
+                );
+                cursor = span.end as usize;
+            }
+            _ => {}
+        }
+    }
+    out.push_str(&module.source[cursor..]);
+    Ok(out)
+}
+
+fn relative_path_from(base: &Path, target: &Path) -> PathBuf {
+    let base_components = base.components().collect::<Vec<_>>();
+    let target_components = target.components().collect::<Vec<_>>();
+    let common_len = base_components
+        .iter()
+        .zip(target_components.iter())
+        .take_while(|(left, right)| left == right)
+        .count();
+
+    let mut relative = PathBuf::new();
+    for _ in common_len..base_components.len() {
+        relative.push("..");
+    }
+    for component in &target_components[common_len..] {
+        relative.push(component.as_os_str());
+    }
+    relative
+}
+
+fn copy_stylesheet_if_stale(
+    from: &Path,
+    to: &Path,
+    force_rebuild: bool,
+) -> Result<bool, LayoutConfigError> {
+    let source_modified = std::fs::metadata(from)
+        .and_then(|metadata| metadata.modified())
+        .map_err(|_| LayoutConfigError::ReadConfig { path: from.into() })?;
+    if !force_rebuild
+        && let Ok(destination_modified) = std::fs::metadata(to).and_then(|metadata| metadata.modified())
+    {
+        if destination_modified >= source_modified {
+            return Ok(false);
+        }
+    }
+    if let Some(parent) = to.parent() {
+        std::fs::create_dir_all(parent).map_err(|_| LayoutConfigError::ReadConfig {
+            path: parent.to_path_buf(),
+        })?;
+    }
+    std::fs::copy(from, to).map_err(|_| LayoutConfigError::ReadConfig { path: from.into() })?;
+    Ok(true)
+}
+
+fn prune_stale_runtime_cache(
+    runtime_root: &Path,
+    expected_paths: &BTreeSet<PathBuf>,
+) -> Result<usize, LayoutConfigError> {
+    if !runtime_root.exists() {
+        return Ok(0);
+    }
+    prune_stale_runtime_cache_dir(runtime_root, runtime_root, expected_paths)
+}
+
+fn prune_stale_runtime_cache_dir(
+    runtime_root: &Path,
+    dir: &Path,
+    expected_paths: &BTreeSet<PathBuf>,
+) -> Result<usize, LayoutConfigError> {
+    let mut pruned_files = 0usize;
+    for entry in std::fs::read_dir(dir).map_err(|_| LayoutConfigError::ReadConfig {
+        path: dir.to_path_buf(),
+    })? {
+        let entry = entry.map_err(|_| LayoutConfigError::ReadConfig {
+            path: dir.to_path_buf(),
+        })?;
+        let path = entry.path();
+        let file_type = entry.file_type().map_err(|_| LayoutConfigError::ReadConfig {
+            path: path.clone(),
+        })?;
+
+        if file_type.is_dir() {
+            pruned_files += prune_stale_runtime_cache_dir(runtime_root, &path, expected_paths)?;
+            if path != runtime_root
+                && std::fs::read_dir(&path)
+                    .map_err(|_| LayoutConfigError::ReadConfig { path: path.clone() })?
+                    .next()
+                    .is_none()
+            {
+                std::fs::remove_dir(&path)
+                    .map_err(|_| LayoutConfigError::ReadConfig { path: path.clone() })?;
+            }
+            continue;
+        }
+
+        let should_consider = matches!(
+            path.extension().and_then(|ext| ext.to_str()),
+            Some("js" | "css")
+        );
+        if should_consider && !expected_paths.contains(&path) {
+            std::fs::remove_file(&path)
+                .map_err(|_| LayoutConfigError::ReadConfig { path: path.clone() })?;
+            pruned_files += 1;
+        }
+    }
+
+    Ok(pruned_files)
+}
+
+struct CompiledRuntimeAppOutputs {
+    paths: Vec<PathBuf>,
+    written_files: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct JsRuntimeCacheUpdate {
+    pub rebuilt_files: usize,
+    pub copied_stylesheets: usize,
+    pub pruned_files: usize,
 }
 
 fn decode_config_value(path: &Path, value: &Value) -> Result<Config, LayoutConfigError> {
@@ -126,6 +574,46 @@ fn decode_config_value(path: &Path, value: &Value) -> Result<Config, LayoutConfi
             "root.autostart_once",
         )?,
     })
+}
+
+fn validate_layout_selection(
+    path: &Path,
+    selection: &LayoutSelectionConfig,
+    layouts: &[LayoutDefinition],
+) -> Result<(), LayoutConfigError> {
+    let known = layouts
+        .iter()
+        .map(|layout| layout.name.as_str())
+        .collect::<Vec<_>>();
+    let is_known = |name: &str| known.iter().any(|known_name| *known_name == name);
+
+    if let Some(default) = &selection.default {
+        if !is_known(default) {
+            return Err(LayoutConfigError::DecodeAuthoredConfig {
+                path: path.to_path_buf(),
+                message: format!(
+                    "selected layout `{default}` is not defined by discovered layout modules"
+                ),
+            });
+        }
+    }
+
+    for layout in selection
+        .per_tag
+        .iter()
+        .chain(selection.per_monitor.values())
+    {
+        if !is_known(layout) {
+            return Err(LayoutConfigError::DecodeAuthoredConfig {
+                path: path.to_path_buf(),
+                message: format!(
+                    "selected layout `{layout}` is not defined by discovered layout modules"
+                ),
+            });
+        }
+    }
+
+    Ok(())
 }
 
 fn decode_tags(value: Option<&Value>, path: &Path) -> Result<Vec<String>, LayoutConfigError> {
@@ -594,10 +1082,6 @@ fn required<'a>(
         })
 }
 
-fn layout_runtime_module_path(name: &str) -> String {
-    format!("layouts/{name}.bundle.js")
-}
-
 #[cfg(test)]
 mod tests {
     use std::fs;
@@ -614,7 +1098,7 @@ mod tests {
     }
 
     #[test]
-    fn loads_authored_config_and_bundled_layouts() {
+    fn loads_authored_config_and_prepared_layouts() {
         let root = unique_root("project");
         fs::create_dir_all(root.join("config")).unwrap();
         fs::create_dir_all(root.join("layouts/master-stack")).unwrap();
@@ -734,15 +1218,62 @@ mod tests {
             Some("master-stack")
         );
         assert_eq!(config.layouts.len(), 1);
-        assert_eq!(config.layouts[0].module, "layouts/master-stack.bundle.js");
+        assert_eq!(config.layouts[0].module, "layouts/master-stack/index.tsx");
+        assert_eq!(
+            config.layouts[0].runtime_graph.as_ref().unwrap().entry,
+            "layouts/master-stack/index.tsx"
+        );
         assert!(config.layouts[0]
-            .runtime_source
+            .runtime_graph
             .as_ref()
             .unwrap()
-            .contains("__require"));
+            .modules
+            .iter()
+            .any(|module| module.source.contains("export default function layout")));
         assert!(config.layouts[0].stylesheet.contains(".master {}"));
         assert!(config.layouts[0]
             .effects_stylesheet
             .contains("window { appearance: none; }"));
+    }
+
+    #[test]
+    fn refresh_prepared_config_skips_rewriting_fresh_outputs() {
+        let root = unique_root("cache-sync");
+        let cache_root = root.join("runtime-cache");
+        fs::create_dir_all(root.join("layouts/master-stack")).unwrap();
+        fs::write(
+            root.join("config.ts"),
+            r#"
+                export default {
+                  layouts: { default: "master-stack" },
+                };
+            "#,
+        )
+        .unwrap();
+        fs::write(
+            root.join("layouts/master-stack/index.ts"),
+            r#"
+                export default function layout() {
+                  return { type: "workspace", children: [] };
+                }
+            "#,
+        )
+        .unwrap();
+        fs::write(root.join("layouts/master-stack/index.css"), ".master {}").unwrap();
+
+        let runtime_entry = cache_root.join("config.js");
+        rebuild_prepared_config(root.join("config.ts"), &runtime_entry).unwrap();
+        fs::write(cache_root.join("stale.js"), "export default {};" ).unwrap();
+        fs::write(cache_root.join("stale.css"), ".stale {}").unwrap();
+        let first_modified = fs::metadata(&runtime_entry).unwrap().modified().unwrap();
+
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        refresh_prepared_config(root.join("config.ts"), &runtime_entry).unwrap();
+        let second_modified = fs::metadata(&runtime_entry).unwrap().modified().unwrap();
+
+        assert_eq!(first_modified, second_modified);
+        assert!(cache_root.join("layouts/master-stack/index.js").exists());
+        assert!(!cache_root.join("stale.js").exists());
+        assert!(!cache_root.join("stale.css").exists());
     }
 }

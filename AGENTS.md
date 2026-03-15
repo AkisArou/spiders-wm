@@ -8,7 +8,7 @@ Build `spiders-wm` as a Rust-native Wayland compositor/window manager with:
 
 - `smithay` for the compositor core
 - `taffy` for layout computation
-- `boa_engine` for JavaScript configuration and layout evaluation
+- `rquickjs` for JavaScript configuration and layout evaluation
 - `keyframe` for animation timelines and interpolation
 
 The old C repo is a behavior reference only.
@@ -21,7 +21,7 @@ These are fixed unless the user explicitly changes them:
 - The implementation language is Rust.
 - The compositor stack targets `smithay`.
 - The layout engine targets `taffy`.
-- The embedded JS engine target is `boa_engine`.
+- The embedded JS engine target is `rquickjs`.
 - The animation engine target is `keyframe`.
 - User-facing config and layout authoring stays JavaScript/TypeScript-based.
 - The JS environment must remain capability-limited and deterministic.

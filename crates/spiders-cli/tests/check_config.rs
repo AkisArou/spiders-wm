@@ -23,18 +23,28 @@ fn runtime_fixture_paths() -> (std::path::PathBuf, std::path::PathBuf) {
     )
 }
 
-fn write_runtime_config(name: &str) -> std::path::PathBuf {
+fn write_prepared_config(name: &str) -> std::path::PathBuf {
     let (runtime_dir, _) = runtime_fixture_paths();
-    let runtime_config = std::env::temp_dir().join(name);
+    let runtime_root = std::env::temp_dir().join(name.trim_end_matches(".json"));
+    let _ = std::fs::remove_dir_all(&runtime_root);
+    std::fs::create_dir_all(runtime_root.join("layouts/master-stack")).unwrap();
+    let layout_source =
+        std::fs::read_to_string(runtime_dir.join("layouts/master-stack.js")).unwrap();
     std::fs::write(
-        &runtime_config,
-        format!(
-            r#"{{"layouts":[{{"name":"master-stack","module":"{}","stylesheet":"workspace {{ display: flex; }}"}}]}}"#,
-            runtime_dir.join("layouts/master-stack.js").display()
-        ),
+        runtime_root.join("layouts/master-stack/index.js"),
+        format!("export default ({});", layout_source.trim()),
     )
     .unwrap();
-    runtime_config
+    std::fs::write(
+        runtime_root.join("config.js"),
+        r#"
+            export default {
+              layouts: { default: "master-stack" }
+            };
+        "#,
+    )
+    .unwrap();
+    runtime_root.join("config.js")
 }
 
 #[test]
@@ -42,7 +52,7 @@ fn cli_reports_discovery_in_json_mode() {
     let output = Command::new(cli_bin())
         .arg("--json")
         .env("SPIDERS_WM_AUTHORED_CONFIG", "/tmp/authored.js")
-        .env("SPIDERS_WM_RUNTIME_CONFIG", "/tmp/runtime.json")
+        .env("SPIDERS_WM_CACHE_DIR", "/tmp/spiders-cache")
         .output()
         .unwrap();
 
@@ -52,16 +62,23 @@ fn cli_reports_discovery_in_json_mode() {
     let json: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
     assert_eq!(json["status"], "ok");
     assert_eq!(json["authored_config"], "/tmp/authored.js");
-    assert_eq!(json["runtime_config"], "/tmp/runtime.json");
+    assert_eq!(json["prepared_config"], "/tmp/spiders-cache/config.js");
 }
 
 #[test]
 fn cli_check_config_reports_validation_errors_in_json_mode() {
     let temp_dir = std::env::temp_dir();
-    let runtime_config = temp_dir.join("spiders-cli-runtime-config.json");
+    let runtime_root = temp_dir.join("spiders-cli-runtime-config-missing");
+    let _ = std::fs::remove_dir_all(&runtime_root);
+    std::fs::create_dir_all(&runtime_root).unwrap();
+    let prepared_config = runtime_root.join("config.js");
     std::fs::write(
-        &runtime_config,
-        r#"{"layouts":[{"name":"missing","module":"layouts/missing.js","stylesheet":""}]}"#,
+        &prepared_config,
+        r#"
+            export default {
+              layouts: { default: "missing" }
+            };
+        "#,
     )
     .unwrap();
 
@@ -69,7 +86,7 @@ fn cli_check_config_reports_validation_errors_in_json_mode() {
         .arg("check-config")
         .arg("--json")
         .env("SPIDERS_WM_AUTHORED_CONFIG", "/tmp/authored.js")
-        .env("SPIDERS_WM_RUNTIME_CONFIG", &runtime_config)
+        .env("SPIDERS_WM_CACHE_DIR", prepared_config.parent().unwrap())
         .output()
         .unwrap();
 
@@ -78,22 +95,22 @@ fn cli_check_config_reports_validation_errors_in_json_mode() {
     let stdout = String::from_utf8(output.stdout).unwrap();
     let json: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
     assert_eq!(json["status"], "error");
-    assert_eq!(json["phase"], "validation");
-    assert!(json["errors"][0].as_str().unwrap().contains("missing"));
+    assert_eq!(json["phase"], "load");
+    assert!(json["message"].as_str().unwrap().contains("missing"));
 
-    let _ = std::fs::remove_file(runtime_config);
+    let _ = std::fs::remove_dir_all(runtime_root);
 }
 
 #[test]
 fn cli_check_config_reports_success_in_json_mode_with_fixture_layout() {
     let (_, authored_config) = runtime_fixture_paths();
-    let runtime_config = write_runtime_config("spiders-cli-runtime-success.json");
+    let prepared_config = write_prepared_config("spiders-cli-runtime-success.json");
 
     let output = Command::new(cli_bin())
         .arg("check-config")
         .arg("--json")
         .env("SPIDERS_WM_AUTHORED_CONFIG", authored_config)
-        .env("SPIDERS_WM_RUNTIME_CONFIG", &runtime_config)
+        .env("SPIDERS_WM_CACHE_DIR", prepared_config.parent().unwrap())
         .output()
         .unwrap();
 
@@ -104,19 +121,72 @@ fn cli_check_config_reports_success_in_json_mode_with_fixture_layout() {
     assert_eq!(json["status"], "ok");
     assert_eq!(json["layouts"], 1);
 
-    let _ = std::fs::remove_file(runtime_config);
+    let _ = std::fs::remove_file(prepared_config);
+}
+
+#[test]
+fn cli_build_config_writes_prepared_config_with_module_graphs() {
+    let root = std::env::temp_dir().join("spiders-cli-build-config-project");
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("layouts/master-stack")).unwrap();
+    std::fs::write(
+        root.join("config.ts"),
+        r#"
+            export default {
+              layouts: { default: "master-stack" },
+            };
+        "#,
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("layouts/master-stack/index.ts"),
+        r#"
+            export default function layout() {
+              return { type: "workspace", children: [] };
+            }
+        "#,
+    )
+    .unwrap();
+    std::fs::write(root.join("layouts/master-stack/index.css"), "workspace {}").unwrap();
+
+    let authored_config = root.join("config.ts");
+    let runtime_root = std::env::temp_dir().join("spiders-cli-built-runtime-config");
+    let _ = std::fs::remove_dir_all(&runtime_root);
+    let prepared_config = runtime_root.join("config.js");
+
+    let output = Command::new(cli_bin())
+        .arg("build-config")
+        .arg("--json")
+        .env("SPIDERS_WM_AUTHORED_CONFIG", authored_config)
+        .env("SPIDERS_WM_CACHE_DIR", prepared_config.parent().unwrap())
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    assert_eq!(json["status"], "ok");
+    assert_eq!(json["layouts"], 1);
+
+    let built = std::fs::read_to_string(&prepared_config).unwrap();
+    assert!(built.contains("export default"));
+    assert!(std::fs::metadata(runtime_root.join("layouts/master-stack/index.js")).is_ok());
+
+    let _ = std::fs::remove_dir_all(runtime_root);
+    let _ = std::fs::remove_dir_all(root);
 }
 
 #[test]
 fn cli_bootstrap_trace_reports_json_diagnostics() {
     let (_, authored_config) = runtime_fixture_paths();
-    let runtime_config = write_runtime_config("spiders-cli-bootstrap-trace.json");
+    let prepared_config = write_prepared_config("spiders-cli-bootstrap-trace.json");
 
     let output = Command::new(cli_bin())
         .arg("bootstrap-trace")
         .arg("--json")
         .env("SPIDERS_WM_AUTHORED_CONFIG", authored_config)
-        .env("SPIDERS_WM_RUNTIME_CONFIG", &runtime_config)
+        .env("SPIDERS_WM_CACHE_DIR", prepared_config.parent().unwrap())
         .output()
         .unwrap();
 
@@ -138,13 +208,13 @@ fn cli_bootstrap_trace_reports_json_diagnostics() {
     assert_eq!(json["output_count"], 1);
     assert_eq!(json["applied_events"], 0);
 
-    let _ = std::fs::remove_file(runtime_config);
+    let _ = std::fs::remove_file(prepared_config);
 }
 
 #[test]
 fn cli_bootstrap_trace_reports_script_failure_in_json_mode() {
     let (_, authored_config) = runtime_fixture_paths();
-    let runtime_config = write_runtime_config("spiders-cli-bootstrap-trace-failure.json");
+    let prepared_config = write_prepared_config("spiders-cli-bootstrap-trace-failure.json");
     let events_path = bootstrap_fixture("failure.json");
     let output = Command::new(cli_bin())
         .arg("bootstrap-trace")
@@ -152,7 +222,7 @@ fn cli_bootstrap_trace_reports_script_failure_in_json_mode() {
         .arg("--events")
         .arg(&events_path)
         .env("SPIDERS_WM_AUTHORED_CONFIG", authored_config)
-        .env("SPIDERS_WM_RUNTIME_CONFIG", &runtime_config)
+        .env("SPIDERS_WM_CACHE_DIR", prepared_config.parent().unwrap())
         .output()
         .unwrap();
 
@@ -169,13 +239,13 @@ fn cli_bootstrap_trace_reports_script_failure_in_json_mode() {
     );
     assert_eq!(json["diagnostics"]["active_seat"], "seat-x");
 
-    let _ = std::fs::remove_file(runtime_config);
+    let _ = std::fs::remove_file(prepared_config);
 }
 
 #[test]
 fn cli_bootstrap_trace_reports_script_success_fixture() {
     let (_, authored_config) = runtime_fixture_paths();
-    let runtime_config = write_runtime_config("spiders-cli-bootstrap-trace-success-script.json");
+    let prepared_config = write_prepared_config("spiders-cli-bootstrap-trace-success-script.json");
     let events_path = bootstrap_fixture("success.json");
 
     let output = Command::new(cli_bin())
@@ -184,7 +254,7 @@ fn cli_bootstrap_trace_reports_script_success_fixture() {
         .arg("--events")
         .arg(&events_path)
         .env("SPIDERS_WM_AUTHORED_CONFIG", authored_config)
-        .env("SPIDERS_WM_RUNTIME_CONFIG", &runtime_config)
+        .env("SPIDERS_WM_CACHE_DIR", prepared_config.parent().unwrap())
         .output()
         .unwrap();
 
@@ -208,14 +278,14 @@ fn cli_bootstrap_trace_reports_script_success_fixture() {
         .iter()
         .any(|value| value == "window-w1"));
 
-    let _ = std::fs::remove_file(runtime_config);
+    let _ = std::fs::remove_file(prepared_config);
 }
 
 #[test]
 fn cli_bootstrap_trace_reports_transcript_success_fixture() {
     let (_, authored_config) = runtime_fixture_paths();
-    let runtime_config =
-        write_runtime_config("spiders-cli-bootstrap-trace-transcript-success.json");
+    let prepared_config =
+        write_prepared_config("spiders-cli-bootstrap-trace-transcript-success.json");
     let transcript_path = bootstrap_fixture("transcript-success.json");
 
     let output = Command::new(cli_bin())
@@ -224,7 +294,7 @@ fn cli_bootstrap_trace_reports_transcript_success_fixture() {
         .arg("--transcript")
         .arg(&transcript_path)
         .env("SPIDERS_WM_AUTHORED_CONFIG", authored_config)
-        .env("SPIDERS_WM_RUNTIME_CONFIG", &runtime_config)
+        .env("SPIDERS_WM_CACHE_DIR", prepared_config.parent().unwrap())
         .output()
         .unwrap();
 
@@ -243,14 +313,14 @@ fn cli_bootstrap_trace_reports_transcript_success_fixture() {
         .iter()
         .any(|value| value == "popup-1"));
 
-    let _ = std::fs::remove_file(runtime_config);
+    let _ = std::fs::remove_file(prepared_config);
 }
 
 #[test]
 fn cli_bootstrap_trace_accepts_transcript_fixture_via_events_flag() {
     let (_, authored_config) = runtime_fixture_paths();
-    let runtime_config =
-        write_runtime_config("spiders-cli-bootstrap-trace-transcript-via-events.json");
+    let prepared_config =
+        write_prepared_config("spiders-cli-bootstrap-trace-transcript-via-events.json");
     let transcript_path = bootstrap_fixture("transcript-success.json");
 
     let output = Command::new(cli_bin())
@@ -259,7 +329,7 @@ fn cli_bootstrap_trace_accepts_transcript_fixture_via_events_flag() {
         .arg("--events")
         .arg(&transcript_path)
         .env("SPIDERS_WM_AUTHORED_CONFIG", authored_config)
-        .env("SPIDERS_WM_RUNTIME_CONFIG", &runtime_config)
+        .env("SPIDERS_WM_CACHE_DIR", prepared_config.parent().unwrap())
         .output()
         .unwrap();
 
@@ -272,7 +342,7 @@ fn cli_bootstrap_trace_accepts_transcript_fixture_via_events_flag() {
     assert_eq!(json["applied_events"], 3);
     assert_eq!(json["startup"]["active_seat"], "seat-1");
 
-    let _ = std::fs::remove_file(runtime_config);
+    let _ = std::fs::remove_file(prepared_config);
 }
 
 #[test]

@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
@@ -41,9 +42,35 @@ pub enum RuntimeError {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct JavaScriptModule {
+    pub specifier: String,
+    pub source: String,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub resolved_imports: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct JavaScriptModuleGraph {
+    pub entry: String,
+    pub modules: Vec<JavaScriptModule>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct RuntimeRefreshSummary {
+    pub refreshed_files: usize,
+    pub pruned_files: usize,
+}
+
+impl RuntimeRefreshSummary {
+    pub fn is_noop(self) -> bool {
+        self.refreshed_files == 0 && self.pruned_files == 0
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PreparedLayout {
     pub selected: SelectedLayout,
-    pub runtime_source: String,
+    pub runtime_graph: JavaScriptModuleGraph,
 }
 
 pub trait PreparedLayoutRuntime: std::fmt::Debug {
@@ -73,6 +100,17 @@ pub trait PreparedLayoutRuntime: std::fmt::Debug {
 
 pub trait AuthoringLayoutRuntime: PreparedLayoutRuntime {
     fn load_authored_config(&self, path: &Path) -> Result<Self::Config, RuntimeError>;
+    fn load_prepared_config(&self, path: &Path) -> Result<Self::Config, RuntimeError>;
+    fn refresh_prepared_config(
+        &self,
+        authored: &Path,
+        runtime: &Path,
+    ) -> Result<RuntimeRefreshSummary, RuntimeError>;
+    fn rebuild_prepared_config(
+        &self,
+        authored: &Path,
+        runtime: &Path,
+    ) -> Result<RuntimeRefreshSummary, RuntimeError>;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

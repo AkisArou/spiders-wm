@@ -208,7 +208,7 @@ mod tests {
     use spiders_config::model::{Config, LayoutDefinition};
     use spiders_config::authoring_layout::AuthoringLayoutService;
     use spiders_runtime_js::loader::{RuntimePathResolver, RuntimeProjectLayoutSourceLoader};
-    use spiders_runtime_js::runtime::BoaPreparedLayoutRuntime;
+    use spiders_runtime_js::runtime::QuickJsPreparedLayoutRuntime;
     use spiders_shared::ids::{OutputId, WindowId, WorkspaceId};
     use spiders_shared::wm::{
         LayoutRef, OutputSnapshot, OutputTransform, ShellKind, StateSnapshot, WindowSnapshot,
@@ -224,7 +224,7 @@ mod tests {
                 module: "layouts/master-stack.js".into(),
                 stylesheet: String::new(),
                 effects_stylesheet: String::new(),
-                runtime_source: None,
+                runtime_graph: None,
             }],
             ..Config::default()
         }
@@ -282,7 +282,7 @@ mod tests {
         }
     }
 
-    fn runner() -> BootstrapRunner<BoaPreparedLayoutRuntime<RuntimeProjectLayoutSourceLoader>> {
+    fn runner() -> BootstrapRunner<QuickJsPreparedLayoutRuntime<RuntimeProjectLayoutSourceLoader>> {
         let temp_dir = std::env::temp_dir();
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -298,7 +298,7 @@ mod tests {
 
         let loader =
             RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
-        let runtime = BoaPreparedLayoutRuntime::with_loader(loader.clone());
+        let runtime = QuickJsPreparedLayoutRuntime::with_loader(loader.clone());
         let service = AuthoringLayoutService::new(runtime);
 
         BootstrapRunner::initialize(LayoutService, service, config(), state()).unwrap()
@@ -385,7 +385,7 @@ mod tests {
 
         let loader =
             RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
-        let runtime = BoaPreparedLayoutRuntime::with_loader(loader.clone());
+        let runtime = QuickJsPreparedLayoutRuntime::with_loader(loader.clone());
         let service = AuthoringLayoutService::new(runtime);
         let mut snapshot = state();
         snapshot.outputs.push(OutputSnapshot {

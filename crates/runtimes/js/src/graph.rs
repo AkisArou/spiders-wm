@@ -336,15 +336,24 @@ fn parse_imports(path: &Path, source: &str) -> Result<Vec<ImportedModule>, Graph
     for statement in &parsed.program.body {
         match statement {
             Statement::ImportDeclaration(decl) => {
-                imports.push(classify_import_specifier(decl.source.value.as_str()));
+                let import = classify_import_specifier(decl.source.value.as_str());
+                if !matches!(import.kind, ImportedModuleKind::Stylesheet) {
+                    imports.push(import);
+                }
             }
             Statement::ExportNamedDeclaration(decl) => {
                 if let Some(source) = &decl.source {
-                    imports.push(classify_import_specifier(source.value.as_str()));
+                    let import = classify_import_specifier(source.value.as_str());
+                    if !matches!(import.kind, ImportedModuleKind::Stylesheet) {
+                        imports.push(import);
+                    }
                 }
             }
             Statement::ExportAllDeclaration(decl) => {
-                imports.push(classify_import_specifier(decl.source.value.as_str()));
+                let import = classify_import_specifier(decl.source.value.as_str());
+                if !matches!(import.kind, ImportedModuleKind::Stylesheet) {
+                    imports.push(import);
+                }
             }
             _ => {}
         }
@@ -404,7 +413,7 @@ mod tests {
     }
 
     #[test]
-    fn graph_builder_resolves_local_css_and_virtual_imports() {
+    fn graph_builder_ignores_css_imports_and_keeps_virtual_imports() {
         let root = unique_root("graph");
         fs::create_dir_all(root.join("config")).unwrap();
         fs::write(
@@ -435,9 +444,6 @@ mod tests {
         assert!(graph
             .modules
             .contains_key(&ModuleId::File(root.join("config/bindings.ts"))));
-        assert!(graph
-            .modules
-            .contains_key(&ModuleId::File(root.join("index.css"))));
         assert!(graph
             .modules
             .contains_key(&ModuleId::Virtual("spider-wm/config".into())));

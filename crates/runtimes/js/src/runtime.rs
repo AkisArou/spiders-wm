@@ -1,6 +1,5 @@
 use std::collections::BTreeMap;
 
-use boa_engine::{Context as JsContext, JsValue, Source};
 use serde::Deserialize;
 use spiders_config::model::Config;
 use spiders_layout::ast::{
@@ -8,11 +7,13 @@ use spiders_layout::ast::{
 };
 use spiders_shared::layout::{SlotTake, SourceLayoutNode};
 use spiders_shared::runtime::{
-    AuthoringLayoutRuntime, LayoutModuleContract, PreparedLayoutRuntime, PreparedLayout, RuntimeError,
+    AuthoringLayoutRuntime, JavaScriptModule, JavaScriptModuleGraph, LayoutModuleContract,
+    PreparedLayout, PreparedLayoutRuntime, RuntimeError,
 };
 use spiders_shared::wm::{LayoutEvaluationContext, SelectedLayout};
 
 use crate::loader::{InlineLayoutSourceLoader, JsLayoutSourceLoader};
+use crate::module_graph_runtime::call_entry_export_with_json_arg;
 
 #[cfg(test)]
 use crate::loader::FsLayoutSourceLoader;
@@ -40,11 +41,6 @@ impl DecodePath {
     fn display(&self) -> String {
         self.0.join(".")
     }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-struct PreparedLayoutEvaluationModule {
-    export: JsValue,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -110,12 +106,12 @@ pub enum PreparedLayoutRuntimeError {
 pub struct StubPreparedLayoutRuntime;
 
 #[derive(Debug)]
-pub struct BoaPreparedLayoutRuntime<L = InlineLayoutSourceLoader> {
+pub struct QuickJsPreparedLayoutRuntime<L = InlineLayoutSourceLoader> {
     contract: LayoutModuleContract,
     loader: L,
 }
 
-impl Default for BoaPreparedLayoutRuntime<InlineLayoutSourceLoader> {
+impl Default for QuickJsPreparedLayoutRuntime<InlineLayoutSourceLoader> {
     fn default() -> Self {
         Self {
             contract: LayoutModuleContract::default(),
@@ -124,13 +120,13 @@ impl Default for BoaPreparedLayoutRuntime<InlineLayoutSourceLoader> {
     }
 }
 
-impl BoaPreparedLayoutRuntime<InlineLayoutSourceLoader> {
+impl QuickJsPreparedLayoutRuntime<InlineLayoutSourceLoader> {
     pub fn new() -> Self {
         Self::default()
     }
 }
 
-impl<L> BoaPreparedLayoutRuntime<L> {
+impl<L> QuickJsPreparedLayoutRuntime<L> {
     pub fn with_loader(loader: L) -> Self {
         Self {
             contract: LayoutModuleContract::default(),
@@ -144,11 +140,18 @@ impl<L> BoaPreparedLayoutRuntime<L> {
         context: &LayoutEvaluationContext,
         source: &str,
     ) -> Result<SourceLayoutNode, PreparedLayoutRuntimeError> {
-        let mut js = JsContext::default();
-        let module = self.evaluate_module(selected_layout, source, &mut js)?;
-        let context_value = self.context_to_js_value(context, &mut js)?;
-
-        self.call_layout_export(selected_layout, &module, &context_value, &mut js)
+        self.evaluate_module_graph(
+            selected_layout,
+            context,
+            &JavaScriptModuleGraph {
+                entry: selected_layout.module.clone(),
+                modules: vec![JavaScriptModule {
+                    specifier: selected_layout.module.clone(),
+                    source: format!("export default ({source});"),
+                    resolved_imports: Default::default(),
+                }],
+            },
+        )
     }
 
     pub fn normalize_authored_layout(
@@ -158,88 +161,41 @@ impl<L> BoaPreparedLayoutRuntime<L> {
         Ok(ValidatedLayoutTree::from_authored(root)?.root)
     }
 
-    fn evaluate_module(
+    fn evaluate_module_graph(
         &self,
         selected_layout: &SelectedLayout,
-        source: &str,
-        js: &mut JsContext,
-    ) -> Result<PreparedLayoutEvaluationModule, PreparedLayoutRuntimeError> {
-        let wrapped = format!("({source})");
-        let export = js.eval(Source::from_bytes(&wrapped)).map_err(|error| {
+        context: &LayoutEvaluationContext,
+        graph: &JavaScriptModuleGraph,
+    ) -> Result<SourceLayoutNode, PreparedLayoutRuntimeError> {
+        let context_value = serde_json::to_value(context).map_err(|error| {
             PreparedLayoutRuntimeError::JavaScript {
                 message: error.to_string(),
             }
         })?;
 
-        if export.is_null_or_undefined() {
-            return Err(PreparedLayoutRuntimeError::MissingExport {
-                name: selected_layout.name.clone(),
-                export: self.contract.export_name.clone(),
-            });
-        }
-
-        Ok(PreparedLayoutEvaluationModule { export })
-    }
-
-    fn context_to_js_value(
-        &self,
-        context: &LayoutEvaluationContext,
-        js: &mut JsContext,
-    ) -> Result<JsValue, PreparedLayoutRuntimeError> {
-        let value =
-            serde_json::to_value(context).map_err(|error| PreparedLayoutRuntimeError::JavaScript {
-                message: error.to_string(),
-            })?;
-
-        JsValue::from_json(&value, js).map_err(|error| PreparedLayoutRuntimeError::JavaScript {
-            message: error.to_string(),
-        })
-    }
-
-    fn call_layout_export(
-        &self,
-        selected_layout: &SelectedLayout,
-        module: &PreparedLayoutEvaluationModule,
-        context_value: &JsValue,
-        js: &mut JsContext,
-    ) -> Result<SourceLayoutNode, PreparedLayoutRuntimeError> {
-        let callable =
-            module
-                .export
-                .as_callable()
-                .ok_or_else(|| PreparedLayoutRuntimeError::NonCallableExport {
-                    name: selected_layout.name.clone(),
-                    export: self.contract.export_name.clone(),
-                })?;
-
-        let value = callable
-            .call(
-                &JsValue::undefined(),
-                std::slice::from_ref(context_value),
-                js,
-            )
-            .map_err(|error| PreparedLayoutRuntimeError::JavaScript {
-                message: error.to_string(),
-            })?;
-
-        self.convert_js_value_to_authored_layout(selected_layout, &value, js)
-    }
-
-    fn convert_js_value_to_authored_layout(
-        &self,
-        selected_layout: &SelectedLayout,
-        value: &JsValue,
-        js: &mut JsContext,
-    ) -> Result<SourceLayoutNode, PreparedLayoutRuntimeError> {
-        let json = value
-            .to_json(js)
-            .map_err(|error| PreparedLayoutRuntimeError::JavaScript {
-                message: error.to_string(),
-            })?
-            .ok_or_else(|| PreparedLayoutRuntimeError::ValueConversion {
-                name: selected_layout.name.clone(),
-                message: "layout function returned undefined".into(),
-            })?;
+        let json = call_entry_export_with_json_arg(
+            graph,
+            &selected_layout.module,
+            &self.contract.export_name,
+            &context_value,
+        )
+        .map_err(|error| match error {
+            crate::module_graph_runtime::ModuleGraphRuntimeError::JavaScript { message } => {
+                PreparedLayoutRuntimeError::JavaScript { message }
+            }
+            crate::module_graph_runtime::ModuleGraphRuntimeError::MissingExport {
+                name,
+                export,
+            } => PreparedLayoutRuntimeError::MissingExport { name, export },
+            crate::module_graph_runtime::ModuleGraphRuntimeError::NonCallableExport {
+                name,
+                export,
+            } => PreparedLayoutRuntimeError::NonCallableExport { name, export },
+        })?
+        .ok_or_else(|| PreparedLayoutRuntimeError::ValueConversion {
+            name: selected_layout.name.clone(),
+            message: "layout function returned undefined".into(),
+        })?;
 
         let authored =
             decode_authored_layout_node(&json, &DecodePath::root()).map_err(|message| {
@@ -253,7 +209,7 @@ impl<L> BoaPreparedLayoutRuntime<L> {
     }
 }
 
-impl<L: JsLayoutSourceLoader> BoaPreparedLayoutRuntime<L> {
+impl<L: JsLayoutSourceLoader> QuickJsPreparedLayoutRuntime<L> {
     pub fn prepare_layout(
         &self,
         config: &Config,
@@ -278,7 +234,10 @@ impl PreparedLayoutRuntime for StubPreparedLayoutRuntime {
             })?
             .map(|selected| PreparedLayout {
                 selected,
-                runtime_source: String::new(),
+                runtime_graph: JavaScriptModuleGraph {
+                    entry: String::new(),
+                    modules: Vec::new(),
+                },
             }))
     }
 
@@ -310,7 +269,7 @@ impl PreparedLayoutRuntime for StubPreparedLayoutRuntime {
     }
 }
 
-impl<L: JsLayoutSourceLoader> PreparedLayoutRuntime for BoaPreparedLayoutRuntime<L> {
+impl<L: JsLayoutSourceLoader> PreparedLayoutRuntime for QuickJsPreparedLayoutRuntime<L> {
     type Config = Config;
 
     fn prepare_layout(
@@ -318,7 +277,7 @@ impl<L: JsLayoutSourceLoader> PreparedLayoutRuntime for BoaPreparedLayoutRuntime
         config: &Self::Config,
         workspace: &spiders_shared::wm::WorkspaceSnapshot,
     ) -> Result<Option<PreparedLayout>, RuntimeError> {
-        BoaPreparedLayoutRuntime::prepare_layout(self, config, workspace)
+        QuickJsPreparedLayoutRuntime::prepare_layout(self, config, workspace)
     }
 
     fn build_context(
@@ -338,10 +297,10 @@ impl<L: JsLayoutSourceLoader> PreparedLayoutRuntime for BoaPreparedLayoutRuntime
         loaded_layout: &PreparedLayout,
         context: &LayoutEvaluationContext,
     ) -> Result<SourceLayoutNode, RuntimeError> {
-        self.evaluate_module_source(
+        self.evaluate_module_graph(
             &loaded_layout.selected,
             context,
-            &loaded_layout.runtime_source,
+            &loaded_layout.runtime_graph,
         )
         .map_err(|error| RuntimeError::Other {
             message: error.to_string(),
@@ -353,11 +312,41 @@ impl<L: JsLayoutSourceLoader> PreparedLayoutRuntime for BoaPreparedLayoutRuntime
     }
 }
 
-impl<L: JsLayoutSourceLoader> AuthoringLayoutRuntime for BoaPreparedLayoutRuntime<L> {
+impl<L: JsLayoutSourceLoader> AuthoringLayoutRuntime for QuickJsPreparedLayoutRuntime<L> {
     fn load_authored_config(&self, path: &std::path::Path) -> Result<Self::Config, RuntimeError> {
         crate::authored::load_authored_config(path).map_err(|error| RuntimeError::Config {
             message: error.to_string(),
         })
+    }
+
+    fn load_prepared_config(&self, path: &std::path::Path) -> Result<Self::Config, RuntimeError> {
+        crate::authored::load_prepared_config(path).map_err(|error| RuntimeError::Config {
+            message: error.to_string(),
+        })
+    }
+
+    fn refresh_prepared_config(
+        &self,
+        authored: &std::path::Path,
+        runtime: &std::path::Path,
+    ) -> Result<spiders_shared::runtime::RuntimeRefreshSummary, RuntimeError> {
+        crate::authored::refresh_prepared_config(authored, runtime)
+            .map(runtime_refresh_summary)
+            .map_err(|error| RuntimeError::Config {
+                message: error.to_string(),
+            })
+    }
+
+    fn rebuild_prepared_config(
+        &self,
+        authored: &std::path::Path,
+        runtime: &std::path::Path,
+    ) -> Result<spiders_shared::runtime::RuntimeRefreshSummary, RuntimeError> {
+        crate::authored::rebuild_prepared_config(authored, runtime)
+            .map(runtime_refresh_summary)
+            .map_err(|error| RuntimeError::Config {
+                message: error.to_string(),
+            })
     }
 }
 
@@ -366,6 +355,41 @@ impl AuthoringLayoutRuntime for StubPreparedLayoutRuntime {
         Err(RuntimeError::NotImplemented(
             "authored config loading".into(),
         ))
+    }
+
+    fn load_prepared_config(&self, _path: &std::path::Path) -> Result<Self::Config, RuntimeError> {
+        Err(RuntimeError::NotImplemented(
+            "runtime config loading".into(),
+        ))
+    }
+
+    fn refresh_prepared_config(
+        &self,
+        _authored: &std::path::Path,
+        _runtime: &std::path::Path,
+    ) -> Result<spiders_shared::runtime::RuntimeRefreshSummary, RuntimeError> {
+        Err(RuntimeError::NotImplemented(
+            "prepared config refresh".into(),
+        ))
+    }
+
+    fn rebuild_prepared_config(
+        &self,
+        _authored: &std::path::Path,
+        _runtime: &std::path::Path,
+    ) -> Result<spiders_shared::runtime::RuntimeRefreshSummary, RuntimeError> {
+        Err(RuntimeError::NotImplemented(
+            "prepared config rebuild".into(),
+        ))
+    }
+}
+
+fn runtime_refresh_summary(
+    update: crate::authored::JsRuntimeCacheUpdate,
+) -> spiders_shared::runtime::RuntimeRefreshSummary {
+    spiders_shared::runtime::RuntimeRefreshSummary {
+        refreshed_files: update.rebuilt_files + update.copied_stylesheets,
+        pruned_files: update.pruned_files,
     }
 }
 
@@ -479,14 +503,14 @@ mod tests {
     }
 
     #[test]
-    fn boa_runtime_exposes_default_export_contract() {
-        let runtime = BoaPreparedLayoutRuntime::new();
+    fn quickjs_runtime_exposes_default_export_contract() {
+        let runtime = QuickJsPreparedLayoutRuntime::new();
         assert_eq!(runtime.contract().export_name, "default");
     }
 
     #[test]
-    fn boa_runtime_decodes_js_layout_object_into_normalized_tree() {
-        let runtime = BoaPreparedLayoutRuntime::new();
+    fn quickjs_runtime_decodes_js_layout_object_into_normalized_tree() {
+        let runtime = QuickJsPreparedLayoutRuntime::new();
         let layout = runtime
             .evaluate_module_source(
                 &SelectedLayout {
@@ -504,7 +528,7 @@ mod tests {
     }
 
     #[test]
-    fn boa_authoring_layout_service_works_with_filesystem_loader() {
+    fn quickjs_authoring_layout_service_works_with_filesystem_loader() {
         let temp_dir = std::env::temp_dir();
         let module_path = temp_dir.join("spiders-runtime-service-test.js");
         fs::write(
@@ -513,14 +537,14 @@ mod tests {
         )
         .unwrap();
 
-        let runtime = BoaPreparedLayoutRuntime::with_loader(FsLayoutSourceLoader);
+        let runtime = QuickJsPreparedLayoutRuntime::with_loader(FsLayoutSourceLoader);
         let config = Config {
             layouts: vec![LayoutDefinition {
                 name: "master-stack".into(),
                 module: module_path.to_string_lossy().into_owned(),
                 stylesheet: String::new(),
                 effects_stylesheet: String::new(),
-                runtime_source: None,
+                runtime_graph: None,
             }],
             ..Config::default()
         };

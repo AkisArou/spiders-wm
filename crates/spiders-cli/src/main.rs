@@ -3,8 +3,9 @@ mod report;
 
 use bootstrap::CliBootstrap;
 use report::{
-    emit, BootstrapFailureReport, BootstrapReport, DiscoveryReport, ErrorReport, IpcActionReport,
-    IpcMonitorReport, IpcQueryReport, IpcSmokeReport, OutputMode, SuccessCheckReport,
+    emit, BootstrapFailureReport, BootstrapReport, BuildConfigReport, DiscoveryReport, ErrorReport,
+    IpcActionReport, IpcMonitorReport, IpcQueryReport, IpcSmokeReport, OutputMode,
+    SuccessCheckReport,
 };
 
 #[derive(Debug, Clone)]
@@ -21,11 +22,9 @@ impl CliContext {
                 home_dir: std::env::var_os("SPIDERS_WM_HOME").map(std::path::PathBuf::from),
                 config_dir_override: std::env::var_os("SPIDERS_WM_CONFIG_DIR")
                     .map(std::path::PathBuf::from),
-                data_dir_override: std::env::var_os("SPIDERS_WM_DATA_DIR")
+                cache_dir_override: std::env::var_os("SPIDERS_WM_CACHE_DIR")
                     .map(std::path::PathBuf::from),
                 authored_config_override: std::env::var_os("SPIDERS_WM_AUTHORED_CONFIG")
-                    .map(std::path::PathBuf::from),
-                runtime_config_override: std::env::var_os("SPIDERS_WM_RUNTIME_CONFIG")
                     .map(std::path::PathBuf::from),
             },
         }
@@ -39,6 +38,7 @@ impl CliContext {
 fn main() -> std::process::ExitCode {
     let args: Vec<String> = std::env::args().collect();
     let check_config = args.iter().any(|arg| arg == "check-config");
+    let build_config = args.iter().any(|arg| arg == "build-config");
     let bootstrap_trace = args.iter().any(|arg| arg == "bootstrap-trace");
     let ipc_smoke = args.iter().any(|arg| arg == "ipc-smoke");
     let ipc_query = args.iter().any(|arg| arg == "ipc-query");
@@ -70,6 +70,8 @@ fn main() -> std::process::ExitCode {
         ipc_monitor_command(output_mode, socket_path, topic_names)
     } else if bootstrap_trace {
         bootstrap_trace_command(&cli, output_mode, events_path, transcript_path)
+    } else if build_config {
+        build_config_command(&cli, output_mode)
     } else if check_config {
         check_config_command(&cli, output_mode)
     } else {
@@ -101,7 +103,7 @@ fn ipc_monitor_command(
                     status: "error",
                     phase: "ipc-monitor",
                     runtime_ready: spiders_ipc::crate_ready(),
-                    runtime_config: None,
+                    prepared_config: None,
                     errors: None,
                     message: Some(error),
                 },
@@ -136,7 +138,7 @@ fn ipc_query_command(
                     status: "error",
                     phase: "ipc-query",
                     runtime_ready: spiders_ipc::crate_ready(),
-                    runtime_config: None,
+                    prepared_config: None,
                     errors: None,
                     message: Some(error),
                 },
@@ -171,7 +173,7 @@ fn ipc_action_command(
                     status: "error",
                     phase: "ipc-action",
                     runtime_ready: spiders_ipc::crate_ready(),
-                    runtime_config: None,
+                    prepared_config: None,
                     errors: None,
                     message: Some(error),
                 },
@@ -205,7 +207,7 @@ fn ipc_smoke_command(output_mode: OutputMode) -> std::process::ExitCode {
                     status: "error",
                     phase: "ipc-smoke",
                     runtime_ready: spiders_ipc::crate_ready(),
-                    runtime_config: None,
+                    prepared_config: None,
                     errors: None,
                     message: Some(error.to_string()),
                 },
@@ -238,14 +240,14 @@ fn print_discovery(cli: &CliContext, output_mode: OutputMode) -> std::process::E
                     status: "ok",
                     runtime_ready: cli.ready,
                     authored_config: bootstrap.paths.authored_config.display().to_string(),
-                    runtime_config: bootstrap.paths.runtime_config.display().to_string(),
+                    prepared_config: bootstrap.paths.prepared_config.display().to_string(),
                 },
                 || {
                     format!(
                         "spiders-cli placeholder (config runtime ready: {}, authored: {}, runtime: {})",
                         cli.ready,
                         bootstrap.paths.authored_config.display(),
-                        bootstrap.paths.runtime_config.display()
+                        bootstrap.paths.prepared_config.display()
                     )
                 },
             );
@@ -258,7 +260,7 @@ fn print_discovery(cli: &CliContext, output_mode: OutputMode) -> std::process::E
                     status: "error",
                     phase: "discovery",
                     runtime_ready: cli.ready,
-                    runtime_config: None,
+                    prepared_config: None,
                     errors: None,
                     message: Some(error.to_string()),
                 },
@@ -281,7 +283,7 @@ fn check_config_command(cli: &CliContext, output_mode: OutputMode) -> std::proce
                     status: "error",
                     phase: "discovery",
                     runtime_ready: cli.ready,
-                    runtime_config: None,
+                    prepared_config: None,
                     errors: None,
                     message: Some(error.to_string()),
                 },
@@ -296,67 +298,200 @@ fn check_config_command(cli: &CliContext, output_mode: OutputMode) -> std::proce
         }
     };
 
-    match bootstrap.service.load_config(&bootstrap.paths) {
-        Ok(config) => match bootstrap.service.validate_layout_modules(&config) {
-            Ok(errors) if errors.is_empty() => {
+    match bootstrap
+        .service
+        .load_config_with_cache_update(&bootstrap.paths)
+    {
+        Ok((config, prepared_config_update)) => {
+            match bootstrap.service.validate_layout_modules(&config) {
+                Ok(errors) if errors.is_empty() => {
+                    emit(
+                        output_mode,
+                        &SuccessCheckReport {
+                            status: "ok",
+                            runtime_ready: cli.ready,
+                            layouts: config.layouts.len(),
+                            prepared_config: bootstrap.paths.prepared_config.display().to_string(),
+                            prepared_config_update,
+                        },
+                        || {
+                            format!(
+                            "config ok (runtime ready: {}, layouts: {}, runtime: {}, cache: {})",
+                            cli.ready,
+                            config.layouts.len(),
+                            bootstrap.paths.prepared_config.display(),
+                            describe_prepared_config_update(prepared_config_update)
+                        )
+                        },
+                    );
+                    std::process::ExitCode::SUCCESS
+                }
+                Ok(errors) => {
+                    emit(
+                        output_mode,
+                        &ErrorReport {
+                            status: "error",
+                            phase: "validation",
+                            runtime_ready: cli.ready,
+                            prepared_config: Some(
+                                bootstrap.paths.prepared_config.display().to_string(),
+                            ),
+                            errors: Some(errors.clone()),
+                            message: None,
+                        },
+                        || {
+                            format!(
+                                "config error (runtime ready: {}, runtime: {}): {}",
+                                cli.ready,
+                                bootstrap.paths.prepared_config.display(),
+                                errors.join("; ")
+                            )
+                        },
+                    );
+                    std::process::ExitCode::from(1)
+                }
+                Err(error) => {
+                    emit(
+                        output_mode,
+                        &ErrorReport {
+                            status: "error",
+                            phase: "validation",
+                            runtime_ready: cli.ready,
+                            prepared_config: None,
+                            errors: None,
+                            message: Some(error.to_string()),
+                        },
+                        || {
+                            format!(
+                                "config error (runtime ready: {}, validation): {error}",
+                                cli.ready
+                            )
+                        },
+                    );
+                    std::process::ExitCode::from(1)
+                }
+            }
+        }
+        Err(error) => {
+            emit(
+                output_mode,
+                &ErrorReport {
+                    status: "error",
+                    phase: "load",
+                    runtime_ready: cli.ready,
+                    prepared_config: Some(bootstrap.paths.prepared_config.display().to_string()),
+                    errors: None,
+                    message: Some(error.to_string()),
+                },
+                || {
+                    format!(
+                        "config error (runtime ready: {}, runtime: {}): {error}",
+                        cli.ready,
+                        bootstrap.paths.prepared_config.display()
+                    )
+                },
+            );
+            std::process::ExitCode::from(1)
+        }
+    }
+}
+
+fn build_config_command(cli: &CliContext, output_mode: OutputMode) -> std::process::ExitCode {
+    let bootstrap = match cli.bootstrap() {
+        Ok(bootstrap) => bootstrap,
+        Err(error) => {
+            emit(
+                output_mode,
+                &ErrorReport {
+                    status: "error",
+                    phase: "discovery",
+                    runtime_ready: cli.ready,
+                    prepared_config: None,
+                    errors: None,
+                    message: Some(error.to_string()),
+                },
+                || format!("prepared config discovery error: {error}"),
+            );
+            return std::process::ExitCode::from(1);
+        }
+    };
+
+    let config = match bootstrap.service.load_authored_config(&bootstrap.paths) {
+        Ok(config) => config,
+        Err(error) => {
+            emit(
+                output_mode,
+                &ErrorReport {
+                    status: "error",
+                    phase: "load-authored",
+                    runtime_ready: cli.ready,
+                    prepared_config: Some(bootstrap.paths.prepared_config.display().to_string()),
+                    errors: None,
+                    message: Some(error.to_string()),
+                },
+                || format!("prepared config build error: {error}"),
+            );
+            return std::process::ExitCode::from(1);
+        }
+    };
+
+    match bootstrap.service.validate_layout_modules(&config) {
+        Ok(errors) if !errors.is_empty() => {
+            emit(
+                output_mode,
+                &ErrorReport {
+                    status: "error",
+                    phase: "validation",
+                    runtime_ready: cli.ready,
+                    prepared_config: Some(bootstrap.paths.prepared_config.display().to_string()),
+                    errors: Some(errors.clone()),
+                    message: None,
+                },
+                || format!("prepared config build error: {}", errors.join("; ")),
+            );
+            std::process::ExitCode::from(1)
+        }
+        Ok(_) => match bootstrap
+            .service
+            .write_prepared_config(&bootstrap.paths, &config)
+        {
+            Ok(update) => {
                 emit(
                     output_mode,
-                    &SuccessCheckReport {
+                    &BuildConfigReport {
                         status: "ok",
                         runtime_ready: cli.ready,
+                        authored_config: bootstrap.paths.authored_config.display().to_string(),
+                        prepared_config: bootstrap.paths.prepared_config.display().to_string(),
                         layouts: config.layouts.len(),
-                        runtime_config: bootstrap.paths.runtime_config.display().to_string(),
+                        prepared_config_update: update,
                     },
                     || {
                         format!(
-                            "config ok (runtime ready: {}, layouts: {}, runtime: {})",
-                            cli.ready,
+                            "prepared config built (layouts: {}, authored: {}, prepared: {}, refresh: {})",
                             config.layouts.len(),
-                            bootstrap.paths.runtime_config.display()
+                            bootstrap.paths.authored_config.display(),
+                            bootstrap.paths.prepared_config.display(),
+                            describe_prepared_config_update(Some(update))
                         )
                     },
                 );
                 std::process::ExitCode::SUCCESS
-            }
-            Ok(errors) => {
-                emit(
-                    output_mode,
-                    &ErrorReport {
-                        status: "error",
-                        phase: "validation",
-                        runtime_ready: cli.ready,
-                        runtime_config: Some(bootstrap.paths.runtime_config.display().to_string()),
-                        errors: Some(errors.clone()),
-                        message: None,
-                    },
-                    || {
-                        format!(
-                            "config error (runtime ready: {}, runtime: {}): {}",
-                            cli.ready,
-                            bootstrap.paths.runtime_config.display(),
-                            errors.join("; ")
-                        )
-                    },
-                );
-                std::process::ExitCode::from(1)
             }
             Err(error) => {
                 emit(
                     output_mode,
                     &ErrorReport {
                         status: "error",
-                        phase: "validation",
+                        phase: "write-runtime",
                         runtime_ready: cli.ready,
-                        runtime_config: None,
+                        prepared_config: Some(
+                            bootstrap.paths.prepared_config.display().to_string(),
+                        ),
                         errors: None,
                         message: Some(error.to_string()),
                     },
-                    || {
-                        format!(
-                            "config error (runtime ready: {}, validation): {error}",
-                            cli.ready
-                        )
-                    },
+                    || format!("prepared config write error: {error}"),
                 );
                 std::process::ExitCode::from(1)
             }
@@ -366,19 +501,13 @@ fn check_config_command(cli: &CliContext, output_mode: OutputMode) -> std::proce
                 output_mode,
                 &ErrorReport {
                     status: "error",
-                    phase: "load",
+                    phase: "validation",
                     runtime_ready: cli.ready,
-                    runtime_config: Some(bootstrap.paths.runtime_config.display().to_string()),
+                    prepared_config: Some(bootstrap.paths.prepared_config.display().to_string()),
                     errors: None,
                     message: Some(error.to_string()),
                 },
-                || {
-                    format!(
-                        "config error (runtime ready: {}, runtime: {}): {error}",
-                        cli.ready,
-                        bootstrap.paths.runtime_config.display()
-                    )
-                },
+                || format!("prepared config validation error: {error}"),
             );
             std::process::ExitCode::from(1)
         }
@@ -400,7 +529,7 @@ fn bootstrap_trace_command(
                     status: "error",
                     phase: "discovery",
                     runtime_ready: cli.ready,
-                    runtime_config: None,
+                    prepared_config: None,
                     errors: None,
                     message: Some(error.to_string()),
                 },
@@ -410,8 +539,11 @@ fn bootstrap_trace_command(
         }
     };
 
-    let config = match bootstrap.service.load_config(&bootstrap.paths) {
-        Ok(config) => config,
+    let (config, prepared_config_update) = match bootstrap
+        .service
+        .load_config_with_cache_update(&bootstrap.paths)
+    {
+        Ok(result) => result,
         Err(error) => {
             emit(
                 output_mode,
@@ -419,7 +551,7 @@ fn bootstrap_trace_command(
                     status: "error",
                     phase: "load",
                     runtime_ready: cli.ready,
-                    runtime_config: Some(bootstrap.paths.runtime_config.display().to_string()),
+                    prepared_config: Some(bootstrap.paths.prepared_config.display().to_string()),
                     errors: None,
                     message: Some(error.to_string()),
                 },
@@ -430,7 +562,7 @@ fn bootstrap_trace_command(
     };
 
     let authored_config = bootstrap.paths.authored_config.display().to_string();
-    let runtime_config = bootstrap.paths.runtime_config.display().to_string();
+    let prepared_config = bootstrap.paths.prepared_config.display().to_string();
 
     if let Some(script_path) = transcript_path.or(events_path) {
         let contents = match std::fs::read_to_string(script_path) {
@@ -442,7 +574,7 @@ fn bootstrap_trace_command(
                         status: "error",
                         phase: "script",
                         runtime_ready: cli.ready,
-                        runtime_config: Some(runtime_config.clone()),
+                        prepared_config: Some(prepared_config.clone()),
                         errors: None,
                         message: Some(error.to_string()),
                     },
@@ -461,7 +593,7 @@ fn bootstrap_trace_command(
                         status: "error",
                         phase: "script",
                         runtime_ready: cli.ready,
-                        runtime_config: Some(runtime_config.clone()),
+                        prepared_config: Some(prepared_config.clone()),
                         errors: None,
                         message: Some(error.to_string()),
                     },
@@ -486,7 +618,7 @@ fn bootstrap_trace_command(
                         status: "error",
                         phase: "bootstrap",
                         runtime_ready: cli.ready,
-                        runtime_config: Some(runtime_config.clone()),
+                        prepared_config: Some(prepared_config.clone()),
                         errors: None,
                         message: Some(error.to_string()),
                     },
@@ -503,18 +635,20 @@ fn bootstrap_trace_command(
                     status: "error",
                     runtime_ready: cli.ready,
                     authored_config: authored_config.clone(),
-                    runtime_config: runtime_config.clone(),
+                    prepared_config: prepared_config.clone(),
                     controller_phase: controller.phase(),
                     error: trace.error.clone(),
                     failed_event: trace.failed_event,
                     applied_events: trace.applied_events.len(),
                     diagnostics: trace.diagnostics,
+                    prepared_config_update,
                 },
                 || {
                     format!(
-                        "bootstrap trace failed after {} events: {}",
+                        "bootstrap trace failed after {} events: {} (cache: {})",
                         trace.applied_events.len(),
-                        trace.error
+                        trace.error,
+                        describe_prepared_config_update(prepared_config_update)
                     )
                 },
             );
@@ -525,7 +659,8 @@ fn bootstrap_trace_command(
             cli,
             output_mode,
             authored_config,
-            runtime_config,
+            prepared_config,
+            prepared_config_update,
             controller.report(),
         );
     }
@@ -544,7 +679,7 @@ fn bootstrap_trace_command(
                     status: "error",
                     phase: "bootstrap",
                     runtime_ready: cli.ready,
-                    runtime_config: Some(runtime_config.clone()),
+                    prepared_config: Some(prepared_config.clone()),
                     errors: None,
                     message: Some(error.to_string()),
                 },
@@ -558,7 +693,8 @@ fn bootstrap_trace_command(
         cli,
         output_mode,
         authored_config,
-        runtime_config,
+        prepared_config,
+        prepared_config_update,
         controller.report(),
     )
 }
@@ -567,7 +703,8 @@ fn emit_bootstrap_trace(
     cli: &CliContext,
     output_mode: OutputMode,
     authored_config: String,
-    runtime_config: String,
+    prepared_config: String,
+    prepared_config_update: Option<spiders_shared::runtime::RuntimeRefreshSummary>,
     report: spiders_compositor::ControllerReport,
 ) -> std::process::ExitCode {
     let current_workspace = report.diagnostics.current_workspace.clone();
@@ -578,7 +715,7 @@ fn emit_bootstrap_trace(
             status: "ok",
             runtime_ready: cli.ready,
             authored_config,
-            runtime_config,
+            prepared_config,
             controller_phase: report.phase,
             active_seat: report.diagnostics.active_seat,
             active_output: report.diagnostics.active_output.map(|id| id.to_string()),
@@ -594,21 +731,36 @@ fn emit_bootstrap_trace(
             mapped_surface_count: report.diagnostics.mapped_surface_count,
             applied_events: report.applied_events,
             startup: report.startup,
+            prepared_config_update,
         },
         || {
             format!(
-                "bootstrap trace ok (workspace: {}, focused: {}, seats: {}, outputs: {}, surfaces: {}, mapped: {})",
+                "bootstrap trace ok (workspace: {}, focused: {}, seats: {}, outputs: {}, surfaces: {}, mapped: {}, cache: {})",
                 current_workspace.as_deref().unwrap_or("none"),
                 focused_window.as_deref().unwrap_or("none"),
                 report.diagnostics.seat_count,
                 report.diagnostics.output_count,
                 report.diagnostics.surface_count,
-                report.diagnostics.mapped_surface_count
+                report.diagnostics.mapped_surface_count,
+                describe_prepared_config_update(prepared_config_update)
             )
         },
     );
 
     std::process::ExitCode::SUCCESS
+}
+
+fn describe_prepared_config_update(
+    update: Option<spiders_shared::runtime::RuntimeRefreshSummary>,
+) -> String {
+    match update {
+        Some(update) if update.is_noop() => "noop".into(),
+        Some(update) => format!(
+            "refreshed={}, pruned={}",
+            update.refreshed_files, update.pruned_files
+        ),
+        None => "unchanged".into(),
+    }
 }
 
 fn synthetic_bootstrap_state() -> spiders_shared::wm::StateSnapshot {

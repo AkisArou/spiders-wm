@@ -1,5 +1,5 @@
-use spiders_config::model::Config;
 use spiders_config::authoring_layout::AuthoringLayoutService;
+use spiders_config::model::Config;
 use spiders_shared::ids::{WindowId, WorkspaceId};
 use spiders_shared::layout::{LayoutRect, LayoutRequest, LayoutResponse};
 use spiders_shared::runtime::AuthoringLayoutRuntime;
@@ -99,6 +99,12 @@ impl<R> CompositorRuntimeState<R> {
 }
 
 impl<R: AuthoringLayoutRuntime<Config = Config>> CompositorRuntimeState<R> {
+    pub fn reload_config(&mut self) -> Result<(), CompositorLayoutError> {
+        let config = self.startup.runtime.service.reload_config()?;
+        self.startup.runtime.config = config;
+        self.recompute_current_layout()
+    }
+
     pub fn recompute_current_layout(&mut self) -> Result<(), CompositorLayoutError> {
         let startup_layout = startup::bootstrap_runtime(
             &self.layout_service,
@@ -130,8 +136,12 @@ pub(crate) fn initialize_runtime_state<R: AuthoringLayoutRuntime<Config = Config
     config: Config,
     state: StateSnapshot,
 ) -> Result<CompositorRuntimeState<R>, CompositorLayoutError> {
-    let startup =
-        startup::initialize_startup_session(&layout_service, authoring_layout_service, config, state)?;
+    let startup = startup::initialize_startup_session(
+        &layout_service,
+        authoring_layout_service,
+        config,
+        state,
+    )?;
 
     Ok(CompositorRuntimeState::from_startup(
         layout_service,
@@ -188,7 +198,7 @@ mod tests {
 
     use spiders_config::authoring_layout::AuthoringLayoutService;
     use spiders_runtime_js::loader::{RuntimePathResolver, RuntimeProjectLayoutSourceLoader};
-    use spiders_runtime_js::runtime::BoaPreparedLayoutRuntime;
+    use spiders_runtime_js::runtime::QuickJsPreparedLayoutRuntime;
     use spiders_shared::ids::{OutputId, WorkspaceId};
     use spiders_shared::wm::{OutputSnapshot, OutputTransform, StateSnapshot, WorkspaceSnapshot};
 
@@ -235,7 +245,7 @@ mod tests {
                 module: "layouts/master-stack.js".into(),
                 stylesheet: String::new(),
                 effects_stylesheet: String::new(),
-                runtime_source: None,
+                runtime_graph: None,
             }],
             ..Config::default()
         }
@@ -255,11 +265,12 @@ mod tests {
 
         let loader =
             RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
-        let runtime = BoaPreparedLayoutRuntime::with_loader(loader.clone());
+        let runtime = QuickJsPreparedLayoutRuntime::with_loader(loader.clone());
         let authoring_layout_service = AuthoringLayoutService::new(runtime);
 
         let runtime =
-            initialize_runtime_state(LayoutService, authoring_layout_service, config(), state()).unwrap();
+            initialize_runtime_state(LayoutService, authoring_layout_service, config(), state())
+                .unwrap();
 
         assert_eq!(
             runtime.current_workspace_id(),
@@ -299,7 +310,7 @@ mod tests {
 
         let loader =
             RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
-        let runtime = BoaPreparedLayoutRuntime::with_loader(loader.clone());
+        let runtime = QuickJsPreparedLayoutRuntime::with_loader(loader.clone());
         let authoring_layout_service = AuthoringLayoutService::new(runtime);
         let mut config = config();
         config.layouts[0].effects_stylesheet =
@@ -327,7 +338,8 @@ mod tests {
         snapshot.visible_window_ids = vec![spiders_shared::ids::WindowId::from("w1")];
 
         let runtime =
-            initialize_runtime_state(LayoutService, authoring_layout_service, config, snapshot).unwrap();
+            initialize_runtime_state(LayoutService, authoring_layout_service, config, snapshot)
+                .unwrap();
         let effects = &runtime.current_layout().unwrap().effects;
 
         assert!(effects
@@ -356,7 +368,7 @@ mod tests {
 
         let loader =
             RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
-        let runtime = BoaPreparedLayoutRuntime::with_loader(loader.clone());
+        let runtime = QuickJsPreparedLayoutRuntime::with_loader(loader.clone());
         let authoring_layout_service = AuthoringLayoutService::new(runtime);
         let mut config = config();
         config.layouts[0].effects_stylesheet =
@@ -384,7 +396,8 @@ mod tests {
         snapshot.visible_window_ids = vec![spiders_shared::ids::WindowId::from("w1")];
 
         let runtime =
-            initialize_runtime_state(LayoutService, authoring_layout_service, config, snapshot).unwrap();
+            initialize_runtime_state(LayoutService, authoring_layout_service, config, snapshot)
+                .unwrap();
         let plan = runtime.current_titlebar_render_plan();
 
         assert_eq!(plan.len(), 1);

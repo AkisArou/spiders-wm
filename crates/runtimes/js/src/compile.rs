@@ -1,13 +1,10 @@
 use std::collections::BTreeMap;
-use std::collections::BTreeSet;
 use std::mem;
 use std::path::Path;
 use std::path::PathBuf;
 
 use oxc::allocator::Allocator;
-use oxc::ast::ast::{
-    BindingPattern, Declaration, ImportDeclarationSpecifier, ModuleExportName, Statement,
-};
+use oxc::ast::ast::Statement;
 use oxc::codegen::CodegenReturn;
 use oxc::diagnostics::OxcDiagnostic;
 use oxc::parser::Parser;
@@ -15,8 +12,9 @@ use oxc::span::GetSpan;
 use oxc::span::SourceType;
 use oxc::transformer::{JsxRuntime, TransformOptions};
 use oxc::CompilerInterface;
+use spiders_shared::runtime::{JavaScriptModule, JavaScriptModuleGraph};
 
-use crate::graph::{ImportedModuleKind, ModuleGraph, ModuleId, ModuleKind, ModuleRecord};
+use crate::graph::{ImportedModuleKind, ModuleGraph, ModuleId, ModuleKind};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AppBuildPlan {
@@ -44,12 +42,6 @@ pub struct CompiledVirtualModule {
     pub code: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct BundledApp {
-    pub javascript: String,
-    pub stylesheet: String,
-}
-
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum CompileError {
     #[error("failed to read script module `{path}`")]
@@ -66,10 +58,6 @@ pub enum CompileError {
     ReadVirtualModule { path: PathBuf },
     #[error("compiled output for module `{module}` is unavailable")]
     MissingCompiledModule { module: String },
-    #[error("bundler failed to parse module `{module}`")]
-    ParseBundledModule { module: String },
-    #[error("bundler could not resolve import `{specifier}` in `{module}`")]
-    MissingResolvedImport { module: String, specifier: String },
 }
 
 impl AppBuildPlan {
@@ -77,13 +65,10 @@ impl AppBuildPlan {
         let mut script_modules = Vec::new();
         let mut stylesheet_modules = Vec::new();
         let mut virtual_modules = Vec::new();
-        let mut seen_stylesheets = BTreeSet::new();
         let mut needs_jsx_runtime = false;
 
         if let Some(stylesheet_path) = graph.app.stylesheet_path.as_ref() {
-            if seen_stylesheets.insert(stylesheet_path.clone()) {
-                stylesheet_modules.push(stylesheet_path.clone());
-            }
+            stylesheet_modules.push(stylesheet_path.clone());
         }
 
         for module_id in &graph.order {
@@ -101,11 +86,7 @@ impl AppBuildPlan {
                     }
                     script_modules.push(path.clone())
                 }
-                (ModuleId::File(path), ModuleKind::Stylesheet) => {
-                    if seen_stylesheets.insert(path.clone()) {
-                        stylesheet_modules.push(path.clone());
-                    }
-                }
+                (ModuleId::File(_), ModuleKind::Stylesheet) => {}
                 (ModuleId::Virtual(name), ModuleKind::Virtual) => {
                     virtual_modules.push(name.clone())
                 }
@@ -199,6 +180,7 @@ pub fn compile_app(plan: &AppBuildPlan) -> Result<CompiledApp, CompileError> {
         let code = compiler
             .execute(&injected_source, source_type, path)
             .map_err(|_| CompileError::Transpile { path: path.clone() })?;
+        let code = strip_stylesheet_imports(path, &code)?;
         scripts.push(CompiledScriptModule {
             path: path.clone(),
             code,
@@ -230,24 +212,22 @@ pub fn compile_app(plan: &AppBuildPlan) -> Result<CompiledApp, CompileError> {
     })
 }
 
-pub fn bundle_app(graph: &ModuleGraph, compiled: &CompiledApp) -> Result<BundledApp, CompileError> {
+pub fn compiled_app_to_module_graph(
+    graph: &ModuleGraph,
+    compiled: &CompiledApp,
+) -> Result<JavaScriptModuleGraph, CompileError> {
+    let mut modules = Vec::new();
     let compiled_scripts = compiled
         .scripts
         .iter()
-        .map(|module| (ModuleId::File(module.path.clone()), module.code.clone()))
+        .map(|module| (ModuleId::File(module.path.clone()), module))
         .collect::<BTreeMap<_, _>>();
     let compiled_virtuals = compiled
         .virtual_modules
         .iter()
-        .map(|module| {
-            (
-                ModuleId::Virtual(module.specifier.clone()),
-                module.code.clone(),
-            )
-        })
+        .map(|module| (ModuleId::Virtual(module.specifier.clone()), module))
         .collect::<BTreeMap<_, _>>();
 
-    let mut module_factories = Vec::new();
     for module_id in &graph.order {
         let Some(record) = graph.modules.get(module_id) else {
             continue;
@@ -256,53 +236,78 @@ pub fn bundle_app(graph: &ModuleGraph, compiled: &CompiledApp) -> Result<Bundled
             continue;
         }
 
-        let code = match module_id {
-            ModuleId::File(_) => compiled_scripts.get(module_id),
-            ModuleId::Virtual(_) => compiled_virtuals.get(module_id),
-        }
-        .ok_or_else(|| CompileError::MissingCompiledModule {
-            module: module_key(&graph.app.root_dir, module_id),
-        })?;
-
-        let rewritten = rewrite_module_code(code, module_id, record, &graph.app.root_dir)?;
-        let key = serde_json::to_string(&module_key(&graph.app.root_dir, module_id)).unwrap();
-        module_factories.push(format!(
-            "{key}: (module, exports, __require) => {{\n{rewritten}\n}}"
-        ));
-    }
-
-    for (module_id, code) in &compiled_virtuals {
-        if graph.modules.contains_key(module_id) {
-            continue;
-        }
-        let record = ModuleRecord {
-            id: module_id.clone(),
-            kind: ModuleKind::Virtual,
-            imports: Vec::new(),
-            resolved_imports: Vec::new(),
+        let source = match module_id {
+            ModuleId::File(_) => compiled_scripts
+                .get(module_id)
+                .ok_or_else(|| CompileError::MissingCompiledModule {
+                    module: module_key(&graph.app.root_dir, module_id),
+                })?
+                .code
+                .clone(),
+            ModuleId::Virtual(_) => compiled_virtuals
+                .get(module_id)
+                .ok_or_else(|| CompileError::MissingCompiledModule {
+                    module: module_key(&graph.app.root_dir, module_id),
+                })?
+                .code
+                .clone(),
         };
-        let rewritten = rewrite_module_code(code, module_id, &record, &graph.app.root_dir)?;
-        let key = serde_json::to_string(&module_key(&graph.app.root_dir, module_id)).unwrap();
-        module_factories.push(format!(
-            "{key}: (module, exports, __require) => {{\n{rewritten}\n}}"
-        ));
+
+        modules.push(JavaScriptModule {
+            specifier: module_key(&graph.app.root_dir, module_id),
+            source,
+            resolved_imports: record
+                .resolved_imports
+                .iter()
+                .filter(|import| !matches!(import.kind, ImportedModuleKind::Stylesheet))
+                .map(|import| {
+                    (
+                        import.specifier.clone(),
+                        module_key(&graph.app.root_dir, &import.module_id),
+                    )
+                })
+                .collect(),
+        });
     }
 
-    let entry_key = serde_json::to_string(&module_key(
-        &graph.app.root_dir,
-        &ModuleId::File(graph.app.entry_path.clone()),
-    ))
-    .unwrap();
-
-    let javascript = format!(
-        "(() => {{\nconst __modules = {{\n{}\n}};\nconst __cache = Object.create(null);\nconst __require = (id) => {{\n  if (Object.prototype.hasOwnProperty.call(__cache, id)) {{\n    return __cache[id].exports;\n  }}\n  const factory = __modules[id];\n  if (!factory) {{\n    throw new Error(`unknown bundled module ${{id}}`);\n  }}\n  const module = {{ exports: {{}} }};\n  __cache[id] = module;\n  factory(module, module.exports, __require);\n  return module.exports;\n}};\nreturn __require({entry_key}).default;\n}})()",
-        module_factories.join(",\n")
-    );
-
-    Ok(BundledApp {
-        javascript,
-        stylesheet: compiled.stylesheet.clone(),
+    Ok(JavaScriptModuleGraph {
+        entry: module_key(
+            &graph.app.root_dir,
+            &ModuleId::File(graph.app.entry_path.clone()),
+        ),
+        modules,
     })
+}
+
+fn strip_stylesheet_imports(path: &Path, source: &str) -> Result<String, CompileError> {
+    let allocator = Allocator::default();
+    let source_type =
+        SourceType::from_path(path).map_err(|_| CompileError::UnsupportedSourceType {
+            path: path.to_path_buf(),
+        })?;
+    let parsed = Parser::new(&allocator, source, source_type).parse();
+    if !parsed.errors.is_empty() {
+        return Err(CompileError::Transpile {
+            path: path.to_path_buf(),
+        });
+    }
+
+    let mut out = String::new();
+    let mut cursor = 0usize;
+    for statement in &parsed.program.body {
+        let span = statement.span();
+        let start = span.start as usize;
+        let end = span.end as usize;
+        out.push_str(&source[cursor..start]);
+        match statement {
+            Statement::ImportDeclaration(decl) if decl.source.value.as_str().ends_with(".css") => {}
+            _ => out.push_str(&source[start..end]),
+        }
+        cursor = end;
+    }
+    out.push_str(&source[cursor..]);
+
+    Ok(out)
 }
 
 fn read_virtual_module_source(specifier: &str) -> Result<String, CompileError> {
@@ -323,312 +328,6 @@ fn read_virtual_module_source(specifier: &str) -> Result<String, CompileError> {
     std::fs::read_to_string(&path).map_err(|_| CompileError::ReadVirtualModule { path })
 }
 
-fn rewrite_module_code(
-    source: &str,
-    module_id: &ModuleId,
-    record: &ModuleRecord,
-    root_dir: &Path,
-) -> Result<String, CompileError> {
-    let allocator = Allocator::default();
-    let source_type = match module_id {
-        ModuleId::File(path) => {
-            SourceType::from_path(path).map_err(|_| CompileError::ParseBundledModule {
-                module: module_key(root_dir, module_id),
-            })?
-        }
-        ModuleId::Virtual(_) => SourceType::from_path(Path::new("virtual.js")).unwrap(),
-    };
-    let parsed = Parser::new(&allocator, source, source_type).parse();
-    if !parsed.errors.is_empty() {
-        return Err(CompileError::ParseBundledModule {
-            module: module_key(root_dir, module_id),
-        });
-    }
-
-    let mut out = String::new();
-    let mut cursor = 0usize;
-    let mut temp_index = 0usize;
-
-    for statement in &parsed.program.body {
-        let span = statement.span();
-        let start = span.start as usize;
-        let end = span.end as usize;
-        out.push_str(&source[cursor..start]);
-
-        match statement {
-            Statement::ImportDeclaration(decl) => {
-                out.push_str(&rewrite_import_declaration(
-                    decl,
-                    record,
-                    root_dir,
-                    module_id,
-                    &mut temp_index,
-                )?);
-            }
-            Statement::ExportDefaultDeclaration(decl) => {
-                out.push_str(&rewrite_export_default_declaration(decl, source));
-            }
-            Statement::ExportNamedDeclaration(decl) => {
-                out.push_str(&rewrite_export_named_declaration(
-                    decl,
-                    source,
-                    record,
-                    root_dir,
-                    module_id,
-                    &mut temp_index,
-                )?);
-            }
-            Statement::ExportAllDeclaration(decl) => {
-                out.push_str(&rewrite_export_all_declaration(
-                    decl,
-                    record,
-                    root_dir,
-                    module_id,
-                    &mut temp_index,
-                )?);
-            }
-            _ => out.push_str(&source[start..end]),
-        }
-
-        cursor = end;
-    }
-
-    out.push_str(&source[cursor..]);
-    Ok(out)
-}
-
-fn rewrite_import_declaration(
-    decl: &oxc::ast::ast::ImportDeclaration<'_>,
-    record: &ModuleRecord,
-    root_dir: &Path,
-    module_id: &ModuleId,
-    temp_index: &mut usize,
-) -> Result<String, CompileError> {
-    let Some(resolved) = resolve_import_module(record, decl.source.value.as_str()) else {
-        return Err(CompileError::MissingResolvedImport {
-            module: module_key(root_dir, module_id),
-            specifier: decl.source.value.to_string(),
-        });
-    };
-    if matches!(resolved.kind, ImportedModuleKind::Stylesheet) {
-        return Ok(String::new());
-    }
-
-    let required_key = serde_json::to_string(&module_key(root_dir, &resolved.module_id)).unwrap();
-    let Some(specifiers) = decl.specifiers.as_ref() else {
-        return Ok(format!("__require({required_key});"));
-    };
-    if specifiers.is_empty() {
-        return Ok(format!("__require({required_key});"));
-    }
-
-    let temp_name = next_temp(temp_index, "import");
-    let mut lines = vec![format!("const {temp_name} = __require({required_key});")];
-    for specifier in specifiers {
-        match specifier {
-            ImportDeclarationSpecifier::ImportDefaultSpecifier(spec) => {
-                lines.push(format!(
-                    "const {} = {temp_name}.default;",
-                    spec.local.name.as_str()
-                ));
-            }
-            ImportDeclarationSpecifier::ImportNamespaceSpecifier(spec) => {
-                lines.push(format!("const {} = {temp_name};", spec.local.name.as_str()));
-            }
-            ImportDeclarationSpecifier::ImportSpecifier(spec) => {
-                lines.push(format!(
-                    "const {} = {temp_name}{};",
-                    spec.local.name.as_str(),
-                    module_export_accessor(&spec.imported)
-                ));
-            }
-        }
-    }
-
-    Ok(lines.join("\n"))
-}
-
-fn rewrite_export_default_declaration(
-    decl: &oxc::ast::ast::ExportDefaultDeclaration<'_>,
-    source: &str,
-) -> String {
-    let declaration_source = span_slice(source, decl.declaration.span());
-    format!("module.exports.default = {declaration_source};")
-}
-
-fn rewrite_export_named_declaration(
-    decl: &oxc::ast::ast::ExportNamedDeclaration<'_>,
-    source: &str,
-    record: &ModuleRecord,
-    root_dir: &Path,
-    module_id: &ModuleId,
-    temp_index: &mut usize,
-) -> Result<String, CompileError> {
-    if let Some(declaration) = &decl.declaration {
-        let declaration_source = span_slice(source, declaration.span());
-        let mut lines = vec![declaration_source.to_owned()];
-        for binding in declaration_binding_names(declaration) {
-            lines.push(format!("module.exports.{binding} = {binding};"));
-        }
-        return Ok(lines.join("\n"));
-    }
-
-    if let Some(source_module) = &decl.source {
-        let Some(resolved) = resolve_import_module(record, source_module.value.as_str()) else {
-            return Err(CompileError::MissingResolvedImport {
-                module: module_key(root_dir, module_id),
-                specifier: source_module.value.to_string(),
-            });
-        };
-        let required_key =
-            serde_json::to_string(&module_key(root_dir, &resolved.module_id)).unwrap();
-        let temp_name = next_temp(temp_index, "reexport");
-        let mut lines = vec![format!("const {temp_name} = __require({required_key});")];
-        for specifier in &decl.specifiers {
-            let exported = module_exports_accessor(&specifier.exported);
-            let local = module_export_accessor(&specifier.local);
-            lines.push(format!("module.exports{exported} = {temp_name}{local};"));
-        }
-        return Ok(lines.join("\n"));
-    }
-
-    let mut lines = Vec::new();
-    for specifier in &decl.specifiers {
-        let exported = module_exports_accessor(&specifier.exported);
-        let local = module_export_name(&specifier.local);
-        lines.push(format!("module.exports{exported} = {local};"));
-    }
-    Ok(lines.join("\n"))
-}
-
-fn rewrite_export_all_declaration(
-    decl: &oxc::ast::ast::ExportAllDeclaration<'_>,
-    record: &ModuleRecord,
-    root_dir: &Path,
-    module_id: &ModuleId,
-    temp_index: &mut usize,
-) -> Result<String, CompileError> {
-    let Some(resolved) = resolve_import_module(record, decl.source.value.as_str()) else {
-        return Err(CompileError::MissingResolvedImport {
-            module: module_key(root_dir, module_id),
-            specifier: decl.source.value.to_string(),
-        });
-    };
-    let required_key = serde_json::to_string(&module_key(root_dir, &resolved.module_id)).unwrap();
-    let temp_name = next_temp(temp_index, "export_all");
-    if let Some(exported) = &decl.exported {
-        let exported_name = module_exports_accessor(exported);
-        return Ok(format!(
-            "module.exports{exported_name} = __require({required_key});"
-        ));
-    }
-
-    Ok(format!(
-        "const {temp_name} = __require({required_key});\nfor (const key in {temp_name}) {{\n  if (key !== \"default\") {{\n    module.exports[key] = {temp_name}[key];\n  }}\n}}"
-    ))
-}
-
-fn resolve_import_module(
-    record: &ModuleRecord,
-    specifier: &str,
-) -> Option<crate::graph::ResolvedImport> {
-    record
-        .resolved_imports
-        .iter()
-        .find(|import| import.specifier == specifier)
-        .cloned()
-        .or_else(|| {
-            specifier
-                .starts_with("spider-wm/")
-                .then(|| crate::graph::ResolvedImport {
-                    specifier: specifier.to_owned(),
-                    kind: ImportedModuleKind::Virtual,
-                    module_id: ModuleId::Virtual(specifier.to_owned()),
-                })
-        })
-}
-
-fn declaration_binding_names(declaration: &Declaration<'_>) -> Vec<String> {
-    match declaration {
-        Declaration::VariableDeclaration(decl) => decl
-            .declarations
-            .iter()
-            .flat_map(|declarator| binding_pattern_names(&declarator.id))
-            .collect(),
-        Declaration::FunctionDeclaration(decl) => decl
-            .id
-            .as_ref()
-            .map(|id| vec![id.name.as_str().to_owned()])
-            .unwrap_or_default(),
-        Declaration::ClassDeclaration(decl) => decl
-            .id
-            .as_ref()
-            .map(|id| vec![id.name.as_str().to_owned()])
-            .unwrap_or_default(),
-        _ => Vec::new(),
-    }
-}
-
-fn binding_pattern_names(pattern: &BindingPattern<'_>) -> Vec<String> {
-    match pattern {
-        BindingPattern::BindingIdentifier(identifier) => vec![identifier.name.as_str().to_owned()],
-        BindingPattern::AssignmentPattern(pattern) => binding_pattern_names(&pattern.left),
-        BindingPattern::ObjectPattern(pattern) => {
-            let mut names = pattern
-                .properties
-                .iter()
-                .flat_map(|property| binding_pattern_names(&property.value))
-                .collect::<Vec<_>>();
-            if let Some(rest) = &pattern.rest {
-                names.extend(binding_pattern_names(&rest.argument));
-            }
-            names
-        }
-        BindingPattern::ArrayPattern(pattern) => {
-            let mut names = pattern
-                .elements
-                .iter()
-                .flatten()
-                .flat_map(binding_pattern_names)
-                .collect::<Vec<_>>();
-            if let Some(rest) = &pattern.rest {
-                names.extend(binding_pattern_names(&rest.argument));
-            }
-            names
-        }
-    }
-}
-
-fn module_export_accessor(name: &ModuleExportName<'_>) -> String {
-    match name {
-        ModuleExportName::IdentifierName(name) => format!(".{}", name.name.as_str()),
-        ModuleExportName::IdentifierReference(name) => format!(".{}", name.name.as_str()),
-        ModuleExportName::StringLiteral(name) => {
-            format!("[{}]", serde_json::to_string(name.value.as_str()).unwrap())
-        }
-    }
-}
-
-fn module_export_name(name: &ModuleExportName<'_>) -> String {
-    match name {
-        ModuleExportName::IdentifierName(name) => name.name.as_str().to_owned(),
-        ModuleExportName::IdentifierReference(name) => name.name.as_str().to_owned(),
-        ModuleExportName::StringLiteral(name) => {
-            serde_json::to_string(name.value.as_str()).unwrap()
-        }
-    }
-}
-
-fn module_exports_accessor(name: &ModuleExportName<'_>) -> String {
-    match name {
-        ModuleExportName::IdentifierName(name) => format!(".{}", name.name.as_str()),
-        ModuleExportName::IdentifierReference(name) => format!(".{}", name.name.as_str()),
-        ModuleExportName::StringLiteral(name) => {
-            format!("[{}]", serde_json::to_string(name.value.as_str()).unwrap())
-        }
-    }
-}
-
 fn module_key(root_dir: &Path, module_id: &ModuleId) -> String {
     match module_id {
         ModuleId::File(path) => path
@@ -638,16 +337,6 @@ fn module_key(root_dir: &Path, module_id: &ModuleId) -> String {
             .replace('\\', "/"),
         ModuleId::Virtual(specifier) => specifier.clone(),
     }
-}
-
-fn span_slice(source: &str, span: oxc::span::Span) -> &str {
-    &source[span.start as usize..span.end as usize]
-}
-
-fn next_temp(index: &mut usize, prefix: &str) -> String {
-    let current = *index;
-    *index += 1;
-    format!("__{prefix}_{current}")
 }
 
 #[cfg(test)]
@@ -667,7 +356,7 @@ mod tests {
     }
 
     #[test]
-    fn build_plan_keeps_layout_entry_and_collects_component_css() {
+    fn build_plan_keeps_layout_entry_and_only_collects_layout_index_css() {
         let root = unique_root("layout-plan");
         fs::create_dir_all(root.join("layouts/master-stack")).unwrap();
         fs::create_dir_all(root.join("components")).unwrap();
@@ -704,9 +393,10 @@ mod tests {
         assert!(plan
             .stylesheet_modules
             .contains(&root.join("layouts/master-stack/index.css")));
-        assert!(plan
-            .stylesheet_modules
-            .contains(&root.join("components/StackGroup.css")));
+        assert_eq!(
+            plan.stylesheet_modules,
+            vec![root.join("layouts/master-stack/index.css")]
+        );
     }
 
     #[test]
@@ -788,8 +478,8 @@ mod tests {
     }
 
     #[test]
-    fn bundle_app_emits_executable_config_entry() {
-        let root = unique_root("bundle-config");
+    fn compiled_app_to_module_graph_emits_config_entry_and_import_map() {
+        let root = unique_root("module-graph-config");
         fs::create_dir_all(root.join("config")).unwrap();
         fs::write(
             root.join("config.ts"),
@@ -814,18 +504,34 @@ mod tests {
             .unwrap();
         let plan = AppBuildPlan::from_graph(&graph);
         let compiled = compile_app(&plan).unwrap();
-        let bundled = bundle_app(&graph, &compiled).unwrap();
+        let module_graph = compiled_app_to_module_graph(&graph, &compiled).unwrap();
 
-        assert!(bundled
-            .javascript
-            .contains("return __require(\"config.ts\").default"));
-        assert!(bundled.javascript.contains("spawn"));
-        assert!(bundled.javascript.contains("module.exports.default"));
+        assert_eq!(module_graph.entry, "config.ts");
+        assert!(module_graph
+            .modules
+            .iter()
+            .any(|module| module.specifier == "config.ts"));
+        assert!(module_graph
+            .modules
+            .iter()
+            .any(|module| module.specifier == "spider-wm/actions"));
+        let config_module = module_graph
+            .modules
+            .iter()
+            .find(|module| module.specifier == "config.ts")
+            .unwrap();
+        assert_eq!(
+            config_module
+                .resolved_imports
+                .get("./config/bindings")
+                .map(String::as_str),
+            Some("config/bindings.ts")
+        );
     }
 
     #[test]
-    fn bundle_app_rewrites_layout_imports_exports_and_css_side_effects() {
-        let root = unique_root("bundle-layout");
+    fn compiled_app_to_module_graph_drops_css_imports_and_keeps_js_modules() {
+        let root = unique_root("module-graph-layout");
         fs::create_dir_all(root.join("layouts/master-stack")).unwrap();
         fs::create_dir_all(root.join("components")).unwrap();
         fs::write(root.join("config.ts"), "export default {};").unwrap();
@@ -859,16 +565,22 @@ mod tests {
             .unwrap();
         let plan = AppBuildPlan::from_graph(&graph);
         let compiled = compile_app(&plan).unwrap();
-        let bundled = bundle_app(&graph, &compiled).unwrap();
+        let module_graph = compiled_app_to_module_graph(&graph, &compiled).unwrap();
 
-        assert!(bundled
-            .javascript
-            .contains("const __import_0 = __require(\"components/StackGroup.ts\")"));
-        assert!(bundled
-            .javascript
-            .contains("module.exports.StackGroup = StackGroup;"));
-        assert!(!bundled.javascript.contains("./index.css"));
-        assert!(bundled.stylesheet.contains(".layout {}"));
-        assert!(bundled.stylesheet.contains(".stack {}"));
+        let layout_module = module_graph
+            .modules
+            .iter()
+            .find(|module| module.specifier == "layouts/master-stack/index.tsx")
+            .unwrap();
+        assert!(!layout_module.source.contains("./index.css"));
+        assert_eq!(
+            layout_module
+                .resolved_imports
+                .get("../../components/StackGroup")
+                .map(String::as_str),
+            Some("components/StackGroup.ts")
+        );
+        assert!(compiled.stylesheet.contains(".layout {}"));
+        assert!(!compiled.stylesheet.contains(".stack {}"));
     }
 }

@@ -1,6 +1,8 @@
 use std::collections::BTreeMap;
 
-use spiders_shared::runtime::{AuthoringLayoutRuntime, PreparedLayout, RuntimeError};
+use spiders_shared::runtime::{
+    AuthoringLayoutRuntime, PreparedLayout, RuntimeError, RuntimeRefreshSummary,
+};
 use spiders_shared::wm::LayoutEvaluationContext;
 
 use crate::model::{Config, ConfigDiscoveryOptions, ConfigPaths, LayoutConfigError};
@@ -17,6 +19,7 @@ pub enum AuthoringLayoutServiceError {
 pub struct AuthoringLayoutService<R> {
     runtime: R,
     cache: BTreeMap<String, PreparedLayout>,
+    paths: Option<ConfigPaths>,
 }
 
 impl<R> AuthoringLayoutService<R> {
@@ -24,6 +27,15 @@ impl<R> AuthoringLayoutService<R> {
         Self {
             runtime,
             cache: BTreeMap::new(),
+            paths: None,
+        }
+    }
+
+    pub fn with_paths(runtime: R, paths: ConfigPaths) -> Self {
+        Self {
+            runtime,
+            cache: BTreeMap::new(),
+            paths: Some(paths),
         }
     }
 }
@@ -40,11 +52,64 @@ where
     }
 
     pub fn load_config(&self, paths: &ConfigPaths) -> Result<Config, AuthoringLayoutServiceError> {
-        if paths.runtime_config.exists() {
-            Ok(Config::from_path(&paths.runtime_config)?)
+        Ok(self.load_config_with_cache_update(paths)?.0)
+    }
+
+    pub fn load_config_with_cache_update(
+        &self,
+        paths: &ConfigPaths,
+    ) -> Result<(Config, Option<RuntimeRefreshSummary>), AuthoringLayoutServiceError> {
+        if paths.authored_config.exists() {
+            let update = self
+                .runtime
+                .refresh_prepared_config(&paths.authored_config, &paths.prepared_config)?;
+            Ok((
+                self.runtime.load_prepared_config(&paths.prepared_config)?,
+                Some(update),
+            ))
+        } else if paths.prepared_config.exists() {
+            Ok((
+                self.runtime.load_prepared_config(&paths.prepared_config)?,
+                None,
+            ))
         } else {
-            Ok(self.runtime.load_authored_config(&paths.authored_config)?)
+            Ok((
+                self.runtime.load_authored_config(&paths.authored_config)?,
+                None,
+            ))
         }
+    }
+
+    pub fn load_authored_config(
+        &self,
+        paths: &ConfigPaths,
+    ) -> Result<Config, AuthoringLayoutServiceError> {
+        Ok(self.runtime.load_authored_config(&paths.authored_config)?)
+    }
+
+    pub fn write_prepared_config(
+        &self,
+        paths: &ConfigPaths,
+        _config: &Config,
+    ) -> Result<RuntimeRefreshSummary, AuthoringLayoutServiceError> {
+        Ok(self
+            .runtime
+            .rebuild_prepared_config(&paths.authored_config, &paths.prepared_config)?)
+    }
+
+    pub fn reload_config(&mut self) -> Result<Config, AuthoringLayoutServiceError> {
+        let Some(paths) = self.paths.as_ref() else {
+            return Err(RuntimeError::Other {
+                message: "prepared config reload requires configured paths".into(),
+            }
+            .into());
+        };
+
+        let _ = self
+            .runtime
+            .rebuild_prepared_config(&paths.authored_config, &paths.prepared_config)?;
+        self.cache.clear();
+        Ok(self.runtime.load_prepared_config(&paths.prepared_config)?)
     }
 
     pub fn validate_layout_modules(
@@ -93,7 +158,10 @@ where
         config: &Config,
         state: &spiders_shared::wm::StateSnapshot,
         workspace: &spiders_shared::wm::WorkspaceSnapshot,
-    ) -> Result<Option<crate::authoring_layout::PreparedLayoutEvaluation>, AuthoringLayoutServiceError> {
+    ) -> Result<
+        Option<crate::authoring_layout::PreparedLayoutEvaluation>,
+        AuthoringLayoutServiceError,
+    > {
         let Some(loaded) = self.prepare_for_workspace(config, workspace)?.cloned() else {
             return Ok(None);
         };
@@ -126,8 +194,8 @@ mod tests {
     use spiders_shared::ids::{OutputId, WorkspaceId};
     use spiders_shared::layout::SourceLayoutNode;
     use spiders_shared::runtime::{
-        AuthoringLayoutRuntime, LayoutModuleContract, PreparedLayout, PreparedLayoutRuntime,
-        RuntimeError,
+        AuthoringLayoutRuntime, JavaScriptModule, JavaScriptModuleGraph, LayoutModuleContract,
+        PreparedLayout, PreparedLayoutRuntime, RuntimeError,
     };
     use spiders_shared::wm::{
         LayoutRef, OutputSnapshot, OutputTransform, SelectedLayout, StateSnapshot,
@@ -197,6 +265,40 @@ mod tests {
                 "authored config loading".into(),
             ))
         }
+
+        fn load_prepared_config(
+            &self,
+            _path: &std::path::Path,
+        ) -> Result<Self::Config, RuntimeError> {
+            Ok(Config {
+                layouts: vec![LayoutDefinition {
+                    name: "master-stack".into(),
+                    module: "layouts/master-stack.js".into(),
+                    stylesheet: "workspace { display: flex; }".into(),
+                    effects_stylesheet: String::new(),
+                    runtime_graph: None,
+                }],
+                ..Config::default()
+            })
+        }
+
+        fn refresh_prepared_config(
+            &self,
+            _authored: &std::path::Path,
+            _runtime: &std::path::Path,
+        ) -> Result<RuntimeRefreshSummary, RuntimeError> {
+            Ok(RuntimeRefreshSummary::default())
+        }
+
+        fn rebuild_prepared_config(
+            &self,
+            _authored: &std::path::Path,
+            _runtime: &std::path::Path,
+        ) -> Result<RuntimeRefreshSummary, RuntimeError> {
+            Err(RuntimeError::NotImplemented(
+                "prepared config rebuild".into(),
+            ))
+        }
     }
 
     #[derive(Debug, Clone, Default)]
@@ -260,6 +362,29 @@ mod tests {
         ) -> Result<Self::Config, RuntimeError> {
             Ok(self.config.clone())
         }
+
+        fn load_prepared_config(
+            &self,
+            _path: &std::path::Path,
+        ) -> Result<Self::Config, RuntimeError> {
+            Ok(self.config.clone())
+        }
+
+        fn refresh_prepared_config(
+            &self,
+            _authored: &std::path::Path,
+            _runtime: &std::path::Path,
+        ) -> Result<RuntimeRefreshSummary, RuntimeError> {
+            Ok(RuntimeRefreshSummary::default())
+        }
+
+        fn rebuild_prepared_config(
+            &self,
+            _authored: &std::path::Path,
+            _runtime: &std::path::Path,
+        ) -> Result<RuntimeRefreshSummary, RuntimeError> {
+            Ok(RuntimeRefreshSummary::default())
+        }
     }
 
     fn prepared_layout(name: &str, module: &str) -> PreparedLayout {
@@ -270,7 +395,18 @@ mod tests {
                 stylesheet: String::new(),
                 effects_stylesheet: String::new(),
             },
-            runtime_source: "ctx => ({ type: 'workspace', children: [] })".into(),
+            runtime_graph: single_module_graph(module),
+        }
+    }
+
+    fn single_module_graph(module: &str) -> JavaScriptModuleGraph {
+        JavaScriptModuleGraph {
+            entry: module.into(),
+            modules: vec![JavaScriptModule {
+                specifier: module.into(),
+                source: "export default (ctx => ({ type: 'workspace', children: [] }));".into(),
+                resolved_imports: Default::default(),
+            }],
         }
     }
 
@@ -325,7 +461,7 @@ mod tests {
                 module: "layouts/master-stack.js".into(),
                 stylesheet: String::new(),
                 effects_stylesheet: String::new(),
-                runtime_source: None,
+                runtime_graph: None,
             }],
             ..Config::default()
         };
@@ -352,7 +488,7 @@ mod tests {
                 module: "layouts/master-stack.js".into(),
                 stylesheet: String::new(),
                 effects_stylesheet: String::new(),
-                runtime_source: None,
+                runtime_graph: None,
             }],
             ..Config::default()
         };
@@ -372,24 +508,20 @@ mod tests {
     #[test]
     fn authoring_layout_service_loads_config_from_runtime_path() {
         let temp_dir = std::env::temp_dir();
-        let runtime_config_path = temp_dir.join("spiders-runtime-config.json");
-        fs::write(
-            &runtime_config_path,
-            r#"{"layouts":[{"name":"master-stack","module":"layouts/master-stack.js","stylesheet":"workspace { display: flex; }"}]}"#,
-        )
-        .unwrap();
+        let prepared_config_path = temp_dir.join("spiders-runtime-config.js");
+        fs::write(&prepared_config_path, "export default {};").unwrap();
 
         let service: AuthoringLayoutService<_> = AuthoringLayoutService::new(StubRuntime {
             loaded: None,
             error_message: None,
         });
         let config = service
-            .load_config(&ConfigPaths::new("unused", &runtime_config_path))
+            .load_config(&ConfigPaths::new("unused", &prepared_config_path))
             .unwrap();
 
         assert_eq!(config.layouts[0].module, "layouts/master-stack.js");
 
-        let _ = fs::remove_file(runtime_config_path);
+        let _ = fs::remove_file(prepared_config_path);
     }
 
     #[test]
@@ -397,7 +529,7 @@ mod tests {
         let temp_dir = std::env::temp_dir();
         let home_dir = temp_dir.join("spiders-service-discovery-home");
         let config_dir = home_dir.join(".config/spiders-wm");
-        let data_dir = home_dir.join(".local/share/spiders-wm");
+        let data_dir = home_dir.join(".cache/spiders-wm");
         let _ = fs::create_dir_all(&config_dir);
         let _ = fs::create_dir_all(&data_dir);
         fs::write(config_dir.join("config.ts"), "export default {};").unwrap();
@@ -417,8 +549,8 @@ mod tests {
             .authored_config
             .ends_with(".config/spiders-wm/config.ts"));
         assert!(paths
-            .runtime_config
-            .ends_with(".local/share/spiders-wm/config.json"));
+            .prepared_config
+            .ends_with(".cache/spiders-wm/config.js"));
 
         let _ = fs::remove_file(config_dir.join("config.ts"));
     }
@@ -435,7 +567,7 @@ mod tests {
                 module: "layouts/missing.js".into(),
                 stylesheet: String::new(),
                 effects_stylesheet: String::new(),
-                runtime_source: None,
+                runtime_graph: None,
             }],
             ..Config::default()
         };
@@ -447,17 +579,17 @@ mod tests {
     }
 
     #[test]
-    fn authoring_layout_service_loads_authored_config_when_runtime_json_is_missing() {
+    fn authoring_layout_service_loads_authored_config_when_runtime_js_is_missing() {
         let project_root = std::env::temp_dir().join("spiders-service-authored-config");
         let authored_config = Config {
             tags: vec!["1".into()],
             bindings: vec![],
             layouts: vec![LayoutDefinition {
                 name: "master-stack".into(),
-                module: "layouts/master-stack.bundle.js".into(),
+                module: "layouts/master-stack/index.js".into(),
                 stylesheet: String::new(),
                 effects_stylesheet: String::new(),
-                runtime_source: Some("ctx => ({ type: 'workspace', children: [] })".into()),
+                runtime_graph: Some(single_module_graph("layouts/master-stack/index.js")),
             }],
             ..Config::default()
         };
@@ -470,13 +602,13 @@ mod tests {
         let config = service
             .load_config(&ConfigPaths::new(
                 project_root.join("config.ts"),
-                project_root.join("missing-config.json"),
+                project_root.join("missing-config.js"),
             ))
             .unwrap();
 
         assert_eq!(config.tags, vec!["1"]);
         assert_eq!(config.bindings.len(), 0);
         assert_eq!(config.layouts.len(), 1);
-        assert!(config.layouts[0].runtime_source.is_some());
+        assert!(config.layouts[0].runtime_graph.is_some());
     }
 }
