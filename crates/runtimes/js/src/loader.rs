@@ -403,8 +403,10 @@ mod tests {
         let loaded = loader.load_definition(&definition).unwrap();
 
         assert!(loaded.selected.module.ends_with("layouts/fallback.js"));
-        assert!(loaded.runtime_graph.modules[0]
-            .source
-            .contains("fallback-group"));
+        assert!(
+            loaded.runtime_graph.modules[0]
+                .source
+                .contains("fallback-group")
+        );
     }
 }

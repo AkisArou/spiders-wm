@@ -3,8 +3,8 @@ use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::Path;
 
 use crate::{
-    decode_request_line, decode_response_line, encode_request_line, encode_response_line,
-    IpcCodecError, IpcRequest, IpcResponse,
+    IpcCodecError, IpcRequest, IpcResponse, decode_request_line, decode_response_line,
+    encode_request_line, encode_response_line,
 };
 
 #[derive(Debug, thiserror::Error)]

@@ -5,20 +5,20 @@ pub mod session;
 pub mod transport;
 
 pub use codec::{
-    decode_request_line, decode_response_line, encode_request_line, encode_response_line,
-    IpcCodecError,
+    IpcCodecError, decode_request_line, decode_response_line, encode_request_line,
+    encode_response_line,
 };
 pub use protocol::{
-    infer_topics, normalize_topics, subscription_matches_event, subscription_matches_topics,
     IpcClientMessage, IpcEnvelope, IpcRequest, IpcResponse, IpcServerMessage, IpcSubscriptionTopic,
+    infer_topics, normalize_topics, subscription_matches_event, subscription_matches_topics,
 };
 pub use server::{
     IpcClientId, IpcServeError, IpcServerHandleResult, IpcServerState, UnknownClientError,
 };
 pub use session::{IpcSession, IpcSessionHandleResult};
 pub use transport::{
-    bind_listener, connect, recv_request, recv_response, send_request, send_response,
-    IpcTransportError,
+    IpcTransportError, bind_listener, connect, recv_request, recv_response, send_request,
+    send_response,
 };
 
 pub fn crate_ready() -> bool {

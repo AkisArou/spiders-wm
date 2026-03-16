@@ -1,9 +1,9 @@
 use std::collections::BTreeMap;
 
 use rquickjs::{
-    loader::{Loader, Resolver},
     Context as JsContext, Ctx, Function, Module, Object, Runtime as JsRuntime, String as JsString,
     Value,
+    loader::{Loader, Resolver},
 };
 use spiders_shared::runtime::JavaScriptModuleGraph;
 

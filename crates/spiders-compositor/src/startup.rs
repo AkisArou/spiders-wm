@@ -8,7 +8,7 @@ use spiders_shared::runtime::AuthoringLayoutRuntime;
 use spiders_shared::wm::StateSnapshot;
 
 use crate::effects::EffectsRuntimeState;
-use crate::{build_request_from_context, CompositorLayoutError, LayoutService};
+use crate::{CompositorLayoutError, LayoutService, build_request_from_context};
 
 #[derive(Debug)]
 pub struct StartupRuntime<R> {
@@ -425,16 +425,20 @@ mod tests {
         .unwrap();
 
         assert_eq!(startup.response.root.window_nodes().len(), 1);
-        assert!(startup
-            .response
-            .root
-            .find_by_window_id(&WindowId::from("w1"))
-            .is_some());
-        assert!(startup
-            .response
-            .root
-            .find_by_window_id(&WindowId::from("w2"))
-            .is_none());
+        assert!(
+            startup
+                .response
+                .root
+                .find_by_window_id(&WindowId::from("w1"))
+                .is_some()
+        );
+        assert!(
+            startup
+                .response
+                .root
+                .find_by_window_id(&WindowId::from("w2"))
+                .is_none()
+        );
 
         let _ = fs::remove_file(module_path);
     }

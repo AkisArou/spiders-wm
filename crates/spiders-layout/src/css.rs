@@ -3,10 +3,10 @@ mod syntax;
 mod taffy;
 
 pub use domain::*;
-pub use syntax::{parse_stylesheet, CssParseError};
+pub use syntax::{CssParseError, parse_stylesheet};
 pub use taffy::{
-    compile_declaration, compute_style, map_computed_style_to_taffy, matching_rules,
-    selector_matches, CompiledDeclaration, CssValueError, NodeComputedStyle, StyledLayoutTree,
+    CompiledDeclaration, CssValueError, NodeComputedStyle, StyledLayoutTree, compile_declaration,
+    compute_style, map_computed_style_to_taffy, matching_rules, selector_matches,
 };
 
 #[cfg(test)]

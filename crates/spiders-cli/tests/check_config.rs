@@ -1,7 +1,7 @@
 use std::process::Command;
 use std::{io::Write, os::unix::net::UnixListener};
 
-use spiders_ipc::{encode_response_line, IpcEnvelope, IpcServerMessage, IpcSubscriptionTopic};
+use spiders_ipc::{IpcEnvelope, IpcServerMessage, IpcSubscriptionTopic, encode_response_line};
 use spiders_shared::api::{CompositorEvent, QueryResponse};
 
 fn cli_bin() -> String {
@@ -267,16 +267,20 @@ fn cli_bootstrap_trace_reports_script_success_fixture() {
     assert_eq!(json["applied_events"], 4);
     assert_eq!(json["active_seat"], "seat-1");
     assert_eq!(json["seat_names"][1], "seat-1");
-    assert!(json["surface_ids"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|value| value == "popup-1"));
-    assert!(json["mapped_surface_ids"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|value| value == "window-w1"));
+    assert!(
+        json["surface_ids"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|value| value == "popup-1")
+    );
+    assert!(
+        json["mapped_surface_ids"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|value| value == "window-w1")
+    );
 
     let _ = std::fs::remove_file(prepared_config);
 }
@@ -307,11 +311,13 @@ fn cli_bootstrap_trace_reports_transcript_success_fixture() {
     assert_eq!(json["applied_events"], 3);
     assert_eq!(json["active_seat"], "seat-1");
     assert_eq!(json["startup"]["active_seat"], "seat-1");
-    assert!(json["surface_ids"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|value| value == "popup-1"));
+    assert!(
+        json["surface_ids"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|value| value == "popup-1")
+    );
 
     let _ = std::fs::remove_file(prepared_config);
 }

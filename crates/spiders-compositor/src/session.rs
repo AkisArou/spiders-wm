@@ -9,7 +9,7 @@ use spiders_wm::{
     TopologyError, WmState,
 };
 
-use crate::actions::{apply_action, preferred_focus_after_close, ActionError};
+use crate::actions::{ActionError, apply_action, preferred_focus_after_close};
 use crate::effects::WindowDecorationPolicy;
 use crate::runtime::WindowPlacement;
 use crate::runtime::{CompositorRuntimeState, WorkspaceLayoutState};
@@ -713,10 +713,12 @@ mod tests {
             .unwrap();
 
         assert!(update.recomputed_layout);
-        assert!(update
-            .events
-            .iter()
-            .any(|event| matches!(event, CompositorEvent::LayoutChange { .. })));
+        assert!(
+            update
+                .events
+                .iter()
+                .any(|event| matches!(event, CompositorEvent::LayoutChange { .. }))
+        );
         assert_eq!(
             update
                 .current_layout
@@ -938,15 +940,19 @@ mod tests {
             .unwrap();
 
         assert!(update.recomputed_layout);
-        assert!(update
-            .events
-            .iter()
-            .any(|event| matches!(event, CompositorEvent::WindowCreated { .. })));
-        assert!(session
-            .state()
-            .windows
-            .iter()
-            .any(|window| window.id == WindowId::from("w3") && window.mapped));
+        assert!(
+            update
+                .events
+                .iter()
+                .any(|event| matches!(event, CompositorEvent::WindowCreated { .. }))
+        );
+        assert!(
+            session
+                .state()
+                .windows
+                .iter()
+                .any(|window| window.id == WindowId::from("w3") && window.mapped)
+        );
         assert!(update.current_layout.is_some());
         assert_eq!(
             session.window_surface(&WindowId::from("w3")).unwrap().id,
@@ -965,11 +971,13 @@ mod tests {
             event,
             CompositorEvent::WindowDestroyed { window_id } if window_id == &WindowId::from("w1")
         )));
-        assert!(session
-            .state()
-            .windows
-            .iter()
-            .all(|window| window.id != WindowId::from("w1")));
+        assert!(
+            session
+                .state()
+                .windows
+                .iter()
+                .all(|window| window.id != WindowId::from("w1"))
+        );
         assert!(session.window_surface(&WindowId::from("w1")).is_none());
     }
 
@@ -1044,11 +1052,13 @@ mod tests {
             CompositorEvent::WindowFullscreenChange { window_id, fullscreen }
                 if window_id == &WindowId::from("w1") && *fullscreen
         )));
-        assert!(session
-            .state()
-            .windows
-            .iter()
-            .any(|window| window.id == WindowId::from("w1") && window.fullscreen));
+        assert!(
+            session
+                .state()
+                .windows
+                .iter()
+                .any(|window| window.id == WindowId::from("w1") && window.fullscreen)
+        );
     }
 
     #[test]
@@ -1063,11 +1073,13 @@ mod tests {
             CompositorEvent::WindowFloatingChange { window_id, floating }
                 if window_id == &WindowId::from("w1") && *floating
         )));
-        assert!(session
-            .state()
-            .windows
-            .iter()
-            .any(|window| window.id == WindowId::from("w1") && window.floating));
+        assert!(
+            session
+                .state()
+                .windows
+                .iter()
+                .any(|window| window.id == WindowId::from("w1") && window.floating)
+        );
     }
 
     #[test]
@@ -1104,11 +1116,13 @@ mod tests {
 
         let update = session.toggle_focused_fullscreen().unwrap();
 
-        assert!(update
-            .decoration_policies
-            .iter()
-            .any(|(window_id, policy)| window_id == &WindowId::from("w1")
-                && !policy.decorations_visible));
+        assert!(
+            update
+                .decoration_policies
+                .iter()
+                .any(|(window_id, policy)| window_id == &WindowId::from("w1")
+                    && !policy.decorations_visible)
+        );
     }
 
     #[test]
@@ -1117,10 +1131,12 @@ mod tests {
 
         session.register_output(OutputId::from("out-1")).unwrap();
 
-        assert!(session
-            .topology()
-            .output(&OutputId::from("out-1"))
-            .is_some());
+        assert!(
+            session
+                .topology()
+                .output(&OutputId::from("out-1"))
+                .is_some()
+        );
     }
 
     #[test]

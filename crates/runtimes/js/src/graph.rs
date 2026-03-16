@@ -454,18 +454,26 @@ mod tests {
             .build(&project.config_app)
             .unwrap();
 
-        assert!(graph
-            .modules
-            .contains_key(&ModuleId::File(root.join("config.ts"))));
-        assert!(graph
-            .modules
-            .contains_key(&ModuleId::File(root.join("config/bindings.ts"))));
-        assert!(graph
-            .modules
-            .contains_key(&ModuleId::Virtual("spiders-wm/config".into())));
-        assert!(graph
-            .modules
-            .contains_key(&ModuleId::File(root.join("index.css"))));
+        assert!(
+            graph
+                .modules
+                .contains_key(&ModuleId::File(root.join("config.ts")))
+        );
+        assert!(
+            graph
+                .modules
+                .contains_key(&ModuleId::File(root.join("config/bindings.ts")))
+        );
+        assert!(
+            graph
+                .modules
+                .contains_key(&ModuleId::Virtual("spiders-wm/config".into()))
+        );
+        assert!(
+            graph
+                .modules
+                .contains_key(&ModuleId::File(root.join("index.css")))
+        );
         assert_eq!(
             graph.order.first(),
             Some(&ModuleId::File(root.join("config.ts")))

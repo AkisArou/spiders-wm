@@ -5,8 +5,8 @@ use taffy::prelude::{AvailableSpace, Size as TaffyAvailableSize, TaffyTree};
 use taffy::tree::{Layout as TaffyLayout, NodeId as TaffyNodeId};
 
 use crate::css::{
-    compute_style, map_computed_style_to_taffy, parse_stylesheet, CssParseError, CssValueError,
-    NodeComputedStyle, StyledLayoutTree,
+    CssParseError, CssValueError, NodeComputedStyle, StyledLayoutTree, compute_style,
+    map_computed_style_to_taffy, parse_stylesheet,
 };
 
 #[derive(Debug, thiserror::Error, PartialEq)]

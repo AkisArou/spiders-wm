@@ -3,9 +3,9 @@ mod report;
 
 use bootstrap::CliBootstrap;
 use report::{
-    emit, BootstrapFailureReport, BootstrapReport, BuildConfigReport, DiscoveryReport, ErrorReport,
+    BootstrapFailureReport, BootstrapReport, BuildConfigReport, DiscoveryReport, ErrorReport,
     IpcActionReport, IpcMonitorReport, IpcQueryReport, IpcSmokeReport, OutputMode,
-    SuccessCheckReport, WinitRunReport,
+    SuccessCheckReport, WinitRunReport, emit,
 };
 
 #[derive(Debug, Clone)]
@@ -480,7 +480,10 @@ fn print_discovery(cli: &CliContext, output_mode: OutputMode) -> std::process::E
                     message: Some(error.to_string()),
                 },
                 || {
-                    format!("spiders-cli placeholder (config runtime ready: {}, discovery error: {error})", cli.ready)
+                    format!(
+                        "spiders-cli placeholder (config runtime ready: {}, discovery error: {error})",
+                        cli.ready
+                    )
                 },
             );
             std::process::ExitCode::from(1)
@@ -531,12 +534,12 @@ fn check_config_command(cli: &CliContext, output_mode: OutputMode) -> std::proce
                         },
                         || {
                             format!(
-                            "config ok (runtime ready: {}, layouts: {}, runtime: {}, cache: {})",
-                            cli.ready,
-                            config.layouts.len(),
-                            bootstrap.paths.prepared_config.display(),
-                            describe_prepared_config_update(prepared_config_update)
-                        )
+                                "config ok (runtime ready: {}, layouts: {}, runtime: {}, cache: {})",
+                                cli.ready,
+                                config.layouts.len(),
+                                bootstrap.paths.prepared_config.display(),
+                                describe_prepared_config_update(prepared_config_update)
+                            )
                         },
                     );
                     std::process::ExitCode::SUCCESS
@@ -1102,8 +1105,8 @@ fn synthetic_winit_layout_name(
 
 fn run_ipc_smoke() -> Result<IpcSmokeReport, String> {
     use spiders_ipc::{
-        decode_request_line, encode_request_line, encode_response_line, IpcClientMessage,
-        IpcEnvelope, IpcServerHandleResult, IpcServerState, IpcSubscriptionTopic,
+        IpcClientMessage, IpcEnvelope, IpcServerHandleResult, IpcServerState, IpcSubscriptionTopic,
+        decode_request_line, encode_request_line, encode_response_line,
     };
     use spiders_shared::api::CompositorEvent;
 
@@ -1165,7 +1168,7 @@ fn run_ipc_query(
     socket_path: Option<std::path::PathBuf>,
     query_name: &str,
 ) -> Result<IpcQueryReport, String> {
-    use spiders_ipc::{connect, recv_response, send_request, IpcClientMessage, IpcEnvelope};
+    use spiders_ipc::{IpcClientMessage, IpcEnvelope, connect, recv_response, send_request};
 
     let socket_path = socket_path.ok_or_else(|| "missing IPC socket path".to_string())?;
     let query = parse_query_request(query_name)?;
@@ -1194,7 +1197,7 @@ fn run_ipc_action(
     socket_path: Option<std::path::PathBuf>,
     action_name: &str,
 ) -> Result<IpcActionReport, String> {
-    use spiders_ipc::{connect, recv_response, send_request, IpcClientMessage, IpcEnvelope};
+    use spiders_ipc::{IpcClientMessage, IpcEnvelope, connect, recv_response, send_request};
 
     let socket_path = socket_path.ok_or_else(|| "missing IPC socket path".to_string())?;
     let action = parse_action_request(action_name)?;
@@ -1225,8 +1228,8 @@ fn run_ipc_monitor(
     topic_names: Vec<&str>,
 ) -> Result<IpcMonitorReport, String> {
     use spiders_ipc::{
-        connect, decode_response_line, send_request, IpcClientMessage, IpcEnvelope,
-        IpcServerMessage,
+        IpcClientMessage, IpcEnvelope, IpcServerMessage, connect, decode_response_line,
+        send_request,
     };
     use std::io::BufRead;
 
@@ -1492,7 +1495,7 @@ mod tests {
     use std::io::Write;
     use std::os::unix::net::UnixListener;
 
-    use spiders_ipc::{encode_response_line, IpcEnvelope, IpcServerMessage};
+    use spiders_ipc::{IpcEnvelope, IpcServerMessage, encode_response_line};
     use spiders_shared::api::{CompositorEvent, QueryResponse};
 
     #[test]

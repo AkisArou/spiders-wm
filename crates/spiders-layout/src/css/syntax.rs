@@ -1,6 +1,6 @@
 use swc_common::{
-    input::StringInput, sync::Lrc, FileName, FilePathMapping, SourceMap, SourceMapper, Span,
-    Spanned,
+    FileName, FilePathMapping, SourceMap, SourceMapper, Span, Spanned, input::StringInput,
+    sync::Lrc,
 };
 use swc_css_ast::Token;
 use swc_css_ast::{
@@ -10,8 +10,8 @@ use swc_css_ast::{
     SelectorList, SubclassSelector, TypeSelector,
 };
 use swc_css_codegen::{
-    writer::basic::{BasicCssWriter, BasicCssWriterConfig},
     CodeGenerator, CodegenConfig, Emit,
+    writer::basic::{BasicCssWriter, BasicCssWriterConfig},
 };
 use swc_css_parser::{error::Error as SwcCssError, parse_string_input, parser::ParserConfig};
 use thiserror::Error;
@@ -151,7 +151,7 @@ fn convert_type_selector(
         _ => {
             return Err(CssParseError::UnsupportedSelector {
                 selector: snippet_or_fallback(source_map, type_selector.span(), "<selector>"),
-            })
+            });
         }
     };
 
@@ -162,7 +162,7 @@ fn convert_type_selector(
         _ => {
             return Err(CssParseError::UnsupportedSelector {
                 selector: name.to_owned(),
-            })
+            });
         }
     };
 
@@ -366,7 +366,7 @@ fn lower_component_value(source_map: &SourceMap, value: &ComponentValue) -> CssV
                         source_map,
                         value.span(),
                         "<block>",
-                    ))
+                    ));
                 }
             },
             value: lower_component_values(source_map, &block.value),

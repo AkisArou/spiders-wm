@@ -1117,11 +1117,13 @@ mod tests {
         });
 
         assert!(matches!(event, CompositorEvent::WindowCreated { .. }));
-        assert!(state
-            .snapshot()
-            .windows
-            .iter()
-            .any(|window| window.id == WindowId::from("w3") && window.mapped));
+        assert!(
+            state
+                .snapshot()
+                .windows
+                .iter()
+                .any(|window| window.id == WindowId::from("w3") && window.mapped)
+        );
 
         let events = state.destroy_window(&WindowId::from("w3")).unwrap();
 
@@ -1129,11 +1131,13 @@ mod tests {
             event,
             CompositorEvent::WindowDestroyed { window_id } if window_id == &WindowId::from("w3")
         )));
-        assert!(state
-            .snapshot()
-            .windows
-            .iter()
-            .all(|window| window.id != WindowId::from("w3")));
+        assert!(
+            state
+                .snapshot()
+                .windows
+                .iter()
+                .all(|window| window.id != WindowId::from("w3"))
+        );
     }
 
     #[test]

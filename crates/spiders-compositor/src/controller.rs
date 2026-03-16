@@ -10,12 +10,12 @@ use spiders_wm::{
     ControllerReport, StartupRegistration,
 };
 
+use crate::CompositorApp;
 use crate::backend::{
     BackendDiscoveryEvent, BackendSessionState, BackendSource, BackendTopologySnapshot,
 };
 use crate::host::CompositorHost;
 use crate::runner::BootstrapRunnerError;
-use crate::CompositorApp;
 
 #[derive(Debug)]
 pub struct CompositorController<R> {
@@ -384,9 +384,8 @@ mod tests {
         }
     }
 
-    fn authoring_layout_service(
-    ) -> AuthoringLayoutService<QuickJsPreparedLayoutRuntime<RuntimeProjectLayoutSourceLoader>>
-    {
+    fn authoring_layout_service()
+    -> AuthoringLayoutService<QuickJsPreparedLayoutRuntime<RuntimeProjectLayoutSourceLoader>> {
         let temp_dir = std::env::temp_dir();
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -543,14 +542,16 @@ mod tests {
             .surface("window-w1")
             .unwrap();
         assert!(!surface.mapped);
-        assert!(controller
-            .app()
-            .session()
-            .topology()
-            .output(&OutputId::from("out-1"))
-            .unwrap()
-            .mapped_surface_ids
-            .is_empty());
+        assert!(
+            controller
+                .app()
+                .session()
+                .topology()
+                .output(&OutputId::from("out-1"))
+                .unwrap()
+                .mapped_surface_ids
+                .is_empty()
+        );
     }
 
     #[test]
@@ -733,11 +734,13 @@ mod tests {
             Some(0)
         );
         assert_eq!(report.applied_events, 3);
-        assert!(report
-            .diagnostics
-            .seat_names
-            .iter()
-            .any(|seat| seat == "seat-batch"));
+        assert!(
+            report
+                .diagnostics
+                .seat_names
+                .iter()
+                .any(|seat| seat == "seat-batch")
+        );
     }
 
     #[test]

@@ -166,7 +166,7 @@ impl<R: AuthoringLayoutRuntime<Config = Config>> BootstrapRunner<R> {
                     CompositorLayoutError::Runtime(spiders_shared::runtime::RuntimeError::Other {
                         message: error.to_string(),
                     }),
-                ))
+                ));
             }
         }
         self.applied_events.push(event);
@@ -378,10 +378,12 @@ mod tests {
         assert_eq!(trace.diagnostics.focused_window.as_deref(), None);
         assert!(trace.diagnostics.seat_names.contains(&"seat-1".to_string()));
         assert!(trace.diagnostics.output_ids.contains(&"out-2".to_string()));
-        assert!(!trace
-            .diagnostics
-            .surface_ids
-            .contains(&"popup-1".to_string()));
+        assert!(
+            !trace
+                .diagnostics
+                .surface_ids
+                .contains(&"popup-1".to_string())
+        );
     }
 
     #[test]
@@ -507,13 +509,17 @@ mod tests {
         let trace = runner.trace();
         assert_eq!(trace.applied_events.len(), 6);
         assert!(trace.diagnostics.seat_names.contains(&"seat-1".to_string()));
-        assert!(trace
-            .diagnostics
-            .surface_ids
-            .contains(&"popup-1".to_string()));
-        assert!(!trace
-            .diagnostics
-            .mapped_surface_ids
-            .contains(&"popup-1".to_string()));
+        assert!(
+            trace
+                .diagnostics
+                .surface_ids
+                .contains(&"popup-1".to_string())
+        );
+        assert!(
+            !trace
+                .diagnostics
+                .mapped_surface_ids
+                .contains(&"popup-1".to_string())
+        );
     }
 }

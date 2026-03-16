@@ -3,6 +3,7 @@ use std::mem;
 use std::path::Path;
 use std::path::PathBuf;
 
+use oxc::CompilerInterface;
 use oxc::allocator::Allocator;
 use oxc::ast::ast::Statement;
 use oxc::codegen::CodegenReturn;
@@ -11,7 +12,6 @@ use oxc::parser::Parser;
 use oxc::span::GetSpan;
 use oxc::span::SourceType;
 use oxc::transformer::{JsxRuntime, TransformOptions};
-use oxc::CompilerInterface;
 use spiders_shared::runtime::{JavaScriptModule, JavaScriptModuleGraph};
 
 use crate::graph::{ImportedModuleKind, ModuleGraph, ModuleId, ModuleKind};
@@ -363,7 +363,7 @@ fn module_key(root_dir: &Path, module_id: &ModuleId) -> String {
 mod tests {
     use std::fs;
 
-    use crate::graph::{discover_project_apps, ModuleGraphBuilder};
+    use crate::graph::{ModuleGraphBuilder, discover_project_apps};
 
     use super::*;
 
@@ -404,15 +404,18 @@ mod tests {
             .unwrap();
         let plan = AppBuildPlan::from_graph(&graph);
 
-        assert!(plan
-            .script_modules
-            .contains(&root.join("layouts/master-stack/index.tsx")));
-        assert!(plan
-            .script_modules
-            .contains(&root.join("components/StackGroup.tsx")));
-        assert!(plan
-            .stylesheet_modules
-            .contains(&root.join("layouts/master-stack/index.css")));
+        assert!(
+            plan.script_modules
+                .contains(&root.join("layouts/master-stack/index.tsx"))
+        );
+        assert!(
+            plan.script_modules
+                .contains(&root.join("components/StackGroup.tsx"))
+        );
+        assert!(
+            plan.stylesheet_modules
+                .contains(&root.join("layouts/master-stack/index.css"))
+        );
         assert_eq!(
             plan.stylesheet_modules,
             vec![
@@ -469,9 +472,11 @@ mod tests {
 
         assert_eq!(compiled.virtual_modules.len(), 1);
         assert_eq!(compiled.virtual_modules[0].specifier, "spiders-wm/actions");
-        assert!(compiled.virtual_modules[0]
-            .code
-            .contains("export const spawn"));
+        assert!(
+            compiled.virtual_modules[0]
+                .code
+                .contains("export const spawn")
+        );
     }
 
     #[test]
@@ -530,14 +535,18 @@ mod tests {
         let module_graph = compiled_app_to_module_graph(&graph, &compiled).unwrap();
 
         assert_eq!(module_graph.entry, "config.ts");
-        assert!(module_graph
-            .modules
-            .iter()
-            .any(|module| module.specifier == "config.ts"));
-        assert!(module_graph
-            .modules
-            .iter()
-            .any(|module| module.specifier == "spiders-wm/actions"));
+        assert!(
+            module_graph
+                .modules
+                .iter()
+                .any(|module| module.specifier == "config.ts")
+        );
+        assert!(
+            module_graph
+                .modules
+                .iter()
+                .any(|module| module.specifier == "spiders-wm/actions")
+        );
         let config_module = module_graph
             .modules
             .iter()

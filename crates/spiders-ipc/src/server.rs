@@ -4,8 +4,8 @@ use std::os::unix::net::UnixStream;
 use spiders_shared::api::{CompositorEvent, QueryRequest, QueryResponse, WmAction};
 
 use crate::{
-    recv_request, send_response, IpcRequest, IpcResponse, IpcSession, IpcSessionHandleResult,
-    IpcTransportError,
+    IpcRequest, IpcResponse, IpcSession, IpcSessionHandleResult, IpcTransportError, recv_request,
+    send_response,
 };
 
 pub type IpcClientId = u64;

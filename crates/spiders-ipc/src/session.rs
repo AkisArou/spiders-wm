@@ -1,8 +1,8 @@
 use spiders_shared::api::{CompositorEvent, QueryRequest, QueryResponse, WmAction};
 
 use crate::protocol::{
-    normalize_topics, subscription_matches_event, IpcClientMessage, IpcEnvelope, IpcRequest,
-    IpcResponse, IpcServerMessage, IpcSubscriptionTopic,
+    IpcClientMessage, IpcEnvelope, IpcRequest, IpcResponse, IpcServerMessage, IpcSubscriptionTopic,
+    normalize_topics, subscription_matches_event,
 };
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]

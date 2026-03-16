@@ -5,8 +5,8 @@ use oxc::span::SourceType;
 use serde_json::Value;
 use spiders_shared::api::{FocusDirection, WmAction};
 
-use crate::compile::{compile_app, compiled_app_to_module_graph, AppBuildPlan};
-use crate::graph::{discover_project_apps, ModuleGraphBuilder};
+use crate::compile::{AppBuildPlan, compile_app, compiled_app_to_module_graph};
+use crate::graph::{ModuleGraphBuilder, discover_project_apps};
 use crate::module_graph_runtime::evaluate_entry_export_to_json;
 use spiders_config::model::{
     Binding, Config, ConfigOptions, InputConfig, LayoutConfigError, LayoutDefinition,
@@ -132,12 +132,7 @@ fn write_runtime_cache(
     update.rebuilt_files += config_outputs.written_files;
     expected_paths.extend(config_outputs.paths);
     for app in &project.layout_apps {
-        let outputs = write_compiled_app(
-            app,
-            runtime_root,
-            runtime_path,
-            force_rebuild,
-        )?;
+        let outputs = write_compiled_app(app, runtime_root, runtime_path, force_rebuild)?;
         update.rebuilt_files += outputs.written_files;
         expected_paths.extend(outputs.paths);
     }
@@ -191,11 +186,15 @@ fn write_compiled_app(
         .values()
         .filter_map(|record| match &record.id {
             crate::graph::ModuleId::File(path) => match record.kind {
-                crate::graph::ModuleKind::Script => Some(runtime_root.join(runtime_relative_path(
-                    path,
-                    &graph.app.root_dir,
-                    runtime_entry_path.file_name().and_then(|name| name.to_str()),
-                ))),
+                crate::graph::ModuleKind::Script => Some(
+                    runtime_root.join(runtime_relative_path(
+                        path,
+                        &graph.app.root_dir,
+                        runtime_entry_path
+                            .file_name()
+                            .and_then(|name| name.to_str()),
+                    )),
+                ),
                 crate::graph::ModuleKind::Stylesheet => {
                     Some(runtime_root.join(runtime_static_relative_path(path, &graph.app.root_dir)))
                 }
@@ -262,8 +261,10 @@ fn write_compiled_app(
                 path: parent.to_path_buf(),
             })?;
         }
-        std::fs::write(&destination, &compiled.stylesheet).map_err(|_| LayoutConfigError::ReadConfig {
-            path: destination.clone(),
+        std::fs::write(&destination, &compiled.stylesheet).map_err(|_| {
+            LayoutConfigError::ReadConfig {
+                path: destination.clone(),
+            }
         })?;
         written_files += 1;
     }
@@ -307,7 +308,10 @@ fn app_cache_is_fresh(
                 if matches!(
                     record.kind,
                     crate::graph::ModuleKind::Script | crate::graph::ModuleKind::Stylesheet
-                ) => Some(path),
+                ) =>
+            {
+                Some(path)
+            }
             _ => None,
         })
         .collect::<Vec<_>>();
@@ -353,7 +357,10 @@ fn generated_stylesheet_matches_cached(
         return true;
     };
 
-    let destination = runtime_root.join(runtime_static_relative_path(stylesheet_path, &graph.app.root_dir));
+    let destination = runtime_root.join(runtime_static_relative_path(
+        stylesheet_path,
+        &graph.app.root_dir,
+    ));
     let expected = plan
         .stylesheet_modules
         .iter()
@@ -399,7 +406,10 @@ fn runtime_relative_path(
 }
 
 fn runtime_static_relative_path(source_path: &Path, authored_root: &Path) -> PathBuf {
-    source_path.strip_prefix(authored_root).unwrap().to_path_buf()
+    source_path
+        .strip_prefix(authored_root)
+        .unwrap()
+        .to_path_buf()
 }
 
 fn rewrite_module_for_runtime(
@@ -532,7 +542,8 @@ fn copy_stylesheet_if_stale(
         .and_then(|metadata| metadata.modified())
         .map_err(|_| LayoutConfigError::ReadConfig { path: from.into() })?;
     if !force_rebuild
-        && let Ok(destination_modified) = std::fs::metadata(to).and_then(|metadata| metadata.modified())
+        && let Ok(destination_modified) =
+            std::fs::metadata(to).and_then(|metadata| metadata.modified())
     {
         if destination_modified >= source_modified {
             return Ok(false);
@@ -570,9 +581,9 @@ fn prune_stale_runtime_cache_dir(
             path: dir.to_path_buf(),
         })?;
         let path = entry.path();
-        let file_type = entry.file_type().map_err(|_| LayoutConfigError::ReadConfig {
-            path: path.clone(),
-        })?;
+        let file_type = entry
+            .file_type()
+            .map_err(|_| LayoutConfigError::ReadConfig { path: path.clone() })?;
 
         if file_type.is_dir() {
             pruned_files += prune_stale_runtime_cache_dir(runtime_root, &path, expected_paths)?;
@@ -1282,17 +1293,21 @@ mod tests {
             config.layouts[0].runtime_graph.as_ref().unwrap().entry,
             "layouts/master-stack/index.tsx"
         );
-        assert!(config.layouts[0]
-            .runtime_graph
-            .as_ref()
-            .unwrap()
-            .modules
-            .iter()
-            .any(|module| module.source.contains("export default function layout")));
+        assert!(
+            config.layouts[0]
+                .runtime_graph
+                .as_ref()
+                .unwrap()
+                .modules
+                .iter()
+                .any(|module| module.source.contains("export default function layout"))
+        );
         assert!(config.layouts[0].stylesheet.contains(".master {}"));
-        assert!(config.layouts[0]
-            .effects_stylesheet
-            .contains("window { appearance: none; }"));
+        assert!(
+            config.layouts[0]
+                .effects_stylesheet
+                .contains("window { appearance: none; }")
+        );
     }
 
     #[test]
@@ -1322,7 +1337,7 @@ mod tests {
 
         let runtime_entry = cache_root.join("config.js");
         rebuild_prepared_config(root.join("config.ts"), &runtime_entry).unwrap();
-        fs::write(cache_root.join("stale.js"), "export default {};" ).unwrap();
+        fs::write(cache_root.join("stale.js"), "export default {};").unwrap();
         fs::write(cache_root.join("stale.css"), ".stale {}").unwrap();
         let first_modified = fs::metadata(&runtime_entry).unwrap().modified().unwrap();
 

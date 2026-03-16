@@ -581,26 +581,26 @@ fn parse_aspect_ratio(property: &str, value: &CssValue) -> Result<f32, CssValueE
     match components.as_slice() {
         [CssValueToken::Number(number)] => Ok(*number),
         [CssValueToken::Integer(number)] => Ok(*number as f32),
-        [CssValueToken::Integer(width), CssValueToken::Delimiter(CssDelimiter::Solidus), CssValueToken::Integer(height)]
-            if *height != 0 =>
-        {
-            Ok(*width as f32 / *height as f32)
-        }
-        [CssValueToken::Number(width), CssValueToken::Delimiter(CssDelimiter::Solidus), CssValueToken::Number(height)]
-            if *height != 0.0 =>
-        {
-            Ok(*width / *height)
-        }
-        [CssValueToken::Integer(width), CssValueToken::Delimiter(CssDelimiter::Solidus), CssValueToken::Number(height)]
-            if *height != 0.0 =>
-        {
-            Ok(*width as f32 / *height)
-        }
-        [CssValueToken::Number(width), CssValueToken::Delimiter(CssDelimiter::Solidus), CssValueToken::Integer(height)]
-            if *height != 0 =>
-        {
-            Ok(*width / *height as f32)
-        }
+        [
+            CssValueToken::Integer(width),
+            CssValueToken::Delimiter(CssDelimiter::Solidus),
+            CssValueToken::Integer(height),
+        ] if *height != 0 => Ok(*width as f32 / *height as f32),
+        [
+            CssValueToken::Number(width),
+            CssValueToken::Delimiter(CssDelimiter::Solidus),
+            CssValueToken::Number(height),
+        ] if *height != 0.0 => Ok(*width / *height),
+        [
+            CssValueToken::Integer(width),
+            CssValueToken::Delimiter(CssDelimiter::Solidus),
+            CssValueToken::Number(height),
+        ] if *height != 0.0 => Ok(*width as f32 / *height),
+        [
+            CssValueToken::Number(width),
+            CssValueToken::Delimiter(CssDelimiter::Solidus),
+            CssValueToken::Integer(height),
+        ] if *height != 0 => Ok(*width / *height as f32),
         _ => Err(invalid_value(property, text_for_value(value))),
     }
 }
@@ -1210,13 +1210,13 @@ fn parse_grid_placement(
         [CssValueToken::Ident(span), CssValueToken::Ident(name)] if span == "span" => {
             Ok(GridPlacementValue::NamedSpan(name.clone(), 1))
         }
-        [CssValueToken::Ident(span), CssValueToken::Integer(number), CssValueToken::Ident(name)]
-            if span == "span" =>
-        {
-            u16::try_from(*number)
-                .map(|count| GridPlacementValue::NamedSpan(name.clone(), count))
-                .map_err(|_| invalid_value(property, text_for_value(value)))
-        }
+        [
+            CssValueToken::Ident(span),
+            CssValueToken::Integer(number),
+            CssValueToken::Ident(name),
+        ] if span == "span" => u16::try_from(*number)
+            .map(|count| GridPlacementValue::NamedSpan(name.clone(), count))
+            .map_err(|_| invalid_value(property, text_for_value(value))),
         [CssValueToken::Ident(span), CssValueToken::Number(number)]
             if span == "span" && number.fract() == 0.0 =>
         {
@@ -1224,13 +1224,13 @@ fn parse_grid_placement(
                 .map(GridPlacementValue::Span)
                 .map_err(|_| invalid_value(property, text_for_value(value)))
         }
-        [CssValueToken::Ident(span), CssValueToken::Number(number), CssValueToken::Ident(name)]
-            if span == "span" && number.fract() == 0.0 =>
-        {
-            u16::try_from(*number as i64)
-                .map(|count| GridPlacementValue::NamedSpan(name.clone(), count))
-                .map_err(|_| invalid_value(property, text_for_value(value)))
-        }
+        [
+            CssValueToken::Ident(span),
+            CssValueToken::Number(number),
+            CssValueToken::Ident(name),
+        ] if span == "span" && number.fract() == 0.0 => u16::try_from(*number as i64)
+            .map(|count| GridPlacementValue::NamedSpan(name.clone(), count))
+            .map_err(|_| invalid_value(property, text_for_value(value))),
         [CssValueToken::Ident(name)] => Ok(GridPlacementValue::NamedLine(name.clone(), 1)),
         [CssValueToken::Ident(name), CssValueToken::Integer(index)] => i16::try_from(*index)
             .map(|line_index| GridPlacementValue::NamedLine(name.clone(), line_index))

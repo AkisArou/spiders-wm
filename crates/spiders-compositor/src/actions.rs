@@ -3,9 +3,9 @@ use spiders_shared::api::{CompositorEvent, LayoutCycleDirection, WmAction};
 use spiders_shared::ids::WindowId;
 use spiders_shared::runtime::AuthoringLayoutRuntime;
 
+use crate::CompositorLayoutError;
 use crate::runtime::{CompositorRuntimeState, WindowPlacement};
 use crate::wm::{WmState, WmStateError};
-use crate::CompositorLayoutError;
 
 #[derive(Debug, thiserror::Error, PartialEq)]
 pub enum ActionError {
@@ -416,9 +416,8 @@ mod tests {
         }
     }
 
-    fn runtime_state(
-    ) -> CompositorRuntimeState<QuickJsPreparedLayoutRuntime<RuntimeProjectLayoutSourceLoader>>
-    {
+    fn runtime_state()
+    -> CompositorRuntimeState<QuickJsPreparedLayoutRuntime<RuntimeProjectLayoutSourceLoader>> {
         let temp_dir = std::env::temp_dir();
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -447,9 +446,8 @@ mod tests {
             .unwrap()
     }
 
-    fn runtime_state_with_reloadable_cache(
-    ) -> CompositorRuntimeState<QuickJsPreparedLayoutRuntime<RuntimeProjectLayoutSourceLoader>>
-    {
+    fn runtime_state_with_reloadable_cache()
+    -> CompositorRuntimeState<QuickJsPreparedLayoutRuntime<RuntimeProjectLayoutSourceLoader>> {
         let temp_dir = std::env::temp_dir();
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -513,10 +511,12 @@ mod tests {
         .unwrap();
 
         assert!(outcome.recomputed_layout);
-        assert!(outcome
-            .events
-            .iter()
-            .any(|event| matches!(event, CompositorEvent::LayoutChange { .. })));
+        assert!(
+            outcome
+                .events
+                .iter()
+                .any(|event| matches!(event, CompositorEvent::LayoutChange { .. }))
+        );
         assert_eq!(
             wm_state
                 .snapshot()
@@ -548,11 +548,13 @@ mod tests {
             event,
             CompositorEvent::WindowDestroyed { window_id } if window_id == &WindowId::from("w1")
         )));
-        assert!(wm_state
-            .snapshot()
-            .windows
-            .iter()
-            .all(|window| window.id != WindowId::from("w1")));
+        assert!(
+            wm_state
+                .snapshot()
+                .windows
+                .iter()
+                .all(|window| window.id != WindowId::from("w1"))
+        );
     }
 
     #[test]
@@ -647,10 +649,12 @@ mod tests {
             wm_state.snapshot().current_workspace_id,
             Some(WorkspaceId::from("ws-2"))
         );
-        assert!(outcome
-            .events
-            .iter()
-            .any(|event| matches!(event, CompositorEvent::TagChange { .. })));
+        assert!(
+            outcome
+                .events
+                .iter()
+                .any(|event| matches!(event, CompositorEvent::TagChange { .. }))
+        );
     }
 
     #[test]

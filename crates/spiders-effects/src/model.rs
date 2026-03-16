@@ -693,7 +693,7 @@ fn parse_effect_selector(input: &str) -> Result<EffectSelector, EffectsCssParseE
         _ => {
             return Err(EffectsCssParseError::UnsupportedSelector {
                 selector: input.to_owned(),
-            })
+            });
         }
     };
 

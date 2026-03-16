@@ -25,7 +25,7 @@ use spiders_config::authoring_layout::{AuthoringLayoutService, AuthoringLayoutSe
 use spiders_config::model::{Config, LayoutConfigError};
 use spiders_effects::EffectsCssParseError;
 use spiders_layout::ast::{LayoutValidationError, ValidatedLayoutTree};
-use spiders_layout::pipeline::{compute_layout_from_request, LayoutPipelineError};
+use spiders_layout::pipeline::{LayoutPipelineError, compute_layout_from_request};
 use spiders_shared::layout::{LayoutRequest, LayoutResponse, LayoutSpace, ResolvedLayoutNode};
 use spiders_shared::runtime::{AuthoringLayoutRuntime, RuntimeError};
 use spiders_shared::wm::{
@@ -68,9 +68,8 @@ pub use backend::{
 };
 pub use controller::CompositorController;
 pub use effects::{
-    decoration_visible, resolve_window_effect_style, titlebar_visible,
-    window_decoration_policy_for_style, EffectsRuntimeState, WindowDecorationPolicy,
-    WindowEffectsState,
+    EffectsRuntimeState, WindowDecorationPolicy, WindowEffectsState, decoration_visible,
+    resolve_window_effect_style, titlebar_visible, window_decoration_policy_for_style,
 };
 pub use host::CompositorHost;
 pub use ipc::{CompositorIpcError, CompositorIpcHost, IpcPumpReport};
@@ -82,14 +81,14 @@ pub use smithay_adapter::{
 };
 #[cfg(feature = "smithay-winit")]
 pub use smithay_runtime::{
-    bootstrap_winit, bootstrap_winit_with_options, SmithayBootstrap, SmithayWinitOptions,
-    SmithayWinitRuntime,
+    SmithayBootstrap, SmithayWinitOptions, SmithayWinitRuntime, bootstrap_winit,
+    bootstrap_winit_with_options,
 };
-#[cfg(feature = "smithay-winit")]
-pub use smithay_runtime::{initialize_smithay_workspace_export, initialize_winit_controller};
 pub use smithay_runtime::{
     SmithayBootstrapSnapshot, SmithayRuntimeError, SmithayRuntimeSnapshot, SmithayStartupReport,
 };
+#[cfg(feature = "smithay-winit")]
+pub use smithay_runtime::{initialize_smithay_workspace_export, initialize_winit_controller};
 #[cfg(feature = "smithay-winit")]
 pub use smithay_state::{
     SmithayClientState, SmithayKnownLayerSurface, SmithayKnownPopupSurface, SmithayKnownSurface,
@@ -111,7 +110,7 @@ pub use spiders_wm::{
 pub use startup::{
     StartupConfig, StartupLayoutState, StartupRuntime, StartupSequence, StartupSession,
 };
-pub use titlebar::{compute_titlebar_render_plan, TitlebarRenderItem};
+pub use titlebar::{TitlebarRenderItem, compute_titlebar_render_plan};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkspaceLayoutSource<'a> {

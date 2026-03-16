@@ -101,7 +101,7 @@ mod tests {
     };
 
     use crate::effects::EffectsRuntimeState;
-    use crate::runtime::{compute_window_placements, WorkspaceLayoutState};
+    use crate::runtime::{WorkspaceLayoutState, compute_window_placements};
 
     use super::*;
 

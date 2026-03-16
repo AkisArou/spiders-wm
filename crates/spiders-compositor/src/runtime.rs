@@ -7,7 +7,7 @@ use spiders_shared::wm::StateSnapshot;
 
 use crate::effects::EffectsRuntimeState;
 use crate::startup::{self, StartupLayoutState, StartupSession};
-use crate::titlebar::{compute_titlebar_render_plan, TitlebarRenderItem};
+use crate::titlebar::{TitlebarRenderItem, compute_titlebar_render_plan};
 use crate::{CompositorLayoutError, LayoutService};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -376,9 +376,11 @@ mod tests {
                 .unwrap();
         let effects = &runtime.current_layout().unwrap().effects;
 
-        assert!(effects
-            .window_style(&spiders_shared::ids::WindowId::from("w1"))
-            .is_some());
+        assert!(
+            effects
+                .window_style(&spiders_shared::ids::WindowId::from("w1"))
+                .is_some()
+        );
 
         let policy = runtime
             .window_decoration_policy(&spiders_shared::ids::WindowId::from("w1"))

@@ -527,12 +527,16 @@ mod tests {
         })
         .unwrap();
 
-        assert!(paths
-            .authored_config
-            .ends_with(".config/spiders-wm/config.ts"));
-        assert!(paths
-            .prepared_config
-            .ends_with(".cache/spiders-wm/config.js"));
+        assert!(
+            paths
+                .authored_config
+                .ends_with(".config/spiders-wm/config.ts")
+        );
+        assert!(
+            paths
+                .prepared_config
+                .ends_with(".cache/spiders-wm/config.js")
+        );
 
         let _ = fs::remove_file(config_dir.join("config.ts"));
     }
