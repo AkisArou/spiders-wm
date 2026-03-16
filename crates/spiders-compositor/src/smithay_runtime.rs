@@ -3,20 +3,22 @@ mod imp {
     use std::sync::Arc;
     use std::time::Duration;
 
-    use font8x8::{UnicodeFonts, BASIC_FONTS};
+    use font8x8::{BASIC_FONTS, UnicodeFonts};
     use std::collections::{HashMap, HashSet, VecDeque};
 
     use smithay::backend::allocator::Fourcc;
     use smithay::backend::input::{
         AbsolutePositionEvent, ButtonState, Event, InputEvent, KeyboardKeyEvent, PointerButtonEvent,
     };
+    use smithay::backend::renderer::Color32F;
+    use smithay::backend::renderer::Frame;
     use smithay::backend::renderer::damage::OutputDamageTracker;
     use smithay::backend::renderer::element::memory::{
         MemoryRenderBuffer, MemoryRenderBufferRenderElement,
     };
     use smithay::backend::renderer::element::solid::SolidColorRenderElement;
     use smithay::backend::renderer::element::surface::{
-        render_elements_from_surface_tree, WaylandSurfaceRenderElement,
+        WaylandSurfaceRenderElement, render_elements_from_surface_tree,
     };
     use smithay::backend::renderer::element::texture::{TextureBuffer, TextureRenderElement};
     use smithay::backend::renderer::element::utils::{
@@ -26,17 +28,15 @@ mod imp {
     use smithay::backend::renderer::gles::{GlesRenderer, GlesTexture};
     use smithay::backend::renderer::sync::SyncPoint;
     use smithay::backend::renderer::utils::RendererSurfaceStateUserData;
-    use smithay::backend::renderer::Color32F;
-    use smithay::backend::renderer::Frame;
     use smithay::backend::renderer::{
         Bind, ImportAll, ImportMem, Offscreen, Renderer, RendererSuper,
     };
     use smithay::backend::winit::{self, WinitEvent, WinitEventLoop, WinitGraphicsBackend};
     use smithay::desktop::utils::{
-        send_frames_surface_tree, surface_presentation_feedback_flags_from_states,
-        take_presentation_feedback_surface_tree, OutputPresentationFeedback,
+        OutputPresentationFeedback, send_frames_surface_tree,
+        surface_presentation_feedback_flags_from_states, take_presentation_feedback_surface_tree,
     };
-    use smithay::input::keyboard::{xkb, FilterResult, Keysym, ModifiersState};
+    use smithay::input::keyboard::{FilterResult, Keysym, ModifiersState, xkb};
     use smithay::input::pointer::CursorIcon;
     use smithay::input::pointer::{ButtonEvent, MotionEvent};
     use smithay::output::{Mode, Output, PhysicalProperties, Subpixel};
@@ -45,10 +45,10 @@ mod imp {
         EventLoop, Interest, LoopSignal, Mode as CalloopMode, PostAction,
     };
     use smithay::reexports::wayland_protocols::wp::presentation_time::server::wp_presentation_feedback;
-    use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
     use smithay::reexports::wayland_server::Display;
-    use smithay::utils::{Clock, Monotonic, Point, Rectangle, Transform, SERIAL_COUNTER};
-    use smithay::wayland::compositor::{with_states, with_surface_tree_downward, TraversalAction};
+    use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
+    use smithay::utils::{Clock, Monotonic, Point, Rectangle, SERIAL_COUNTER, Transform};
+    use smithay::wayland::compositor::{TraversalAction, with_states, with_surface_tree_downward};
     use smithay::wayland::presentation::Refresh;
     use spiders_config::model::Config;
     use spiders_shared::api::WmAction;
@@ -69,8 +69,8 @@ mod imp {
     };
     use crate::titlebar::TitlebarRenderItem;
     use crate::transitions::{
-        now as transition_now, ClosingWindowTransition, OpeningWindowTransition, ResizeTransition,
-        SceneTextureSnapshot, SceneTransition, TransitionTextureSnapshot,
+        ClosingWindowTransition, OpeningWindowTransition, ResizeTransition, SceneTextureSnapshot,
+        SceneTransition, TransitionTextureSnapshot, now as transition_now,
     };
 
     fn append_winit_debug_log(message: &str) {
@@ -1589,8 +1589,7 @@ mod imp {
             if !window_known {
                 append_winit_debug_log(&format!(
                     "bootstrap.sync_focus_state skip_unknown_window window_id={window_id:?} visible={:?} focused={:?}",
-                    controller_state.visible_window_ids,
-                    controller_state.focused_window_id,
+                    controller_state.visible_window_ids, controller_state.focused_window_id,
                 ));
                 return Ok(());
             }
@@ -3068,8 +3067,7 @@ mod imp {
                 .iter()
                 .filter(|item| {
                     presented_window_ids.contains(&item.window_id)
-                        || (pending_presented_window_ids.contains(&item.window_id)
-                            && !opening_transitions.contains_key(&item.window_id))
+                        || pending_presented_window_ids.contains(&item.window_id)
                 })
                 .filter_map(|item| {
                     let color = titlebar_background_color(item);
@@ -4280,10 +4278,12 @@ mod imp {
 
             assert!(topology.outputs.len() >= runtime_state.outputs.known_output_ids.len());
             for output_id in &runtime_state.outputs.known_output_ids {
-                assert!(topology
-                    .outputs
-                    .iter()
-                    .any(|output| output.snapshot.id == *output_id));
+                assert!(
+                    topology
+                        .outputs
+                        .iter()
+                        .any(|output| output.snapshot.id == *output_id)
+                );
             }
             if let Some(active_output_id) = runtime_state.outputs.active_output_id.as_ref() {
                 assert_eq!(topology.active_output_id.as_ref(), Some(active_output_id));
@@ -4379,11 +4379,13 @@ mod imp {
             assert!(snapshot.state.selection_protocols.wlr_data_control);
             assert!(snapshot.state.selection_protocols.ext_data_control);
             assert!(snapshot.state.clipboard_selection.selection.is_none());
-            assert!(snapshot
-                .state
-                .clipboard_selection
-                .focused_client_id
-                .is_none());
+            assert!(
+                snapshot
+                    .state
+                    .clipboard_selection
+                    .focused_client_id
+                    .is_none()
+            );
             assert_eq!(snapshot.state.primary_selection.target, "primary");
             assert!(snapshot.state.primary_selection.selection.is_none());
             assert!(snapshot.state.primary_selection.focused_client_id.is_none());
@@ -4587,11 +4589,13 @@ mod imp {
                 .unwrap();
 
             let snapshot = bootstrap.snapshot();
-            assert!(snapshot
-                .topology
-                .outputs
-                .iter()
-                .all(|output| output.snapshot.id != OutputId::from("out-2")));
+            assert!(
+                snapshot
+                    .topology
+                    .outputs
+                    .iter()
+                    .all(|output| output.snapshot.id != OutputId::from("out-2"))
+            );
             assert_eq!(
                 snapshot.topology.active_output_id,
                 Some(OutputId::from("out-1"))
@@ -4652,11 +4656,13 @@ mod imp {
                 .unwrap();
 
             let snapshot = bootstrap.snapshot();
-            assert!(snapshot
-                .topology
-                .seats
-                .iter()
-                .all(|seat| seat.name != "seat-adapter"));
+            assert!(
+                snapshot
+                    .topology
+                    .seats
+                    .iter()
+                    .all(|seat| seat.name != "seat-adapter")
+            );
             assert_eq!(
                 snapshot.topology.active_seat_name.as_deref(),
                 Some("seat-0")
@@ -4685,11 +4691,13 @@ mod imp {
                 snapshot.topology.active_seat_name.as_deref(),
                 Some("seat-extra")
             );
-            assert!(snapshot
-                .topology
-                .seats
-                .iter()
-                .any(|seat| seat.name == "seat-extra" && seat.active));
+            assert!(
+                snapshot
+                    .topology
+                    .seats
+                    .iter()
+                    .any(|seat| seat.name == "seat-extra" && seat.active)
+            );
 
             bootstrap.runtime.state_mut().remove_seat_name("seat-extra");
             let applied = bootstrap.apply_pending_discovery_events().unwrap();
@@ -4700,11 +4708,13 @@ mod imp {
                 snapshot.topology.active_seat_name.as_deref(),
                 Some("seat-0")
             );
-            assert!(snapshot
-                .topology
-                .seats
-                .iter()
-                .all(|seat| seat.name != "seat-extra"));
+            assert!(
+                snapshot
+                    .topology
+                    .seats
+                    .iter()
+                    .all(|seat| seat.name != "seat-extra")
+            );
         }
 
         #[test]
@@ -4735,11 +4745,13 @@ mod imp {
                 .unwrap();
 
             let snapshot = bootstrap.snapshot();
-            assert!(snapshot
-                .topology
-                .outputs
-                .iter()
-                .any(|output| output.snapshot.id == OutputId::from("out-3")));
+            assert!(
+                snapshot
+                    .topology
+                    .outputs
+                    .iter()
+                    .any(|output| output.snapshot.id == OutputId::from("out-3"))
+            );
             assert_eq!(
                 snapshot.topology.active_output_id,
                 Some(OutputId::from("out-3"))
@@ -4925,18 +4937,22 @@ mod imp {
                 .unwrap();
 
             let snapshot = bootstrap.snapshot();
-            assert!(snapshot
-                .topology
-                .surfaces
-                .iter()
-                .any(|surface| surface.id == "wl-bootstrap-window-1"
-                    && surface.role == SurfaceRole::Window));
-            assert!(snapshot
-                .topology
-                .surfaces
-                .iter()
-                .any(|surface| surface.id == "wl-bootstrap-popup-1"
-                    && surface.role == SurfaceRole::Popup));
+            assert!(
+                snapshot
+                    .topology
+                    .surfaces
+                    .iter()
+                    .any(|surface| surface.id == "wl-bootstrap-window-1"
+                        && surface.role == SurfaceRole::Window)
+            );
+            assert!(
+                snapshot
+                    .topology
+                    .surfaces
+                    .iter()
+                    .any(|surface| surface.id == "wl-bootstrap-popup-1"
+                        && surface.role == SurfaceRole::Popup)
+            );
         }
 
         #[test]
@@ -4994,17 +5010,21 @@ mod imp {
                 .unwrap();
 
             let snapshot = bootstrap.snapshot();
-            assert!(snapshot
-                .topology
-                .outputs
-                .iter()
-                .any(|output| output.snapshot.id == OutputId::from("out-snapshot-1")));
-            assert!(snapshot
-                .topology
-                .surfaces
-                .iter()
-                .any(|surface| surface.id == "wl-snapshot-window-1"
-                    && surface.role == SurfaceRole::Window));
+            assert!(
+                snapshot
+                    .topology
+                    .outputs
+                    .iter()
+                    .any(|output| output.snapshot.id == OutputId::from("out-snapshot-1"))
+            );
+            assert!(
+                snapshot
+                    .topology
+                    .surfaces
+                    .iter()
+                    .any(|surface| surface.id == "wl-snapshot-window-1"
+                        && surface.role == SurfaceRole::Window)
+            );
             assert_eq!(
                 snapshot
                     .controller
@@ -5814,11 +5834,13 @@ mod imp {
 
             let snapshot = bootstrap.snapshot();
             assert!(snapshot.runtime.state.known_surfaces.layers.is_empty());
-            assert!(snapshot
-                .topology
-                .surfaces
-                .iter()
-                .all(|surface| surface.id != "wl-layer-3"));
+            assert!(
+                snapshot
+                    .topology
+                    .surfaces
+                    .iter()
+                    .all(|surface| surface.id != "wl-layer-3")
+            );
         }
 
         #[test]
@@ -5836,13 +5858,15 @@ mod imp {
             bootstrap
                 .apply_tracked_smithay_discovery_snapshot(1)
                 .unwrap();
-            assert!(bootstrap
-                .controller
-                .app()
-                .session()
-                .topology()
-                .surface("wl-surface-801")
-                .is_some());
+            assert!(
+                bootstrap
+                    .controller
+                    .app()
+                    .session()
+                    .topology()
+                    .surface("wl-surface-801")
+                    .is_some()
+            );
 
             bootstrap
                 .runtime
@@ -5856,13 +5880,15 @@ mod imp {
             assert_eq!(snapshot.runtime.state.tracked_surface_count, 0);
             assert_eq!(snapshot.topology_surface_count, 0);
             assert!(snapshot.topology.surfaces.is_empty());
-            assert!(bootstrap
-                .controller
-                .app()
-                .session()
-                .topology()
-                .surface("wl-surface-801")
-                .is_none());
+            assert!(
+                bootstrap
+                    .controller
+                    .app()
+                    .session()
+                    .topology()
+                    .surface("wl-surface-801")
+                    .is_none()
+            );
         }
 
         #[test]
@@ -5923,14 +5949,16 @@ mod imp {
                 .find(|surface| surface.id == "wl-surface-901")
                 .unwrap();
             assert!(!surface.mapped);
-            assert!(unmapped
-                .topology
-                .outputs
-                .iter()
-                .find(|output| output.snapshot.id == OutputId::from("out-1"))
-                .unwrap()
-                .mapped_surface_ids
-                .is_empty());
+            assert!(
+                unmapped
+                    .topology
+                    .outputs
+                    .iter()
+                    .find(|output| output.snapshot.id == OutputId::from("out-1"))
+                    .unwrap()
+                    .mapped_surface_ids
+                    .is_empty()
+            );
             assert_eq!(unmapped.runtime.state.known_surfaces.toplevels.len(), 1);
 
             bootstrap.runtime.state_mut().track_test_surface_snapshot(
@@ -6031,16 +6059,20 @@ mod imp {
             assert_eq!(bootstrap.apply_pending_discovery_events().unwrap(), 1);
 
             let removed = bootstrap.snapshot();
-            assert!(removed
-                .topology
-                .surfaces
-                .iter()
-                .all(|surface| surface.id != "wl-surface-1001"));
-            assert!(removed
-                .topology
-                .surfaces
-                .iter()
-                .all(|surface| surface.id != "wl-surface-1002"));
+            assert!(
+                removed
+                    .topology
+                    .surfaces
+                    .iter()
+                    .all(|surface| surface.id != "wl-surface-1001")
+            );
+            assert!(
+                removed
+                    .topology
+                    .surfaces
+                    .iter()
+                    .all(|surface| surface.id != "wl-surface-1002")
+            );
         }
 
         #[test]
@@ -6236,11 +6268,13 @@ mod imp {
                     source_kind: "data-device".into(),
                 })
             );
-            assert!(snapshot
-                .state
-                .clipboard_selection
-                .focused_client_id
-                .is_none());
+            assert!(
+                snapshot
+                    .state
+                    .clipboard_selection
+                    .focused_client_id
+                    .is_none()
+            );
         }
 
         #[test]
@@ -6675,11 +6709,13 @@ mod imp {
             let snapshot = bootstrap.snapshot();
 
             assert_eq!(applied, 1);
-            assert!(snapshot
-                .topology
-                .outputs
-                .iter()
-                .all(|output| output.snapshot.id != OutputId::from("out-2")));
+            assert!(
+                snapshot
+                    .topology
+                    .outputs
+                    .iter()
+                    .all(|output| output.snapshot.id != OutputId::from("out-2"))
+            );
             assert_eq!(
                 snapshot.topology.active_output_id,
                 Some(OutputId::from("out-1"))
@@ -6917,11 +6953,11 @@ mod imp {
 
 #[cfg(feature = "smithay-winit")]
 pub use imp::{
-    bootstrap_winit, bootstrap_winit_controller, bootstrap_winit_controller_with_options,
-    bootstrap_winit_with_options, initialize_smithay_workspace_export, initialize_winit_controller,
     SmithayBootstrap, SmithayBootstrapSnapshot, SmithayBootstrapTopologySnapshot,
     SmithayRuntimeError, SmithayRuntimeSnapshot, SmithayStartupReport, SmithayWinitOptions,
-    SmithayWinitRuntime,
+    SmithayWinitRuntime, bootstrap_winit, bootstrap_winit_controller,
+    bootstrap_winit_controller_with_options, bootstrap_winit_with_options,
+    initialize_smithay_workspace_export, initialize_winit_controller,
 };
 
 #[cfg(not(feature = "smithay-winit"))]
