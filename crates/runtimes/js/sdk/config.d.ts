@@ -129,7 +129,7 @@ export interface InputsConfig {
 export interface RuleConfig {
   app_id?: string;
   title?: string;
-  tags?: number | string | Array<number | string>;
+  workspaces?: number | string | Array<number | string>;
   floating?: boolean;
   fullscreen?: boolean;
   monitor?: number | string;
@@ -157,12 +157,12 @@ export interface OptionsConfig {
 
 export interface LayoutsConfig {
   default?: string;
-  per_tag?: string[];
+  per_workspace?: string[];
   per_monitor?: Record<string, string>;
 }
 
 export interface SpiderWMConfig {
-  tags?: string[];
+  workspaces?: string[];
   options?: OptionsConfig;
   layouts?: LayoutsConfig;
   outputs?: OutputsConfig;

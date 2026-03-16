@@ -270,10 +270,10 @@ mod tests {
             server.query_response(
                 client_id,
                 Some("req-3".into()),
-                QueryResponse::TagNames(vec!["1".into()]),
+                QueryResponse::WorkspaceNames(vec!["1".into()]),
             ),
             Ok(
-                IpcEnvelope::new(IpcServerMessage::Query(QueryResponse::TagNames(vec![
+                IpcEnvelope::new(IpcServerMessage::Query(QueryResponse::WorkspaceNames(vec![
                     "1".into()
                 ],)))
                 .with_request_id("req-3")
@@ -388,7 +388,7 @@ mod tests {
 
         crate::send_request(
             &mut client,
-            &IpcEnvelope::new(IpcClientMessage::Query(QueryRequest::TagNames))
+            &IpcEnvelope::new(IpcClientMessage::Query(QueryRequest::WorkspaceNames))
                 .with_request_id("req-10"),
         )
         .unwrap();
@@ -399,10 +399,10 @@ mod tests {
                     match result {
                         IpcServerHandleResult::Query {
                             request_id,
-                            query: QueryRequest::TagNames,
+                            query: QueryRequest::WorkspaceNames,
                             ..
                         } => Ok::<IpcResponse, IpcServeError>(
-                            IpcEnvelope::new(IpcServerMessage::Query(QueryResponse::TagNames(
+                            IpcEnvelope::new(IpcServerMessage::Query(QueryResponse::WorkspaceNames(
                                 vec!["1".into(), "2".into()],
                             )))
                             .with_request_id(request_id.unwrap_or_default()),
@@ -414,7 +414,7 @@ mod tests {
 
         assert_eq!(
             response,
-            IpcEnvelope::new(IpcServerMessage::Query(QueryResponse::TagNames(vec![
+            IpcEnvelope::new(IpcServerMessage::Query(QueryResponse::WorkspaceNames(vec![
                 "1".into(),
                 "2".into(),
             ])))

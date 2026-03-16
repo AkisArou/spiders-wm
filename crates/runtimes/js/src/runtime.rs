@@ -559,7 +559,7 @@ mod tests {
             id: WorkspaceId::from("ws-1"),
             name: "1".into(),
             output_id: Some(OutputId::from("out-1")),
-            active_tags: vec!["1".into()],
+            active_workspaces: vec!["1".into()],
             focused: true,
             visible: true,
             effective_layout: Some(LayoutRef {
@@ -588,7 +588,7 @@ mod tests {
             workspaces: vec![workspace()],
             windows: vec![],
             visible_window_ids: vec![],
-            tag_names: vec!["1".into()],
+            workspace_names: vec!["1".into()],
         }
     }
 

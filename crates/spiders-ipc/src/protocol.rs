@@ -8,7 +8,7 @@ pub enum IpcSubscriptionTopic {
     All,
     Focus,
     Windows,
-    Tags,
+    Workspaces,
     Layout,
     Config,
 }
@@ -125,11 +125,11 @@ pub fn infer_topics(event: &CompositorEvent) -> Vec<IpcSubscriptionTopic> {
         CompositorEvent::FocusChange { .. } => vec![IpcSubscriptionTopic::Focus],
         CompositorEvent::WindowCreated { .. }
         | CompositorEvent::WindowDestroyed { .. }
-        | CompositorEvent::WindowTagChange { .. }
+        | CompositorEvent::WindowWorkspaceChange { .. }
         | CompositorEvent::WindowFloatingChange { .. }
         | CompositorEvent::WindowGeometryChange { .. }
         | CompositorEvent::WindowFullscreenChange { .. } => vec![IpcSubscriptionTopic::Windows],
-        CompositorEvent::TagChange { .. } => vec![IpcSubscriptionTopic::Tags],
+        CompositorEvent::WorkspaceChange { .. } => vec![IpcSubscriptionTopic::Workspaces],
         CompositorEvent::LayoutChange { .. } => vec![IpcSubscriptionTopic::Layout],
         CompositorEvent::ConfigReloaded => vec![IpcSubscriptionTopic::Config],
     }
@@ -257,7 +257,7 @@ mod tests {
                 urgent: false,
                 workspace_id: None,
                 output_id: Some(OutputId::from("out-1")),
-                tags: vec!["1".into()],
+                workspaces: vec!["1".into()],
             },
         }))
         .with_request_id("sub-1");

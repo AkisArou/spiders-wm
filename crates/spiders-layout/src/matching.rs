@@ -163,7 +163,7 @@ mod tests {
             urgent: false,
             output_id: Some(OutputId::from("HDMI-A-1")),
             workspace_id: Some(WorkspaceId::from("1")),
-            tags: vec!["1".into()],
+            workspaces: vec!["1".into()],
         }
     }
 

@@ -2,8 +2,7 @@
 resolver = "2"
 members = [
   "crates/spiders-cli",
-  "crates/spiders-compositor",
-  "crates/spiders-config",
+    "crates/spiders-config",
   "crates/spiders-effects",
   "crates/spiders-ipc",
   "crates/spiders-layout",

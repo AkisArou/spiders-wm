@@ -19,8 +19,8 @@ pub enum WmStateError {
     WorkspaceNotFound(WorkspaceId),
     #[error("window not found: {0}")]
     WindowNotFound(WindowId),
-    #[error("tag '{tag}' not found on output {output_id}")]
-    TagNotFound { output_id: OutputId, tag: String },
+    #[error("workspace index {workspace} not found on output {output_id}")]
+    WorkspaceNameNotFound { output_id: OutputId, workspace: u8 },
     #[error("workspace {workspace_id} cannot be assigned to missing output {output_id}")]
     InvalidWorkspaceAssignment {
         workspace_id: WorkspaceId,
@@ -147,30 +147,34 @@ impl WmState {
         Ok(self.focus_change_event())
     }
 
-    pub fn view_tag_on_output(
+    pub fn view_workspace_on_output(
         &mut self,
         output_id: &OutputId,
-        tag: &str,
+        workspace_index: u8,
     ) -> Result<Vec<CompositorEvent>, WmStateError> {
+        let workspace_name = workspace_index.to_string();
         let workspace = self
             .snapshot
             .workspaces
             .iter()
             .find(|workspace| {
                 workspace.output_id.as_ref() == Some(output_id)
-                    && workspace.active_tags.iter().any(|active| active == tag)
+                    && workspace
+                        .active_workspaces
+                        .iter()
+                        .any(|active| active == &workspace_name)
             })
             .cloned()
-            .ok_or_else(|| WmStateError::TagNotFound {
+            .ok_or_else(|| WmStateError::WorkspaceNameNotFound {
                 output_id: output_id.clone(),
-                tag: tag.to_owned(),
+                workspace: workspace_index,
             })?;
 
         self.select_workspace(&workspace.id)?;
 
-        let mut events = vec![CompositorEvent::TagChange {
+        let mut events = vec![CompositorEvent::WorkspaceChange {
             workspace_id: Some(workspace.id.clone()),
-            active_tags: workspace.active_tags.clone(),
+            active_workspaces: workspace.active_workspaces.clone(),
         }];
 
         if self.snapshot.focused_window_id.is_none() {
@@ -216,17 +220,18 @@ impl WmState {
             .ok_or_else(|| WmStateError::WorkspaceNotFound(workspace_id.clone()))
     }
 
-    pub fn toggle_tag_on_current_output(
+    pub fn toggle_workspace_on_current_output(
         &mut self,
-        tag: &str,
+        workspace_index: u8,
     ) -> Result<Vec<CompositorEvent>, WmStateError> {
+        let workspace_name = workspace_index.to_string();
         let output_id = self.current_output_id()?.clone();
         let current_workspace = self.current_workspace()?.clone();
 
         if current_workspace
-            .active_tags
+            .active_workspaces
             .iter()
-            .any(|active| active == tag)
+            .any(|active| active == &workspace_name)
         {
             return Ok(Vec::new());
         }
@@ -237,19 +242,22 @@ impl WmState {
             .iter()
             .find(|workspace| {
                 workspace.output_id.as_ref() == Some(&output_id)
-                    && workspace.active_tags.iter().any(|active| active == tag)
+                    && workspace
+                        .active_workspaces
+                        .iter()
+                        .any(|active| active == &workspace_name)
             })
             .cloned()
-            .ok_or_else(|| WmStateError::TagNotFound {
+            .ok_or_else(|| WmStateError::WorkspaceNameNotFound {
                 output_id: output_id.clone(),
-                tag: tag.to_owned(),
+                workspace: workspace_index,
             })?;
 
         self.select_workspace(&workspace.id)?;
 
-        let mut events = vec![CompositorEvent::TagChange {
+        let mut events = vec![CompositorEvent::WorkspaceChange {
             workspace_id: Some(workspace.id.clone()),
-            active_tags: workspace.active_tags.clone(),
+            active_workspaces: workspace.active_workspaces.clone(),
         }];
 
         if self.snapshot.focused_window_id.is_none() {
@@ -266,9 +274,9 @@ impl WmState {
         self.select_workspace(workspace_id)?;
 
         let workspace = self.workspace_by_id(workspace_id)?.clone();
-        let mut events = vec![CompositorEvent::TagChange {
+        let mut events = vec![CompositorEvent::WorkspaceChange {
             workspace_id: Some(workspace.id.clone()),
-            active_tags: workspace.active_tags.clone(),
+            active_workspaces: workspace.active_workspaces.clone(),
         }];
 
         events.push(self.focus_change_event());
@@ -336,9 +344,9 @@ impl WmState {
         self.reconcile_focus();
 
         let workspace = self.workspace_by_id(workspace_id)?.clone();
-        let mut events = vec![CompositorEvent::TagChange {
+        let mut events = vec![CompositorEvent::WorkspaceChange {
             workspace_id: Some(workspace.id.clone()),
-            active_tags: workspace.active_tags.clone(),
+            active_workspaces: workspace.active_workspaces.clone(),
         }];
 
         if should_activate {
@@ -735,7 +743,11 @@ impl WmState {
         }
     }
 
-    pub fn tag_focused_window(&mut self, tag: &str) -> Result<CompositorEvent, WmStateError> {
+    pub fn assign_focused_window_to_workspace(
+        &mut self,
+        workspace_index: u8,
+    ) -> Result<CompositorEvent, WmStateError> {
+        let workspace_name = workspace_index.to_string();
         let window_id = self.focused_window_id()?.clone();
         let window = self
             .snapshot
@@ -743,17 +755,18 @@ impl WmState {
             .iter_mut()
             .find(|window| window.id == window_id)
             .ok_or_else(|| WmStateError::WindowNotFound(window_id.clone()))?;
-        window.tags = vec![tag.to_owned()];
-        Ok(CompositorEvent::WindowTagChange {
+        window.workspaces = vec![workspace_name];
+        Ok(CompositorEvent::WindowWorkspaceChange {
             window_id,
-            tags: window.tags.clone(),
+            workspaces: window.workspaces.clone(),
         })
     }
 
-    pub fn toggle_tag_focused_window(
+    pub fn toggle_assign_focused_window_to_workspace(
         &mut self,
-        tag: &str,
+        workspace_index: u8,
     ) -> Result<CompositorEvent, WmStateError> {
+        let workspace_name = workspace_index.to_string();
         let window_id = self.focused_window_id()?.clone();
         let window = self
             .snapshot
@@ -761,14 +774,18 @@ impl WmState {
             .iter_mut()
             .find(|window| window.id == window_id)
             .ok_or_else(|| WmStateError::WindowNotFound(window_id.clone()))?;
-        if let Some(index) = window.tags.iter().position(|candidate| candidate == tag) {
-            window.tags.remove(index);
+        if let Some(index) = window
+            .workspaces
+            .iter()
+            .position(|candidate| candidate == &workspace_name)
+        {
+            window.workspaces.remove(index);
         } else {
-            window.tags.push(tag.to_owned());
+            window.workspaces.push(workspace_name);
         }
-        Ok(CompositorEvent::WindowTagChange {
+        Ok(CompositorEvent::WindowWorkspaceChange {
             window_id,
-            tags: window.tags.clone(),
+            workspaces: window.workspaces.clone(),
         })
     }
 
@@ -975,7 +992,7 @@ mod tests {
                     id: WorkspaceId::from("ws-1"),
                     name: "1".into(),
                     output_id: Some(OutputId::from("out-1")),
-                    active_tags: vec!["1".into()],
+                    active_workspaces: vec!["1".into()],
                     focused: true,
                     visible: true,
                     effective_layout: Some(LayoutRef {
@@ -986,7 +1003,7 @@ mod tests {
                     id: WorkspaceId::from("ws-2"),
                     name: "2".into(),
                     output_id: Some(OutputId::from("out-1")),
-                    active_tags: vec!["2".into()],
+                    active_workspaces: vec!["2".into()],
                     focused: false,
                     visible: false,
                     effective_layout: Some(LayoutRef {
@@ -1012,7 +1029,7 @@ mod tests {
                     urgent: false,
                     output_id: Some(OutputId::from("out-1")),
                     workspace_id: Some(WorkspaceId::from("ws-1")),
-                    tags: vec!["1".into()],
+                    workspaces: vec!["1".into()],
                 },
                 WindowSnapshot {
                     id: WindowId::from("w2"),
@@ -1031,11 +1048,11 @@ mod tests {
                     urgent: false,
                     output_id: Some(OutputId::from("out-1")),
                     workspace_id: Some(WorkspaceId::from("ws-2")),
-                    tags: vec!["2".into()],
+                    workspaces: vec!["2".into()],
                 },
             ],
             visible_window_ids: vec![WindowId::from("w1")],
-            tag_names: vec!["1".into(), "2".into()],
+            workspace_names: vec!["1".into(), "2".into()],
         }
     }
 
@@ -1072,7 +1089,7 @@ mod tests {
         let mut state = WmState::from_snapshot(state());
 
         let events = state
-            .view_tag_on_output(&OutputId::from("out-1"), "2")
+            .view_workspace_on_output(&OutputId::from("out-1"), 2)
             .unwrap();
 
         assert_eq!(
@@ -1086,7 +1103,7 @@ mod tests {
         assert_eq!(state.snapshot().focused_window_id, None);
         assert!(events.iter().any(|event| matches!(
             event,
-            CompositorEvent::TagChange {
+            CompositorEvent::WorkspaceChange {
                 workspace_id: Some(id),
                 ..
             } if id == &WorkspaceId::from("ws-2")
@@ -1113,17 +1130,15 @@ mod tests {
             urgent: false,
             output_id: Some(OutputId::from("out-1")),
             workspace_id: Some(WorkspaceId::from("ws-1")),
-            tags: vec!["1".into()],
+            workspaces: vec!["1".into()],
         });
 
         assert!(matches!(event, CompositorEvent::WindowCreated { .. }));
-        assert!(
-            state
-                .snapshot()
-                .windows
-                .iter()
-                .any(|window| window.id == WindowId::from("w3") && window.mapped)
-        );
+        assert!(state
+            .snapshot()
+            .windows
+            .iter()
+            .any(|window| window.id == WindowId::from("w3") && window.mapped));
 
         let events = state.destroy_window(&WindowId::from("w3")).unwrap();
 
@@ -1131,13 +1146,11 @@ mod tests {
             event,
             CompositorEvent::WindowDestroyed { window_id } if window_id == &WindowId::from("w3")
         )));
-        assert!(
-            state
-                .snapshot()
-                .windows
-                .iter()
-                .all(|window| window.id != WindowId::from("w3"))
-        );
+        assert!(state
+            .snapshot()
+            .windows
+            .iter()
+            .all(|window| window.id != WindowId::from("w3")));
     }
 
     #[test]
@@ -1168,10 +1181,10 @@ mod tests {
     }
 
     #[test]
-    fn wm_state_toggle_tag_on_current_output_is_noop_for_visible_tag() {
+    fn wm_state_toggle_workspace_on_current_output_is_noop_for_visible_tag() {
         let mut state = WmState::from_snapshot(state());
 
-        let events = state.toggle_tag_on_current_output("1").unwrap();
+        let events = state.toggle_workspace_on_current_output(1).unwrap();
 
         assert!(events.is_empty());
         assert_eq!(
@@ -1181,14 +1194,14 @@ mod tests {
     }
 
     #[test]
-    fn wm_state_toggle_tag_on_current_output_switches_to_hidden_tag() {
+    fn wm_state_toggle_workspace_on_current_output_switches_to_hidden_tag() {
         let mut state = WmState::from_snapshot(state());
 
-        let events = state.toggle_tag_on_current_output("2").unwrap();
+        let events = state.toggle_workspace_on_current_output(2).unwrap();
 
         assert!(events.iter().any(|event| matches!(
             event,
-            CompositorEvent::TagChange {
+            CompositorEvent::WorkspaceChange {
                 workspace_id: Some(id),
                 ..
             } if id == &WorkspaceId::from("ws-2")
@@ -1255,7 +1268,7 @@ mod tests {
         );
         assert!(events.iter().any(|event| matches!(
             event,
-            CompositorEvent::TagChange {
+            CompositorEvent::WorkspaceChange {
                 workspace_id: Some(id),
                 ..
             } if id == &WorkspaceId::from("ws-2")
@@ -1422,7 +1435,7 @@ mod tests {
             id: WorkspaceId::from("ws-2"),
             name: "2".into(),
             output_id: Some(OutputId::from("out-2")),
-            active_tags: vec!["2".into()],
+            active_workspaces: vec!["2".into()],
             focused: false,
             visible: true,
             effective_layout: Some(LayoutRef {
@@ -1475,7 +1488,7 @@ mod tests {
             urgent: false,
             output_id: Some(OutputId::from("out-1")),
             workspace_id: Some(WorkspaceId::from("ws-1")),
-            tags: vec!["1".into()],
+            workspaces: vec!["1".into()],
         });
         snapshot.visible_window_ids = vec![WindowId::from("w1"), WindowId::from("w3")];
         let mut state = WmState::from_snapshot(snapshot);

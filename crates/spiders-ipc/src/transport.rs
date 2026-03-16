@@ -162,7 +162,7 @@ mod tests {
         let (server, _) = listener.accept().unwrap();
 
         let response = IpcEnvelope::new(IpcServerMessage::Query(
-            spiders_shared::api::QueryResponse::TagNames(vec!["1".into()]),
+            spiders_shared::api::QueryResponse::WorkspaceNames(vec!["1".into()]),
         ));
 
         let line = encode_response_line(&response).unwrap();

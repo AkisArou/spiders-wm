@@ -1,0 +1,226 @@
+# Config
+
+`spiders-wm` loads configuration from JavaScript or TypeScript and exposes a
+small typed SDK under `spiders-wm/*`.
+
+## Config Files
+
+Authored config is discovered in this order:
+
+- `~/.config/spiders-wm/config.ts`
+- `~/.config/spiders-wm/config.js`
+
+Prepared runtime output is written to:
+
+- `~/.cache/spiders-wm/config.js`
+
+You can override discovery with:
+
+- `SPIDERS_WM_HOME`
+- `SPIDERS_WM_CONFIG_DIR`
+- `SPIDERS_WM_CACHE_DIR`
+- `SPIDERS_WM_AUTHORED_CONFIG`
+
+## Top-Level Keys
+
+`SpiderWMConfig` supports:
+
+- `workspaces?: string[]`
+- `options?: OptionsConfig`
+- `layouts?: LayoutsConfig`
+- `outputs?: OutputsConfig`
+- `inputs?: InputsConfig`
+- `rules?: RulesConfig`
+- `bindings?: BindingsConfig`
+- `autostart?: string[]`
+- `autostart_once?: string[]`
+
+## Minimal Example
+
+```ts
+import type { SpiderWMConfig } from "spiders-wm/config";
+
+export default {
+  workspaces: ["1", "2", "3", "4", "5"],
+} satisfies SpiderWMConfig;
+```
+
+## Typical Example
+
+```ts
+import type { SpiderWMConfig } from "spiders-wm/config";
+
+import { bindings } from "./config/bindings";
+import { inputs } from "./config/inputs";
+import { layouts } from "./config/layouts";
+
+export default {
+  workspaces: ["1", "2", "3", "4", "5", "6", "7", "8", "9"],
+  options: {
+    sloppyfocus: true,
+  },
+  inputs,
+  layouts,
+  bindings,
+  autostart_once: ["waybar"],
+} satisfies SpiderWMConfig;
+```
+
+## Options
+
+`options` currently supports:
+
+- `sloppyfocus?: boolean`
+- `attach?: "after" | "before"`
+- `layouts_dir?: string`
+- `source_layouts_dir?: string`
+- `snapshot_fadeout_ms?: number`
+
+## Layout Selection
+
+`layouts` is a selection object, not the authored JSX tree itself.
+
+Supported keys:
+
+- `default?: string`
+- `per_workspace?: string[]`
+- `per_monitor?: Record<string, string>`
+
+Example:
+
+```ts
+import type { LayoutsConfig } from "spiders-wm/config";
+
+export const layouts = {
+  default: "master-stack",
+  per_workspace: ["master-stack", "columns", "columns"],
+  per_monitor: {
+    "DP-1": "columns",
+  },
+} satisfies LayoutsConfig;
+```
+
+## Rules
+
+Each rule can match and assign window behavior.
+
+Supported rule fields:
+
+- `app_id?: string`
+- `title?: string`
+- `workspaces?: string | number | Array<string | number>`
+- `floating?: boolean`
+- `fullscreen?: boolean`
+- `monitor?: string | number`
+
+Example:
+
+```ts
+rules: [
+  { app_id: "pavucontrol", floating: true },
+  { app_id: "slack", workspaces: "3" },
+]
+```
+
+## Bindings
+
+Bindings are declarative entries with a trigger and an action descriptor.
+
+```ts
+import * as actions from "spiders-wm/actions";
+import type { BindingsConfig } from "spiders-wm/config";
+
+export const bindings = {
+  mod: "super",
+  entries: [
+    { bind: ["mod", "Return"], action: actions.spawn("foot") },
+    { bind: ["mod", "h"], action: actions.focus_dir("left") },
+    { bind: ["mod", "space"], action: actions.cycle_layout() },
+    { bind: ["mod", "1"], action: actions.view_workspace(1) },
+    { bind: ["mod", "shift", "1"], action: actions.assign_workspace(1) },
+  ],
+} satisfies BindingsConfig;
+```
+
+Binding keys use XKB keysym names. `mod` is an alias resolved from `bindings.mod`.
+
+## Supported Actions
+
+`spiders-wm/actions` currently exposes:
+
+- `spawn(command)`
+- `reload_config()`
+- `focus_next()` and `focus_prev()`
+- `focus_dir(direction)`
+- `swap_dir(direction)`
+- `resize_dir(direction)`
+- `resize_tiled(direction)`
+- `focus_mon_left()` and `focus_mon_right()`
+- `send_mon_left()` and `send_mon_right()`
+- `view_workspace(index)`
+- `toggle_view_workspace(index)`
+- `assign_workspace(index)`
+- `toggle_workspace(index)`
+- `toggle_floating()`
+- `toggle_fullscreen()`
+- `set_layout(name)`
+- `cycle_layout()`
+- `move(direction)`
+- `resize(direction)`
+- `kill_client()`
+
+Workspace actions accept shortcut numbers `1` through `9` and resolve them to
+`workspaces[index - 1]` from your config.
+
+## Inputs
+
+`inputs` is a map keyed by:
+
+- `"*"`
+- `"type:keyboard"`
+- `"type:pointer"`
+- `"type:touchpad"`
+- `"type:touch"`
+- an exact device identifier string
+
+Supported input fields include:
+
+- keyboard: `xkb_layout`, `xkb_model`, `xkb_variant`, `xkb_options`, `repeat_rate`, `repeat_delay`
+- pointer and touchpad: `accel_profile`, `pointer_accel`, `left_handed`, `middle_emulation`
+- touchpad extras: `natural_scroll`, `tap`, `drag_lock`, `dwt`
+
+## Outputs
+
+`outputs` is a map keyed by output name or description.
+
+Supported fields:
+
+- `mode?: string`
+- `scale?: number`
+- `transform?: "normal" | "90" | "180" | "270" | "flipped" | "flipped-90" | "flipped-180" | "flipped-270"`
+- `position?: string`
+- `adaptive_sync?: boolean`
+- `enabled?: boolean`
+
+## Runtime API From Config
+
+`spiders-wm/api` exposes:
+
+- `events.on`, `events.once`, `events.off`
+- `wm.spawn`, `wm.reloadConfig`, `wm.setLayout`, `wm.cycleLayout`
+- `wm.viewWorkspace`, `wm.toggleViewWorkspace`
+- `wm.toggleFloating`, `wm.toggleFullscreen`
+- `wm.focusDirection`, `wm.closeWindow`
+- `query.getState`, `query.getFocusedWindow`, `query.getCurrentMonitor`, `query.getCurrentWorkspace`
+
+Event names are:
+
+- `focus-change`
+- `window-created`
+- `window-destroyed`
+- `window-workspace-change`
+- `window-floating-change`
+- `window-fullscreen-change`
+- `workspace-change`
+- `layout-change`
+- `config-reloaded`

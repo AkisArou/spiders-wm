@@ -651,14 +651,14 @@ mod tests {
                 id: WorkspaceId::from("ws-1"),
                 name: "1".into(),
                 output_id: Some(OutputId::from("out-1")),
-                active_tags: vec!["1".into()],
+                active_workspaces: vec!["1".into()],
                 focused: true,
                 visible: true,
                 effective_layout: None,
             }],
             windows: vec![],
             visible_window_ids: vec![],
-            tag_names: vec!["1".into()],
+            workspace_names: vec!["1".into()],
         }
     }
 
@@ -825,13 +825,11 @@ mod tests {
             topology.surface("layer-1").unwrap().output_id,
             Some(OutputId::from("out-2"))
         );
-        assert!(
-            topology
-                .output(&OutputId::from("out-1"))
-                .unwrap()
-                .mapped_surface_ids
-                .is_empty()
-        );
+        assert!(topology
+            .output(&OutputId::from("out-1"))
+            .unwrap()
+            .mapped_surface_ids
+            .is_empty());
         assert_eq!(
             topology
                 .output(&OutputId::from("out-2"))
@@ -961,7 +959,7 @@ mod tests {
             focused_window_id: None,
             current_output_id: None,
             current_workspace_id: None,
-            tag_names: Vec::new(),
+            workspace_names: Vec::new(),
         });
 
         topology.register_output(OutputSnapshot {
@@ -1012,13 +1010,11 @@ mod tests {
         topology.unregister_surface("popup-1").unwrap();
 
         assert!(topology.surface("popup-1").is_none());
-        assert!(
-            topology
-                .output(&OutputId::from("out-1"))
-                .unwrap()
-                .mapped_surface_ids
-                .is_empty()
-        );
+        assert!(topology
+            .output(&OutputId::from("out-1"))
+            .unwrap()
+            .mapped_surface_ids
+            .is_empty());
     }
 
     #[test]
@@ -1108,13 +1104,11 @@ mod tests {
         topology.unmap_surface("popup-1").unwrap();
 
         assert!(!topology.surface("popup-1").unwrap().mapped);
-        assert!(
-            topology
-                .output(&OutputId::from("out-1"))
-                .unwrap()
-                .mapped_surface_ids
-                .is_empty()
-        );
+        assert!(topology
+            .output(&OutputId::from("out-1"))
+            .unwrap()
+            .mapped_surface_ids
+            .is_empty());
     }
 
     #[test]
@@ -1172,13 +1166,11 @@ mod tests {
 
         assert!(!topology.surface("window-1").unwrap().mapped);
         assert!(!topology.surface("popup-1").unwrap().mapped);
-        assert!(
-            topology
-                .output(&OutputId::from("out-1"))
-                .unwrap()
-                .mapped_surface_ids
-                .is_empty()
-        );
+        assert!(topology
+            .output(&OutputId::from("out-1"))
+            .unwrap()
+            .mapped_surface_ids
+            .is_empty());
     }
 
     #[test]
@@ -1204,12 +1196,10 @@ mod tests {
 
         assert!(topology.surface("window-1").is_none());
         assert!(topology.surface("popup-1").is_none());
-        assert!(
-            topology
-                .output(&OutputId::from("out-1"))
-                .unwrap()
-                .mapped_surface_ids
-                .is_empty()
-        );
+        assert!(topology
+            .output(&OutputId::from("out-1"))
+            .unwrap()
+            .mapped_surface_ids
+            .is_empty());
     }
 }

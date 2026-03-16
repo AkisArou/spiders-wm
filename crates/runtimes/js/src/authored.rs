@@ -629,7 +629,7 @@ fn decode_config_value(path: &Path, value: &Value) -> Result<Config, LayoutConfi
     let root = expect_object(path, value, "root")?;
 
     Ok(Config {
-        tags: decode_tags(root.get("tags"), path)?,
+        workspaces: decode_workspaces(root.get("workspaces"), path)?,
         options: decode_options(root.get("options"), path)?,
         inputs: decode_inputs(root.get("inputs"), path)?,
         outputs: decode_outputs(root.get("outputs"), path)?,
@@ -669,7 +669,7 @@ fn validate_layout_selection(
     }
 
     for layout in selection
-        .per_tag
+        .per_workspace
         .iter()
         .chain(selection.per_monitor.values())
     {
@@ -686,8 +686,8 @@ fn validate_layout_selection(
     Ok(())
 }
 
-fn decode_tags(value: Option<&Value>, path: &Path) -> Result<Vec<String>, LayoutConfigError> {
-    decode_string_array(value, path, "root.tags")
+fn decode_workspaces(value: Option<&Value>, path: &Path) -> Result<Vec<String>, LayoutConfigError> {
+    decode_string_array(value, path, "root.workspaces")
 }
 
 fn decode_options(value: Option<&Value>, path: &Path) -> Result<ConfigOptions, LayoutConfigError> {
@@ -826,7 +826,7 @@ fn decode_layout_selection(
 
     Ok(LayoutSelectionConfig {
         default: decode_optional_string(object.get("default"), path, "root.layouts.default")?,
-        per_tag: decode_string_array(object.get("per_tag"), path, "root.layouts.per_tag")?,
+        per_workspace: decode_string_array(object.get("per_workspace"), path, "root.layouts.per_workspace")?,
         per_monitor,
     })
 }
@@ -842,7 +842,7 @@ fn decode_rules(value: Option<&Value>, path: &Path) -> Result<Vec<WindowRule>, L
         rules.push(WindowRule {
             app_id: decode_optional_string(object.get("app_id"), path, "rule.app_id")?,
             title: decode_optional_string(object.get("title"), path, "rule.title")?,
-            tags: decode_rule_tags(object.get("tags"), path)?,
+            workspaces: decode_rule_workspaces(object.get("workspaces"), path)?,
             floating: decode_optional_bool(object.get("floating"), path, "rule.floating")?,
             fullscreen: decode_optional_bool(object.get("fullscreen"), path, "rule.fullscreen")?,
             monitor: decode_optional_stringish(object.get("monitor"), path, "rule.monitor")?,
@@ -915,11 +915,11 @@ fn decode_action_descriptor(
             name: expect_string(path, arg, field)?.to_owned(),
         }),
         "cycle_layout" => Ok(WmAction::CycleLayout { direction: None }),
-        "view_tag" => Ok(WmAction::ViewTag {
-            tag: decode_tag_string(path, arg, field)?,
+        "view_workspace" => Ok(WmAction::ViewWorkspace {
+            workspace: decode_workspace_shortcut(path, arg, field)?,
         }),
-        "toggle_view_tag" => Ok(WmAction::ToggleViewTag {
-            tag: decode_tag_string(path, arg, field)?,
+        "toggle_view_workspace" => Ok(WmAction::ToggleViewWorkspace {
+            workspace: decode_workspace_shortcut(path, arg, field)?,
         }),
         "focus_mon_left" => Ok(WmAction::FocusMonitorLeft),
         "focus_mon_right" => Ok(WmAction::FocusMonitorRight),
@@ -945,11 +945,11 @@ fn decode_action_descriptor(
         "resize" => Ok(WmAction::ResizeDirection {
             direction: decode_focus_direction(path, arg, field)?,
         }),
-        "tag" => Ok(WmAction::TagFocusedWindow {
-            tag: decode_tag_string(path, arg, field)?,
+        "assign_workspace" => Ok(WmAction::AssignFocusedWindowToWorkspace {
+            workspace: decode_workspace_shortcut(path, arg, field)?,
         }),
-        "toggle_tag" => Ok(WmAction::ToggleTagFocusedWindow {
-            tag: decode_tag_string(path, arg, field)?,
+        "toggle_workspace" => Ok(WmAction::ToggleAssignFocusedWindowToWorkspace {
+            workspace: decode_workspace_shortcut(path, arg, field)?,
         }),
         "kill_client" => Ok(WmAction::CloseFocusedWindow),
         other => Err(LayoutConfigError::DecodeAuthoredConfig {
@@ -976,26 +976,52 @@ fn decode_focus_direction(
     }
 }
 
-fn decode_rule_tags(value: Option<&Value>, path: &Path) -> Result<Vec<String>, LayoutConfigError> {
+fn decode_rule_workspaces(value: Option<&Value>, path: &Path) -> Result<Vec<String>, LayoutConfigError> {
     let Some(value) = value else {
         return Ok(Vec::new());
     };
     match value {
         Value::Array(values) => values
             .iter()
-            .map(|value| decode_tag_string(path, value, "rule.tags"))
+            .map(|value| decode_workspace_string(path, value, "rule.workspaces"))
             .collect(),
-        _ => Ok(vec![decode_tag_string(path, value, "rule.tags")?]),
+        _ => Ok(vec![decode_workspace_string(path, value, "rule.workspaces")?]),
     }
 }
 
-fn decode_tag_string(path: &Path, value: &Value, field: &str) -> Result<String, LayoutConfigError> {
+fn decode_workspace_string(path: &Path, value: &Value, field: &str) -> Result<String, LayoutConfigError> {
     match value {
         Value::String(value) => Ok(value.clone()),
         Value::Number(value) => Ok(value.to_string()),
         _ => Err(LayoutConfigError::DecodeAuthoredConfig {
             path: path.to_path_buf(),
             message: format!("expected string or number at {field}"),
+        }),
+    }
+}
+
+fn decode_workspace_shortcut(path: &Path, value: &Value, field: &str) -> Result<u8, LayoutConfigError> {
+    match value {
+        Value::Number(value) => {
+            let Some(number) = value.as_u64() else {
+                return Err(LayoutConfigError::DecodeAuthoredConfig {
+                    path: path.to_path_buf(),
+                    message: format!("expected integer workspace shortcut at {field}"),
+                });
+            };
+
+            if (1..=9).contains(&number) {
+                Ok(number as u8)
+            } else {
+                Err(LayoutConfigError::DecodeAuthoredConfig {
+                    path: path.to_path_buf(),
+                    message: format!("workspace shortcut must be between 1 and 9 at {field}"),
+                })
+            }
+        }
+        _ => Err(LayoutConfigError::DecodeAuthoredConfig {
+            path: path.to_path_buf(),
+            message: format!("expected numeric workspace shortcut at {field}"),
         }),
     }
 }
@@ -1182,7 +1208,7 @@ mod tests {
                 import { layouts } from "./config/layouts";
 
                 export default {
-                  tags: ["1", "2"],
+                  workspaces: ["1", "2"],
                   options: { sloppyfocus: true },
                   bindings,
                   inputs,
@@ -1225,7 +1251,7 @@ mod tests {
             r#"
                 export const layouts = {
                   default: "master-stack",
-                  per_tag: ["master-stack", "master-stack"],
+                  per_workspace: ["master-stack", "master-stack"],
                   per_monitor: { "eDP-1": "master-stack" },
                 };
             "#,
@@ -1245,7 +1271,7 @@ mod tests {
 
         let config = load_authored_config(root.join("config.ts")).unwrap();
 
-        assert_eq!(config.tags, vec!["1", "2"]);
+        assert_eq!(config.workspaces, vec!["1", "2"]);
         assert_eq!(config.options.sloppyfocus, Some(true));
         assert_eq!(config.bindings.len(), 8);
         assert_eq!(config.bindings[0].trigger, "alt+Return");

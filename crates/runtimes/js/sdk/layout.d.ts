@@ -72,7 +72,7 @@ export interface LayoutContext {
   };
   workspace: {
     name: string;
-    tags?: string[];
+    workspaces?: string[];
     windowCount: number;
   };
   windows: LayoutWindow[];

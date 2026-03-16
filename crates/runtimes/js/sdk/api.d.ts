@@ -6,7 +6,7 @@ export interface WindowInfo {
   fullscreen: boolean;
   mapped: boolean;
   urgent: boolean;
-  tag?: number;
+  workspace?: string;
 }
 
 export interface MonitorInfo {
@@ -25,7 +25,7 @@ export interface MonitorSnapshot extends MonitorInfo {
 }
 
 export interface WorkspaceInfo {
-  activeTags: number[];
+  activeWorkspaces: string[];
   layout: string;
 }
 
@@ -42,9 +42,9 @@ export interface WindowEvent {
   workspace: WorkspaceInfo | null;
 }
 
-export interface WindowTagChangeEvent extends WindowEvent {
-  previousTags: number[];
-  currentTags: number[];
+export interface WindowWorkspaceChangeEvent extends WindowEvent {
+  previousWorkspaces: number[];
+  currentWorkspaces: number[];
 }
 
 export interface WindowBooleanChangeEvent extends WindowEvent {
@@ -63,10 +63,10 @@ export interface SpiderWMEventMap {
   "focus-change": FocusChangeEvent;
   "window-created": WindowEvent;
   "window-destroyed": WindowEvent;
-  "window-tag-change": WindowTagChangeEvent;
+  "window-workspace-change": WindowWorkspaceChangeEvent;
   "window-floating-change": WindowBooleanChangeEvent;
   "window-fullscreen-change": WindowBooleanChangeEvent;
-  "tag-change": WorkspaceEvent;
+  "workspace-change": WorkspaceEvent;
   "layout-change": WorkspaceEvent;
   "config-reloaded": ConfigReloadedEvent;
 }
@@ -98,8 +98,8 @@ export interface SpiderWMApi {
   reloadConfig(): boolean;
   setLayout(layout: string): boolean;
   cycleLayout(direction?: number): boolean;
-  viewTag(tag: number): boolean;
-  toggleViewTag(tag: number): boolean;
+  viewWorkspace(workspace: number): boolean;
+  toggleViewWorkspace(workspace: number): boolean;
   toggleFloating(): boolean;
   toggleFullscreen(): boolean;
   focusDirection(direction: Direction): boolean;
@@ -111,7 +111,7 @@ export interface SpiderWMState {
   currentMonitor: MonitorSnapshot | null;
   currentWorkspace: WorkspaceInfo | null;
   monitors: MonitorSnapshot[];
-  tagNames: string[];
+  workspaceNames: string[];
 }
 
 export interface SpiderWMQueryApi {

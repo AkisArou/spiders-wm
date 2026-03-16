@@ -364,7 +364,7 @@ mod tests {
             urgent: false,
             output_id: None,
             workspace_id: None,
-            tags: vec![],
+            workspaces: vec![],
         }
     }
 

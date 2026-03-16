@@ -69,7 +69,7 @@ pub struct LayoutMonitorContext {
 pub struct LayoutWorkspaceContext {
     pub name: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub tags: Vec<String>,
+    pub workspaces: Vec<String>,
     #[serde(rename = "windowCount")]
     pub window_count: usize,
 }
@@ -95,7 +95,7 @@ pub struct LayoutStateContext {
     pub current_output_id: Option<OutputId>,
     pub current_workspace_id: Option<WorkspaceId>,
     pub visible_window_ids: Vec<WindowId>,
-    pub tag_names: Vec<String>,
+    pub workspace_names: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub selected_layout_name: Option<String>,
 }
@@ -119,7 +119,7 @@ pub struct WindowSnapshot {
     pub urgent: bool,
     pub output_id: Option<OutputId>,
     pub workspace_id: Option<WorkspaceId>,
-    pub tags: Vec<String>,
+    pub workspaces: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -127,7 +127,7 @@ pub struct WorkspaceSnapshot {
     pub id: WorkspaceId,
     pub name: String,
     pub output_id: Option<OutputId>,
-    pub active_tags: Vec<String>,
+    pub active_workspaces: Vec<String>,
     pub focused: bool,
     pub visible: bool,
     pub effective_layout: Option<LayoutRef>,
@@ -158,7 +158,7 @@ pub struct StateSnapshot {
     pub workspaces: Vec<WorkspaceSnapshot>,
     pub windows: Vec<WindowSnapshot>,
     pub visible_window_ids: Vec<WindowId>,
-    pub tag_names: Vec<String>,
+    pub workspace_names: Vec<String>,
 }
 
 impl StateSnapshot {
@@ -251,7 +251,7 @@ impl StateSnapshot {
             },
             workspace: LayoutWorkspaceContext {
                 name: workspace.name.clone(),
-                tags: workspace.active_tags.clone(),
+                workspaces: workspace.active_workspaces.clone(),
                 window_count: windows.len(),
             },
             windows: windows
@@ -279,7 +279,7 @@ impl StateSnapshot {
                 current_output_id: self.current_output_id.clone(),
                 current_workspace_id: self.current_workspace_id.clone(),
                 visible_window_ids: self.visible_window_ids.clone(),
-                tag_names: self.tag_names.clone(),
+                workspace_names: self.workspace_names.clone(),
                 selected_layout_name: selected_layout_name.clone(),
             }),
             workspace_id: workspace.id.clone(),
@@ -316,7 +316,7 @@ mod tests {
                 id: WorkspaceId::from("ws-1"),
                 name: "1".into(),
                 output_id: Some(OutputId::from("out-1")),
-                active_tags: vec!["1".into()],
+                active_workspaces: vec!["1".into()],
                 focused: true,
                 visible: true,
                 effective_layout: Some(LayoutRef {
@@ -325,7 +325,7 @@ mod tests {
             }],
             windows: vec![],
             visible_window_ids: vec![],
-            tag_names: vec!["1".into()],
+            workspace_names: vec!["1".into()],
         };
 
         let workspace = state.current_workspace().unwrap();
@@ -360,7 +360,7 @@ mod tests {
                 id: WorkspaceId::from("ws-1"),
                 name: "1".into(),
                 output_id: Some(OutputId::from("out-1")),
-                active_tags: vec!["1".into()],
+                active_workspaces: vec!["1".into()],
                 focused: true,
                 visible: true,
                 effective_layout: Some(LayoutRef {
@@ -369,7 +369,7 @@ mod tests {
             }],
             windows: vec![],
             visible_window_ids: vec![],
-            tag_names: vec!["1".into()],
+            workspace_names: vec!["1".into()],
         };
         let workspace = state.current_workspace().unwrap();
 
@@ -412,7 +412,7 @@ mod tests {
                 id: WorkspaceId::from("ws-1"),
                 name: "1".into(),
                 output_id: Some(OutputId::from("out-1")),
-                active_tags: vec!["1".into()],
+                active_workspaces: vec!["1".into()],
                 focused: true,
                 visible: true,
                 effective_layout: Some(LayoutRef {
@@ -437,7 +437,7 @@ mod tests {
                     urgent: false,
                     output_id: Some(OutputId::from("out-1")),
                     workspace_id: Some(WorkspaceId::from("ws-1")),
-                    tags: vec!["1".into()],
+                    workspaces: vec!["1".into()],
                 },
                 WindowSnapshot {
                     id: WindowId::from("w2"),
@@ -456,7 +456,7 @@ mod tests {
                     urgent: false,
                     output_id: Some(OutputId::from("out-1")),
                     workspace_id: Some(WorkspaceId::from("ws-1")),
-                    tags: vec!["1".into()],
+                    workspaces: vec!["1".into()],
                 },
                 WindowSnapshot {
                     id: WindowId::from("w3"),
@@ -475,11 +475,11 @@ mod tests {
                     urgent: false,
                     output_id: Some(OutputId::from("out-2")),
                     workspace_id: Some(WorkspaceId::from("ws-2")),
-                    tags: vec!["2".into()],
+                    workspaces: vec!["2".into()],
                 },
             ],
             visible_window_ids: vec![WindowId::from("w1")],
-            tag_names: vec!["1".into(), "2".into()],
+            workspace_names: vec!["1".into(), "2".into()],
         };
 
         let windows = state.windows_for_workspace(state.current_workspace().unwrap());

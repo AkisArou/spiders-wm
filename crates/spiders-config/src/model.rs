@@ -88,7 +88,7 @@ pub struct LayoutSelectionConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub per_tag: Vec<String>,
+    pub per_workspace: Vec<String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub per_monitor: BTreeMap<String, String>,
 }
@@ -100,7 +100,7 @@ pub struct WindowRule {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub tags: Vec<String>,
+    pub workspaces: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub floating: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -118,7 +118,7 @@ pub struct Binding {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Config {
     #[serde(default)]
-    pub tags: Vec<String>,
+    pub workspaces: Vec<String>,
     #[serde(default)]
     pub options: ConfigOptions,
     #[serde(default)]
@@ -332,7 +332,7 @@ mod tests {
             id: WorkspaceId::from("ws-1"),
             name: "1".into(),
             output_id: Some(OutputId::from("out-1")),
-            active_tags: vec!["1".into()],
+            active_workspaces: vec!["1".into()],
             focused: true,
             visible: true,
             effective_layout: Some(LayoutRef {
@@ -453,7 +453,7 @@ mod tests {
             workspaces: vec![workspace("master-stack")],
             windows: vec![],
             visible_window_ids: vec![],
-            tag_names: vec!["1".into()],
+            workspace_names: vec!["1".into()],
         };
 
         let request = config

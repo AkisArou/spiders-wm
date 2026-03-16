@@ -1,7 +1,7 @@
 use std::process::Command;
 use std::{io::Write, os::unix::net::UnixListener};
 
-use spiders_ipc::{IpcEnvelope, IpcServerMessage, IpcSubscriptionTopic, encode_response_line};
+use spiders_ipc::{encode_response_line, IpcEnvelope, IpcServerMessage, IpcSubscriptionTopic};
 use spiders_shared::api::{CompositorEvent, QueryResponse};
 
 fn cli_bin() -> String {
@@ -267,20 +267,16 @@ fn cli_bootstrap_trace_reports_script_success_fixture() {
     assert_eq!(json["applied_events"], 4);
     assert_eq!(json["active_seat"], "seat-1");
     assert_eq!(json["seat_names"][1], "seat-1");
-    assert!(
-        json["surface_ids"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|value| value == "popup-1")
-    );
-    assert!(
-        json["mapped_surface_ids"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|value| value == "window-w1")
-    );
+    assert!(json["surface_ids"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|value| value == "popup-1"));
+    assert!(json["mapped_surface_ids"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|value| value == "window-w1"));
 
     let _ = std::fs::remove_file(prepared_config);
 }
@@ -311,13 +307,11 @@ fn cli_bootstrap_trace_reports_transcript_success_fixture() {
     assert_eq!(json["applied_events"], 3);
     assert_eq!(json["active_seat"], "seat-1");
     assert_eq!(json["startup"]["active_seat"], "seat-1");
-    assert!(
-        json["surface_ids"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|value| value == "popup-1")
-    );
+    assert!(json["surface_ids"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|value| value == "popup-1"));
 
     let _ = std::fs::remove_file(prepared_config);
 }
@@ -365,7 +359,7 @@ fn cli_ipc_query_reports_socket_response_in_json_mode() {
             use std::io::BufRead;
             reader.read_line(&mut request).unwrap();
             let line = encode_response_line(&IpcEnvelope::new(IpcServerMessage::Query(
-                QueryResponse::TagNames(vec!["1".into(), "2".into()]),
+                QueryResponse::WorkspaceNames(vec!["1".into(), "2".into()]),
             )))
             .unwrap();
             stream.write_all(line.as_bytes()).unwrap();
@@ -379,7 +373,7 @@ fn cli_ipc_query_reports_socket_response_in_json_mode() {
         .arg("--socket")
         .arg(&socket_path)
         .arg("--query")
-        .arg("tag-names")
+        .arg("workspace-names")
         .output()
         .unwrap();
 
@@ -388,8 +382,8 @@ fn cli_ipc_query_reports_socket_response_in_json_mode() {
     let stdout = String::from_utf8(output.stdout).unwrap();
     let json: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
     assert_eq!(json["status"], "ok");
-    assert_eq!(json["query"], "tag-names");
-    assert_eq!(json["response"]["type"], "tag-names");
+    assert_eq!(json["query"], "workspace-names");
+    assert_eq!(json["response"]["type"], "workspace-names");
     assert_eq!(json["response"]["payload"][0], "1");
 
     let path = handle.join().unwrap();
@@ -517,11 +511,21 @@ fn cli_winit_run_reports_requested_socket_name_in_json_mode() {
         .output()
         .unwrap();
 
-    assert!(output.status.success());
-
     let stdout = String::from_utf8(output.stdout).unwrap();
     let first_line = stdout.lines().next().unwrap_or_default();
     let json: serde_json::Value = serde_json::from_str(first_line).unwrap();
+
+    if !output.status.success() {
+        assert_eq!(json["status"], "error");
+        assert_eq!(json["phase"], "bootstrap");
+        assert!(json["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("Failed to initialize an event loop"));
+        let _ = std::fs::remove_file(prepared_config);
+        return;
+    }
+
     assert_eq!(json["status"], "ok");
     assert_eq!(json["wayland_display"], socket_name);
     assert_eq!(json["output_name"], "smithay-winit-output");

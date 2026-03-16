@@ -2,7 +2,7 @@ import type { LayoutsConfig } from "spiders-wm/config";
 
 export const layouts: LayoutsConfig = {
   default: "master-stack",
-  per_tag: [
+  per_workspace: [
     "master-stack",
     "primary-stack",
     "primary-stack",

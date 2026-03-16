@@ -1,9 +1,7 @@
 use std::fs;
 
-use spiders_compositor::{
-    BootstrapScenario, BootstrapScript, BootstrapTranscript, StartupRegistration,
-};
 use spiders_shared::ids::OutputId;
+use spiders_wm::{BootstrapScenario, BootstrapScript, BootstrapTranscript, StartupRegistration};
 
 fn fixture(name: &str) -> std::path::PathBuf {
     std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))

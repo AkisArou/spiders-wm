@@ -1,125 +1,80 @@
 # spiders-wm
 
-`spiders-wm` is a clean-slate Rust rewrite of an earlier private C prototype.
+`spiders-wm` is a Rust-native Wayland compositor and window manager built around
+JavaScript or TypeScript configuration, structural JSX layouts, CSS-based layout
+styling, and CSS-based visual effects.
 
-This repository exists to make the rewrite easy for both humans and coding agents
-to execute without reverse-engineering the old C codebase.
+The rewrite targets:
 
-## Project Intent
+- `smithay` for compositor integration
+- `taffy` for layout computation
+- `rquickjs` for the embedded JavaScript runtime
+- `keyframe` for animation timelines
 
-- Build a keyboard-driven Wayland compositor/window manager in Rust.
-- Replace `wlroots` with `smithay`.
-- Replace Yoga with `taffy`.
-- Replace QuickJS with `boa_engine` for config and layout evaluation.
-- Use `keyframe` for compositor animation timelines and interpolation.
-- Preserve the best user-facing ideas from the earlier prototype while allowing internal
-  architecture to change completely.
+## What It Keeps
 
-This is not an incremental migration repo. The old reference codebase is not a
-base branch.
+- keyboard-first window management
+- named workspaces
+- declarative bindings and window rules
+- JSX layout trees built from `workspace`, `group`, `window`, and `slot`
+- structural layout CSS for geometry
+- effects CSS for window chrome and workspace transitions
+- local IPC for queries, actions, and subscriptions
 
-## What Must Survive The Rewrite
+## Docs
 
-- JavaScript or TypeScript-authored configuration.
-- User-authored layout definitions that resolve into a structural layout tree.
-- CSS-like layout styling for structural layout nodes.
-- Separate effects styling for real window visuals and workspace transitions.
-- A small, safe scripting surface that does not expose compositor internals.
-- Window manager features such as tags, floating, fullscreen, monitor focus/send,
-  rules, bindings, autostart, and IPC.
+- `docs/config.md` - config shape, rules, bindings, and examples
+- `docs/css.md` - supported layout CSS and effects CSS
+- `docs/jsx.md` - JSX layout elements, props, matching, and examples
+- `docs/development.md` - build, run, and debugging workflow
+- `docs/ipc.md` - IPC transport, queries, actions, and events
+- `docs/cli.md` - CLI commands and examples
 
-## What Does Not Need To Survive
+Compatibility notes for older paths:
 
-- C data structures.
-- Meson/Ninja build assumptions.
-- QuickJS bytecode cache format.
-- wlroots-specific object model.
-- Yoga implementation details that are not visible in user-facing behavior.
+- `docs/spec/config-runtime.md` points to `docs/config.md`
+- `docs/spec/layout-system.md` points to `docs/jsx.md` and `docs/css.md`
+- `docs/spec/effects-css.md` points to `docs/css.md`
+- `docs/spec/ipc.md` points to `docs/ipc.md`
 
-## Target Stack
+## Quick Start
 
-- compositor/runtime: `smithay`
-- layout engine: `taffy`
-- JS engine: `boa_engine`
-- animation engine: `keyframe`
-- config/layout source builder: external helper, likely Rust-driven with `esbuild`
-  or `swc` only where needed
-- IPC: custom local IPC plus `ext-workspace-v1` export
+1. Run `cargo check`.
+2. Validate config with `cargo run -p spiders-cli -- check-config`.
+3. Build prepared config with `cargo run -p spiders-cli -- build-config`.
+4. Start the nested compositor with `cargo run -p spiders-cli -- winit-run`.
 
-## Repository Map
+## Configuration At A Glance
 
-- `AGENTS.md` - execution rules and priorities for coding agents
-- `docs/architecture.md` - top-level system design
-- `docs/rewrite-plan.md` - milestone plan and acceptance targets
-- `docs/spec/compositor-bootstrap.md` - bootstrap/controller/runtime boundary and first smithay slices
-- `docs/reference-repos.md` - local upstream and legacy repos worth consulting
-- `docs/spec/config-runtime.md` - config and JS runtime contract
-- `docs/spec/layout-system.md` - layout AST, matching, CSS layout, `taffy` mapping
-- `docs/spec/effects-css.md` - real-window and workspace visual effects model
-- `docs/spec/ipc.md` - IPC and workspace export requirements
+The default authored config lives at `~/.config/spiders-wm/config.ts` or
+`~/.config/spiders-wm/config.js`.
 
-## Current Workspace
+Minimal example:
 
-The workspace currently includes:
+```ts
+import type { SpiderWMConfig } from "spiders-wm/config";
+import { bindings } from "./config/bindings";
+import { layouts } from "./config/layouts";
 
-- `spiders-compositor`
-- `spiders-config`
-- `spiders-layout`
-- `spiders-effects`
-- `spiders-ipc`
-- `spiders-runtime`
-- `spiders-shared`
-- `spiders-cli`
+export default {
+  workspaces: ["1", "2", "3", "4", "5"],
+  layouts,
+  bindings,
+} satisfies SpiderWMConfig;
+```
 
-`spiders-runtime` now owns the backend-agnostic WM/topology/session domain core,
-while `spiders-compositor` owns the smithay-facing integration layer.
+## Repository Layout
 
-## Current Implementation Status
+- `crates/spiders-wm` - compositor integration, runtime hosting, WM state, and backend-agnostic domain logic
+- `crates/spiders-config` - config loading and prepared config handling
+- `crates/spiders-layout` - layout validation and geometry pipeline
+- `crates/spiders-effects` - effects stylesheet model
+- `crates/spiders-ipc` - IPC protocol, transport, and server helpers
+- - `crates/runtimes/js` - JavaScript runtime bridge and SDK surface
+- `crates/spiders-cli` - local development and IPC CLI
 
-The repository is past the pure planning stage. Implemented slices now include:
+## Notes
 
-- typed WM, topology, bootstrap, and runtime domain models in Rust
-- config/runtime evaluation through `boa_engine`
-- validated layout resolution and CSS-to-`taffy` geometry computation
-- backend-agnostic bootstrap/controller/session boundaries
-- a first feature-gated `smithay-winit` bootstrap/runtime slice with:
-  - winit startup
-  - minimal Wayland display/socket state
-  - seat keyboard/pointer setup
-  - minimal xdg-shell state
-  - typed discovered-surface tracking
-  - typed smithay runtime/bootstrap snapshots for tests
-
-## Reference Inputs From The Old Repo
-
-Use `/home/akisarou/projects/spider-wm` as the historical reference for behavior,
-especially:
-
-- `/home/akisarou/projects/spider-wm/README.md`
-- `/home/akisarou/projects/spider-wm/docs/layout-ast-spec.md`
-- `/home/akisarou/projects/spider-wm/docs/layout-build-runtime-spec.md`
-- `/home/akisarou/projects/spider-wm/docs/effects-css-spec.md`
-
-When the old repo and this repo disagree, this repo wins.
-
-## Local Reference Repositories
-
-The following local clones under `/home/akisarou/projects` may be referenced when
-implementation details or upstream behavior need confirmation:
-
-- `/home/akisarou/projects/niri` - `smithay`-based compositor reference with
-  animation patterns relevant to `keyframe` usage
-- `/home/akisarou/projects/keyframe` - animation crate source and API reference
-- `/home/akisarou/projects/boa` - `boa_engine` source for embedding/runtime details
-- `/home/akisarou/projects/smithay` - compositor framework source and examples
-- `/home/akisarou/projects/taffy` - layout engine source and style behavior
-- `/home/akisarou/projects/rust-cssparser` - CSS parsing reference used by this
-  project's parser direction
-
-These repositories are references only. This repository's docs and decisions
-remain the source of truth for `spiders-wm`.
-
-## Working Rule
-
-Agents should implement against the specs in this repository, not by blindly
-porting C code.
+- The old C repository is reference material only.
+- User-facing terminology is `workspace` everywhere.
+- JS stays capability-limited: config and layout code do not receive raw compositor objects.

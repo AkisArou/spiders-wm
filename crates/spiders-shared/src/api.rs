@@ -34,11 +34,11 @@ pub enum WmAction {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         direction: Option<LayoutCycleDirection>,
     },
-    ViewTag {
-        tag: String,
+    ViewWorkspace {
+        workspace: u8,
     },
-    ToggleViewTag {
-        tag: String,
+    ToggleViewWorkspace {
+        workspace: u8,
     },
     ActivateWorkspace {
         workspace_id: WorkspaceId,
@@ -53,11 +53,11 @@ pub enum WmAction {
     SendMonitorRight,
     ToggleFloating,
     ToggleFullscreen,
-    TagFocusedWindow {
-        tag: String,
+    AssignFocusedWindowToWorkspace {
+        workspace: u8,
     },
-    ToggleTagFocusedWindow {
-        tag: String,
+    ToggleAssignFocusedWindowToWorkspace {
+        workspace: u8,
     },
     FocusWindow {
         window_id: WindowId,
@@ -92,7 +92,7 @@ pub enum QueryRequest {
     CurrentOutput,
     CurrentWorkspace,
     MonitorList,
-    TagNames,
+    WorkspaceNames,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -103,7 +103,7 @@ pub enum QueryResponse {
     CurrentOutput(Option<OutputSnapshot>),
     CurrentWorkspace(Option<WorkspaceSnapshot>),
     MonitorList(Vec<OutputSnapshot>),
-    TagNames(Vec<String>),
+    WorkspaceNames(Vec<String>),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -123,9 +123,9 @@ pub enum CompositorEvent {
     WindowDestroyed {
         window_id: WindowId,
     },
-    WindowTagChange {
+    WindowWorkspaceChange {
         window_id: WindowId,
-        tags: Vec<String>,
+        workspaces: Vec<String>,
     },
     WindowFloatingChange {
         window_id: WindowId,
@@ -144,10 +144,10 @@ pub enum CompositorEvent {
         window_id: WindowId,
         fullscreen: bool,
     },
-    TagChange {
+    WorkspaceChange {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         workspace_id: Option<WorkspaceId>,
-        active_tags: Vec<String>,
+        active_workspaces: Vec<String>,
     },
     LayoutChange {
         #[serde(default, skip_serializing_if = "Option::is_none")]

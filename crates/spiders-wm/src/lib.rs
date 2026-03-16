@@ -1,886 +1,949 @@
+extern crate self as spiders_wm;
+
+pub mod actions;
+pub mod app;
+pub mod backend;
+pub mod controller;
+pub mod domain;
+pub mod domain_session;
+pub mod effects;
+pub mod host;
+pub mod ipc;
+pub mod runner;
+pub mod runtime;
+pub mod scenario;
+pub mod script;
 pub mod session;
+pub mod smithay_adapter;
+pub mod smithay_runtime;
+pub mod smithay_state;
+pub mod smithay_workspace;
+pub mod startup;
+pub mod titlebar;
 pub mod topology;
+pub mod transcript;
+pub mod transitions;
 pub mod wm;
 
-use spiders_shared::ids::{OutputId, WindowId};
-use spiders_shared::wm::{OutputSnapshot, StateSnapshot};
+use spiders_config::authoring_layout::{AuthoringLayoutService, AuthoringLayoutServiceError};
+use spiders_config::model::{Config, LayoutConfigError};
+use spiders_effects::EffectsCssParseError;
+use spiders_layout::ast::{LayoutValidationError, ValidatedLayoutTree};
+use spiders_layout::pipeline::{compute_layout_from_request, LayoutPipelineError};
+use spiders_shared::layout::{LayoutRequest, LayoutResponse, LayoutSpace, ResolvedLayoutNode};
+use spiders_shared::runtime::{AuthoringLayoutRuntime, RuntimeError};
+use spiders_shared::wm::{
+    LayoutEvaluationContext, LayoutRef, OutputSnapshot, SelectedLayout, StateSnapshot,
+    WindowSnapshot, WorkspaceSnapshot,
+};
 
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum BootstrapEvent {
-    // Typed bootstrap/domain seam inputs only. Smithay/protocol-specific state
-    // should stay compositor-owned unless it reduces to one of these stable-id
-    // topology actions.
-    RegisterSeat {
-        seat_name: String,
-        active: bool,
-    },
-    RegisterOutput {
-        output_id: OutputId,
-        active: bool,
-    },
-    // Preferred only for outputs already present in startup state. Newly
-    // discovered backend-created outputs should use RegisterOutputSnapshot.
-    RegisterOutputSnapshot {
-        output: OutputSnapshot,
-        active: bool,
-    },
-    ActivateOutput {
-        output_id: OutputId,
-    },
-    EnableOutput {
-        output_id: OutputId,
-    },
-    DisableOutput {
-        output_id: OutputId,
-    },
-    RemoveOutput {
-        output_id: OutputId,
-    },
-    RegisterWindowSurface {
-        surface_id: String,
-        window_id: WindowId,
-        output_id: Option<OutputId>,
-    },
-    RegisterPopupSurface {
-        surface_id: String,
-        output_id: Option<OutputId>,
-        parent_surface_id: String,
-    },
-    RegisterLayerSurface {
-        surface_id: String,
-        output_id: OutputId,
-        metadata: LayerSurfaceMetadata,
-    },
-    RegisterUnmanagedSurface {
-        surface_id: String,
-    },
-    RemoveSurface {
-        surface_id: String,
-    },
-    RemoveWindowSurface {
-        window_id: WindowId,
-    },
-    MoveSurfaceToOutput {
-        surface_id: String,
-        output_id: OutputId,
-    },
-    FocusSeat {
-        seat_name: String,
-        window_id: Option<WindowId>,
-        output_id: Option<OutputId>,
-    },
-    UnmapSurface {
-        surface_id: String,
-    },
-    RemoveSeat {
-        seat_name: String,
-    },
+#[derive(Debug, thiserror::Error, PartialEq)]
+pub enum CompositorLayoutError {
+    #[error(transparent)]
+    Pipeline(#[from] LayoutPipelineError),
+    #[error(transparent)]
+    Config(#[from] LayoutConfigError),
+    #[error(transparent)]
+    Runtime(#[from] RuntimeError),
+    #[error(transparent)]
+    Validation(#[from] LayoutValidationError),
+    #[error(transparent)]
+    Resolve(#[from] spiders_layout::ast::LayoutResolveError),
+    #[error(transparent)]
+    Service(#[from] AuthoringLayoutServiceError),
+    #[error(transparent)]
+    EffectsParse(#[from] EffectsCssParseError),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct StartupRegistration {
-    pub seats: Vec<String>,
-    pub outputs: Vec<OutputId>,
-    pub active_seat: Option<String>,
-    pub active_output: Option<OutputId>,
+pub trait LayoutEngine {
+    fn layout_workspace(
+        &self,
+        request: &LayoutRequest,
+    ) -> Result<LayoutResponse, CompositorLayoutError>;
 }
 
-impl Default for StartupRegistration {
-    fn default() -> Self {
-        Self {
-            seats: vec!["seat-0".into()],
-            outputs: Vec::new(),
-            active_seat: Some("seat-0".into()),
-            active_output: None,
-        }
-    }
-}
+#[derive(Debug, Default, Clone, Copy)]
+pub struct LayoutService;
 
-impl StartupRegistration {
-    pub fn from_state(state: &StateSnapshot) -> Self {
-        let mut registration = Self::default();
-        registration.outputs = state
-            .outputs
-            .iter()
-            .map(|output| output.id.clone())
-            .collect();
-        registration.active_output = state
-            .current_output_id
-            .clone()
-            .or_else(|| registration.outputs.first().cloned());
-        registration
-    }
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct BootstrapScenario {
-    events: Vec<BootstrapEvent>,
-}
-
-impl BootstrapScenario {
-    pub fn new() -> Self {
-        Self { events: Vec::new() }
-    }
-
-    pub fn from_events(events: Vec<BootstrapEvent>) -> Self {
-        Self { events }
-    }
-
-    pub fn events(&self) -> &[BootstrapEvent] {
-        &self.events
-    }
-
-    pub fn into_events(self) -> Vec<BootstrapEvent> {
-        self.events
-    }
-
-    pub fn to_json_pretty(&self) -> String {
-        serde_json::to_string_pretty(&self.events).unwrap()
-    }
-
-    pub fn from_json_str(json: &str) -> Result<Self, serde_json::Error> {
-        serde_json::from_str::<Vec<BootstrapEvent>>(json).map(Self::from_events)
-    }
-
-    pub fn register_seat(mut self, seat_name: impl Into<String>, active: bool) -> Self {
-        self.events.push(BootstrapEvent::RegisterSeat {
-            seat_name: seat_name.into(),
-            active,
-        });
-        self
-    }
-
-    pub fn register_output(mut self, output_id: impl Into<OutputId>, active: bool) -> Self {
-        self.events.push(BootstrapEvent::RegisterOutput {
-            output_id: output_id.into(),
-            active,
-        });
-        self
-    }
-
-    pub fn register_output_snapshot(mut self, output: OutputSnapshot, active: bool) -> Self {
-        self.events
-            .push(BootstrapEvent::RegisterOutputSnapshot { output, active });
-        self
-    }
-
-    pub fn register_window_surface(
-        mut self,
-        surface_id: impl Into<String>,
-        window_id: impl Into<WindowId>,
-        output_id: Option<OutputId>,
-    ) -> Self {
-        self.events.push(BootstrapEvent::RegisterWindowSurface {
-            surface_id: surface_id.into(),
-            window_id: window_id.into(),
-            output_id,
-        });
-        self
-    }
-
-    pub fn register_popup_surface(
-        mut self,
-        surface_id: impl Into<String>,
-        output_id: Option<OutputId>,
-        parent_surface_id: impl Into<String>,
-    ) -> Self {
-        self.events.push(BootstrapEvent::RegisterPopupSurface {
-            surface_id: surface_id.into(),
-            output_id,
-            parent_surface_id: parent_surface_id.into(),
-        });
-        self
-    }
-
-    pub fn register_layer_surface(
-        mut self,
-        surface_id: impl Into<String>,
-        output_id: impl Into<OutputId>,
-    ) -> Self {
-        self.events.push(BootstrapEvent::RegisterLayerSurface {
-            surface_id: surface_id.into(),
-            output_id: output_id.into(),
-            metadata: LayerSurfaceMetadata {
-                namespace: String::new(),
-                tier: LayerSurfaceTier::Background,
-                keyboard_interactivity: topology::LayerKeyboardInteractivity::None,
-                exclusive_zone: topology::LayerExclusiveZone::Neutral,
-            },
-        });
-        self
-    }
-
-    pub fn register_layer_surface_with_metadata(
-        mut self,
-        surface_id: impl Into<String>,
-        output_id: impl Into<OutputId>,
-        metadata: LayerSurfaceMetadata,
-    ) -> Self {
-        self.events.push(BootstrapEvent::RegisterLayerSurface {
-            surface_id: surface_id.into(),
-            output_id: output_id.into(),
-            metadata,
-        });
-        self
-    }
-
-    pub fn register_unmanaged_surface(mut self, surface_id: impl Into<String>) -> Self {
-        self.events.push(BootstrapEvent::RegisterUnmanagedSurface {
-            surface_id: surface_id.into(),
-        });
-        self
-    }
-
-    pub fn move_surface_to_output(
-        mut self,
-        surface_id: impl Into<String>,
-        output_id: impl Into<OutputId>,
-    ) -> Self {
-        self.events.push(BootstrapEvent::MoveSurfaceToOutput {
-            surface_id: surface_id.into(),
-            output_id: output_id.into(),
-        });
-        self
-    }
-
-    pub fn unmap_surface(mut self, surface_id: impl Into<String>) -> Self {
-        self.events.push(BootstrapEvent::UnmapSurface {
-            surface_id: surface_id.into(),
-        });
-        self
-    }
-
-    pub fn remove_window_surface(mut self, window_id: impl Into<WindowId>) -> Self {
-        self.events.push(BootstrapEvent::RemoveWindowSurface {
-            window_id: window_id.into(),
-        });
-        self
-    }
-
-    pub fn remove_surface(mut self, surface_id: impl Into<String>) -> Self {
-        self.events.push(BootstrapEvent::RemoveSurface {
-            surface_id: surface_id.into(),
-        });
-        self
-    }
-
-    pub fn remove_output(mut self, output_id: impl Into<OutputId>) -> Self {
-        self.events.push(BootstrapEvent::RemoveOutput {
-            output_id: output_id.into(),
-        });
-        self
-    }
-
-    pub fn remove_seat(mut self, seat_name: impl Into<String>) -> Self {
-        self.events.push(BootstrapEvent::RemoveSeat {
-            seat_name: seat_name.into(),
-        });
-        self
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct BootstrapTranscript {
-    pub startup: StartupRegistration,
-    pub scenario: BootstrapScenario,
-}
-
-impl BootstrapTranscript {
-    pub fn new(startup: StartupRegistration, scenario: BootstrapScenario) -> Self {
-        Self { startup, scenario }
-    }
-
-    pub fn to_json_pretty(&self) -> String {
-        serde_json::to_string_pretty(self).unwrap()
-    }
-
-    pub fn from_json_str(json: &str) -> Result<Self, serde_json::Error> {
-        serde_json::from_str(json)
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BootstrapScriptKind {
-    Events,
-    Transcript,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub enum BootstrapScript {
-    Events(BootstrapScenario),
-    Transcript(BootstrapTranscript),
-}
-
-impl BootstrapScript {
-    pub fn kind(&self) -> BootstrapScriptKind {
-        match self {
-            Self::Events(_) => BootstrapScriptKind::Events,
-            Self::Transcript(_) => BootstrapScriptKind::Transcript,
-        }
-    }
-
-    pub fn startup(&self) -> Option<&StartupRegistration> {
-        match self {
-            Self::Events(_) => None,
-            Self::Transcript(transcript) => Some(&transcript.startup),
-        }
-    }
-
-    pub fn scenario(&self) -> &BootstrapScenario {
-        match self {
-            Self::Events(scenario) => scenario,
-            Self::Transcript(transcript) => &transcript.scenario,
-        }
-    }
-
-    pub fn into_parts(self) -> (Option<StartupRegistration>, BootstrapScenario) {
-        match self {
-            Self::Events(scenario) => (None, scenario),
-            Self::Transcript(transcript) => (Some(transcript.startup), transcript.scenario),
-        }
-    }
-
-    pub fn to_json_pretty(&self) -> String {
-        match self {
-            Self::Events(scenario) => scenario.to_json_pretty(),
-            Self::Transcript(transcript) => transcript.to_json_pretty(),
-        }
-    }
-
-    pub fn from_json_str(json: &str) -> Result<Self, serde_json::Error> {
-        #[derive(serde::Deserialize)]
-        #[serde(untagged)]
-        enum BootstrapScriptRepr {
-            Transcript(BootstrapTranscript),
-            Events(Vec<BootstrapEvent>),
-        }
-
-        match serde_json::from_str::<BootstrapScriptRepr>(json)? {
-            BootstrapScriptRepr::Transcript(transcript) => Ok(Self::Transcript(transcript)),
-            BootstrapScriptRepr::Events(events) => {
-                Ok(Self::Events(BootstrapScenario::from_events(events)))
-            }
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum BackendSource {
-    Fixture,
-    Mock,
-    Smithay,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct BackendSeatSnapshot {
-    pub seat_name: String,
-    pub active: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct BackendOutputSnapshot {
-    pub snapshot: OutputSnapshot,
-    pub active: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum BackendSurfaceSnapshot {
-    Window {
-        surface_id: String,
-        window_id: WindowId,
-        output_id: Option<OutputId>,
-    },
-    Popup {
-        surface_id: String,
-        output_id: Option<OutputId>,
-        parent_surface_id: String,
-    },
-    Layer {
-        surface_id: String,
-        output_id: OutputId,
-        metadata: LayerSurfaceMetadata,
-    },
-    Unmanaged {
-        surface_id: String,
-    },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct BackendTopologySnapshot {
-    pub source: BackendSource,
-    pub generation: u64,
-    pub seats: Vec<BackendSeatSnapshot>,
-    pub outputs: Vec<BackendOutputSnapshot>,
-    pub surfaces: Vec<BackendSurfaceSnapshot>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct BackendSnapshotSummary {
-    pub seat_count: usize,
-    pub output_count: usize,
-    pub surface_count: usize,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
-pub struct BackendSessionReport {
-    pub last_source: Option<BackendSource>,
-    pub last_generation: Option<u64>,
-    pub last_snapshot: Option<BackendSnapshotSummary>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct BackendSessionState {
-    last_source: Option<BackendSource>,
-    last_generation: Option<u64>,
-    last_snapshot: Option<BackendSnapshotSummary>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum BackendDiscoveryEvent {
-    // Typed backend-to-domain seam inputs only. These carry stable-id facts that
-    // can be applied to backend-agnostic topology without exposing backend
-    // handles or protocol ownership.
-    SeatDiscovered {
-        seat_name: String,
-        active: bool,
-    },
-    SeatLost {
-        seat_name: String,
-    },
-    OutputDiscovered {
-        output_id: OutputId,
-        active: bool,
-    },
-    // Preferred for genuinely new backend-created outputs. OutputDiscovered is
-    // kept for id-only activation of outputs already seeded by startup state.
-    OutputSnapshotDiscovered {
-        output: OutputSnapshot,
-        active: bool,
-    },
-    OutputActivated {
-        output_id: OutputId,
-    },
-    SeatFocusChanged {
-        seat_name: String,
-        window_id: Option<WindowId>,
-        output_id: Option<OutputId>,
-    },
-    OutputLost {
-        output_id: OutputId,
-    },
-    WindowSurfaceDiscovered {
-        surface_id: String,
-        window_id: WindowId,
-        output_id: Option<OutputId>,
-    },
-    PopupSurfaceDiscovered {
-        surface_id: String,
-        output_id: Option<OutputId>,
-        parent_surface_id: String,
-    },
-    LayerSurfaceDiscovered {
-        surface_id: String,
-        output_id: OutputId,
-        metadata: LayerSurfaceMetadata,
-    },
-    UnmanagedSurfaceDiscovered {
-        surface_id: String,
-    },
-    SurfaceUnmapped {
-        surface_id: String,
-    },
-    SurfaceLost {
-        surface_id: String,
-    },
-}
-
-impl BackendDiscoveryEvent {
-    pub fn into_bootstrap_event(self) -> BootstrapEvent {
-        match self {
-            Self::SeatDiscovered { seat_name, active } => {
-                BootstrapEvent::RegisterSeat { seat_name, active }
-            }
-            Self::SeatLost { seat_name } => BootstrapEvent::RemoveSeat { seat_name },
-            Self::OutputDiscovered { output_id, active } => {
-                BootstrapEvent::RegisterOutput { output_id, active }
-            }
-            Self::OutputSnapshotDiscovered { output, active } => {
-                BootstrapEvent::RegisterOutputSnapshot { output, active }
-            }
-            Self::OutputActivated { output_id } => BootstrapEvent::ActivateOutput { output_id },
-            Self::SeatFocusChanged {
-                seat_name,
-                window_id,
-                output_id,
-            } => BootstrapEvent::FocusSeat {
-                seat_name,
-                window_id,
-                output_id,
-            },
-            Self::OutputLost { output_id } => BootstrapEvent::RemoveOutput { output_id },
-            Self::WindowSurfaceDiscovered {
-                surface_id,
-                window_id,
-                output_id,
-            } => BootstrapEvent::RegisterWindowSurface {
-                surface_id,
-                window_id,
-                output_id,
-            },
-            Self::PopupSurfaceDiscovered {
-                surface_id,
-                output_id,
-                parent_surface_id,
-            } => BootstrapEvent::RegisterPopupSurface {
-                surface_id,
-                output_id,
-                parent_surface_id,
-            },
-            Self::LayerSurfaceDiscovered {
-                surface_id,
-                output_id,
-                metadata,
-            } => BootstrapEvent::RegisterLayerSurface {
-                surface_id,
-                output_id,
-                metadata,
-            },
-            Self::UnmanagedSurfaceDiscovered { surface_id } => {
-                BootstrapEvent::RegisterUnmanagedSurface { surface_id }
-            }
-            Self::SurfaceUnmapped { surface_id } => BootstrapEvent::UnmapSurface { surface_id },
-            Self::SurfaceLost { surface_id } => BootstrapEvent::RemoveSurface { surface_id },
-        }
-    }
-}
-
-impl BackendTopologySnapshot {
-    pub fn summary(&self) -> BackendSnapshotSummary {
-        BackendSnapshotSummary {
-            seat_count: self.seats.len(),
-            output_count: self.outputs.len(),
-            surface_count: self.surfaces.len(),
-        }
-    }
-
-    pub fn into_discovery_events(self) -> Vec<BackendDiscoveryEvent> {
-        let mut events =
-            Vec::with_capacity(self.seats.len() + self.outputs.len() + self.surfaces.len());
-
-        events.extend(
-            self.seats
-                .into_iter()
-                .map(|seat| BackendDiscoveryEvent::SeatDiscovered {
-                    seat_name: seat.seat_name,
-                    active: seat.active,
-                }),
-        );
-        events.extend(self.outputs.into_iter().map(|output| {
-            BackendDiscoveryEvent::OutputSnapshotDiscovered {
-                output: output.snapshot,
-                active: output.active,
-            }
-        }));
-        events.extend(self.surfaces.into_iter().map(|surface| match surface {
-            BackendSurfaceSnapshot::Window {
-                surface_id,
-                window_id,
-                output_id,
-            } => BackendDiscoveryEvent::WindowSurfaceDiscovered {
-                surface_id,
-                window_id,
-                output_id,
-            },
-            BackendSurfaceSnapshot::Popup {
-                surface_id,
-                output_id,
-                parent_surface_id,
-            } => BackendDiscoveryEvent::PopupSurfaceDiscovered {
-                surface_id,
-                output_id,
-                parent_surface_id,
-            },
-            BackendSurfaceSnapshot::Layer {
-                surface_id,
-                output_id,
-                metadata,
-            } => BackendDiscoveryEvent::LayerSurfaceDiscovered {
-                surface_id,
-                output_id,
-                metadata,
-            },
-            BackendSurfaceSnapshot::Unmanaged { surface_id } => {
-                BackendDiscoveryEvent::UnmanagedSurfaceDiscovered { surface_id }
-            }
-        }));
-
-        events
-    }
-}
-
-impl BackendSessionState {
-    pub fn report(&self) -> BackendSessionReport {
-        BackendSessionReport {
-            last_source: self.last_source.clone(),
-            last_generation: self.last_generation,
-            last_snapshot: self.last_snapshot.clone(),
-        }
-    }
-
-    pub fn record_snapshot(&mut self, snapshot: &BackendTopologySnapshot) {
-        self.last_source = Some(snapshot.source.clone());
-        self.last_generation = Some(snapshot.generation);
-        self.last_snapshot = Some(snapshot.summary());
-    }
-
-    pub fn record_batch(&mut self, source: BackendSource, generation: u64) {
-        self.last_source = Some(source);
-        self.last_generation = Some(generation);
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
-pub struct BootstrapDiagnostics {
-    pub active_seat: Option<String>,
-    pub active_output: Option<OutputId>,
-    pub current_workspace: Option<String>,
-    pub focused_window: Option<String>,
-    pub seat_names: Vec<String>,
-    pub output_ids: Vec<String>,
-    pub surface_ids: Vec<String>,
-    pub mapped_surface_ids: Vec<String>,
-    pub seat_count: usize,
-    pub output_count: usize,
-    pub surface_count: usize,
-    pub mapped_surface_count: usize,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
-pub struct BootstrapRunTrace {
-    pub startup: StartupRegistration,
-    pub applied_events: Vec<BootstrapEvent>,
-    pub diagnostics: BootstrapDiagnostics,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
-pub struct BootstrapFailureTrace {
-    pub startup: StartupRegistration,
-    pub applied_events: Vec<BootstrapEvent>,
-    pub failed_event: Option<BootstrapEvent>,
-    pub diagnostics: Option<BootstrapDiagnostics>,
-    pub error: String,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum ControllerPhase {
-    Pending,
-    Bootstrapping,
-    Running,
-    Degraded,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
-pub struct ControllerReport {
-    pub phase: ControllerPhase,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub backend: Option<BackendSessionReport>,
-    pub startup: StartupRegistration,
-    pub applied_events: usize,
-    pub diagnostics: BootstrapDiagnostics,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum ControllerCommand {
-    BootstrapScript(BootstrapScript),
-    BootstrapEvent(BootstrapEvent),
-    DiscoveryEvent(BackendDiscoveryEvent),
-    DiscoverySnapshot(BackendTopologySnapshot),
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
-pub struct ControllerCommandReport {
-    pub command: ControllerCommand,
-    pub phase: ControllerPhase,
-    pub controller: ControllerReport,
-}
-
-pub use session::{DomainSession, DomainSessionError, DomainUpdate};
+pub use app::CompositorApp;
+pub use backend::{
+    BackendDiscoveryEvent, BackendOutputSnapshot, BackendSeatSnapshot, BackendSessionReport,
+    BackendSessionState, BackendSnapshotSummary, BackendSource, BackendSurfaceSnapshot,
+    BackendTopologySnapshot,
+};
+pub use controller::CompositorController;
+pub use domain::{
+    BootstrapDiagnostics, BootstrapEvent, BootstrapFailureTrace, BootstrapRunTrace,
+    BootstrapScenario, BootstrapScript, BootstrapScriptKind, BootstrapTranscript,
+    ControllerCommand, ControllerCommandReport, ControllerPhase, ControllerReport,
+    StartupRegistration,
+};
+pub use domain_session::{DomainSession, DomainSessionError, DomainUpdate};
+pub use effects::{
+    decoration_visible, resolve_window_effect_style, titlebar_visible,
+    window_decoration_policy_for_style, EffectsRuntimeState, WindowDecorationPolicy,
+    WindowEffectsState,
+};
+pub use host::CompositorHost;
+pub use ipc::{CompositorIpcError, CompositorIpcHost, IpcPumpReport};
+pub use runner::{BootstrapRunner, BootstrapRunnerError};
+pub use runtime::{CompositorRuntimeState, WorkspaceLayoutState};
+pub use session::{CompositorSession, SessionUpdate};
+pub use smithay_adapter::{
+    SmithayAdapter, SmithayAdapterEvent, SmithayOutputDescriptor, SmithaySeatDescriptor,
+};
+#[cfg(feature = "smithay-winit")]
+pub use smithay_runtime::{
+    bootstrap_winit, bootstrap_winit_with_options, SmithayBootstrap, SmithayWinitOptions,
+    SmithayWinitRuntime,
+};
+#[cfg(feature = "smithay-winit")]
+pub use smithay_runtime::{initialize_smithay_workspace_export, initialize_winit_controller};
+pub use smithay_runtime::{
+    SmithayBootstrapSnapshot, SmithayRuntimeError, SmithayRuntimeSnapshot, SmithayStartupReport,
+};
+#[cfg(feature = "smithay-winit")]
+pub use smithay_state::{
+    SmithayClientState, SmithayKnownLayerSurface, SmithayKnownPopupSurface, SmithayKnownSurface,
+    SmithayKnownSurfacesSnapshot, SmithayKnownToplevelSurface, SmithayKnownUnmanagedSurface,
+    SmithayPopupParentSnapshot, SmithayStateError, SmithayStateSnapshot, SmithaySurfaceRoleCounts,
+    SmithayTitlebarRenderSnapshot, SpidersSmithayState,
+};
+#[cfg(feature = "smithay-winit")]
+pub use smithay_workspace::{
+    WorkspaceHandler, WorkspaceManagerDebugSnapshot, WorkspaceManagerState,
+};
+pub use startup::{
+    StartupConfig, StartupLayoutState, StartupRuntime, StartupSequence, StartupSession,
+};
+pub use titlebar::{compute_titlebar_render_plan, TitlebarRenderItem};
 pub use topology::{
     CompositorTopologyState, LayerExclusiveZone, LayerKeyboardInteractivity, LayerSurfaceMetadata,
     LayerSurfaceTier, OutputState, SeatState, SurfaceRole, SurfaceState, TopologyError,
 };
 pub use wm::{WmState, WmStateError};
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceLayoutSource<'a> {
+    pub workspace: &'a WorkspaceSnapshot,
+    pub output: Option<&'a OutputSnapshot>,
+    pub layout: Option<&'a LayoutRef>,
+    pub stylesheet: &'a str,
+    pub effects_stylesheet: &'a str,
+}
+
+impl LayoutService {
+    pub fn initialize_startup_runtime<R: AuthoringLayoutRuntime<Config = Config>>(
+        &self,
+        service: AuthoringLayoutService<R>,
+        config: Config,
+        state: &StateSnapshot,
+    ) -> Result<StartupRuntime<R>, CompositorLayoutError> {
+        startup::initialize_startup_runtime(self, service, config, state)
+    }
+
+    pub fn initialize_startup_config<R: AuthoringLayoutRuntime<Config = Config>>(
+        &self,
+        service: AuthoringLayoutService<R>,
+        config: Config,
+        state: StateSnapshot,
+    ) -> Result<StartupConfig<R>, CompositorLayoutError> {
+        startup::initialize_startup_config(self, service, config, state)
+    }
+
+    pub fn initialize_startup_session<R: AuthoringLayoutRuntime<Config = Config>>(
+        &self,
+        service: AuthoringLayoutService<R>,
+        config: Config,
+        state: StateSnapshot,
+    ) -> Result<StartupSession<R>, CompositorLayoutError> {
+        startup::initialize_startup_session(self, service, config, state)
+    }
+
+    pub fn initialize_runtime_state<R: AuthoringLayoutRuntime<Config = Config>>(
+        &self,
+        service: AuthoringLayoutService<R>,
+        config: Config,
+        state: StateSnapshot,
+    ) -> Result<CompositorRuntimeState<R>, CompositorLayoutError> {
+        runtime::initialize_runtime_state(*self, service, config, state)
+    }
+
+    pub fn bootstrap_runtime<R: AuthoringLayoutRuntime<Config = Config>>(
+        &self,
+        service: &mut AuthoringLayoutService<R>,
+        config: &Config,
+        state: &StateSnapshot,
+    ) -> Result<Option<StartupLayoutState>, CompositorLayoutError> {
+        startup::bootstrap_runtime(self, service, config, state)
+    }
+
+    pub fn make_request(
+        &self,
+        source: WorkspaceLayoutSource<'_>,
+        root: ResolvedLayoutNode,
+    ) -> LayoutRequest {
+        LayoutRequest {
+            workspace_id: source.workspace.id.clone(),
+            output_id: source.output.map(|output| output.id.clone()),
+            layout_name: source.layout.map(|layout| layout.name.clone()),
+            root,
+            stylesheet: source.stylesheet.to_owned(),
+            effects_stylesheet: source.effects_stylesheet.to_owned(),
+            space: LayoutSpace {
+                width: source
+                    .output
+                    .map(|output| output.logical_width as f32)
+                    .unwrap_or_default(),
+                height: source
+                    .output
+                    .map(|output| output.logical_height as f32)
+                    .unwrap_or_default(),
+            },
+        }
+    }
+
+    pub fn make_request_from_config(
+        &self,
+        config: &Config,
+        workspace: &WorkspaceSnapshot,
+        output: Option<&OutputSnapshot>,
+        root: ResolvedLayoutNode,
+    ) -> Result<LayoutRequest, CompositorLayoutError> {
+        Ok(config.build_layout_request(workspace, output, root)?)
+    }
+
+    pub fn make_request_from_state(
+        &self,
+        config: &Config,
+        state: &StateSnapshot,
+        root: ResolvedLayoutNode,
+    ) -> Result<Option<LayoutRequest>, CompositorLayoutError> {
+        Ok(config.build_layout_request_from_state(state, root)?)
+    }
+
+    pub fn selected_layout_from_config(
+        &self,
+        config: &Config,
+        workspace: &WorkspaceSnapshot,
+    ) -> Result<Option<SelectedLayout>, CompositorLayoutError> {
+        Ok(config.resolve_selected_layout(workspace)?)
+    }
+
+    pub fn evaluate_and_layout_current_workspace<R: AuthoringLayoutRuntime<Config = Config>>(
+        &self,
+        runtime: &R,
+        config: &Config,
+        state: &StateSnapshot,
+        windows: &[WindowSnapshot],
+    ) -> Result<Option<LayoutResponse>, CompositorLayoutError> {
+        let Some(workspace) = state.current_workspace() else {
+            return Ok(None);
+        };
+        let Some(loaded_layout) = runtime.prepare_layout(config, workspace)? else {
+            return Ok(None);
+        };
+        let context = runtime.build_context(state, workspace, Some(&loaded_layout));
+        let source = runtime.evaluate_layout(&loaded_layout, &context)?;
+        let validated = ValidatedLayoutTree::new(source)?;
+        let resolved = validated.resolve(windows)?;
+        let request = build_request_from_context(context, loaded_layout.selected, resolved.root);
+
+        Ok(Some(compute_layout_from_request(&request)?))
+    }
+}
+
+pub(crate) fn build_request_from_context(
+    context: LayoutEvaluationContext,
+    selected_layout: SelectedLayout,
+    root: ResolvedLayoutNode,
+) -> LayoutRequest {
+    LayoutRequest {
+        workspace_id: context.workspace_id,
+        output_id: context.output.map(|output| output.id),
+        layout_name: Some(selected_layout.name),
+        root,
+        stylesheet: selected_layout.stylesheet,
+        effects_stylesheet: selected_layout.effects_stylesheet,
+        space: context.space,
+    }
+}
+
+impl LayoutEngine for LayoutService {
+    fn layout_workspace(
+        &self,
+        request: &LayoutRequest,
+    ) -> Result<LayoutResponse, CompositorLayoutError> {
+        Ok(compute_layout_from_request(request)?)
+    }
+}
+
+pub fn crate_ready() -> bool {
+    true
+}
+
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
+    use spiders_shared::ids::WindowId;
+    use spiders_shared::ids::{OutputId, WorkspaceId};
+    use spiders_shared::layout::{
+        LayoutNodeMeta, LayoutRect, LayoutRequest, LayoutResponse, LayoutSnapshotNode, LayoutSpace,
+        ResolvedLayoutNode,
+    };
+    use spiders_shared::wm::{
+        OutputSnapshot, OutputTransform, ShellKind, StateSnapshot, WindowSnapshot,
+        WorkspaceSnapshot,
+    };
+
     use super::*;
 
-    #[test]
-    fn scenario_round_trips_through_json() {
-        let scenario = BootstrapScenario::new()
-            .register_seat("seat-1", true)
-            .register_window_surface("window-w1", "w1", Some(OutputId::from("out-1")))
-            .register_popup_surface("popup-1", Some(OutputId::from("out-1")), "window-w1");
-
-        let json = scenario.to_json_pretty();
-        let parsed = BootstrapScenario::from_json_str(&json).unwrap();
-
-        assert_eq!(parsed, scenario);
-    }
-
-    #[test]
-    fn transcript_round_trips_through_json() {
-        let transcript = BootstrapTranscript::new(
-            StartupRegistration {
-                seats: vec!["seat-0".into(), "seat-1".into()],
-                outputs: vec![OutputId::from("out-1")],
-                active_seat: Some("seat-1".into()),
-                active_output: Some(OutputId::from("out-1")),
-            },
-            BootstrapScenario::new()
-                .register_seat("seat-1", true)
-                .register_output("out-1", true),
-        );
-
-        let json = transcript.to_json_pretty();
-        let parsed = BootstrapTranscript::from_json_str(&json).unwrap();
-
-        assert_eq!(parsed, transcript);
-    }
-
-    #[test]
-    fn scenario_registers_output_snapshot_event() {
-        let scenario = BootstrapScenario::new().register_output_snapshot(
-            OutputSnapshot {
-                id: OutputId::from("out-2"),
-                name: "DP-1".into(),
-                logical_x: 0,
-                logical_y: 0,
-                logical_width: 2560,
-                logical_height: 1440,
-                scale: 1,
-                transform: spiders_shared::wm::OutputTransform::Normal,
-                enabled: true,
-                current_workspace_id: None,
-            },
-            true,
-        );
-
-        assert!(matches!(
-            scenario.events(),
-            [BootstrapEvent::RegisterOutputSnapshot { active: true, .. }]
-        ));
-    }
-
-    #[test]
-    fn script_round_trips_transcripts() {
-        let script = BootstrapScript::Transcript(BootstrapTranscript::new(
-            StartupRegistration {
-                seats: vec!["seat-0".into(), "seat-1".into()],
-                outputs: vec![OutputId::from("out-1")],
-                active_seat: Some("seat-1".into()),
-                active_output: Some(OutputId::from("out-1")),
-            },
-            BootstrapScenario::new().register_output("out-1", true),
-        ));
-
-        let parsed = BootstrapScript::from_json_str(&script.to_json_pretty()).unwrap();
-
-        assert_eq!(parsed, script);
-    }
-
-    #[test]
-    fn topology_snapshot_expands_into_discovery_events() {
-        let snapshot = BackendTopologySnapshot {
-            source: BackendSource::Fixture,
-            generation: 7,
-            seats: vec![BackendSeatSnapshot {
-                seat_name: "seat-1".into(),
-                active: true,
-            }],
-            outputs: vec![BackendOutputSnapshot {
-                snapshot: OutputSnapshot {
-                    id: OutputId::from("out-1"),
-                    name: "HDMI-A-1".into(),
-                    logical_x: 0,
-                    logical_y: 0,
-                    logical_width: 1920,
-                    logical_height: 1080,
-                    scale: 1,
-                    transform: spiders_shared::wm::OutputTransform::Normal,
-                    enabled: true,
-                    current_workspace_id: None,
-                },
-                active: true,
-            }],
-            surfaces: vec![
-                BackendSurfaceSnapshot::Window {
-                    surface_id: "window-w1".into(),
-                    window_id: WindowId::from("w1"),
-                    output_id: Some(OutputId::from("out-1")),
-                },
-                BackendSurfaceSnapshot::Unmanaged {
-                    surface_id: "overlay-1".into(),
-                },
-            ],
-        };
-
-        let events = snapshot.into_discovery_events();
-
-        assert_eq!(events.len(), 4);
-        assert!(matches!(
-            events[0],
-            BackendDiscoveryEvent::SeatDiscovered { .. }
-        ));
-        assert!(matches!(
-            events[1],
-            BackendDiscoveryEvent::OutputSnapshotDiscovered { .. }
-        ));
-    }
-
-    #[test]
-    fn seat_focus_discovery_event_converts_into_bootstrap_event() {
-        let event = BackendDiscoveryEvent::SeatFocusChanged {
-            seat_name: "seat-1".into(),
-            window_id: Some(WindowId::from("w1")),
+    fn mapped_window(id: &str) -> WindowSnapshot {
+        WindowSnapshot {
+            id: WindowId::from(id),
+            shell: ShellKind::XdgToplevel,
+            app_id: Some("foot".into()),
+            title: Some("foot".into()),
+            class: None,
+            instance: None,
+            role: None,
+            window_type: None,
+            mapped: true,
+            floating: false,
+            floating_rect: None,
+            fullscreen: false,
+            focused: true,
+            urgent: false,
             output_id: Some(OutputId::from("out-1")),
+            workspace_id: Some(WorkspaceId::from("ws-1")),
+            workspaces: vec!["1".into()],
+        }
+    }
+
+    fn workspace_snapshot() -> WorkspaceSnapshot {
+        WorkspaceSnapshot {
+            id: WorkspaceId::from("ws-1"),
+            name: "1".into(),
+            output_id: Some(OutputId::from("out-1")),
+            active_workspaces: vec!["1".into()],
+            focused: true,
+            visible: true,
+            effective_layout: Some(spiders_shared::wm::LayoutRef {
+                name: "master-stack".into(),
+            }),
+        }
+    }
+
+    fn output_snapshot(width: u32, height: u32) -> OutputSnapshot {
+        OutputSnapshot {
+            id: OutputId::from("out-1"),
+            name: "HDMI-A-1".into(),
+            logical_x: 0,
+            logical_y: 0,
+            logical_width: width,
+            logical_height: height,
+            scale: 1,
+            transform: OutputTransform::Normal,
+            enabled: true,
+            current_workspace_id: Some(WorkspaceId::from("ws-1")),
+        }
+    }
+
+    fn state_snapshot(width: u32, height: u32) -> StateSnapshot {
+        StateSnapshot {
+            focused_window_id: None,
+            current_output_id: Some(OutputId::from("out-1")),
+            current_workspace_id: Some(WorkspaceId::from("ws-1")),
+            outputs: vec![output_snapshot(width, height)],
+            workspaces: vec![workspace_snapshot()],
+            windows: vec![],
+            visible_window_ids: vec![],
+            workspace_names: vec!["1".into()],
+        }
+    }
+
+    fn layout_config(stylesheet: &str, module: &str) -> Config {
+        Config {
+            layouts: vec![spiders_config::model::LayoutDefinition {
+                name: "master-stack".into(),
+                module: module.into(),
+                stylesheet: stylesheet.into(),
+                effects_stylesheet: String::new(),
+                runtime_graph: None,
+            }],
+            ..Config::default()
+        }
+    }
+
+    #[test]
+    fn layout_service_exposes_shared_snapshot_boundary() {
+        let service = LayoutService;
+        let request = LayoutRequest {
+            workspace_id: WorkspaceId::from("ws-1"),
+            output_id: Some(OutputId::from("out-1")),
+            layout_name: None,
+            root: ResolvedLayoutNode::Workspace {
+                meta: LayoutNodeMeta::default(),
+                children: vec![ResolvedLayoutNode::Window {
+                    meta: LayoutNodeMeta {
+                        id: Some("main".into()),
+                        ..LayoutNodeMeta::default()
+                    },
+                    window_id: Some(WindowId::from("w1")),
+                }],
+            },
+            stylesheet:
+                "workspace { display: flex; width: 300px; height: 200px; } #main { width: 120px; }"
+                    .into(),
+            effects_stylesheet: String::new(),
+            space: LayoutSpace {
+                width: 300.0,
+                height: 200.0,
+            },
         };
+
+        let response = service.layout_workspace(&request).unwrap();
 
         assert_eq!(
-            event.into_bootstrap_event(),
-            BootstrapEvent::FocusSeat {
-                seat_name: "seat-1".into(),
-                window_id: Some(WindowId::from("w1")),
-                output_id: Some(OutputId::from("out-1")),
+            response,
+            LayoutResponse {
+                root: LayoutSnapshotNode::Workspace {
+                    meta: LayoutNodeMeta::default(),
+                    rect: LayoutRect {
+                        x: 0.0,
+                        y: 0.0,
+                        width: 300.0,
+                        height: 200.0,
+                    },
+                    children: vec![LayoutSnapshotNode::Window {
+                        meta: LayoutNodeMeta {
+                            id: Some("main".into()),
+                            ..LayoutNodeMeta::default()
+                        },
+                        rect: LayoutRect {
+                            x: 0.0,
+                            y: 0.0,
+                            width: 120.0,
+                            height: 200.0,
+                        },
+                        window_id: Some(WindowId::from("w1")),
+                    }],
+                },
             }
         );
     }
 
     #[test]
-    fn backend_session_records_snapshot_generation() {
-        let snapshot = BackendTopologySnapshot {
-            source: BackendSource::Mock,
-            generation: 3,
-            seats: vec![BackendSeatSnapshot {
-                seat_name: "seat-1".into(),
-                active: true,
-            }],
-            outputs: vec![],
-            surfaces: vec![],
+    fn layout_service_builds_workspace_scoped_request_from_snapshots() {
+        let service = LayoutService;
+        let workspace = workspace_snapshot();
+        let output = output_snapshot(1920, 1080);
+        let root = ResolvedLayoutNode::Workspace {
+            meta: LayoutNodeMeta::default(),
+            children: vec![],
         };
-        let mut session = BackendSessionState::default();
 
-        session.record_snapshot(&snapshot);
+        let request = service.make_request(
+            WorkspaceLayoutSource {
+                workspace: &workspace,
+                output: Some(&output),
+                layout: workspace.effective_layout.as_ref(),
+                stylesheet: "workspace { display: flex; }",
+                effects_stylesheet: "window { appearance: none; }",
+            },
+            root.clone(),
+        );
 
-        let report = session.report();
-        assert_eq!(report.last_source, Some(BackendSource::Mock));
-        assert_eq!(report.last_generation, Some(3));
-        assert_eq!(report.last_snapshot.unwrap().seat_count, 1);
+        assert_eq!(
+            request,
+            LayoutRequest {
+                workspace_id: WorkspaceId::from("ws-1"),
+                output_id: Some(OutputId::from("out-1")),
+                layout_name: Some("master-stack".into()),
+                root,
+                stylesheet: "workspace { display: flex; }".into(),
+                effects_stylesheet: "window { appearance: none; }".into(),
+                space: LayoutSpace {
+                    width: 1920.0,
+                    height: 1080.0,
+                },
+            }
+        );
+    }
+
+    #[test]
+    fn layout_service_builds_request_from_config_selection() {
+        let service = LayoutService;
+        let config = layout_config("workspace { display: flex; }", "layouts/master-stack.js");
+        let workspace = workspace_snapshot();
+        let output = output_snapshot(1600, 900);
+
+        let request = service
+            .make_request_from_config(
+                &config,
+                &workspace,
+                Some(&output),
+                ResolvedLayoutNode::Workspace {
+                    meta: LayoutNodeMeta::default(),
+                    children: vec![],
+                },
+            )
+            .unwrap();
+
+        assert_eq!(request.layout_name.as_deref(), Some("master-stack"));
+        assert_eq!(request.stylesheet, "workspace { display: flex; }");
+        assert_eq!(request.space.width, 1600.0);
+        assert_eq!(request.space.height, 900.0);
+    }
+
+    #[test]
+    fn layout_service_builds_request_from_state_snapshot() {
+        let service = LayoutService;
+        let config = layout_config("workspace { display: flex; }", "layouts/master-stack.js");
+        let state = state_snapshot(1280, 720);
+
+        let request = service
+            .make_request_from_state(
+                &config,
+                &state,
+                ResolvedLayoutNode::Workspace {
+                    meta: LayoutNodeMeta::default(),
+                    children: vec![],
+                },
+            )
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(request.layout_name.as_deref(), Some("master-stack"));
+        assert_eq!(request.space.width, 1280.0);
+        assert_eq!(request.space.height, 720.0);
+    }
+
+    #[test]
+    fn layout_service_evaluates_js_layout_and_computes_geometry() {
+        let service = LayoutService;
+        let temp_dir = std::env::temp_dir();
+        let module_path = temp_dir.join("spiders-compositor-layout-test.js");
+        fs::write(
+            &module_path,
+            "ctx => ({ type: 'workspace', children: [{ type: 'window', id: 'main', match: 'app_id=\"firefox\"' }, { type: 'slot', id: 'rest', class: ['rest'] }] })",
+        )
+        .unwrap();
+        let runtime = spiders_runtime_js::runtime::QuickJsPreparedLayoutRuntime::with_loader(
+            spiders_runtime_js::loader::FsLayoutSourceLoader,
+        );
+        let config = layout_config(
+            "workspace { display: flex; flex-direction: row; width: 800px; height: 600px; } #main { width: 250px; } .rest { flex-grow: 1; }",
+            &module_path.to_string_lossy(),
+        );
+        let mut state = state_snapshot(800, 600);
+        state.focused_window_id = Some(WindowId::from("w1"));
+        state.visible_window_ids = vec![WindowId::from("w1"), WindowId::from("w2")];
+        let windows = vec![
+            WindowSnapshot {
+                id: WindowId::from("w1"),
+                shell: ShellKind::XdgToplevel,
+                app_id: Some("firefox".into()),
+                title: Some("Firefox".into()),
+                class: None,
+                instance: None,
+                role: None,
+                window_type: None,
+                mapped: true,
+                floating: false,
+                floating_rect: None,
+                fullscreen: false,
+                focused: true,
+                urgent: false,
+                output_id: Some(OutputId::from("out-1")),
+                workspace_id: Some(WorkspaceId::from("ws-1")),
+                workspaces: vec!["1".into()],
+            },
+            WindowSnapshot {
+                id: WindowId::from("w2"),
+                shell: ShellKind::XdgToplevel,
+                app_id: Some("alacritty".into()),
+                title: Some("Terminal".into()),
+                class: None,
+                instance: None,
+                role: None,
+                window_type: None,
+                mapped: true,
+                floating: false,
+                floating_rect: None,
+                fullscreen: false,
+                focused: false,
+                urgent: false,
+                output_id: Some(OutputId::from("out-1")),
+                workspace_id: Some(WorkspaceId::from("ws-1")),
+                workspaces: vec!["1".into()],
+            },
+        ];
+
+        let response = service
+            .evaluate_and_layout_current_workspace(&runtime, &config, &state, &windows)
+            .unwrap()
+            .unwrap();
+
+        let main = response.root.find_by_node_id("main").unwrap();
+        let rest = response.root.find_by_node_id("rest").unwrap();
+
+        assert_eq!(main.rect().width, 250.0);
+        assert_eq!(rest.rect().x, 250.0);
+        assert_eq!(rest.rect().width, 550.0);
+
+        let _ = fs::remove_file(module_path);
+    }
+
+    #[test]
+    fn layout_service_bootstraps_authoring_layout_service_for_current_workspace() {
+        let service = LayoutService;
+        let temp_dir = std::env::temp_dir();
+        let runtime_root = temp_dir.join("spiders-bootstrap-runtime");
+        let _ = fs::create_dir_all(runtime_root.join("layouts"));
+        let module_path = runtime_root.join("layouts/master-stack.js");
+        fs::write(
+            &module_path,
+            "ctx => ({ type: 'workspace', children: [{ type: 'window', id: 'main' }] })",
+        )
+        .unwrap();
+
+        let loader = spiders_runtime_js::loader::RuntimeProjectLayoutSourceLoader::new(
+            spiders_runtime_js::loader::RuntimePathResolver::new(".", &runtime_root),
+        );
+        let runtime =
+            spiders_runtime_js::runtime::QuickJsPreparedLayoutRuntime::with_loader(loader.clone());
+        let mut authoring_layout_service =
+            spiders_config::authoring_layout::AuthoringLayoutService::new(runtime);
+        let config = layout_config("", "layouts/master-stack.js");
+        let state = state_snapshot(800, 600);
+
+        let evaluated = service
+            .bootstrap_runtime(&mut authoring_layout_service, &config, &state)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(evaluated.workspace_id, WorkspaceId::from("ws-1"));
+        assert_eq!(evaluated.evaluated.artifact.selected.name, "master-stack");
+        assert_eq!(
+            evaluated.request.layout_name.as_deref(),
+            Some("master-stack")
+        );
+        assert_eq!(evaluated.response.root.window_nodes().len(), 1);
+        assert!(matches!(
+            evaluated.evaluated.layout,
+            spiders_shared::layout::SourceLayoutNode::Workspace { .. }
+        ));
+
+        let _ = fs::remove_file(module_path);
+    }
+
+    #[test]
+    fn test_config_master_stack_single_window_fills_workspace() {
+        let service = LayoutService;
+        let loader = spiders_runtime_js::loader::RuntimeProjectLayoutSourceLoader::new(
+            spiders_runtime_js::loader::RuntimePathResolver::new(
+                "/home/akisarou/projects/spiders-wm",
+                "/home/akisarou/projects/spiders-wm/test_config/.spiders-wm-build",
+            ),
+        );
+        let runtime =
+            spiders_runtime_js::runtime::QuickJsPreparedLayoutRuntime::with_loader(loader);
+        let mut authoring_layout_service =
+            spiders_config::authoring_layout::AuthoringLayoutService::with_paths(
+                runtime,
+                spiders_config::model::ConfigPaths::new(
+                    "/home/akisarou/projects/spiders-wm/test_config/config.ts",
+                    "/home/akisarou/projects/spiders-wm/test_config/.spiders-wm-build/config.js",
+                ),
+            );
+        let config = authoring_layout_service
+            .load_config_with_cache_update(&spiders_config::model::ConfigPaths::new(
+                "/home/akisarou/projects/spiders-wm/test_config/config.ts",
+                "/home/akisarou/projects/spiders-wm/test_config/.spiders-wm-build/config.js",
+            ))
+            .unwrap()
+            .0;
+        let mut state = state_snapshot(1280, 800);
+        state.windows = vec![mapped_window("w1")];
+        state.visible_window_ids = vec![WindowId::from("w1")];
+
+        let startup = service
+            .bootstrap_runtime(&mut authoring_layout_service, &config, &state)
+            .unwrap()
+            .unwrap();
+        let window = startup
+            .response
+            .root
+            .find_by_window_id(&WindowId::from("w1"))
+            .unwrap();
+
+        assert_eq!(window.rect().x, 4.0);
+        assert_eq!(window.rect().y, 4.0);
+        assert_eq!(window.rect().width, 1272.0);
+        assert_eq!(window.rect().height, 792.0);
+    }
+
+    #[test]
+    fn test_config_master_stack_two_windows_splits_master_and_stack() {
+        let service = LayoutService;
+        let loader = spiders_runtime_js::loader::RuntimeProjectLayoutSourceLoader::new(
+            spiders_runtime_js::loader::RuntimePathResolver::new(
+                "/home/akisarou/projects/spiders-wm",
+                "/home/akisarou/projects/spiders-wm/test_config/.spiders-wm-build",
+            ),
+        );
+        let runtime =
+            spiders_runtime_js::runtime::QuickJsPreparedLayoutRuntime::with_loader(loader);
+        let mut authoring_layout_service =
+            spiders_config::authoring_layout::AuthoringLayoutService::with_paths(
+                runtime,
+                spiders_config::model::ConfigPaths::new(
+                    "/home/akisarou/projects/spiders-wm/test_config/config.ts",
+                    "/home/akisarou/projects/spiders-wm/test_config/.spiders-wm-build/config.js",
+                ),
+            );
+        let config = authoring_layout_service
+            .load_config_with_cache_update(&spiders_config::model::ConfigPaths::new(
+                "/home/akisarou/projects/spiders-wm/test_config/config.ts",
+                "/home/akisarou/projects/spiders-wm/test_config/.spiders-wm-build/config.js",
+            ))
+            .unwrap()
+            .0;
+        let mut state = state_snapshot(1280, 800);
+        state.windows = vec![mapped_window("w1"), mapped_window("w2")];
+        state.visible_window_ids = vec![WindowId::from("w1"), WindowId::from("w2")];
+
+        let startup = service
+            .bootstrap_runtime(&mut authoring_layout_service, &config, &state)
+            .unwrap()
+            .unwrap();
+
+        let first = startup
+            .response
+            .root
+            .find_by_window_id(&WindowId::from("w1"))
+            .unwrap();
+        let second = startup
+            .response
+            .root
+            .find_by_window_id(&WindowId::from("w2"))
+            .unwrap();
+
+        assert_eq!(first.rect().x, 4.0);
+        assert_eq!(first.rect().y, 4.0);
+        assert_eq!(first.rect().height, 792.0);
+        assert_eq!(second.rect().y, 4.0);
+        assert!(second.rect().height > 0.0);
+        assert!(first.rect().width > second.rect().width);
+        assert!(first.rect().x < second.rect().x);
+    }
+
+    #[test]
+    fn layout_service_initializes_startup_runtime_state() {
+        let service = LayoutService;
+        let temp_dir = std::env::temp_dir();
+        let runtime_root = temp_dir.join("spiders-startup-runtime");
+        let _ = fs::create_dir_all(runtime_root.join("layouts"));
+        let module_path = runtime_root.join("layouts/master-stack.js");
+        fs::write(
+            &module_path,
+            "ctx => ({ type: 'workspace', children: [{ type: 'window', id: 'main' }] })",
+        )
+        .unwrap();
+
+        let loader = spiders_runtime_js::loader::RuntimeProjectLayoutSourceLoader::new(
+            spiders_runtime_js::loader::RuntimePathResolver::new(".", &runtime_root),
+        );
+        let runtime =
+            spiders_runtime_js::runtime::QuickJsPreparedLayoutRuntime::with_loader(loader.clone());
+        let authoring_layout_service =
+            spiders_config::authoring_layout::AuthoringLayoutService::new(runtime);
+        let config = layout_config("", "layouts/master-stack.js");
+        let state = state_snapshot(800, 600);
+
+        let startup = service
+            .initialize_startup_runtime(authoring_layout_service, config, &state)
+            .unwrap();
+
+        assert!(startup.startup_layout.is_some());
+        assert_eq!(startup.config.layouts.len(), 1);
+        assert_eq!(
+            startup
+                .startup_layout
+                .as_ref()
+                .unwrap()
+                .request
+                .layout_name
+                .as_deref(),
+            Some("master-stack")
+        );
+        assert_eq!(
+            startup
+                .startup_layout
+                .as_ref()
+                .unwrap()
+                .response
+                .root
+                .window_nodes()
+                .len(),
+            1
+        );
+
+        let _ = fs::remove_file(module_path);
+    }
+
+    #[test]
+    fn layout_service_initializes_startup_config_object() {
+        let service = LayoutService;
+        let temp_dir = std::env::temp_dir();
+        let runtime_root = temp_dir.join("spiders-startup-config-runtime");
+        let _ = fs::create_dir_all(runtime_root.join("layouts"));
+        let module_path = runtime_root.join("layouts/master-stack.js");
+        fs::write(
+            &module_path,
+            "ctx => ({ type: 'workspace', children: [{ type: 'window', id: 'main' }] })",
+        )
+        .unwrap();
+
+        let loader = spiders_runtime_js::loader::RuntimeProjectLayoutSourceLoader::new(
+            spiders_runtime_js::loader::RuntimePathResolver::new(".", &runtime_root),
+        );
+        let runtime =
+            spiders_runtime_js::runtime::QuickJsPreparedLayoutRuntime::with_loader(loader.clone());
+        let authoring_layout_service =
+            spiders_config::authoring_layout::AuthoringLayoutService::new(runtime);
+        let config = layout_config("", "layouts/master-stack.js");
+        let state = state_snapshot(800, 600);
+
+        let startup = service
+            .initialize_startup_config(authoring_layout_service, config, state)
+            .unwrap();
+
+        assert!(startup.runtime.startup_layout.is_some());
+        assert_eq!(
+            startup
+                .runtime
+                .startup_layout
+                .as_ref()
+                .unwrap()
+                .request
+                .layout_name
+                .as_deref(),
+            Some("master-stack")
+        );
+        assert_eq!(
+            startup
+                .runtime
+                .startup_layout
+                .as_ref()
+                .unwrap()
+                .response
+                .root
+                .window_nodes()
+                .len(),
+            1
+        );
+        assert_eq!(
+            startup.state.current_workspace_id,
+            Some(WorkspaceId::from("ws-1"))
+        );
+
+        let _ = fs::remove_file(module_path);
+    }
+
+    #[test]
+    fn layout_service_initializes_startup_session_object() {
+        let service = LayoutService;
+        let temp_dir = std::env::temp_dir();
+        let runtime_root = temp_dir.join("spiders-startup-session-object-runtime");
+        let _ = fs::create_dir_all(runtime_root.join("layouts"));
+        let module_path = runtime_root.join("layouts/master-stack.js");
+        fs::write(
+            &module_path,
+            "ctx => ({ type: 'workspace', children: [{ type: 'window', id: 'main' }] })",
+        )
+        .unwrap();
+
+        let loader = spiders_runtime_js::loader::RuntimeProjectLayoutSourceLoader::new(
+            spiders_runtime_js::loader::RuntimePathResolver::new(".", &runtime_root),
+        );
+        let runtime =
+            spiders_runtime_js::runtime::QuickJsPreparedLayoutRuntime::with_loader(loader.clone());
+        let authoring_layout_service =
+            spiders_config::authoring_layout::AuthoringLayoutService::new(runtime);
+        let config = layout_config("", "layouts/master-stack.js");
+        let state = state_snapshot(800, 600);
+
+        let session = service
+            .initialize_startup_session(authoring_layout_service, config, state)
+            .unwrap();
+
+        assert_eq!(
+            session.startup_workspace_id(),
+            Some(&WorkspaceId::from("ws-1"))
+        );
+        assert_eq!(
+            session
+                .startup_request()
+                .and_then(|request| request.layout_name.as_deref()),
+            Some("master-stack")
+        );
+        assert_eq!(
+            session
+                .startup_response()
+                .map(|response| response.root.window_nodes().len()),
+            Some(1)
+        );
+
+        let _ = fs::remove_file(module_path);
+    }
+
+    #[test]
+    fn layout_service_initializes_compositor_runtime_state() {
+        let service = LayoutService;
+        let temp_dir = std::env::temp_dir();
+        let runtime_root = temp_dir.join("spiders-compositor-runtime-object");
+        let _ = fs::create_dir_all(runtime_root.join("layouts"));
+        let module_path = runtime_root.join("layouts/master-stack.js");
+        fs::write(
+            &module_path,
+            "ctx => ({ type: 'workspace', children: [{ type: 'window', id: 'main' }] })",
+        )
+        .unwrap();
+
+        let loader = spiders_runtime_js::loader::RuntimeProjectLayoutSourceLoader::new(
+            spiders_runtime_js::loader::RuntimePathResolver::new(".", &runtime_root),
+        );
+        let runtime =
+            spiders_runtime_js::runtime::QuickJsPreparedLayoutRuntime::with_loader(loader.clone());
+        let authoring_layout_service =
+            spiders_config::authoring_layout::AuthoringLayoutService::new(runtime);
+        let config = layout_config("", "layouts/master-stack.js");
+        let state = state_snapshot(800, 600);
+
+        let runtime = service
+            .initialize_runtime_state(authoring_layout_service, config, state)
+            .unwrap();
+
+        assert_eq!(
+            runtime.current_workspace_id(),
+            Some(&WorkspaceId::from("ws-1"))
+        );
+        assert_eq!(
+            runtime
+                .current_layout()
+                .and_then(|layout| layout.request.layout_name.as_deref()),
+            Some("master-stack")
+        );
+        assert_eq!(
+            runtime
+                .current_layout()
+                .map(|layout| layout.response.root.window_nodes().len()),
+            Some(1)
+        );
+
+        let _ = fs::remove_file(module_path);
     }
 }

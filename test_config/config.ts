@@ -13,7 +13,7 @@ import { layouts } from "./config/layouts";
 // });
 
 export default {
-  tags: ["1", "2", "3", "4", "5", "6", "7", "8", "9"],
+  workspaces: ["1", "2", "3", "4", "5", "6", "7", "8", "9"],
 
   options: {
     sloppyfocus: true,

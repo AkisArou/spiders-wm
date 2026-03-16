@@ -123,7 +123,7 @@ where
                 id: spiders_shared::ids::WorkspaceId::from("validation"),
                 name: "validation".into(),
                 output_id: None,
-                active_tags: vec![],
+                active_workspaces: vec![],
                 focused: true,
                 visible: true,
                 effective_layout: Some(spiders_shared::wm::LayoutRef {
@@ -415,7 +415,7 @@ mod tests {
             id: WorkspaceId::from("ws-1"),
             name: "1".into(),
             output_id: Some(OutputId::from("out-1")),
-            active_tags: vec!["1".into()],
+            active_workspaces: vec!["1".into()],
             focused: true,
             visible: true,
             effective_layout: Some(LayoutRef {
@@ -444,7 +444,7 @@ mod tests {
             workspaces: vec![workspace()],
             windows: vec![],
             visible_window_ids: vec![],
-            tag_names: vec!["1".into()],
+            workspace_names: vec!["1".into()],
         }
     }
 
@@ -586,7 +586,7 @@ mod tests {
     fn authoring_layout_service_loads_authored_config_when_runtime_js_is_missing() {
         let project_root = std::env::temp_dir().join("spiders-service-authored-config");
         let authored_config = Config {
-            tags: vec!["1".into()],
+            workspaces: vec!["1".into()],
             bindings: vec![],
             layouts: vec![LayoutDefinition {
                 name: "master-stack".into(),
@@ -610,7 +610,7 @@ mod tests {
             ))
             .unwrap();
 
-        assert_eq!(config.tags, vec!["1"]);
+        assert_eq!(config.workspaces, vec!["1"]);
         assert_eq!(config.bindings.len(), 0);
         assert_eq!(config.layouts.len(), 1);
         assert!(config.layouts[0].runtime_graph.is_some());

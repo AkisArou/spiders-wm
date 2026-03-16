@@ -3,9 +3,9 @@ mod report;
 
 use bootstrap::CliBootstrap;
 use report::{
-    BootstrapFailureReport, BootstrapReport, BuildConfigReport, DiscoveryReport, ErrorReport,
+    emit, BootstrapFailureReport, BootstrapReport, BuildConfigReport, DiscoveryReport, ErrorReport,
     IpcActionReport, IpcMonitorReport, IpcQueryReport, IpcSmokeReport, OutputMode,
-    SuccessCheckReport, WinitRunReport, emit,
+    SuccessCheckReport, WinitRunReport,
 };
 
 #[derive(Debug, Clone)]
@@ -270,11 +270,11 @@ fn winit_run_command(
     };
 
     let state = synthetic_winit_state(&config);
-    let mut runtime_bootstrap = match spiders_compositor::bootstrap_winit_with_options(
+    let mut runtime_bootstrap = match spiders_wm::bootstrap_winit_with_options(
         bootstrap.service,
         config,
         state,
-        spiders_compositor::SmithayWinitOptions {
+        spiders_wm::SmithayWinitOptions {
             socket_name: socket_name.map(str::to_owned),
         },
     ) {
@@ -391,7 +391,7 @@ fn winit_debug_snapshot_path() -> Option<std::path::PathBuf> {
 
 fn write_winit_debug_snapshot<R>(
     path: &std::path::Path,
-    runtime_bootstrap: &spiders_compositor::SmithayBootstrap<R>,
+    runtime_bootstrap: &spiders_wm::SmithayBootstrap<R>,
 ) -> Result<(), String>
 where
     R: spiders_shared::runtime::AuthoringLayoutRuntime<Config = spiders_config::model::Config>,
@@ -802,7 +802,7 @@ fn bootstrap_trace_command(
             }
         };
 
-        let script = match spiders_compositor::BootstrapScript::from_json_str(&contents) {
+        let script = match spiders_wm::BootstrapScript::from_json_str(&contents) {
             Ok(script) => script,
             Err(error) => {
                 emit(
@@ -822,7 +822,7 @@ fn bootstrap_trace_command(
         };
 
         let state = synthetic_bootstrap_state();
-        let mut controller = match spiders_compositor::CompositorController::initialize_with_script(
+        let mut controller = match spiders_wm::CompositorController::initialize_with_script(
             bootstrap.service,
             config,
             state,
@@ -884,28 +884,25 @@ fn bootstrap_trace_command(
     }
 
     let state = synthetic_bootstrap_state();
-    let controller = match spiders_compositor::CompositorController::initialize(
-        bootstrap.service,
-        config,
-        state,
-    ) {
-        Ok(controller) => controller,
-        Err(error) => {
-            emit(
-                output_mode,
-                &ErrorReport {
-                    status: "error",
-                    phase: "bootstrap",
-                    runtime_ready: cli.ready,
-                    prepared_config: Some(prepared_config.clone()),
-                    errors: None,
-                    message: Some(error.to_string()),
-                },
-                || format!("bootstrap trace runner error: {error}"),
-            );
-            return std::process::ExitCode::from(1);
-        }
-    };
+    let controller =
+        match spiders_wm::CompositorController::initialize(bootstrap.service, config, state) {
+            Ok(controller) => controller,
+            Err(error) => {
+                emit(
+                    output_mode,
+                    &ErrorReport {
+                        status: "error",
+                        phase: "bootstrap",
+                        runtime_ready: cli.ready,
+                        prepared_config: Some(prepared_config.clone()),
+                        errors: None,
+                        message: Some(error.to_string()),
+                    },
+                    || format!("bootstrap trace runner error: {error}"),
+                );
+                return std::process::ExitCode::from(1);
+            }
+        };
 
     emit_bootstrap_trace(
         cli,
@@ -923,7 +920,7 @@ fn emit_bootstrap_trace(
     authored_config: String,
     prepared_config: String,
     prepared_config_update: Option<spiders_shared::runtime::RuntimeRefreshSummary>,
-    report: spiders_compositor::ControllerReport,
+    report: spiders_wm::ControllerReport,
 ) -> std::process::ExitCode {
     let current_workspace = report.diagnostics.current_workspace.clone();
     let focused_window = report.diagnostics.focused_window.clone();
@@ -1008,7 +1005,7 @@ fn synthetic_bootstrap_state() -> spiders_shared::wm::StateSnapshot {
             id: WorkspaceId::from("bootstrap-workspace"),
             name: "bootstrap".into(),
             output_id: Some(OutputId::from("bootstrap-output")),
-            active_tags: vec!["bootstrap".into()],
+            active_workspaces: vec!["bootstrap".into()],
             focused: true,
             visible: true,
             effective_layout: Some(LayoutRef {
@@ -1032,10 +1029,10 @@ fn synthetic_bootstrap_state() -> spiders_shared::wm::StateSnapshot {
             urgent: false,
             output_id: Some(OutputId::from("bootstrap-output")),
             workspace_id: Some(WorkspaceId::from("bootstrap-workspace")),
-            tags: vec!["bootstrap".into()],
+            workspaces: vec!["bootstrap".into()],
         }],
         visible_window_ids: vec![WindowId::from("bootstrap-window")],
-        tag_names: vec!["bootstrap".into()],
+        workspace_names: vec!["bootstrap".into()],
     }
 }
 
@@ -1047,9 +1044,10 @@ fn synthetic_winit_state(
 
     let workspace_id = WorkspaceId::from("winit-workspace");
     let output_id = OutputId::from("smithay-winit-output");
-    let active_tag = "1";
-    let effective_layout = synthetic_winit_layout_name(config, &output_id.to_string(), active_tag)
-        .map(|name| LayoutRef { name });
+    let active_workspace = "1";
+    let effective_layout =
+        synthetic_winit_layout_name(config, &output_id.to_string(), active_workspace)
+            .map(|name| LayoutRef { name });
 
     StateSnapshot {
         focused_window_id: None,
@@ -1071,21 +1069,21 @@ fn synthetic_winit_state(
             id: workspace_id,
             name: "winit".into(),
             output_id: Some(OutputId::from("smithay-winit-output")),
-            active_tags: vec![active_tag.into()],
+            active_workspaces: vec![active_workspace.into()],
             focused: true,
             visible: true,
             effective_layout,
         }],
         windows: Vec::new(),
         visible_window_ids: Vec::new(),
-        tag_names: vec!["1".into()],
+        workspace_names: vec!["1".into()],
     }
 }
 
 fn synthetic_winit_layout_name(
     config: &spiders_config::model::Config,
     output_name: &str,
-    active_tag: &str,
+    active_workspace: &str,
 ) -> Option<String> {
     config
         .layout_selection
@@ -1094,10 +1092,10 @@ fn synthetic_winit_layout_name(
         .cloned()
         .or_else(|| {
             config
-                .tags
+                .workspaces
                 .iter()
-                .position(|tag| tag == active_tag)
-                .and_then(|index| config.layout_selection.per_tag.get(index).cloned())
+                .position(|workspace| workspace == active_workspace)
+                .and_then(|index| config.layout_selection.per_workspace.get(index).cloned())
         })
         .or_else(|| config.layout_selection.default.clone())
         .or_else(|| config.layouts.first().map(|layout| layout.name.clone()))
@@ -1105,8 +1103,8 @@ fn synthetic_winit_layout_name(
 
 fn run_ipc_smoke() -> Result<IpcSmokeReport, String> {
     use spiders_ipc::{
-        IpcClientMessage, IpcEnvelope, IpcServerHandleResult, IpcServerState, IpcSubscriptionTopic,
-        decode_request_line, encode_request_line, encode_response_line,
+        decode_request_line, encode_request_line, encode_response_line, IpcClientMessage,
+        IpcEnvelope, IpcServerHandleResult, IpcServerState, IpcSubscriptionTopic,
     };
     use spiders_shared::api::CompositorEvent;
 
@@ -1168,7 +1166,7 @@ fn run_ipc_query(
     socket_path: Option<std::path::PathBuf>,
     query_name: &str,
 ) -> Result<IpcQueryReport, String> {
-    use spiders_ipc::{IpcClientMessage, IpcEnvelope, connect, recv_response, send_request};
+    use spiders_ipc::{connect, recv_response, send_request, IpcClientMessage, IpcEnvelope};
 
     let socket_path = socket_path.ok_or_else(|| "missing IPC socket path".to_string())?;
     let query = parse_query_request(query_name)?;
@@ -1197,7 +1195,7 @@ fn run_ipc_action(
     socket_path: Option<std::path::PathBuf>,
     action_name: &str,
 ) -> Result<IpcActionReport, String> {
-    use spiders_ipc::{IpcClientMessage, IpcEnvelope, connect, recv_response, send_request};
+    use spiders_ipc::{connect, recv_response, send_request, IpcClientMessage, IpcEnvelope};
 
     let socket_path = socket_path.ok_or_else(|| "missing IPC socket path".to_string())?;
     let action = parse_action_request(action_name)?;
@@ -1228,8 +1226,8 @@ fn run_ipc_monitor(
     topic_names: Vec<&str>,
 ) -> Result<IpcMonitorReport, String> {
     use spiders_ipc::{
-        IpcClientMessage, IpcEnvelope, IpcServerMessage, connect, decode_response_line,
-        send_request,
+        connect, decode_response_line, send_request, IpcClientMessage, IpcEnvelope,
+        IpcServerMessage,
     };
     use std::io::BufRead;
 
@@ -1311,7 +1309,7 @@ fn parse_query_request(name: &str) -> Result<spiders_shared::api::QueryRequest, 
         "current-output" => Ok(QueryRequest::CurrentOutput),
         "current-workspace" => Ok(QueryRequest::CurrentWorkspace),
         "monitor-list" => Ok(QueryRequest::MonitorList),
-        "tag-names" => Ok(QueryRequest::TagNames),
+        "workspace-names" => Ok(QueryRequest::WorkspaceNames),
         _ => Err(format!("unsupported IPC query '{name}'")),
     }
 }
@@ -1324,14 +1322,14 @@ fn parse_action_request(name: &str) -> Result<spiders_shared::api::WmAction, Str
             name: value.to_string(),
         });
     }
-    if let Some(value) = name.strip_prefix("view-tag:") {
-        return Ok(WmAction::ViewTag {
-            tag: value.to_string(),
+    if let Some(value) = name.strip_prefix("view-workspace:") {
+        return Ok(WmAction::ViewWorkspace {
+            workspace: parse_workspace_shortcut(value, "view-workspace")?,
         });
     }
-    if let Some(value) = name.strip_prefix("toggle-view-tag:") {
-        return Ok(WmAction::ToggleViewTag {
-            tag: value.to_string(),
+    if let Some(value) = name.strip_prefix("toggle-view-workspace:") {
+        return Ok(WmAction::ToggleViewWorkspace {
+            workspace: parse_workspace_shortcut(value, "toggle-view-workspace")?,
         });
     }
     if let Some(value) = name.strip_prefix("activate-workspace:") {
@@ -1381,6 +1379,20 @@ fn parse_action_request(name: &str) -> Result<spiders_shared::api::WmAction, Str
     }
 }
 
+fn parse_workspace_shortcut(value: &str, action_name: &str) -> Result<u8, String> {
+    let workspace = value
+        .parse::<u8>()
+        .map_err(|_| format!("{action_name} expects a workspace number between 1 and 9"))?;
+
+    if (1..=9).contains(&workspace) {
+        Ok(workspace)
+    } else {
+        Err(format!(
+            "{action_name} expects a workspace number between 1 and 9"
+        ))
+    }
+}
+
 fn parse_subscription_topics(
     names: &[&str],
 ) -> Result<Vec<spiders_ipc::IpcSubscriptionTopic>, String> {
@@ -1399,7 +1411,7 @@ fn parse_subscription_topic(name: &str) -> Result<spiders_ipc::IpcSubscriptionTo
         "all" => Ok(spiders_ipc::IpcSubscriptionTopic::All),
         "focus" => Ok(spiders_ipc::IpcSubscriptionTopic::Focus),
         "windows" => Ok(spiders_ipc::IpcSubscriptionTopic::Windows),
-        "tags" => Ok(spiders_ipc::IpcSubscriptionTopic::Tags),
+        "workspaces" => Ok(spiders_ipc::IpcSubscriptionTopic::Workspaces),
         "layout" => Ok(spiders_ipc::IpcSubscriptionTopic::Layout),
         "config" => Ok(spiders_ipc::IpcSubscriptionTopic::Config),
         _ => Err(format!("unsupported IPC topic '{name}'")),
@@ -1415,7 +1427,7 @@ fn query_label(query: &spiders_shared::api::QueryRequest) -> &'static str {
         QueryRequest::CurrentOutput => "current-output",
         QueryRequest::CurrentWorkspace => "current-workspace",
         QueryRequest::MonitorList => "monitor-list",
-        QueryRequest::TagNames => "tag-names",
+        QueryRequest::WorkspaceNames => "workspace-names",
     }
 }
 
@@ -1430,16 +1442,18 @@ fn action_label(action: &spiders_shared::api::WmAction) -> &'static str {
         WmAction::Spawn { .. } => "spawn",
         WmAction::SetLayout { .. } => "set-layout",
         WmAction::CycleLayout { .. } => "cycle-layout",
-        WmAction::ViewTag { .. } => "view-tag",
-        WmAction::ToggleViewTag { .. } => "toggle-view-tag",
+        WmAction::ViewWorkspace { .. } => "view-workspace",
+        WmAction::ToggleViewWorkspace { .. } => "toggle-view-workspace",
         WmAction::ActivateWorkspace { .. } => "activate-workspace",
         WmAction::AssignWorkspace { .. } => "assign-workspace",
         WmAction::FocusMonitorLeft => "focus-monitor-left",
         WmAction::FocusMonitorRight => "focus-monitor-right",
         WmAction::SendMonitorLeft => "send-monitor-left",
         WmAction::SendMonitorRight => "send-monitor-right",
-        WmAction::TagFocusedWindow { .. } => "tag-focused-window",
-        WmAction::ToggleTagFocusedWindow { .. } => "toggle-tag-focused-window",
+        WmAction::AssignFocusedWindowToWorkspace { .. } => "assign-focused-window-to-workspace",
+        WmAction::ToggleAssignFocusedWindowToWorkspace { .. } => {
+            "toggle-assign-focused-window-to-workspace"
+        }
         WmAction::FocusWindow { .. } => "focus-window",
         WmAction::SetFloatingWindowGeometry { .. } => "set-floating-window-geometry",
         WmAction::FocusDirection { .. } => "focus-direction",
@@ -1455,7 +1469,7 @@ fn topic_label(topic: &spiders_ipc::IpcSubscriptionTopic) -> &'static str {
         spiders_ipc::IpcSubscriptionTopic::All => "all",
         spiders_ipc::IpcSubscriptionTopic::Focus => "focus",
         spiders_ipc::IpcSubscriptionTopic::Windows => "windows",
-        spiders_ipc::IpcSubscriptionTopic::Tags => "tags",
+        spiders_ipc::IpcSubscriptionTopic::Workspaces => "workspaces",
         spiders_ipc::IpcSubscriptionTopic::Layout => "layout",
         spiders_ipc::IpcSubscriptionTopic::Config => "config",
     }
@@ -1485,7 +1499,7 @@ fn fallback_query_response(
             QueryResponse::CurrentWorkspace(state.current_workspace().cloned())
         }
         QueryRequest::MonitorList => QueryResponse::MonitorList(state.outputs),
-        QueryRequest::TagNames => QueryResponse::TagNames(state.tag_names),
+        QueryRequest::WorkspaceNames => QueryResponse::WorkspaceNames(state.workspace_names),
     }
 }
 
@@ -1495,7 +1509,7 @@ mod tests {
     use std::io::Write;
     use std::os::unix::net::UnixListener;
 
-    use spiders_ipc::{IpcEnvelope, IpcServerMessage, encode_response_line};
+    use spiders_ipc::{encode_response_line, IpcEnvelope, IpcServerMessage};
     use spiders_shared::api::{CompositorEvent, QueryResponse};
 
     #[test]
@@ -1524,7 +1538,7 @@ mod tests {
                 use std::io::BufRead;
                 reader.read_line(&mut request).unwrap();
                 let line = encode_response_line(&IpcEnvelope::new(IpcServerMessage::Query(
-                    QueryResponse::TagNames(vec!["1".into(), "2".into()]),
+                    QueryResponse::WorkspaceNames(vec!["1".into(), "2".into()]),
                 )))
                 .unwrap();
                 stream.write_all(line.as_bytes()).unwrap();
@@ -1533,12 +1547,15 @@ mod tests {
             }
         });
 
-        let report = run_ipc_query(Some(socket_path.clone()), "tag-names").unwrap();
+        let report = run_ipc_query(Some(socket_path.clone()), "workspace-names").unwrap();
 
-        assert_eq!(report.query, spiders_shared::api::QueryRequest::TagNames);
+        assert_eq!(
+            report.query,
+            spiders_shared::api::QueryRequest::WorkspaceNames
+        );
         assert_eq!(
             report.response,
-            QueryResponse::TagNames(vec!["1".into(), "2".into()])
+            QueryResponse::WorkspaceNames(vec!["1".into(), "2".into()])
         );
 
         let path = handle.join().unwrap();

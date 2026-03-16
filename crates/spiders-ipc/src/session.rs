@@ -280,9 +280,9 @@ mod tests {
         assert_eq!(
             session.query_response(
                 Some("req-3".into()),
-                QueryResponse::TagNames(vec!["1".into()])
+                QueryResponse::WorkspaceNames(vec!["1".into()])
             ),
-            IpcEnvelope::new(IpcServerMessage::Query(QueryResponse::TagNames(vec![
+            IpcEnvelope::new(IpcServerMessage::Query(QueryResponse::WorkspaceNames(vec![
                 "1".into()
             ])))
             .with_request_id("req-3")

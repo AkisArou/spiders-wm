@@ -997,7 +997,7 @@ mod tests {
             urgent: false,
             output_id: None,
             workspace_id: Some(WorkspaceId::from("ws-1")),
-            tags: vec!["1".into()],
+            workspaces: vec!["1".into()],
         }
     }
 
@@ -1006,7 +1006,7 @@ mod tests {
             id: WorkspaceId::from("ws-1"),
             name: "1".into(),
             output_id: None,
-            active_tags: vec!["1".into()],
+            active_workspaces: vec!["1".into()],
             focused: true,
             visible: true,
             effective_layout: Some(LayoutRef {
