@@ -1382,6 +1382,12 @@ mod imp {
                                 .first()
                                 .cloned()
                         });
+                    let next_focus = focused_window_id.as_ref().and_then(|window_id| {
+                        self.controller
+                            .app()
+                            .session()
+                            .preferred_focus_after_window_removed(window_id)
+                    });
 
                     if let Some(window_id) = focused_window_id.as_ref() {
                         let previous_window_plan =
@@ -1393,13 +1399,34 @@ mod imp {
                             .state()
                             .current_window_decoration_policies()
                             .to_vec();
+                        let (snapshot_titlebars, snapshot_decoration_policies) =
+                            retarget_close_snapshot_focus(
+                                window_id,
+                                next_focus.as_ref(),
+                                &previous_titlebars,
+                                &decoration_policies,
+                            );
+                        let (
+                            snapshot_window_plan,
+                            snapshot_titlebars,
+                            snapshot_decoration_policies,
+                            snapshot_surfaces,
+                        ) = filter_close_window_from_scene_snapshot(
+                            window_id,
+                            &previous_window_plan,
+                            &snapshot_titlebars,
+                            &snapshot_decoration_policies,
+                            &self.runtime.state().renderable_toplevel_surfaces(),
+                        );
                         if let Some(render) = previous_window_plan
                             .iter()
                             .find(|render| &render.window_id == window_id)
                             .cloned()
                         {
-                            let surfaces = self.runtime.state().renderable_toplevel_surfaces();
-                            if let Some(surface) = surfaces
+                            if let Some(surface) = self
+                                .runtime
+                                .state()
+                                .renderable_toplevel_surfaces()
                                 .iter()
                                 .find(|surface| &surface.window_id == window_id)
                                 .cloned()
@@ -1411,93 +1438,46 @@ mod imp {
                                     let mut request_redraw = false;
                                     if let Some(backend) = self.runtime.backend.as_mut() {
                                         if let Ok((renderer, _)) = backend.bind() {
-                                            if let Ok(Some(snapshot)) = capture_window_snapshot(
+                                            let _ = capture_window_snapshot(
                                                 renderer,
                                                 &surface,
                                                 &render,
                                                 output_scale,
+                                            );
+                                            if let Ok(Some(scene_snapshot)) = capture_scene_snapshot(
+                                                renderer,
+                                                &snapshot_window_plan,
+                                                &snapshot_titlebars,
+                                                &snapshot_decoration_policies,
+                                                &snapshot_surfaces,
+                                                self.runtime.window_size.into(),
+                                                output_scale,
                                             ) {
-                                                if let Ok(Some(scene_snapshot)) =
-                                                    capture_scene_snapshot(
-                                                        renderer,
+                                                let affected_windows =
+                                                    projected_close_affected_window_ids(
                                                         &previous_window_plan,
-                                                        &previous_titlebars,
-                                                        &decoration_policies,
-                                                        &surfaces,
-                                                        self.runtime.window_size.into(),
-                                                        output_scale,
-                                                    )
-                                                {
-                                                    let affected_windows =
-                                                        projected_close_affected_window_ids(
-                                                            &previous_window_plan,
-                                                            window_id,
-                                                        );
-                                                    let affected_previous_windows =
-                                                        select_windows_by_ids(
-                                                            &previous_window_plan,
-                                                            &affected_windows,
-                                                        );
-                                                    let next_transition = SceneTransition::new(
-                                                        scene_snapshot,
-                                                        transition_now(
-                                                            &self.runtime.presentation_state.clock,
-                                                        ),
-                                                        layout_signature(&previous_window_plan),
-                                                        affected_windows,
-                                                        union_window_rect(
-                                                            &affected_previous_windows,
-                                                        )
-                                                        .unwrap_or(render.window_rect),
+                                                        window_id,
                                                     );
-                                                    self.runtime.scene_transition =
-                                                        Some(merge_scene_transition(
-                                                            self.runtime.scene_transition.take(),
-                                                            next_transition,
-                                                        ));
-                                                }
-                                                self.runtime
-                                                    .last_snapshot_capture_window_ids
-                                                    .insert(window_id.clone());
-                                                self.runtime.closing_transitions.insert(
-                                                    window_id.clone(),
-                                                    ClosingWindowTransition::new(
-                                                        window_id.clone(),
-                                                        snapshot,
-                                                        transition_now(
-                                                            &self.runtime.presentation_state.clock,
-                                                        ),
+                                                let affected_previous_windows =
+                                                    select_windows_by_ids(
+                                                        &previous_window_plan,
+                                                        &affected_windows,
+                                                    );
+                                                let next_transition = SceneTransition::new(
+                                                    scene_snapshot,
+                                                    transition_now(
+                                                        &self.runtime.presentation_state.clock,
                                                     ),
+                                                    layout_signature(&previous_window_plan),
+                                                    affected_windows,
+                                                    union_window_rect(&affected_previous_windows)
+                                                        .unwrap_or(render.window_rect),
                                                 );
-                                                self.runtime.resize_transitions.insert(
-                                                    window_id.clone(),
-                                                    ResizeTransition::new(
-                                                        window_id.clone(),
-                                                        self.runtime
-                                                            .closing_transitions
-                                                            .get(window_id)
-                                                            .expect("closing transition inserted")
-                                                            .snapshot
-                                                            .clone(),
-                                                        (
-                                                            render
-                                                                .window_rect
-                                                                .width
-                                                                .max(0.0)
-                                                                .round()
-                                                                as i32,
-                                                            (render.window_rect.height
-                                                                - render.content_offset_y)
-                                                                .max(0.0)
-                                                                .round()
-                                                                as i32,
-                                                        ),
-                                                        transition_now(
-                                                            &self.runtime.presentation_state.clock,
-                                                        ),
-                                                        true,
-                                                    ),
-                                                );
+                                                self.runtime.scene_transition =
+                                                    Some(merge_scene_transition(
+                                                        self.runtime.scene_transition.take(),
+                                                        next_transition,
+                                                    ));
                                                 request_redraw = true;
                                             }
                                         }
@@ -1519,6 +1499,15 @@ mod imp {
                     ));
 
                     if close_requested {
+                        self.controller.apply_ipc_action(&action).map_err(|error| {
+                            SmithayRuntimeError::Winit(format!("workspace action failed: {error}"))
+                        })?;
+                        refresh_workspace_export_from_controller(
+                            &self.controller,
+                            self.runtime.state_mut(),
+                        );
+                        self.report.controller = self.controller.report();
+                        self.runtime.state_mut().request_redraw();
                         append_winit_debug_log(&format!(
                             "bootstrap.apply_pending_workspace_actions action_end action={action:?} windows={} visible={} focused={:?} workspace={:?} gen={}",
                             self.controller.state_snapshot().windows.len(),
@@ -2358,7 +2347,6 @@ mod imp {
             let has_active_transitions = !self.resize_transitions.is_empty()
                 || !self.closing_transitions.is_empty()
                 || !self.opening_transitions.is_empty()
-                || self.scene_transition.is_some()
                 || !self.pending_presented_window_ids.is_empty()
                 || has_close_requested_windows;
             let effective_focused_window_id = effective_render_focus(
@@ -2498,6 +2486,7 @@ mod imp {
                             .cloned()
                             .collect::<HashSet<_>>()
                     });
+                    let mut retire_scene_transition = false;
                     let mut overlay_emitted = false;
                     let mut elements = build_compositor_render_elements(
                         render_state,
@@ -2540,6 +2529,7 @@ mod imp {
                             layout_changed,
                             scene_settled,
                         );
+                        retire_scene_transition = alpha <= 0.0;
                         let needs_overlay = scene_transition_needs_overlay(
                             scene_transition,
                             &window_items,
@@ -2558,6 +2548,15 @@ mod imp {
                                 elements.push(CompositorRenderElement::from(element));
                             }
                         }
+                        elements.extend(build_closing_transition_elements(
+                            output_scale,
+                            transition_now_value,
+                            &self.closing_transitions,
+                            &mut self.last_snapshot_used_window_ids,
+                        ));
+                    }
+                    if retire_scene_transition {
+                        self.scene_transition = None;
                     }
                     let scene_transaction_debug = scene_transaction_debug_record(
                         self.scene_transition.as_ref(),
@@ -2691,7 +2690,6 @@ mod imp {
             if !self.resize_transitions.is_empty()
                 || !self.closing_transitions.is_empty()
                 || !self.opening_transitions.is_empty()
-                || self.scene_transition.is_some()
                 || !self.pending_presented_window_ids.is_empty()
             {
                 self.state_mut().request_redraw();
@@ -2784,11 +2782,11 @@ mod imp {
         let scene_transition_active = frozen_window_ids.is_some();
 
         for transition in closing_transitions.values() {
-            if scene_transition_active {
-                continue;
-            }
             let window_id = &transition.window_id;
             if windows.iter().any(|window| &window.window_id == window_id) {
+                continue;
+            }
+            if scene_transition_active {
                 continue;
             }
 
@@ -2848,6 +2846,7 @@ mod imp {
                             .map(|transition| &transition.snapshot)
                     })
             };
+            let isolated_closing_window = closing_transitions.contains_key(&window.window_id);
             let has_resize_snapshot = transition_snapshot.is_some();
             let snapshot_rect = transition_snapshot.map(|snapshot| {
                 (
@@ -2859,6 +2858,28 @@ mod imp {
             });
             let mut drew_live = false;
             let mut drew_snapshot = false;
+
+            if isolated_closing_window {
+                frame_window_debug.push(FrameWindowDebugRecord {
+                    window_id: window.window_id.clone(),
+                    target_rect: (
+                        window.window_rect.x.round() as i32,
+                        window.window_rect.y.round() as i32,
+                        window.window_rect.width.round() as i32,
+                        window.window_rect.height.round() as i32,
+                    ),
+                    committed_size,
+                    committed_view_size,
+                    has_buffer: surface.has_buffer,
+                    has_resize_snapshot,
+                    snapshot_rect,
+                    considered_presented,
+                    pending_presented,
+                    drew_live,
+                    drew_snapshot,
+                });
+                continue;
+            }
 
             if !considered_presented && !pending_presented {
                 frame_window_debug.push(FrameWindowDebugRecord {
@@ -2912,18 +2933,21 @@ mod imp {
             }
 
             let close_requested = close_requested_window_ids.contains(&window.window_id);
+            let suppress_live_decorations = scene_transition_active && close_requested;
             let has_live_content = surface.has_buffer && !surface_elements.is_empty();
             if !has_live_content {
                 if let Some(snapshot) = transition_snapshot {
-                    elements.extend(
-                        build_window_border_elements_for_rect(
-                            window.window_id.clone(),
-                            window.window_rect,
-                            decoration_policies,
-                        )
-                        .into_iter()
-                        .map(CompositorRenderElement::from),
-                    );
+                    if !suppress_live_decorations {
+                        elements.extend(
+                            build_window_border_elements_for_rect(
+                                window.window_id.clone(),
+                                window.window_rect,
+                                decoration_policies,
+                            )
+                            .into_iter()
+                            .map(CompositorRenderElement::from),
+                        );
+                    }
                     if let Some(element) = build_snapshot_fallback_element(
                         snapshot,
                         1.0,
@@ -2986,15 +3010,17 @@ mod imp {
                             } else {
                                 1.0
                             };
-                        elements.extend(
-                            build_window_border_elements_for_rect(
-                                window.window_id.clone(),
-                                window.window_rect,
-                                decoration_policies,
-                            )
-                            .into_iter()
-                            .map(CompositorRenderElement::from),
-                        );
+                        if !suppress_live_decorations {
+                            elements.extend(
+                                build_window_border_elements_for_rect(
+                                    window.window_id.clone(),
+                                    window.window_rect,
+                                    decoration_policies,
+                                )
+                                .into_iter()
+                                .map(CompositorRenderElement::from),
+                            );
+                        }
                         if let Some(element) = build_snapshot_fallback_element(
                             snapshot,
                             snapshot_alpha,
@@ -3044,11 +3070,13 @@ mod imp {
                     resize_transitions.remove(&window.window_id);
                 }
             }
-            elements.extend(
-                build_window_border_elements(window, decoration_policies)
-                    .into_iter()
-                    .map(CompositorRenderElement::from),
-            );
+            if !suppress_live_decorations {
+                elements.extend(
+                    build_window_border_elements(window, decoration_policies)
+                        .into_iter()
+                        .map(CompositorRenderElement::from),
+                );
+            }
 
             elements.extend(
                 surface_elements
@@ -3084,8 +3112,10 @@ mod imp {
             titlebars
                 .iter()
                 .filter(|item| {
-                    presented_window_ids.contains(&item.window_id)
-                        || pending_presented_window_ids.contains(&item.window_id)
+                    !(scene_transition_active
+                        && close_requested_window_ids.contains(&item.window_id))
+                        && (presented_window_ids.contains(&item.window_id)
+                            || pending_presented_window_ids.contains(&item.window_id))
                 })
                 .filter_map(|item| {
                     let color = titlebar_background_color(item);
@@ -3293,6 +3323,113 @@ mod imp {
                 SolidColorRenderElement::new(Id::new(), rect, 1usize, color, Kind::Unspecified)
             })
             .collect()
+    }
+
+    fn retarget_close_snapshot_focus(
+        closing_window_id: &WindowId,
+        next_focus_window_id: Option<&WindowId>,
+        titlebars: &[TitlebarRenderItem],
+        decoration_policies: &[(WindowId, SmithayWindowDecorationPolicySnapshot)],
+    ) -> (
+        Vec<TitlebarRenderItem>,
+        Vec<(WindowId, SmithayWindowDecorationPolicySnapshot)>,
+    ) {
+        let mut retargeted_titlebars = titlebars.to_vec();
+        for item in &mut retargeted_titlebars {
+            if item.window_id == *closing_window_id {
+                item.focused = false;
+            } else if next_focus_window_id.is_some_and(|next| item.window_id == *next) {
+                item.focused = true;
+            }
+        }
+
+        let mut retargeted_policies = decoration_policies.to_vec();
+        let closing_index = retargeted_policies
+            .iter()
+            .position(|(window_id, _)| window_id == closing_window_id);
+        let next_index = next_focus_window_id.and_then(|next_focus_window_id| {
+            retargeted_policies
+                .iter()
+                .position(|(window_id, _)| window_id == next_focus_window_id)
+        });
+        if let (Some(closing_index), Some(next_index)) = (closing_index, next_index) {
+            if closing_index != next_index {
+                let closing_window_style =
+                    retargeted_policies[closing_index].1.window_style.clone();
+                let closing_titlebar_style =
+                    retargeted_policies[closing_index].1.titlebar_style.clone();
+                retargeted_policies[closing_index].1.window_style =
+                    retargeted_policies[next_index].1.window_style.clone();
+                retargeted_policies[closing_index].1.titlebar_style =
+                    retargeted_policies[next_index].1.titlebar_style.clone();
+                retargeted_policies[next_index].1.window_style = closing_window_style;
+                retargeted_policies[next_index].1.titlebar_style = closing_titlebar_style;
+            }
+        }
+
+        (retargeted_titlebars, retargeted_policies)
+    }
+
+    fn filter_close_window_from_scene_snapshot(
+        closing_window_id: &WindowId,
+        windows: &[SmithayWindowRenderSnapshot],
+        titlebars: &[TitlebarRenderItem],
+        decoration_policies: &[(WindowId, SmithayWindowDecorationPolicySnapshot)],
+        surfaces: &[SmithayRenderableToplevelSurface],
+    ) -> (
+        Vec<SmithayWindowRenderSnapshot>,
+        Vec<TitlebarRenderItem>,
+        Vec<(WindowId, SmithayWindowDecorationPolicySnapshot)>,
+        Vec<SmithayRenderableToplevelSurface>,
+    ) {
+        (
+            windows
+                .iter()
+                .filter(|window| window.window_id != *closing_window_id)
+                .cloned()
+                .collect(),
+            titlebars
+                .iter()
+                .filter(|item| item.window_id != *closing_window_id)
+                .cloned()
+                .collect(),
+            decoration_policies
+                .iter()
+                .filter(|(window_id, _)| *window_id != *closing_window_id)
+                .cloned()
+                .collect(),
+            surfaces
+                .iter()
+                .filter(|surface| surface.window_id != *closing_window_id)
+                .cloned()
+                .collect(),
+        )
+    }
+
+    fn build_closing_transition_elements(
+        output_scale: smithay::utils::Scale<f64>,
+        transition_now_value: std::time::Duration,
+        closing_transitions: &HashMap<WindowId, ClosingWindowTransition>,
+        used_snapshot_window_ids: &mut HashSet<WindowId>,
+    ) -> Vec<CompositorRenderElement<GlesRenderer>> {
+        let mut elements = Vec::new();
+        for transition in closing_transitions.values() {
+            let alpha = closing_transition_alpha(transition_now_value, transition);
+            if alpha <= 0.0 {
+                continue;
+            }
+            if let Some(element) = build_snapshot_fallback_element(
+                &transition.snapshot,
+                alpha,
+                output_scale,
+                None,
+                None,
+            ) {
+                elements.push(CompositorRenderElement::from(element));
+                used_snapshot_window_ids.insert(transition.window_id.clone());
+            }
+        }
+        elements
     }
 
     fn effective_render_focus(

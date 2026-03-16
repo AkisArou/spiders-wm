@@ -5,10 +5,10 @@ use spiders_shared::runtime::AuthoringLayoutRuntime;
 use spiders_shared::wm::{ShellKind, StateSnapshot, WindowSnapshot};
 use spiders_wm::{BootstrapEvent, LayerSurfaceMetadata, StartupRegistration};
 
+use crate::WindowDecorationPolicy;
 use crate::actions::ActionError;
 use crate::session::CompositorSession;
 use crate::topology::{CompositorTopologyState, SurfaceState, TopologyError};
-use crate::WindowDecorationPolicy;
 use crate::{CompositorLayoutError, LayoutService};
 
 fn append_winit_debug_log(message: &str) {
@@ -367,41 +367,55 @@ impl<R: AuthoringLayoutRuntime<Config = Config>> CompositorApp<R> {
                     .surface(&surface_id)
                     .and_then(|surface| surface.window_id.clone())
                 {
+                    let window_still_exists = self
+                        .state()
+                        .windows
+                        .iter()
+                        .any(|window| window.id == window_id);
+                    if window_still_exists {
+                        let next_focus = self
+                            .session
+                            .preferred_focus_after_window_removed(&window_id);
+                        if let Some(next_focus) = next_focus.as_ref() {
+                            append_winit_debug_log(&format!(
+                                "app.remove_surface prefocus closed={window_id:?} next={next_focus:?}"
+                            ));
+                            let _ = self.session.focus_window(next_focus);
+                        }
+                        let _ = self.session.destroy_window(&window_id);
+                        if let Some(next_focus) = next_focus {
+                            append_winit_debug_log(&format!(
+                                "app.remove_surface restoring_focus closed={window_id:?} next={next_focus:?}"
+                            ));
+                            let _ = self.session.focus_window(&next_focus);
+                        }
+                    }
+                }
+                self.remove_surface(&surface_id)?;
+            }
+            BootstrapEvent::RemoveWindowSurface { window_id } => {
+                let window_still_exists = self
+                    .state()
+                    .windows
+                    .iter()
+                    .any(|window| window.id == window_id);
+                if window_still_exists {
                     let next_focus = self
                         .session
                         .preferred_focus_after_window_removed(&window_id);
                     if let Some(next_focus) = next_focus.as_ref() {
                         append_winit_debug_log(&format!(
-                            "app.remove_surface prefocus closed={window_id:?} next={next_focus:?}"
+                            "app.remove_window_surface prefocus closed={window_id:?} next={next_focus:?}"
                         ));
                         let _ = self.session.focus_window(next_focus);
                     }
                     let _ = self.session.destroy_window(&window_id);
                     if let Some(next_focus) = next_focus {
                         append_winit_debug_log(&format!(
-                            "app.remove_surface restoring_focus closed={window_id:?} next={next_focus:?}"
+                            "app.remove_window_surface restoring_focus closed={window_id:?} next={next_focus:?}"
                         ));
                         let _ = self.session.focus_window(&next_focus);
                     }
-                }
-                self.remove_surface(&surface_id)?;
-            }
-            BootstrapEvent::RemoveWindowSurface { window_id } => {
-                let next_focus = self
-                    .session
-                    .preferred_focus_after_window_removed(&window_id);
-                if let Some(next_focus) = next_focus.as_ref() {
-                    append_winit_debug_log(&format!(
-                        "app.remove_window_surface prefocus closed={window_id:?} next={next_focus:?}"
-                    ));
-                    let _ = self.session.focus_window(next_focus);
-                }
-                let _ = self.session.destroy_window(&window_id);
-                if let Some(next_focus) = next_focus {
-                    append_winit_debug_log(&format!(
-                        "app.remove_window_surface restoring_focus closed={window_id:?} next={next_focus:?}"
-                    ));
-                    let _ = self.session.focus_window(&next_focus);
                 }
                 self.remove_window_surface(&window_id)?;
             }
@@ -782,11 +796,12 @@ mod tests {
         assert!(window.mapped);
         assert_eq!(window.output_id, Some(OutputId::from("out-1")));
         assert_eq!(window.workspace_id, Some(WorkspaceId::from("ws-1")));
-        assert!(app
-            .state()
-            .visible_window_ids
-            .iter()
-            .any(|window_id| window_id == &WindowId::from("smithay-window-1")));
+        assert!(
+            app.state()
+                .visible_window_ids
+                .iter()
+                .any(|window_id| window_id == &WindowId::from("smithay-window-1"))
+        );
         assert!(app.session.current_layout().is_some());
         assert_eq!(
             app.topology()
@@ -1052,11 +1067,12 @@ mod tests {
         .unwrap();
 
         assert!(app.topology().surface("wl-surface-test-remove").is_none());
-        assert!(app
-            .state()
-            .windows
-            .iter()
-            .all(|window| window.id != WindowId::from("smithay-window-remove")));
+        assert!(
+            app.state()
+                .windows
+                .iter()
+                .all(|window| window.id != WindowId::from("smithay-window-remove"))
+        );
         assert!(app.state().visible_window_ids.is_empty());
     }
 
