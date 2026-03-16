@@ -9,7 +9,7 @@ use spiders_wm::{
     TopologyError, WmState,
 };
 
-use crate::actions::{apply_action, ActionError};
+use crate::actions::{apply_action, preferred_focus_after_close, ActionError};
 use crate::effects::WindowDecorationPolicy;
 use crate::runtime::WindowPlacement;
 use crate::runtime::{CompositorRuntimeState, WorkspaceLayoutState};
@@ -20,6 +20,8 @@ use crate::{CompositorLayoutError, LayoutService};
 pub struct CompositorSession<R> {
     runtime: CompositorRuntimeState<R>,
     domain: DomainSession,
+    debug_generation: u64,
+    focus_history: Vec<WindowId>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -41,7 +43,17 @@ impl<R> CompositorSession<R> {
         Self {
             runtime,
             domain: DomainSession::new(wm, topology),
+            debug_generation: 0,
+            focus_history: Vec::new(),
         }
+    }
+
+    pub fn debug_generation(&self) -> u64 {
+        self.debug_generation
+    }
+
+    fn bump_debug_generation(&mut self) {
+        self.debug_generation = self.debug_generation.saturating_add(1);
     }
 
     pub fn runtime(&self) -> &CompositorRuntimeState<R> {
@@ -95,6 +107,74 @@ impl<R> CompositorSession<R> {
         self.runtime.current_window_placements()
     }
 
+    pub fn preferred_focus_after_window_removed(
+        &self,
+        closed_window_id: &WindowId,
+    ) -> Option<WindowId> {
+        self.focus_history
+            .iter()
+            .rev()
+            .find(|window_id| {
+                *window_id != closed_window_id
+                    && self
+                        .state()
+                        .windows
+                        .iter()
+                        .any(|window| window.id == **window_id)
+            })
+            .cloned()
+            .or_else(|| {
+                self.state()
+                    .focused_window_id
+                    .as_ref()
+                    .filter(|window_id| *window_id != closed_window_id)
+                    .cloned()
+            })
+            .or_else(|| {
+                self.state()
+                    .visible_window_ids
+                    .iter()
+                    .rev()
+                    .find(|window_id| {
+                        **window_id != *closed_window_id
+                            && self
+                                .state()
+                                .windows
+                                .iter()
+                                .any(|window| window.id == **window_id)
+                    })
+                    .cloned()
+            })
+            .or_else(|| {
+                preferred_focus_after_close(self.current_window_placements(), closed_window_id)
+            })
+    }
+
+    fn sync_focus_history(&mut self) {
+        let existing_window_ids = self
+            .state()
+            .windows
+            .iter()
+            .map(|window| window.id.clone())
+            .collect::<Vec<_>>();
+
+        self.focus_history
+            .retain(|window_id| existing_window_ids.iter().any(|id| id == window_id));
+
+        let Some(focused_window_id) = self.state().focused_window_id.clone() else {
+            return;
+        };
+
+        self.focus_history
+            .retain(|window_id| *window_id != focused_window_id);
+        self.focus_history.push(focused_window_id);
+
+        if self.focus_history.len() > 64 {
+            let drop_count = self.focus_history.len() - 64;
+            self.focus_history.drain(0..drop_count);
+        }
+    }
+
     pub fn register_popup_surface(
         &mut self,
         surface_id: impl Into<String>,
@@ -133,6 +213,7 @@ impl<R> CompositorSession<R> {
     pub fn register_output_snapshot(&mut self, output: spiders_shared::wm::OutputSnapshot) {
         self.domain.wm_mut().insert_output(output.clone());
         self.domain.register_output_snapshot(output);
+        self.bump_debug_generation();
     }
 
     pub fn register_backend_output_snapshot(&mut self, output: spiders_shared::wm::OutputSnapshot) {
@@ -140,6 +221,7 @@ impl<R> CompositorSession<R> {
         self.domain.register_backend_output_snapshot(output);
         self.runtime
             .update_from_wm_state(self.domain.state().clone());
+        self.bump_debug_generation();
     }
 
     pub fn register_output_by_id(&mut self, output_id: &OutputId) -> Result<(), TopologyError> {
@@ -162,11 +244,19 @@ impl<R> CompositorSession<R> {
     }
 
     pub fn unregister_surface(&mut self, surface_id: &str) -> Result<(), TopologyError> {
-        self.domain.unregister_surface(surface_id)
+        let result = self.domain.unregister_surface(surface_id);
+        if result.is_ok() {
+            self.bump_debug_generation();
+        }
+        result
     }
 
     pub fn unregister_window_surface(&mut self, window_id: &WindowId) -> Result<(), TopologyError> {
-        self.domain.unregister_window_surface(window_id)
+        let result = self.domain.unregister_window_surface(window_id);
+        if result.is_ok() {
+            self.bump_debug_generation();
+        }
+        result
     }
 
     pub fn move_surface_to_output(
@@ -174,11 +264,19 @@ impl<R> CompositorSession<R> {
         surface_id: &str,
         output_id: OutputId,
     ) -> Result<(), TopologyError> {
-        self.domain.move_surface_to_output(surface_id, output_id)
+        let result = self.domain.move_surface_to_output(surface_id, output_id);
+        if result.is_ok() {
+            self.bump_debug_generation();
+        }
+        result
     }
 
     pub fn unmap_surface(&mut self, surface_id: &str) -> Result<(), TopologyError> {
-        self.domain.unmap_surface(surface_id)
+        let result = self.domain.unmap_surface(surface_id);
+        if result.is_ok() {
+            self.bump_debug_generation();
+        }
+        result
     }
 
     pub fn register_window_surface(
@@ -192,6 +290,7 @@ impl<R> CompositorSession<R> {
     }
 
     pub fn register_seat(&mut self, seat_name: impl Into<String>) -> &str {
+        self.bump_debug_generation();
         self.domain.register_seat(seat_name)
     }
 
@@ -200,16 +299,11 @@ impl<R> CompositorSession<R> {
     }
 
     pub fn activate_output(&mut self, output_id: &OutputId) -> Result<(), TopologyError> {
-        self.domain.activate_output(output_id)
-    }
-
-    pub fn focus_seat(
-        &mut self,
-        seat_name: &str,
-        window_id: Option<WindowId>,
-        output_id: Option<OutputId>,
-    ) -> Result<(), TopologyError> {
-        self.domain.focus_seat(seat_name, window_id, output_id)
+        let result = self.domain.activate_output(output_id);
+        if result.is_ok() {
+            self.bump_debug_generation();
+        }
+        result
     }
 
     pub fn disable_output(&mut self, output_id: &OutputId) -> Result<(), TopologyError> {
@@ -240,6 +334,35 @@ impl<R: AuthoringLayoutRuntime<Config = Config>> CompositorSession<R> {
         Ok(Self::new(runtime, wm, topology))
     }
 
+    pub fn focus_seat(
+        &mut self,
+        seat_name: &str,
+        window_id: Option<WindowId>,
+        output_id: Option<OutputId>,
+    ) -> Result<(), TopologyError> {
+        self.domain
+            .focus_seat(seat_name, window_id.clone(), output_id)?;
+
+        if window_id.is_none() {
+            return Ok(());
+        }
+
+        if let Some(window_id) = window_id.filter(|window_id| {
+            self.state()
+                .windows
+                .iter()
+                .any(|window| window.id == *window_id)
+        }) {
+            if self.state().focused_window_id.as_ref() != Some(&window_id) {
+                let _ = self.focus_window(&window_id);
+            } else {
+                self.sync_focus_history();
+            }
+        }
+
+        Ok(())
+    }
+
     pub fn apply_action(&mut self, action: &WmAction) -> Result<SessionUpdate, ActionError> {
         match action {
             WmAction::FocusDirection { direction } => self.focus_direction(*direction),
@@ -247,6 +370,8 @@ impl<R: AuthoringLayoutRuntime<Config = Config>> CompositorSession<R> {
             WmAction::ToggleFullscreen => self.toggle_focused_fullscreen(),
             _ => {
                 let outcome = apply_action(&mut self.runtime, self.domain.wm_mut(), action)?;
+                self.sync_focus_history();
+                self.bump_debug_generation();
                 Ok(SessionUpdate {
                     events: outcome.events,
                     recomputed_layout: outcome.recomputed_layout,
@@ -264,6 +389,8 @@ impl<R: AuthoringLayoutRuntime<Config = Config>> CompositorSession<R> {
         self.runtime
             .update_from_wm_state(self.domain.state().clone());
         self.runtime.recompute_current_layout()?;
+        self.sync_focus_history();
+        self.bump_debug_generation();
         Ok(self.session_update(update))
     }
 
@@ -279,6 +406,8 @@ impl<R: AuthoringLayoutRuntime<Config = Config>> CompositorSession<R> {
         self.runtime
             .update_from_wm_state(self.domain.state().clone());
         self.runtime.recompute_current_layout()?;
+        self.sync_focus_history();
+        self.bump_debug_generation();
         Ok(self.session_update(update))
     }
 
@@ -290,6 +419,8 @@ impl<R: AuthoringLayoutRuntime<Config = Config>> CompositorSession<R> {
         self.runtime
             .update_from_wm_state(self.domain.state().clone());
         self.runtime.refresh_view_state()?;
+        self.sync_focus_history();
+        self.bump_debug_generation();
         Ok(self.session_update(update))
     }
 
@@ -301,6 +432,8 @@ impl<R: AuthoringLayoutRuntime<Config = Config>> CompositorSession<R> {
         self.runtime
             .update_from_wm_state(self.domain.state().clone());
         self.runtime.recompute_current_layout()?;
+        self.sync_focus_history();
+        self.bump_debug_generation();
         Ok(self.session_update(update))
     }
 
@@ -312,6 +445,8 @@ impl<R: AuthoringLayoutRuntime<Config = Config>> CompositorSession<R> {
         self.runtime
             .update_from_wm_state(self.domain.state().clone());
         self.runtime.recompute_current_layout()?;
+        self.sync_focus_history();
+        self.bump_debug_generation();
         Ok(self.session_update(update))
     }
 
@@ -323,6 +458,8 @@ impl<R: AuthoringLayoutRuntime<Config = Config>> CompositorSession<R> {
         self.runtime
             .update_from_wm_state(self.domain.state().clone());
         self.runtime.recompute_current_layout()?;
+        self.sync_focus_history();
+        self.bump_debug_generation();
         Ok(self.session_update(update))
     }
 
@@ -338,6 +475,8 @@ impl<R: AuthoringLayoutRuntime<Config = Config>> CompositorSession<R> {
         self.runtime
             .update_from_wm_state(self.domain.state().clone());
         self.runtime.refresh_view_state()?;
+        self.sync_focus_history();
+        self.bump_debug_generation();
         Ok(self.session_update(update))
     }
 

@@ -375,7 +375,7 @@ mod tests {
         assert_eq!(trace.applied_events.len(), 5);
         assert_eq!(trace.diagnostics.active_seat.as_deref(), Some("seat-1"));
         assert_eq!(trace.diagnostics.current_workspace.as_deref(), Some("ws-1"));
-        assert_eq!(trace.diagnostics.focused_window.as_deref(), Some("w1"));
+        assert_eq!(trace.diagnostics.focused_window.as_deref(), None);
         assert!(trace.diagnostics.seat_names.contains(&"seat-1".to_string()));
         assert!(trace.diagnostics.output_ids.contains(&"out-2".to_string()));
         assert!(!trace

@@ -18,6 +18,7 @@ pub mod startup;
 pub mod titlebar;
 pub mod topology;
 pub mod transcript;
+pub mod transitions;
 pub mod wm;
 
 use spiders_config::authoring_layout::{AuthoringLayoutService, AuthoringLayoutServiceError};

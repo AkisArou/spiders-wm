@@ -4,6 +4,8 @@ mod imp {
     use std::time::Duration;
 
     use font8x8::{UnicodeFonts, BASIC_FONTS};
+    use std::collections::{HashMap, HashSet, VecDeque};
+
     use smithay::backend::allocator::Fourcc;
     use smithay::backend::input::{
         AbsolutePositionEvent, ButtonState, Event, InputEvent, KeyboardKeyEvent, PointerButtonEvent,
@@ -16,10 +18,19 @@ mod imp {
     use smithay::backend::renderer::element::surface::{
         render_elements_from_surface_tree, WaylandSurfaceRenderElement,
     };
-    use smithay::backend::renderer::element::{Id, Kind};
-    use smithay::backend::renderer::gles::GlesRenderer;
+    use smithay::backend::renderer::element::texture::{TextureBuffer, TextureRenderElement};
+    use smithay::backend::renderer::element::utils::{
+        CropRenderElement, Relocate, RelocateRenderElement, RescaleRenderElement,
+    };
+    use smithay::backend::renderer::element::{Element, Id, Kind};
+    use smithay::backend::renderer::gles::{GlesRenderer, GlesTexture};
+    use smithay::backend::renderer::sync::SyncPoint;
+    use smithay::backend::renderer::utils::RendererSurfaceStateUserData;
     use smithay::backend::renderer::Color32F;
-    use smithay::backend::renderer::{ImportAll, ImportMem};
+    use smithay::backend::renderer::Frame;
+    use smithay::backend::renderer::{
+        Bind, ImportAll, ImportMem, Offscreen, Renderer, RendererSuper,
+    };
     use smithay::backend::winit::{self, WinitEvent, WinitEventLoop, WinitGraphicsBackend};
     use smithay::desktop::utils::{
         send_frames_surface_tree, surface_presentation_feedback_flags_from_states,
@@ -37,10 +48,12 @@ mod imp {
     use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
     use smithay::reexports::wayland_server::Display;
     use smithay::utils::{Clock, Monotonic, Point, Rectangle, Transform, SERIAL_COUNTER};
+    use smithay::wayland::compositor::{with_states, with_surface_tree_downward, TraversalAction};
     use smithay::wayland::presentation::Refresh;
     use spiders_config::model::Config;
     use spiders_shared::api::WmAction;
     use spiders_shared::ids::{OutputId, WindowId};
+    use spiders_shared::layout::LayoutRect;
     use spiders_shared::runtime::AuthoringLayoutRuntime;
     use spiders_shared::wm::OutputSnapshot;
     use spiders_wm::{
@@ -55,16 +68,41 @@ mod imp {
         SpidersSmithayState,
     };
     use crate::titlebar::TitlebarRenderItem;
+    use crate::transitions::{
+        now as transition_now, ClosingWindowTransition, OpeningWindowTransition, ResizeTransition,
+        SceneTextureSnapshot, SceneTransition, TransitionTextureSnapshot,
+    };
+
+    fn append_winit_debug_log(message: &str) {
+        let Some(path) = std::env::var_os("SPIDERS_WM_WINIT_DEBUG_LOG_PATH") else {
+            return;
+        };
+
+        let _ = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .and_then(|mut file| {
+                use std::io::Write;
+                writeln!(file, "{message}")
+            });
+    }
 
     smithay::backend::renderer::element::render_elements! {
         CompositorRenderElement<R> where R: ImportAll + ImportMem;
         Solid = SolidColorRenderElement,
         Memory = MemoryRenderBufferRenderElement<R>,
         Surface = WaylandSurfaceRenderElement<R>,
+        ClippedSurface = CropRenderElement<WaylandSurfaceRenderElement<R>>,
+        ResizedSurface = CropRenderElement<RelocateRenderElement<RescaleRenderElement<WaylandSurfaceRenderElement<R>>>>,
+        SnapshotSurface = CropRenderElement<RelocateRenderElement<RescaleRenderElement<TextureRenderElement<<R as smithay::backend::renderer::RendererSuper>::TextureId>>>>,
     }
 
     const DEFAULT_CLEAR_COLOR: [f32; 4] = [0.08, 0.08, 0.09, 1.0];
     const BTN_LEFT: u32 = 0x110;
+    const CLOSE_TRANSITION_DURATION: Duration = Duration::from_millis(220);
+    const OPEN_TRANSITION_DURATION: Duration = Duration::from_millis(140);
+    const RESIZE_TRANSITION_DURATION: Duration = Duration::from_millis(180);
 
     #[derive(Debug)]
     struct TitlebarRenderState {
@@ -75,6 +113,45 @@ mod imp {
     struct PresentationRenderState {
         clock: Clock<Monotonic>,
     }
+
+    #[derive(Debug, Clone)]
+    struct FrameDebugRecord {
+        frame_index: u64,
+        rendered: bool,
+        reason: String,
+        focused_window_id: Option<WindowId>,
+        presented_window_ids: Vec<WindowId>,
+        pending_presented_window_ids: Vec<WindowId>,
+        scene_transaction: Option<FrameSceneTransactionDebugRecord>,
+        windows: Vec<FrameWindowDebugRecord>,
+    }
+
+    #[derive(Debug, Clone)]
+    struct FrameSceneTransactionDebugRecord {
+        affected_windows: Vec<WindowId>,
+        frozen_rect: (i32, i32, i32, i32),
+        alpha_milli: i32,
+        layout_changed: bool,
+        settled: bool,
+        emitted_overlay: bool,
+    }
+
+    #[derive(Debug, Clone)]
+    struct FrameWindowDebugRecord {
+        window_id: WindowId,
+        target_rect: (i32, i32, i32, i32),
+        committed_size: Option<(i32, i32)>,
+        committed_view_size: Option<(i32, i32)>,
+        has_buffer: bool,
+        has_resize_snapshot: bool,
+        snapshot_rect: Option<(i32, i32, i32, i32)>,
+        considered_presented: bool,
+        pending_presented: bool,
+        drew_live: bool,
+        drew_snapshot: bool,
+    }
+
+    const FRAME_DEBUG_HISTORY_LIMIT: usize = 256;
 
     impl PresentationRenderState {
         fn new() -> Self {
@@ -94,6 +171,845 @@ mod imp {
         fn next_element_id(&mut self) -> Id {
             Id::new()
         }
+    }
+
+    fn render_snapshot_elements(
+        renderer: &mut GlesRenderer,
+        target: &mut smithay::backend::renderer::gles::GlesTarget<'_>,
+        size: smithay::utils::Size<i32, smithay::utils::Physical>,
+        scale: smithay::utils::Scale<f64>,
+        transform: Transform,
+        elements: impl Iterator<
+            Item = impl smithay::backend::renderer::element::RenderElement<GlesRenderer>,
+        >,
+    ) -> Result<SyncPoint, SmithayRuntimeError> {
+        let transform = transform.invert();
+        let output_rect = Rectangle::from_size(transform.transform_size(size));
+
+        let mut frame = renderer.render(target, size, transform).map_err(
+            |err: <GlesRenderer as RendererSuper>::Error| {
+                SmithayRuntimeError::Winit(err.to_string())
+            },
+        )?;
+
+        frame.clear(Color32F::TRANSPARENT, &[output_rect]).map_err(
+            |err: <GlesRenderer as RendererSuper>::Error| {
+                SmithayRuntimeError::Winit(err.to_string())
+            },
+        )?;
+
+        for element in elements {
+            let src = element.src();
+            let dst = element.geometry(scale);
+
+            if let Some(mut damage) = output_rect.intersection(dst) {
+                damage.loc -= dst.loc;
+                element.draw(&mut frame, src, dst, &[damage], &[]).map_err(
+                    |err: <GlesRenderer as RendererSuper>::Error| {
+                        SmithayRuntimeError::Winit(err.to_string())
+                    },
+                )?;
+            }
+        }
+
+        frame
+            .finish()
+            .map_err(|err: <GlesRenderer as RendererSuper>::Error| {
+                SmithayRuntimeError::Winit(err.to_string())
+            })
+    }
+
+    fn capture_window_snapshot(
+        renderer: &mut GlesRenderer,
+        surface: &SmithayRenderableToplevelSurface,
+        render_snapshot: &SmithayWindowRenderSnapshot,
+        output_scale: smithay::utils::Scale<f64>,
+    ) -> Result<Option<TransitionTextureSnapshot>, SmithayRuntimeError> {
+        let surface_elements = render_elements_from_surface_tree::<
+            GlesRenderer,
+            WaylandSurfaceRenderElement<GlesRenderer>,
+        >(
+            renderer,
+            surface.surface.wl_surface(),
+            (0, 0),
+            output_scale,
+            1.0,
+            Kind::Unspecified,
+        );
+
+        let mut bounds: Option<Rectangle<i32, smithay::utils::Physical>> = None;
+        for element in &surface_elements {
+            let geometry = element.geometry(output_scale);
+            bounds = Some(match bounds {
+                Some(existing) => existing.merge(geometry),
+                None => geometry,
+            });
+        }
+
+        let Some(bounds) = bounds else {
+            return Ok(None);
+        };
+        if bounds.size.w <= 0 || bounds.size.h <= 0 {
+            return Ok(None);
+        }
+
+        let mut texture = renderer
+            .create_buffer(
+                Fourcc::Abgr8888,
+                bounds.size.to_logical(1).to_buffer(1, Transform::Normal),
+            )
+            .map_err(|err| SmithayRuntimeError::Winit(err.to_string()))?;
+        let relocated = surface_elements.into_iter().map(|element| {
+            RelocateRenderElement::from_element(element, bounds.loc.upscale(-1), Relocate::Relative)
+        });
+        {
+            let mut target = renderer
+                .bind(&mut texture)
+                .map_err(|err| SmithayRuntimeError::Winit(err.to_string()))?;
+            let _ = render_snapshot_elements(
+                renderer,
+                &mut target,
+                bounds.size,
+                output_scale,
+                Transform::Normal,
+                relocated,
+            )?;
+        }
+
+        Ok(Some(TransitionTextureSnapshot {
+            buffer: TextureBuffer::from_texture(renderer, texture, 1, Transform::Normal, None),
+            render_snapshot: render_snapshot.clone(),
+            logical_size: (
+                bounds.size.w as f64 / output_scale.x.max(1.0),
+                bounds.size.h as f64 / output_scale.y.max(1.0),
+            ),
+        }))
+    }
+
+    fn capture_scene_snapshot(
+        renderer: &mut GlesRenderer,
+        windows: &[SmithayWindowRenderSnapshot],
+        titlebars: &[TitlebarRenderItem],
+        decoration_policies: &[(WindowId, SmithayWindowDecorationPolicySnapshot)],
+        surfaces: &[SmithayRenderableToplevelSurface],
+        output_size: smithay::utils::Size<i32, smithay::utils::Physical>,
+        output_scale: smithay::utils::Scale<f64>,
+    ) -> Result<Option<SceneTextureSnapshot>, SmithayRuntimeError> {
+        if output_size.w <= 0 || output_size.h <= 0 {
+            return Ok(None);
+        }
+
+        let mut scene_elements: Vec<CompositorRenderElement<GlesRenderer>> = Vec::new();
+        scene_elements.extend(
+            windows
+                .iter()
+                .flat_map(|window| build_window_border_elements(window, decoration_policies))
+                .map(CompositorRenderElement::from),
+        );
+        for window in windows {
+            let Some(surface) = surfaces
+                .iter()
+                .find(|surface| surface.window_id == window.window_id)
+            else {
+                continue;
+            };
+            let location = (
+                window.window_rect.x.round() as i32,
+                (window.window_rect.y + window.content_offset_y).round() as i32,
+            );
+            scene_elements.extend(
+                render_elements_from_surface_tree::<
+                    GlesRenderer,
+                    WaylandSurfaceRenderElement<GlesRenderer>,
+                >(
+                    renderer,
+                    surface.surface.wl_surface(),
+                    location,
+                    output_scale,
+                    1.0,
+                    Kind::Unspecified,
+                )
+                .into_iter()
+                .map(CompositorRenderElement::from),
+            );
+        }
+        scene_elements.extend(
+            titlebars
+                .iter()
+                .filter_map(build_titlebar_border_element)
+                .map(CompositorRenderElement::from),
+        );
+        scene_elements.extend(
+            titlebars
+                .iter()
+                .filter_map(|item| build_titlebar_text_element(renderer, item))
+                .map(CompositorRenderElement::from),
+        );
+
+        let mut texture = renderer
+            .create_buffer(
+                Fourcc::Abgr8888,
+                output_size.to_logical(1).to_buffer(1, Transform::Normal),
+            )
+            .map_err(|err| SmithayRuntimeError::Winit(err.to_string()))?;
+        {
+            let mut target = renderer
+                .bind(&mut texture)
+                .map_err(|err| SmithayRuntimeError::Winit(err.to_string()))?;
+            let _ = render_snapshot_elements(
+                renderer,
+                &mut target,
+                output_size,
+                output_scale,
+                Transform::Normal,
+                scene_elements.into_iter(),
+            )?;
+        }
+
+        Ok(Some(SceneTextureSnapshot {
+            buffer: TextureBuffer::from_texture(renderer, texture, 1, Transform::Normal, None),
+            logical_size: (
+                output_size.w as f64 / output_scale.x.max(1.0),
+                output_size.h as f64 / output_scale.y.max(1.0),
+            ),
+        }))
+    }
+
+    fn committed_root_surface_size(surface: &WlSurface) -> Option<(i32, i32)> {
+        let mut max_width = 0;
+        let mut max_height = 0;
+        let mut saw_view = false;
+
+        with_surface_tree_downward(
+            surface,
+            Point::<f64, smithay::utils::Logical>::from((0.0, 0.0)),
+            |_, states, location| {
+                let mut location = *location;
+                let data = states.data_map.get::<RendererSurfaceStateUserData>();
+
+                if let Some(data) = data {
+                    if let Some(view) = data.lock().unwrap().view() {
+                        location += view.offset.to_f64();
+                        TraversalAction::DoChildren(location)
+                    } else {
+                        TraversalAction::SkipChildren
+                    }
+                } else {
+                    TraversalAction::SkipChildren
+                }
+            },
+            |_, states, location| {
+                let mut location = *location;
+                let data = states.data_map.get::<RendererSurfaceStateUserData>();
+                let Some(data) = data else {
+                    return;
+                };
+                let data = data.lock().unwrap();
+                let Some(view) = data.view() else {
+                    return;
+                };
+
+                location += view.offset.to_f64();
+                saw_view = true;
+                max_width = max_width.max((location.x + f64::from(view.dst.w)).round() as i32);
+                max_height = max_height.max((location.y + f64::from(view.dst.h)).round() as i32);
+            },
+            |_, _, _| true,
+        );
+
+        saw_view.then_some((max_width.max(0), max_height.max(0)))
+    }
+
+    fn ready_for_initial_presentation(
+        committed_size: Option<(i32, i32)>,
+        has_live_surface_content: bool,
+        expected_size: (i32, i32),
+    ) -> bool {
+        let (expected_width, expected_height) = expected_size;
+        if expected_width <= 0 || expected_height <= 0 {
+            return false;
+        }
+
+        has_live_surface_content
+            && matches!(committed_size, Some((width, height)) if width > 0 && height > 0)
+    }
+
+    fn build_snapshot_fallback_element(
+        snapshot: &TransitionTextureSnapshot,
+        alpha: f32,
+        output_scale: smithay::utils::Scale<f64>,
+        target_location: Option<(i32, i32)>,
+        target_size: Option<(i32, i32)>,
+    ) -> Option<
+        CropRenderElement<
+            RelocateRenderElement<
+                RescaleRenderElement<
+                    TextureRenderElement<
+                        <GlesRenderer as smithay::backend::renderer::RendererSuper>::TextureId,
+                    >,
+                >,
+            >,
+        >,
+    > {
+        let texture = TextureRenderElement::from_texture_buffer(
+            Point::from((0.0, 0.0)),
+            &snapshot.buffer,
+            Some(alpha),
+            None,
+            Some(
+                (
+                    snapshot.logical_size.0.round() as i32,
+                    snapshot.logical_size.1.round() as i32,
+                )
+                    .into(),
+            ),
+            Kind::Unspecified,
+        );
+        let source_size = (
+            snapshot.logical_size.0.round().max(0.0) as i32,
+            snapshot.logical_size.1.round().max(0.0) as i32,
+        );
+        let render_size = target_size.map_or(source_size, |(target_width, target_height)| {
+            (
+                source_size.0.min(target_width.max(0)),
+                source_size.1.min(target_height.max(0)),
+            )
+        });
+        let element = RescaleRenderElement::from_element(texture, Point::from((0, 0)), (1.0, 1.0));
+        let render_location = target_location.unwrap_or((
+            snapshot.render_snapshot.window_rect.x.round() as i32,
+            (snapshot.render_snapshot.window_rect.y + snapshot.render_snapshot.content_offset_y)
+                .round() as i32,
+        ));
+        let element =
+            RelocateRenderElement::from_element(element, render_location, Relocate::Absolute);
+        let constrain_rect = Rectangle::new(render_location.into(), render_size.into());
+        CropRenderElement::from_element(element, output_scale, constrain_rect)
+    }
+
+    fn build_scene_snapshot_element(
+        snapshot: &SceneTextureSnapshot,
+        alpha: f32,
+        output_scale: smithay::utils::Scale<f64>,
+        frozen_rect: LayoutRect,
+    ) -> Option<
+        CropRenderElement<
+            RelocateRenderElement<
+                RescaleRenderElement<
+                    TextureRenderElement<
+                        <GlesRenderer as smithay::backend::renderer::RendererSuper>::TextureId,
+                    >,
+                >,
+            >,
+        >,
+    > {
+        let texture = TextureRenderElement::from_texture_buffer(
+            Point::from((0.0, 0.0)),
+            &snapshot.buffer,
+            Some(alpha),
+            None,
+            Some(
+                (
+                    snapshot.logical_size.0.round() as i32,
+                    snapshot.logical_size.1.round() as i32,
+                )
+                    .into(),
+            ),
+            Kind::Unspecified,
+        );
+        let element = RescaleRenderElement::from_element(texture, Point::from((0, 0)), (1.0, 1.0));
+        let render_location = (frozen_rect.x.round() as i32, frozen_rect.y.round() as i32);
+        let element =
+            RelocateRenderElement::from_element(element, render_location, Relocate::Absolute);
+        let constrain_rect = Rectangle::new(
+            render_location.into(),
+            (
+                frozen_rect.width.round().max(0.0) as i32,
+                frozen_rect.height.round().max(0.0) as i32,
+            )
+                .into(),
+        );
+        CropRenderElement::from_element(element, output_scale, constrain_rect)
+    }
+
+    fn window_ids(windows: &[SmithayWindowRenderSnapshot]) -> Vec<WindowId> {
+        windows
+            .iter()
+            .map(|window| window.window_id.clone())
+            .collect()
+    }
+
+    fn union_window_rect(windows: &[SmithayWindowRenderSnapshot]) -> Option<LayoutRect> {
+        let first = windows.first()?;
+        let mut min_x = first.window_rect.x;
+        let mut min_y = first.window_rect.y;
+        let mut max_x = first.window_rect.x + first.window_rect.width;
+        let mut max_y = first.window_rect.y + first.window_rect.height;
+
+        for window in &windows[1..] {
+            min_x = min_x.min(window.window_rect.x);
+            min_y = min_y.min(window.window_rect.y);
+            max_x = max_x.max(window.window_rect.x + window.window_rect.width);
+            max_y = max_y.max(window.window_rect.y + window.window_rect.height);
+        }
+
+        Some(LayoutRect {
+            x: min_x,
+            y: min_y,
+            width: (max_x - min_x).max(0.0),
+            height: (max_y - min_y).max(0.0),
+        })
+    }
+
+    fn union_layout_rects(a: LayoutRect, b: LayoutRect) -> LayoutRect {
+        let min_x = a.x.min(b.x);
+        let min_y = a.y.min(b.y);
+        let max_x = (a.x + a.width).max(b.x + b.width);
+        let max_y = (a.y + a.height).max(b.y + b.height);
+
+        LayoutRect {
+            x: min_x,
+            y: min_y,
+            width: (max_x - min_x).max(0.0),
+            height: (max_y - min_y).max(0.0),
+        }
+    }
+
+    fn overlap_1d(a_start: f32, a_end: f32, b_start: f32, b_end: f32) -> f32 {
+        (a_end.min(b_end) - a_start.max(b_start)).max(0.0)
+    }
+
+    fn projected_close_affected_window_ids(
+        windows: &[SmithayWindowRenderSnapshot],
+        closing_window_id: &WindowId,
+    ) -> Vec<WindowId> {
+        let Some(closing_window) = windows
+            .iter()
+            .find(|window| window.window_id == *closing_window_id)
+        else {
+            return vec![closing_window_id.clone()];
+        };
+
+        let closed_rect = closing_window.window_rect;
+        let mut same_column = Vec::new();
+        let mut side_overlap = Vec::new();
+
+        for window in windows {
+            if window.window_id == *closing_window_id {
+                continue;
+            }
+
+            let candidate = window.window_rect;
+            let horizontal_overlap = overlap_1d(
+                closed_rect.x,
+                closed_rect.x + closed_rect.width,
+                candidate.x,
+                candidate.x + candidate.width,
+            );
+            let vertical_overlap = overlap_1d(
+                closed_rect.y,
+                closed_rect.y + closed_rect.height,
+                candidate.y,
+                candidate.y + candidate.height,
+            );
+
+            if horizontal_overlap > 0.0 {
+                same_column.push(window.window_id.clone());
+            } else if vertical_overlap > 0.0 {
+                side_overlap.push(window.window_id.clone());
+            }
+        }
+
+        let mut affected = vec![closing_window_id.clone()];
+        if same_column.is_empty() {
+            affected.extend(side_overlap);
+        } else {
+            affected.extend(same_column);
+        }
+        affected.sort();
+        affected.dedup();
+        affected
+    }
+
+    fn build_close_scene_transition(
+        renderer: &mut GlesRenderer,
+        windows: &[SmithayWindowRenderSnapshot],
+        titlebars: &[crate::titlebar::TitlebarRenderItem],
+        decoration_policies: &[(WindowId, SmithayWindowDecorationPolicySnapshot)],
+        surfaces: &[SmithayRenderableToplevelSurface],
+        window_id: &WindowId,
+        started_at: std::time::Duration,
+        window_size: (i32, i32),
+        output_scale: smithay::utils::Scale<f64>,
+    ) -> Option<SceneTransition> {
+        let Some(render) = windows
+            .iter()
+            .find(|render| render.window_id == *window_id)
+            .cloned()
+        else {
+            return None;
+        };
+
+        let Ok(Some(scene_snapshot)) = capture_scene_snapshot(
+            renderer,
+            windows,
+            titlebars,
+            decoration_policies,
+            surfaces,
+            window_size.into(),
+            output_scale,
+        ) else {
+            return None;
+        };
+
+        let affected_windows = projected_close_affected_window_ids(windows, window_id);
+        let affected_previous_windows = select_windows_by_ids(windows, &affected_windows);
+        Some(SceneTransition::new(
+            scene_snapshot,
+            started_at,
+            layout_signature(windows),
+            affected_windows,
+            union_window_rect(&affected_previous_windows).unwrap_or(render.window_rect),
+        ))
+    }
+
+    fn merge_scene_transition(
+        existing: Option<SceneTransition>,
+        next: SceneTransition,
+    ) -> SceneTransition {
+        let Some(existing) = existing else {
+            return next;
+        };
+
+        let overlaps = existing
+            .affected_windows
+            .iter()
+            .any(|window_id| next.affected_windows.contains(window_id));
+        if !overlaps {
+            return next;
+        }
+
+        let mut existing = existing;
+        existing.awaiting_layout_change = true;
+        existing.awaiting_settle = true;
+        existing.frozen_rect = union_layout_rects(existing.frozen_rect, next.frozen_rect);
+
+        for window_id in next.affected_windows {
+            if !existing.affected_windows.contains(&window_id) {
+                existing.affected_windows.push(window_id.clone());
+            }
+            if !existing.blocked_windows.contains(&window_id) {
+                existing.blocked_windows.push(window_id);
+            }
+        }
+        existing.affected_windows.sort();
+        existing.affected_windows.dedup();
+
+        for window_id in next.blocked_windows {
+            if !existing.blocked_windows.contains(&window_id) {
+                existing.blocked_windows.push(window_id);
+            }
+        }
+        existing.blocked_windows.sort();
+        existing.blocked_windows.dedup();
+
+        existing
+    }
+
+    fn scene_transition_has_visible_alpha(
+        transition: &SceneTransition,
+        windows: &[SmithayWindowRenderSnapshot],
+        pending_presented_window_ids: &std::collections::HashSet<WindowId>,
+        now: std::time::Duration,
+    ) -> bool {
+        let layout_changed = layout_signature(windows) != transition.captured_layouts;
+        let settled = transition.blocked_windows.is_empty()
+            && !transition
+                .affected_windows
+                .iter()
+                .any(|window_id| pending_presented_window_ids.contains(window_id));
+        scene_transition_alpha(now, transition, layout_changed, settled) > 0.0
+    }
+
+    fn widen_scene_transition_for_close(
+        transition: &mut SceneTransition,
+        windows: &[SmithayWindowRenderSnapshot],
+        closing_window_id: &WindowId,
+        now: std::time::Duration,
+    ) {
+        let affected_windows = projected_close_affected_window_ids(windows, closing_window_id);
+        let affected_previous_windows = select_windows_by_ids(windows, &affected_windows);
+
+        for window_id in affected_windows {
+            if !transition.affected_windows.contains(&window_id) {
+                transition.affected_windows.push(window_id.clone());
+            }
+            if !transition.blocked_windows.contains(&window_id) {
+                transition.blocked_windows.push(window_id);
+            }
+        }
+
+        transition.affected_windows.sort();
+        transition.affected_windows.dedup();
+        transition.blocked_windows.sort();
+        transition.blocked_windows.dedup();
+
+        if let Some(frozen_rect) = union_window_rect(&affected_previous_windows) {
+            transition.frozen_rect = union_layout_rects(transition.frozen_rect, frozen_rect);
+        }
+
+        transition.awaiting_layout_change = true;
+        transition.awaiting_settle = true;
+        transition.started_at = now;
+    }
+
+    fn affected_window_ids_for_transition(
+        previous_windows: &[SmithayWindowRenderSnapshot],
+        next_windows: &[SmithayWindowRenderSnapshot],
+    ) -> Vec<WindowId> {
+        let mut affected = Vec::new();
+
+        for previous in previous_windows {
+            match next_windows
+                .iter()
+                .find(|next| next.window_id == previous.window_id)
+            {
+                Some(next) if next == previous => {}
+                _ => affected.push(previous.window_id.clone()),
+            }
+        }
+
+        for next in next_windows {
+            if previous_windows
+                .iter()
+                .all(|previous| previous.window_id != next.window_id)
+            {
+                affected.push(next.window_id.clone());
+            }
+        }
+
+        affected.sort();
+        affected.dedup();
+        affected
+    }
+
+    fn select_windows_by_ids<'a>(
+        windows: &'a [SmithayWindowRenderSnapshot],
+        window_ids: &[WindowId],
+    ) -> Vec<SmithayWindowRenderSnapshot> {
+        windows
+            .iter()
+            .filter(|window| window_ids.contains(&window.window_id))
+            .cloned()
+            .collect()
+    }
+
+    fn scene_transaction_debug_record(
+        transition: Option<&SceneTransition>,
+        windows: &[SmithayWindowRenderSnapshot],
+        surfaces: &[SmithayRenderableToplevelSurface],
+        pending_presented_window_ids: &std::collections::HashSet<WindowId>,
+        now: std::time::Duration,
+        emitted_overlay: bool,
+    ) -> Option<FrameSceneTransactionDebugRecord> {
+        let transition = transition?;
+        let layout_changed = layout_signature(windows) != transition.captured_layouts;
+        let settled = transition.blocked_windows.is_empty()
+            && !transition
+                .affected_windows
+                .iter()
+                .any(|window_id| pending_presented_window_ids.contains(window_id));
+        Some(FrameSceneTransactionDebugRecord {
+            affected_windows: transition.affected_windows.clone(),
+            frozen_rect: (
+                transition.frozen_rect.x.round() as i32,
+                transition.frozen_rect.y.round() as i32,
+                transition.frozen_rect.width.round() as i32,
+                transition.frozen_rect.height.round() as i32,
+            ),
+            alpha_milli: (scene_transition_alpha(now, transition, layout_changed, settled) * 1000.0)
+                .round() as i32,
+            layout_changed,
+            settled,
+            emitted_overlay,
+        })
+    }
+
+    fn scene_transition_needs_overlay(
+        transition: &SceneTransition,
+        windows: &[SmithayWindowRenderSnapshot],
+        surfaces: &[SmithayRenderableToplevelSurface],
+        close_requested_window_ids: &std::collections::HashSet<WindowId>,
+        layout_changed: bool,
+    ) -> bool {
+        if transition
+            .affected_windows
+            .iter()
+            .any(|window_id| close_requested_window_ids.contains(window_id))
+        {
+            return true;
+        }
+
+        if layout_changed {
+            return true;
+        }
+
+        transition.affected_windows.iter().any(|window_id| {
+            let Some(_window) = windows.iter().find(|window| window.window_id == *window_id) else {
+                return true;
+            };
+            let Some(surface) = surfaces
+                .iter()
+                .find(|surface| surface.window_id == *window_id)
+            else {
+                return true;
+            };
+            !surface.has_buffer
+        })
+    }
+
+    fn refresh_scene_transition_blocked_windows(
+        transition: &mut SceneTransition,
+        windows: &[SmithayWindowRenderSnapshot],
+        surfaces: &[SmithayRenderableToplevelSurface],
+        presented_window_ids: &std::collections::HashSet<WindowId>,
+        pending_presented_window_ids: &std::collections::HashSet<WindowId>,
+    ) {
+        transition.blocked_windows.retain(|window_id| {
+            if pending_presented_window_ids.contains(window_id) {
+                return true;
+            }
+            if !transition.affected_windows.contains(window_id) {
+                return false;
+            }
+            let Some(window) = windows.iter().find(|window| window.window_id == *window_id) else {
+                return false;
+            };
+            let Some(surface) = surfaces.iter().find(|surface| surface.window_id == *window_id)
+            else {
+                return false;
+            };
+            if !presented_window_ids.contains(window_id) {
+                return true;
+            }
+            let expected_width = window.window_rect.width.max(0.0).round() as i32;
+            let expected_height = (window.window_rect.height - window.content_offset_y)
+                .max(0.0)
+                .round() as i32;
+            !matches!(
+                committed_root_surface_size(surface.surface.wl_surface()).or(surface.committed_size),
+                Some((width, height))
+                    if (width - expected_width).abs() <= 1 && (height - expected_height).abs() <= 1
+            )
+        });
+    }
+
+    fn layout_signature(
+        windows: &[SmithayWindowRenderSnapshot],
+    ) -> Vec<(WindowId, (i32, i32, i32, i32))> {
+        windows
+            .iter()
+            .map(|window| {
+                (
+                    window.window_id.clone(),
+                    (
+                        window.window_rect.x.round() as i32,
+                        window.window_rect.y.round() as i32,
+                        window.window_rect.width.round() as i32,
+                        window.window_rect.height.round() as i32,
+                    ),
+                )
+            })
+            .collect()
+    }
+
+    fn closing_transition_is_active(
+        now: std::time::Duration,
+        transition: &ClosingWindowTransition,
+    ) -> bool {
+        now.saturating_sub(transition.started_at) < CLOSE_TRANSITION_DURATION
+    }
+
+    fn resize_transition_is_active(
+        now: std::time::Duration,
+        transition: &ResizeTransition,
+    ) -> bool {
+        now.saturating_sub(transition.started_at) < RESIZE_TRANSITION_DURATION
+    }
+
+    fn resize_transition_progress(now: std::time::Duration, transition: &ResizeTransition) -> f32 {
+        if transition.awaiting_target_commit {
+            return 0.0;
+        }
+        (now.saturating_sub(transition.started_at).as_secs_f32()
+            / RESIZE_TRANSITION_DURATION.as_secs_f32())
+        .clamp(0.0, 1.0)
+    }
+
+    fn committed_matches_transition_target(
+        committed_size: Option<(i32, i32)>,
+        transition: &ResizeTransition,
+    ) -> bool {
+        let Some((committed_width, committed_height)) = committed_size else {
+            return false;
+        };
+
+        let (target_width, target_height) = transition.target_logical_size;
+        if target_width <= 0 || target_height <= 0 {
+            return committed_width > 0 && committed_height > 0;
+        }
+
+        let width_delta = (committed_width - target_width).abs();
+        let height_delta = (committed_height - target_height).abs();
+        width_delta <= 1 && height_delta <= 1
+    }
+
+    fn resize_transition_can_release(
+        committed_size: Option<(i32, i32)>,
+        transition: &ResizeTransition,
+        now: std::time::Duration,
+    ) -> bool {
+        committed_matches_transition_target(committed_size, transition)
+            && !transition.awaiting_target_commit
+            && resize_transition_progress(now, transition) >= 1.0
+    }
+
+    fn closing_transition_alpha(
+        now: std::time::Duration,
+        transition: &ClosingWindowTransition,
+    ) -> f32 {
+        let progress = (now.saturating_sub(transition.started_at).as_secs_f32()
+            / CLOSE_TRANSITION_DURATION.as_secs_f32())
+        .clamp(0.0, 1.0);
+        (1.0 - progress).max(0.0)
+    }
+
+    fn scene_transition_alpha(
+        now: std::time::Duration,
+        transition: &SceneTransition,
+        layout_changed: bool,
+        settled: bool,
+    ) -> f32 {
+        let _ = now;
+        let _ = transition;
+        if transition.awaiting_layout_change && !layout_changed {
+            return 1.0;
+        }
+        if transition.awaiting_settle && !settled {
+            return 1.0;
+        }
+
+        0.0
+    }
+
+    fn opening_transition_alpha(
+        now: std::time::Duration,
+        transition: &OpeningWindowTransition,
+    ) -> f32 {
+        let elapsed = now.saturating_sub(transition.first_seen_at);
+        let progress =
+            (elapsed.as_secs_f32() / OPEN_TRANSITION_DURATION.as_secs_f32()).clamp(0.0, 1.0);
+        progress.max(0.15)
     }
 
     #[derive(Debug, thiserror::Error)]
@@ -125,6 +1041,45 @@ mod imp {
         pub socket_name: String,
         pub window_size: (i32, i32),
         pub state: SmithayStateSnapshot,
+        pub presentation_debug: Vec<WindowPresentationDebugSnapshot>,
+        pub frame_debug_history: Vec<FrameDebugSnapshot>,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct FrameDebugSnapshot {
+        pub frame_index: u64,
+        pub rendered: bool,
+        pub reason: String,
+        pub focused_window_id: Option<WindowId>,
+        pub presented_window_ids: Vec<WindowId>,
+        pub pending_presented_window_ids: Vec<WindowId>,
+        pub scene_transaction: Option<FrameSceneTransactionDebugSnapshot>,
+        pub windows: Vec<FrameWindowDebugSnapshot>,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct FrameSceneTransactionDebugSnapshot {
+        pub affected_windows: Vec<WindowId>,
+        pub frozen_rect: (i32, i32, i32, i32),
+        pub alpha_milli: i32,
+        pub layout_changed: bool,
+        pub settled: bool,
+        pub emitted_overlay: bool,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct FrameWindowDebugSnapshot {
+        pub window_id: WindowId,
+        pub target_rect: (i32, i32, i32, i32),
+        pub committed_size: Option<(i32, i32)>,
+        pub committed_view_size: Option<(i32, i32)>,
+        pub has_buffer: bool,
+        pub has_resize_snapshot: bool,
+        pub snapshot_rect: Option<(i32, i32, i32, i32)>,
+        pub considered_presented: bool,
+        pub pending_presented: bool,
+        pub drew_live: bool,
+        pub drew_snapshot: bool,
     }
 
     #[derive(Debug, Clone, PartialEq, Eq)]
@@ -132,9 +1087,46 @@ mod imp {
         pub runtime: SmithayRuntimeSnapshot,
         pub controller: ControllerReport,
         pub topology: SmithayBootstrapTopologySnapshot,
+        pub runtime_bootstrap_debug: crate::app::RuntimeBootstrapDebug,
+        pub lifecycle_debug: SmithayLifecycleDebugSnapshot,
         pub topology_surface_count: usize,
         pub topology_output_count: usize,
         pub topology_seat_count: usize,
+    }
+
+    #[derive(Debug, Clone, Default, PartialEq, Eq)]
+    pub struct SmithayLifecycleDebugSnapshot {
+        pub before_sync_runtime_output_windows: usize,
+        pub after_sync_runtime_output_windows: usize,
+        pub before_pending_discovery_windows: usize,
+        pub after_pending_discovery_windows: usize,
+        pub before_controller_apply_command_windows: usize,
+        pub after_controller_apply_command_windows: usize,
+        pub before_capture_resize_snapshots_windows: usize,
+        pub after_capture_resize_snapshots_windows: usize,
+        pub after_refresh_workspace_export_windows: usize,
+        pub before_apply_pending_workspace_actions_windows: usize,
+        pub after_apply_pending_workspace_actions_windows: usize,
+        pub before_sync_focus_state_windows: usize,
+        pub after_sync_focus_state_windows: usize,
+        pub before_pending_discovery_generation: u64,
+        pub after_controller_apply_command_generation: u64,
+        pub before_apply_pending_workspace_actions_generation: u64,
+        pub recent_events: Vec<String>,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct WindowPresentationDebugSnapshot {
+        pub window_id: WindowId,
+        pub target_size: Option<(i32, i32)>,
+        pub acked_size: Option<(i32, i32)>,
+        pub committed_view_size: Option<(i32, i32)>,
+        pub has_been_presented: bool,
+        pub has_resize_snapshot: bool,
+        pub snapshot_captured_for_transition: bool,
+        pub used_snapshot_on_last_frame: bool,
+        pub used_live_content_on_last_frame: bool,
+        pub newly_presented_on_last_frame: bool,
     }
 
     #[derive(Debug, Clone, PartialEq, Eq)]
@@ -151,6 +1143,7 @@ mod imp {
         pub controller: crate::CompositorController<R>,
         pub runtime: SmithayWinitRuntime<'static>,
         pub report: SmithayStartupReport,
+        pub lifecycle_debug: SmithayLifecycleDebugSnapshot,
     }
 
     impl<R> SmithayBootstrap<R>
@@ -159,9 +1152,17 @@ mod imp {
     {
         pub fn run_startup_cycle(&mut self) -> Result<(), SmithayRuntimeError> {
             self.runtime.run_startup_cycle()?;
+            self.lifecycle_debug.before_sync_runtime_output_windows =
+                self.controller.state_snapshot().windows.len();
             self.sync_runtime_output_size()?;
+            self.lifecycle_debug.after_sync_runtime_output_windows =
+                self.controller.state_snapshot().windows.len();
 
+            self.lifecycle_debug.before_pending_discovery_windows =
+                self.controller.state_snapshot().windows.len();
             self.apply_pending_discovery_events()?;
+            self.lifecycle_debug.after_pending_discovery_windows =
+                self.controller.state_snapshot().windows.len();
             Ok(())
         }
 
@@ -255,6 +1256,8 @@ mod imp {
                 runtime: self.runtime.snapshot(),
                 controller: self.controller.report(),
                 topology: snapshot_topology(topology),
+                runtime_bootstrap_debug: self.controller.app().runtime_bootstrap_debug.clone(),
+                lifecycle_debug: self.lifecycle_debug.clone(),
                 topology_surface_count: topology.surfaces.len(),
                 topology_output_count: topology.outputs.len(),
                 topology_seat_count: topology.seats.len(),
@@ -263,9 +1266,55 @@ mod imp {
 
         pub fn apply_pending_discovery_events(&mut self) -> Result<usize, SmithayRuntimeError> {
             let commands = self.runtime.drain_pending_discovery_commands();
+            self.lifecycle_debug.before_pending_discovery_generation =
+                self.controller.app().session().debug_generation();
+            append_winit_debug_log(&format!(
+                "bootstrap.apply_pending_discovery_events start commands={} windows={} visible={} gen={}",
+                commands.len(),
+                self.controller.state_snapshot().windows.len(),
+                self.controller.state_snapshot().visible_window_ids.len(),
+                self.controller.app().session().debug_generation()
+            ));
             let applied = self.apply_pending_discovery_commands(commands)?;
+            self.lifecycle_debug
+                .before_apply_pending_workspace_actions_windows =
+                self.controller.state_snapshot().windows.len();
+            self.lifecycle_debug
+                .before_apply_pending_workspace_actions_generation =
+                self.controller.app().session().debug_generation();
+            append_winit_debug_log(&format!(
+                "bootstrap.before_apply_pending_workspace_actions windows={} visible={} gen={}",
+                self.controller.state_snapshot().windows.len(),
+                self.controller.state_snapshot().visible_window_ids.len(),
+                self.controller.app().session().debug_generation()
+            ));
             self.apply_pending_workspace_actions()?;
+            self.lifecycle_debug
+                .after_apply_pending_workspace_actions_windows =
+                self.controller.state_snapshot().windows.len();
+            append_winit_debug_log(&format!(
+                "bootstrap.after_apply_pending_workspace_actions windows={} visible={} gen={}",
+                self.controller.state_snapshot().windows.len(),
+                self.controller.state_snapshot().visible_window_ids.len(),
+                self.controller.app().session().debug_generation()
+            ));
+            self.lifecycle_debug.before_sync_focus_state_windows =
+                self.controller.state_snapshot().windows.len();
+            append_winit_debug_log(&format!(
+                "bootstrap.before_sync_focus_state windows={} visible={} gen={}",
+                self.controller.state_snapshot().windows.len(),
+                self.controller.state_snapshot().visible_window_ids.len(),
+                self.controller.app().session().debug_generation()
+            ));
             self.sync_focus_state()?;
+            self.lifecycle_debug.after_sync_focus_state_windows =
+                self.controller.state_snapshot().windows.len();
+            append_winit_debug_log(&format!(
+                "bootstrap.after_sync_focus_state windows={} visible={} gen={}",
+                self.controller.state_snapshot().windows.len(),
+                self.controller.state_snapshot().visible_window_ids.len(),
+                self.controller.app().session().debug_generation()
+            ));
             Ok(applied)
         }
 
@@ -273,20 +1322,248 @@ mod imp {
             let actions = self.runtime.take_workspace_actions();
             let mut applied = 0;
 
+            append_winit_debug_log(&format!(
+                "bootstrap.apply_pending_workspace_actions drained={} windows={} visible={} focused={:?} workspace={:?}",
+                actions.len(),
+                self.controller.state_snapshot().windows.len(),
+                self.controller.state_snapshot().visible_window_ids.len(),
+                self.controller.state_snapshot().focused_window_id,
+                self.controller.state_snapshot().current_workspace_id,
+            ));
+
             for action in actions {
+                append_winit_debug_log(&format!(
+                    "bootstrap.apply_pending_workspace_actions action_start action={action:?} windows={} visible={} focused={:?} workspace={:?} gen={}",
+                    self.controller.state_snapshot().windows.len(),
+                    self.controller.state_snapshot().visible_window_ids.len(),
+                    self.controller.state_snapshot().focused_window_id,
+                    self.controller.state_snapshot().current_workspace_id,
+                    self.controller.app().session().debug_generation(),
+                ));
                 if let WmAction::Spawn { command } = &action {
                     spawn_shell_command(command, self.runtime.socket_name())?;
+                    append_winit_debug_log(&format!(
+                        "bootstrap.apply_pending_workspace_actions action_end action={action:?} windows={} visible={} focused={:?} workspace={:?} gen={}",
+                        self.controller.state_snapshot().windows.len(),
+                        self.controller.state_snapshot().visible_window_ids.len(),
+                        self.controller.state_snapshot().focused_window_id,
+                        self.controller.state_snapshot().current_workspace_id,
+                        self.controller.app().session().debug_generation(),
+                    ));
                     applied += 1;
                     continue;
                 }
+                if let WmAction::FocusWindow { window_id } = &action {
+                    let window_known = self
+                        .controller
+                        .state_snapshot()
+                        .windows
+                        .iter()
+                        .any(|window| window.id == *window_id);
+
+                    if !window_known {
+                        append_winit_debug_log(&format!(
+                            "bootstrap.apply_pending_workspace_actions skip_unknown_focus window_id={window_id:?}"
+                        ));
+                        applied += 1;
+                        continue;
+                    }
+                }
+                if action == WmAction::CloseFocusedWindow {
+                    let focused_window_id = self
+                        .controller
+                        .state_snapshot()
+                        .focused_window_id
+                        .clone()
+                        .or_else(|| {
+                            self.controller
+                                .state_snapshot()
+                                .visible_window_ids
+                                .first()
+                                .cloned()
+                        });
+
+                    if let Some(window_id) = focused_window_id.as_ref() {
+                        let previous_window_plan =
+                            self.runtime.state().current_window_render_plan().to_vec();
+                        let previous_titlebars =
+                            self.runtime.state().current_titlebar_render_plan().to_vec();
+                        let decoration_policies = self
+                            .runtime
+                            .state()
+                            .current_window_decoration_policies()
+                            .to_vec();
+                        if let Some(render) = previous_window_plan
+                            .iter()
+                            .find(|render| &render.window_id == window_id)
+                            .cloned()
+                        {
+                            let surfaces = self.runtime.state().renderable_toplevel_surfaces();
+                            if let Some(surface) = surfaces
+                                .iter()
+                                .find(|surface| &surface.window_id == window_id)
+                                .cloned()
+                            {
+                                if let Some(output) = self.runtime.state().active_smithay_output() {
+                                    let output_scale = smithay::utils::Scale::from(
+                                        output.current_scale().fractional_scale(),
+                                    );
+                                    let mut request_redraw = false;
+                                    if let Some(backend) = self.runtime.backend.as_mut() {
+                                        if let Ok((renderer, _)) = backend.bind() {
+                                            if let Ok(Some(snapshot)) = capture_window_snapshot(
+                                                renderer,
+                                                &surface,
+                                                &render,
+                                                output_scale,
+                                            ) {
+                                                if let Ok(Some(scene_snapshot)) =
+                                                    capture_scene_snapshot(
+                                                        renderer,
+                                                        &previous_window_plan,
+                                                        &previous_titlebars,
+                                                        &decoration_policies,
+                                                        &surfaces,
+                                                        self.runtime.window_size.into(),
+                                                        output_scale,
+                                                    )
+                                                {
+                                                    let affected_windows =
+                                                        projected_close_affected_window_ids(
+                                                            &previous_window_plan,
+                                                            window_id,
+                                                        );
+                                                    let affected_previous_windows =
+                                                        select_windows_by_ids(
+                                                            &previous_window_plan,
+                                                            &affected_windows,
+                                                        );
+                                                    let next_transition = SceneTransition::new(
+                                                        scene_snapshot,
+                                                        transition_now(
+                                                            &self.runtime.presentation_state.clock,
+                                                        ),
+                                                        layout_signature(&previous_window_plan),
+                                                        affected_windows,
+                                                        union_window_rect(
+                                                            &affected_previous_windows,
+                                                        )
+                                                        .unwrap_or(render.window_rect),
+                                                    );
+                                                    self.runtime.scene_transition =
+                                                        Some(merge_scene_transition(
+                                                            self.runtime.scene_transition.take(),
+                                                            next_transition,
+                                                        ));
+                                                }
+                                                self.runtime
+                                                    .last_snapshot_capture_window_ids
+                                                    .insert(window_id.clone());
+                                                self.runtime.closing_transitions.insert(
+                                                    window_id.clone(),
+                                                    ClosingWindowTransition::new(
+                                                        window_id.clone(),
+                                                        snapshot,
+                                                        transition_now(
+                                                            &self.runtime.presentation_state.clock,
+                                                        ),
+                                                    ),
+                                                );
+                                                self.runtime.resize_transitions.insert(
+                                                    window_id.clone(),
+                                                    ResizeTransition::new(
+                                                        window_id.clone(),
+                                                        self.runtime
+                                                            .closing_transitions
+                                                            .get(window_id)
+                                                            .expect("closing transition inserted")
+                                                            .snapshot
+                                                            .clone(),
+                                                        (
+                                                            render
+                                                                .window_rect
+                                                                .width
+                                                                .max(0.0)
+                                                                .round()
+                                                                as i32,
+                                                            (render.window_rect.height
+                                                                - render.content_offset_y)
+                                                                .max(0.0)
+                                                                .round()
+                                                                as i32,
+                                                        ),
+                                                        transition_now(
+                                                            &self.runtime.presentation_state.clock,
+                                                        ),
+                                                        true,
+                                                    ),
+                                                );
+                                                request_redraw = true;
+                                            }
+                                        }
+                                    }
+                                    if request_redraw {
+                                        self.runtime.state_mut().request_redraw();
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    let close_requested = focused_window_id.as_ref().is_some_and(|window_id| {
+                        self.runtime.state_mut().request_close_for_window(window_id)
+                    });
+
+                    append_winit_debug_log(&format!(
+                        "bootstrap.apply_pending_workspace_actions close_requested focused={focused_window_id:?} requested={close_requested}"
+                    ));
+
+                    if close_requested {
+                        append_winit_debug_log(&format!(
+                            "bootstrap.apply_pending_workspace_actions action_end action={action:?} windows={} visible={} focused={:?} workspace={:?} gen={}",
+                            self.controller.state_snapshot().windows.len(),
+                            self.controller.state_snapshot().visible_window_ids.len(),
+                            self.controller.state_snapshot().focused_window_id,
+                            self.controller.state_snapshot().current_workspace_id,
+                            self.controller.app().session().debug_generation(),
+                        ));
+                        applied += 1;
+                        continue;
+                    }
+                }
+                let previous_window_plan =
+                    self.runtime.state().current_window_render_plan().to_vec();
+                let previous_presented_window_ids = self
+                    .runtime
+                    .state()
+                    .snapshot()
+                    .known_surfaces
+                    .toplevels
+                    .iter()
+                    .filter(|surface| surface.has_been_presented)
+                    .map(|surface| surface.window_id.clone())
+                    .collect::<std::collections::HashSet<_>>();
+
                 self.controller.apply_ipc_action(&action).map_err(|error| {
                     SmithayRuntimeError::Winit(format!("workspace action failed: {error}"))
                 })?;
+                self.capture_resize_snapshots_for_next_export(
+                    &previous_window_plan,
+                    &previous_presented_window_ids,
+                )?;
                 refresh_workspace_export_from_controller(
                     &self.controller,
                     self.runtime.state_mut(),
                 );
                 self.report.controller = self.controller.report();
+                append_winit_debug_log(&format!(
+                    "bootstrap.apply_pending_workspace_actions action_end action={action:?} windows={} visible={} focused={:?} workspace={:?} gen={}",
+                    self.controller.state_snapshot().windows.len(),
+                    self.controller.state_snapshot().visible_window_ids.len(),
+                    self.controller.state_snapshot().focused_window_id,
+                    self.controller.state_snapshot().current_workspace_id,
+                    self.controller.app().session().debug_generation(),
+                ));
                 applied += 1;
             }
 
@@ -303,6 +1580,20 @@ mod imp {
             let Some(window_id) = focused_window_id else {
                 return Ok(());
             };
+
+            let window_known = controller_state
+                .windows
+                .iter()
+                .any(|window| window.id == window_id);
+
+            if !window_known {
+                append_winit_debug_log(&format!(
+                    "bootstrap.sync_focus_state skip_unknown_window window_id={window_id:?} visible={:?} focused={:?}",
+                    controller_state.visible_window_ids,
+                    controller_state.focused_window_id,
+                ));
+                return Ok(());
+            }
 
             if controller_state.focused_window_id.is_none() {
                 self.controller
@@ -412,9 +1703,212 @@ mod imp {
             &mut self,
             command: ControllerCommand,
         ) -> Result<(), SmithayRuntimeError> {
+            self.lifecycle_debug.recent_events.push(format!(
+                "before {command:?} windows={} gen={}",
+                self.controller.state_snapshot().windows.len(),
+                self.controller.app().session().debug_generation()
+            ));
+            if self.lifecycle_debug.recent_events.len() > 32 {
+                self.lifecycle_debug.recent_events.remove(0);
+            }
+            self.lifecycle_debug.before_controller_apply_command_windows =
+                self.controller.state_snapshot().windows.len();
+            let previous_window_plan = self.runtime.state().current_window_render_plan().to_vec();
+            let previous_presented_window_ids = self
+                .runtime
+                .state()
+                .snapshot()
+                .known_surfaces
+                .toplevels
+                .iter()
+                .filter(|surface| surface.has_been_presented)
+                .map(|surface| surface.window_id.clone())
+                .collect::<std::collections::HashSet<_>>();
             self.controller.apply_command(command)?;
+            self.lifecycle_debug.after_controller_apply_command_windows =
+                self.controller.state_snapshot().windows.len();
+            self.lifecycle_debug
+                .after_controller_apply_command_generation =
+                self.controller.app().session().debug_generation();
+            self.lifecycle_debug.recent_events.push(format!(
+                "after controller.apply_command windows={} gen={}",
+                self.controller.state_snapshot().windows.len(),
+                self.controller.app().session().debug_generation()
+            ));
+            if self.lifecycle_debug.recent_events.len() > 32 {
+                self.lifecycle_debug.recent_events.remove(0);
+            }
+            self.lifecycle_debug.before_capture_resize_snapshots_windows =
+                self.controller.state_snapshot().windows.len();
+            self.capture_resize_snapshots_for_next_export(
+                &previous_window_plan,
+                &previous_presented_window_ids,
+            )?;
+            self.lifecycle_debug.after_capture_resize_snapshots_windows =
+                self.controller.state_snapshot().windows.len();
+            self.lifecycle_debug.recent_events.push(format!(
+                "after capture_resize_snapshots windows={} gen={}",
+                self.controller.state_snapshot().windows.len(),
+                self.controller.app().session().debug_generation()
+            ));
+            if self.lifecycle_debug.recent_events.len() > 32 {
+                self.lifecycle_debug.recent_events.remove(0);
+            }
             refresh_workspace_export_from_controller(&self.controller, self.runtime.state_mut());
+            self.lifecycle_debug.after_refresh_workspace_export_windows =
+                self.controller.state_snapshot().windows.len();
+            self.lifecycle_debug.recent_events.push(format!(
+                "after refresh_workspace_export windows={} gen={}",
+                self.controller.state_snapshot().windows.len(),
+                self.controller.app().session().debug_generation()
+            ));
+            if self.lifecycle_debug.recent_events.len() > 32 {
+                self.lifecycle_debug.recent_events.remove(0);
+            }
             self.report.controller = self.controller.report();
+            Ok(())
+        }
+
+        fn capture_resize_snapshots_for_next_export(
+            &mut self,
+            previous_window_plan: &[SmithayWindowRenderSnapshot],
+            previously_presented_window_ids: &std::collections::HashSet<WindowId>,
+        ) -> Result<(), SmithayRuntimeError> {
+            self.runtime.last_snapshot_capture_window_ids.clear();
+            let previous_titlebars = self.runtime.state().current_titlebar_render_plan().to_vec();
+            let next_window_placements =
+                self.controller.app().session().current_window_placements();
+            let next_titlebars = self
+                .controller
+                .app()
+                .session()
+                .current_titlebar_render_plan();
+            let decoration_policies = self.runtime.state().current_window_decoration_policies();
+            let next_window_plan =
+                build_window_render_plan(&next_window_placements, &next_titlebars);
+            let affected_windows =
+                affected_window_ids_for_transition(previous_window_plan, &next_window_plan);
+            let affected_window_ids = affected_windows.iter().cloned().collect::<HashSet<_>>();
+            let next_window_ids = next_window_plan
+                .iter()
+                .map(|window| window.window_id.clone())
+                .collect::<HashSet<_>>();
+
+            let state = self.runtime.state_mut();
+            state.preview_window_render_plan_configures(&next_window_plan);
+
+            let surfaces = state.renderable_toplevel_surfaces();
+            let Some(output) = state.active_smithay_output() else {
+                return Ok(());
+            };
+            let output_scale =
+                smithay::utils::Scale::from(output.current_scale().fractional_scale());
+            let Some(backend) = self.runtime.backend.as_mut() else {
+                return Ok(());
+            };
+            let (renderer, _) = backend
+                .bind()
+                .map_err(|error| SmithayRuntimeError::Winit(error.to_string()))?;
+            let mut request_redraw = false;
+            let mut captured_scene_transition = false;
+
+            if !affected_windows.is_empty() {
+                if let Some(scene_snapshot) = capture_scene_snapshot(
+                    renderer,
+                    previous_window_plan,
+                    &previous_titlebars,
+                    &decoration_policies,
+                    &surfaces,
+                    self.runtime.window_size.into(),
+                    output_scale,
+                )? {
+                    let affected_previous_windows =
+                        select_windows_by_ids(previous_window_plan, &affected_windows);
+                    let frozen_rect =
+                        union_window_rect(&affected_previous_windows).unwrap_or(LayoutRect {
+                            x: 0.0,
+                            y: 0.0,
+                            width: self.runtime.window_size.0 as f32,
+                            height: self.runtime.window_size.1 as f32,
+                        });
+                    let next_transition = SceneTransition::new(
+                        scene_snapshot,
+                        transition_now(&self.runtime.presentation_state.clock),
+                        layout_signature(previous_window_plan),
+                        affected_windows.clone(),
+                        frozen_rect,
+                    );
+                    self.runtime.scene_transition = Some(merge_scene_transition(
+                        self.runtime.scene_transition.take(),
+                        next_transition,
+                    ));
+                    self.runtime
+                        .resize_transitions
+                        .retain(|window_id, _| !affected_window_ids.contains(window_id));
+                    self.runtime.closing_transitions.retain(|window_id, _| {
+                        !affected_window_ids.contains(window_id)
+                            || next_window_ids.contains(window_id)
+                    });
+                    captured_scene_transition = true;
+                    request_redraw = true;
+                }
+            }
+
+            for previous in previous_window_plan {
+                if !previously_presented_window_ids.contains(&previous.window_id) {
+                    continue;
+                }
+
+                if captured_scene_transition && affected_window_ids.contains(&previous.window_id) {
+                    continue;
+                }
+
+                let Some(next) = next_window_plan
+                    .iter()
+                    .find(|window| window.window_id == previous.window_id)
+                else {
+                    continue;
+                };
+
+                if previous == next {
+                    let should_keep_existing_transition = self
+                        .runtime
+                        .resize_transitions
+                        .get(&previous.window_id)
+                        .is_some_and(|transition| {
+                            !resize_transition_can_release(
+                                Some(transition.target_logical_size),
+                                transition,
+                                transition_now(&self.runtime.presentation_state.clock),
+                            )
+                        });
+                    if !should_keep_existing_transition {
+                        self.runtime.resize_transitions.remove(&previous.window_id);
+                    }
+                    continue;
+                }
+
+                let Some(surface) = surfaces
+                    .iter()
+                    .find(|surface| surface.window_id == previous.window_id)
+                else {
+                    continue;
+                };
+
+                if let Some(snapshot) =
+                    capture_window_snapshot(renderer, surface, previous, output_scale)?
+                {
+                    let _ = snapshot;
+                    request_redraw = true;
+                }
+            }
+
+            let _ = renderer;
+            let _ = backend;
+            if request_redraw {
+                self.runtime.state_mut().request_redraw();
+            }
+
             Ok(())
         }
     }
@@ -429,12 +1923,156 @@ mod imp {
         state: Option<SpidersSmithayState>,
         render_state: Option<TitlebarRenderState>,
         presentation_state: PresentationRenderState,
+        scene_transition: Option<SceneTransition>,
+        resize_transitions: HashMap<WindowId, ResizeTransition>,
+        closing_transitions: HashMap<WindowId, ClosingWindowTransition>,
+        opening_transitions: HashMap<WindowId, OpeningWindowTransition>,
+        pending_presented_window_ids: HashSet<WindowId>,
+        frame_debug_history: VecDeque<FrameDebugRecord>,
+        next_frame_debug_index: u64,
+        last_snapshot_capture_window_ids: HashSet<WindowId>,
+        last_snapshot_used_window_ids: HashSet<WindowId>,
+        last_live_window_ids: HashSet<WindowId>,
+        last_newly_presented_window_ids: HashSet<WindowId>,
         backend: Option<WinitGraphicsBackend<GlesRenderer>>,
         winit: Option<WinitEventLoop>,
         stopped: bool,
     }
 
     impl SmithayWinitRuntime<'_> {
+        fn push_frame_debug(&mut self, record: FrameDebugRecord) {
+            self.frame_debug_history.push_back(record);
+            while self.frame_debug_history.len() > FRAME_DEBUG_HISTORY_LIMIT {
+                self.frame_debug_history.pop_front();
+            }
+        }
+
+        fn record_frame_debug(
+            &mut self,
+            reason: &str,
+            rendered: bool,
+            windows: &[SmithayWindowRenderSnapshot],
+            surfaces: &[SmithayRenderableToplevelSurface],
+            presented_window_ids: &HashSet<WindowId>,
+            pending_presented_window_ids: &HashSet<WindowId>,
+        ) {
+            let transition_now_value = transition_now(&self.presentation_state.clock);
+            let record = FrameDebugRecord {
+                frame_index: self.next_frame_debug_index,
+                rendered,
+                reason: reason.into(),
+                focused_window_id: self.state().snapshot().seat.focused_window_id,
+                presented_window_ids: presented_window_ids.iter().cloned().collect(),
+                pending_presented_window_ids: pending_presented_window_ids
+                    .iter()
+                    .cloned()
+                    .collect(),
+                scene_transaction: scene_transaction_debug_record(
+                    self.scene_transition.as_ref(),
+                    windows,
+                    surfaces,
+                    &pending_presented_window_ids,
+                    transition_now_value,
+                    false,
+                ),
+                windows: windows
+                    .iter()
+                    .map(|window| {
+                        let surface = surfaces
+                            .iter()
+                            .find(|surface| surface.window_id == window.window_id);
+                        let snapshot = self
+                            .resize_transitions
+                            .get(&window.window_id)
+                            .map(|transition| &transition.from)
+                            .or_else(|| {
+                                self.closing_transitions
+                                    .get(&window.window_id)
+                                    .map(|transition| &transition.snapshot)
+                            });
+                        FrameWindowDebugRecord {
+                            window_id: window.window_id.clone(),
+                            target_rect: (
+                                window.window_rect.x.round() as i32,
+                                window.window_rect.y.round() as i32,
+                                window.window_rect.width.round() as i32,
+                                window.window_rect.height.round() as i32,
+                            ),
+                            committed_size: surface.and_then(|surface| surface.committed_size),
+                            committed_view_size: surface.and_then(|surface| {
+                                committed_root_surface_size(surface.surface.wl_surface())
+                            }),
+                            has_buffer: surface.is_some_and(|surface| surface.has_buffer),
+                            has_resize_snapshot: snapshot.is_some(),
+                            snapshot_rect: snapshot.map(|snapshot| {
+                                (
+                                    snapshot.render_snapshot.window_rect.x.round() as i32,
+                                    snapshot.render_snapshot.window_rect.y.round() as i32,
+                                    snapshot.render_snapshot.window_rect.width.round() as i32,
+                                    snapshot.render_snapshot.window_rect.height.round() as i32,
+                                )
+                            }),
+                            considered_presented: presented_window_ids.contains(&window.window_id),
+                            pending_presented: pending_presented_window_ids
+                                .contains(&window.window_id),
+                            drew_live: false,
+                            drew_snapshot: false,
+                        }
+                    })
+                    .collect(),
+            };
+            self.push_frame_debug(record);
+            self.next_frame_debug_index += 1;
+        }
+
+        fn write_frame_debug_log(&self) {
+            let Some(path) = std::env::var_os("SPIDERS_WM_WINIT_DEBUG_FRAME_PATH") else {
+                return;
+            };
+
+            let mut body = String::new();
+            for frame in &self.frame_debug_history {
+                body.push_str(&format!(
+                    "frame={} rendered={} reason={} focused={:?} presented={:?} pending={:?}\n",
+                    frame.frame_index,
+                    frame.rendered,
+                    frame.reason,
+                    frame.focused_window_id,
+                    frame.presented_window_ids,
+                    frame.pending_presented_window_ids,
+                ));
+                if let Some(transaction) = &frame.scene_transaction {
+                    body.push_str(&format!(
+                        "  scene affected={:?} frozen_rect={:?} alpha_milli={} layout_changed={} settled={} emitted_overlay={}\n",
+                        transaction.affected_windows,
+                        transaction.frozen_rect,
+                        transaction.alpha_milli,
+                        transaction.layout_changed,
+                        transaction.settled,
+                        transaction.emitted_overlay,
+                    ));
+                }
+                for window in &frame.windows {
+                    body.push_str(&format!(
+                        "  window={:?} target={:?} committed={:?} view={:?} buffer={} snapshot={} snapshot_rect={:?} considered_presented={} pending={} drew_live={} drew_snapshot={}\n",
+                        window.window_id,
+                        window.target_rect,
+                        window.committed_size,
+                        window.committed_view_size,
+                        window.has_buffer,
+                        window.has_resize_snapshot,
+                        window.snapshot_rect,
+                        window.considered_presented,
+                        window.pending_presented,
+                        window.drew_live,
+                        window.drew_snapshot,
+                    ));
+                }
+            }
+
+            let _ = std::fs::write(path, body);
+        }
+
         pub fn socket_name(&self) -> &str {
             &self.socket_name
         }
@@ -456,10 +2094,95 @@ mod imp {
         }
 
         pub fn snapshot(&self) -> SmithayRuntimeSnapshot {
+            let state_snapshot = self.state().snapshot();
+            let window_plan = self.state().current_window_render_plan().to_vec();
+            let surfaces = self.state().renderable_toplevel_surfaces();
             SmithayRuntimeSnapshot {
                 socket_name: self.socket_name.clone(),
                 window_size: self.window_size,
-                state: self.state().snapshot(),
+                presentation_debug: window_plan
+                    .iter()
+                    .map(|window| {
+                        let surface = surfaces
+                            .iter()
+                            .find(|surface| surface.window_id == window.window_id);
+                        WindowPresentationDebugSnapshot {
+                            window_id: window.window_id.clone(),
+                            target_size: Some((
+                                window.window_rect.width.max(0.0).round() as i32,
+                                (window.window_rect.height - window.content_offset_y)
+                                    .max(0.0)
+                                    .round() as i32,
+                            )),
+                            acked_size: surface.and_then(|surface| surface.committed_size),
+                            committed_view_size: surface.and_then(|surface| {
+                                committed_root_surface_size(surface.surface.wl_surface())
+                            }),
+                            has_been_presented: state_snapshot.known_surfaces.toplevels.iter().any(
+                                |known| {
+                                    known.window_id == window.window_id && known.has_been_presented
+                                },
+                            ),
+                            has_resize_snapshot: self
+                                .resize_transitions
+                                .contains_key(&window.window_id)
+                                || self.closing_transitions.contains_key(&window.window_id),
+                            snapshot_captured_for_transition: self
+                                .last_snapshot_capture_window_ids
+                                .contains(&window.window_id),
+                            used_snapshot_on_last_frame: self
+                                .last_snapshot_used_window_ids
+                                .contains(&window.window_id),
+                            used_live_content_on_last_frame: self
+                                .last_live_window_ids
+                                .contains(&window.window_id),
+                            newly_presented_on_last_frame: self
+                                .last_newly_presented_window_ids
+                                .contains(&window.window_id),
+                        }
+                    })
+                    .collect(),
+                frame_debug_history: self
+                    .frame_debug_history
+                    .iter()
+                    .cloned()
+                    .map(|record| FrameDebugSnapshot {
+                        frame_index: record.frame_index,
+                        rendered: record.rendered,
+                        reason: record.reason,
+                        focused_window_id: record.focused_window_id,
+                        presented_window_ids: record.presented_window_ids,
+                        pending_presented_window_ids: record.pending_presented_window_ids,
+                        scene_transaction: record.scene_transaction.map(|transaction| {
+                            FrameSceneTransactionDebugSnapshot {
+                                affected_windows: transaction.affected_windows,
+                                frozen_rect: transaction.frozen_rect,
+                                alpha_milli: transaction.alpha_milli,
+                                layout_changed: transaction.layout_changed,
+                                settled: transaction.settled,
+                                emitted_overlay: transaction.emitted_overlay,
+                            }
+                        }),
+                        windows: record
+                            .windows
+                            .into_iter()
+                            .map(|window| FrameWindowDebugSnapshot {
+                                window_id: window.window_id,
+                                target_rect: window.target_rect,
+                                committed_size: window.committed_size,
+                                committed_view_size: window.committed_view_size,
+                                has_buffer: window.has_buffer,
+                                has_resize_snapshot: window.has_resize_snapshot,
+                                snapshot_rect: window.snapshot_rect,
+                                considered_presented: window.considered_presented,
+                                pending_presented: window.pending_presented,
+                                drew_live: window.drew_live,
+                                drew_snapshot: window.drew_snapshot,
+                            })
+                            .collect(),
+                    })
+                    .collect(),
+                state: state_snapshot,
             }
         }
 
@@ -505,7 +2228,20 @@ mod imp {
         }
 
         fn render_if_needed(&mut self) -> Result<(), SmithayRuntimeError> {
-            let (should_render, render_items, window_items, decoration_policies, output, surfaces) = {
+            let (
+                should_render,
+                render_items,
+                window_items,
+                decoration_policies,
+                output,
+                surfaces,
+                presented_window_ids,
+                newly_presented_window_ids,
+                unseen_window_ids,
+                dropped_window_ids,
+                current_window_ids,
+            ) = {
+                let pending_presented_window_ids = self.pending_presented_window_ids.clone();
                 let state = self.state_mut();
                 let should_render = state.take_redraw_request();
                 let render_items = state.current_titlebar_render_plan().to_vec();
@@ -513,6 +2249,65 @@ mod imp {
                 let decoration_policies = state.current_window_decoration_policies();
                 let output = state.active_smithay_output();
                 let surfaces = state.renderable_toplevel_surfaces();
+                let unseen_window_ids = window_items
+                    .iter()
+                    .filter(|window| {
+                        !state.has_been_presented(&window.window_id)
+                            && !pending_presented_window_ids.contains(&window.window_id)
+                    })
+                    .map(|window| window.window_id.clone())
+                    .collect::<Vec<_>>();
+                let pending_new_window_ids = window_items
+                    .iter()
+                    .filter_map(|window| {
+                        if state.has_been_presented(&window.window_id)
+                            || pending_presented_window_ids.contains(&window.window_id)
+                        {
+                            return None;
+                        }
+                        let expected_width = window.window_rect.width.max(0.0).round() as i32;
+                        let expected_height = (window.window_rect.height - window.content_offset_y)
+                            .max(0.0)
+                            .round() as i32;
+                        surfaces
+                            .iter()
+                            .find(|surface| surface.window_id == window.window_id)
+                            .and_then(|surface| {
+                                let committed =
+                                    committed_root_surface_size(surface.surface.wl_surface())
+                                        .or(surface.committed_size);
+                                ready_for_initial_presentation(
+                                    committed,
+                                    surface.has_buffer,
+                                    (expected_width, expected_height),
+                                )
+                                .then(|| window.window_id.clone())
+                            })
+                    })
+                    .collect::<Vec<_>>();
+
+                let current_window_ids = window_items
+                    .iter()
+                    .map(|window| window.window_id.clone())
+                    .collect::<std::collections::HashSet<_>>();
+                let dropped_window_ids = state
+                    .snapshot()
+                    .known_surfaces
+                    .toplevels
+                    .iter()
+                    .filter(|surface| !current_window_ids.contains(&surface.window_id))
+                    .filter(|surface| surface.has_been_presented)
+                    .map(|surface| surface.window_id.clone())
+                    .collect::<Vec<_>>();
+                state.drop_presented_windows(&dropped_window_ids);
+                let presented_window_ids = state
+                    .snapshot()
+                    .known_surfaces
+                    .toplevels
+                    .iter()
+                    .filter(|surface| surface.has_been_presented)
+                    .map(|surface| surface.window_id.clone())
+                    .collect::<std::collections::HashSet<_>>();
                 (
                     should_render,
                     render_items,
@@ -520,54 +2315,266 @@ mod imp {
                     decoration_policies,
                     output,
                     surfaces,
+                    presented_window_ids,
+                    pending_new_window_ids.into_iter().collect::<HashSet<_>>(),
+                    unseen_window_ids,
+                    dropped_window_ids,
+                    current_window_ids,
                 )
             };
 
+            for window_id in unseen_window_ids {
+                self.opening_transitions
+                    .entry(window_id.clone())
+                    .or_insert_with(|| {
+                        OpeningWindowTransition::new(
+                            window_id,
+                            transition_now(&self.presentation_state.clock),
+                        )
+                    });
+            }
+
+            let dropped_window_id_set = dropped_window_ids.iter().cloned().collect::<HashSet<_>>();
+            let transition_now_value = transition_now(&self.presentation_state.clock);
+            self.resize_transitions.retain(|window_id, transition| {
+                (!dropped_window_id_set.contains(window_id)
+                    && current_window_ids.contains(window_id))
+                    || resize_transition_is_active(transition_now_value, transition)
+            });
+            self.pending_presented_window_ids
+                .retain(|window_id| current_window_ids.contains(window_id));
+            let has_close_requested_windows = window_items
+                .iter()
+                .any(|window| self.state().close_requested_for_window(&window.window_id));
+            self.opening_transitions
+                .retain(|window_id, _| current_window_ids.contains(window_id));
+            let has_active_transitions = !self.resize_transitions.is_empty()
+                || !self.closing_transitions.is_empty()
+                || !self.opening_transitions.is_empty()
+                || self.scene_transition.is_some()
+                || !self.pending_presented_window_ids.is_empty()
+                || has_close_requested_windows;
+            if has_active_transitions {
+                self.state_mut().request_redraw();
+            }
+
+            let should_render = should_render || has_active_transitions;
+
             if !should_render {
+                self.record_frame_debug(
+                    "redraw-not-requested",
+                    false,
+                    &window_items,
+                    &surfaces,
+                    &presented_window_ids,
+                    &newly_presented_window_ids,
+                );
                 return Ok(());
             }
 
             let output = match output {
                 Some(output) => output,
-                None => return Ok(()),
+                None => {
+                    self.record_frame_debug(
+                        "no-output",
+                        false,
+                        &window_items,
+                        &surfaces,
+                        &presented_window_ids,
+                        &newly_presented_window_ids,
+                    );
+                    return Ok(());
+                }
             };
+
+            let close_requested_window_ids = window_items
+                .iter()
+                .filter_map(|window| {
+                    self.state()
+                        .close_requested_for_window(&window.window_id)
+                        .then(|| window.window_id.clone())
+                })
+                .collect::<HashSet<_>>();
+            if !close_requested_window_ids.is_empty() {
+                self.state_mut().request_redraw();
+            }
 
             let backend = match self.backend.as_mut() {
                 Some(backend) => backend,
-                None => return Ok(()),
+                None => {
+                    self.record_frame_debug(
+                        "no-backend",
+                        false,
+                        &window_items,
+                        &surfaces,
+                        &presented_window_ids,
+                        &newly_presented_window_ids,
+                    );
+                    return Ok(());
+                }
             };
             let age = backend.buffer_age().unwrap_or(0);
             let frame_target = self.presentation_state.clock.now() + frame_interval(&output);
 
-            let result = {
-                let render_state = self
-                    .render_state
-                    .get_or_insert_with(|| TitlebarRenderState::new(&output));
-                let (renderer, mut framebuffer) = backend
-                    .bind()
-                    .map_err(|error| SmithayRuntimeError::Winit(error.to_string()))?;
-                let output_scale =
-                    smithay::utils::Scale::from(output.current_scale().fractional_scale());
-                let elements = build_compositor_render_elements(
-                    render_state,
-                    renderer,
-                    output_scale,
-                    &render_items,
-                    &window_items,
-                    &decoration_policies,
-                    &surfaces,
-                );
-                render_state
-                    .damage_tracker
-                    .render_output(
+            let (result, frame_window_debug, scene_transaction_debug) =
+                {
+                    self.last_newly_presented_window_ids.clear();
+                    self.last_snapshot_used_window_ids.clear();
+                    self.last_live_window_ids.clear();
+                    let mut frame_window_debug = Vec::new();
+                    let render_state = self
+                        .render_state
+                        .get_or_insert_with(|| TitlebarRenderState::new(&output));
+                    let (renderer, mut framebuffer) = backend
+                        .bind()
+                        .map_err(|error| SmithayRuntimeError::Winit(error.to_string()))?;
+                    let output_scale =
+                        smithay::utils::Scale::from(output.current_scale().fractional_scale());
+                    let transition_now_value = transition_now(&self.presentation_state.clock);
+                    for window_id in &close_requested_window_ids {
+                        if self.scene_transition.as_ref().is_some_and(|transition| {
+                            transition.affected_windows.contains(window_id)
+                        }) {
+                            continue;
+                        }
+                        let active_scene_visible =
+                            self.scene_transition.as_ref().is_some_and(|transition| {
+                                scene_transition_has_visible_alpha(
+                                    transition,
+                                    &window_items,
+                                    &newly_presented_window_ids,
+                                    transition_now_value,
+                                )
+                            });
+                        if active_scene_visible {
+                            if let Some(transition) = self.scene_transition.as_mut() {
+                                widen_scene_transition_for_close(
+                                    transition,
+                                    &window_items,
+                                    window_id,
+                                    transition_now_value,
+                                );
+                            }
+                            continue;
+                        }
+                        if let Some(next_transition) = build_close_scene_transition(
+                            renderer,
+                            &window_items,
+                            &render_items,
+                            &decoration_policies,
+                            &surfaces,
+                            window_id,
+                            transition_now_value,
+                            self.window_size,
+                            output_scale,
+                        ) {
+                            self.scene_transition = Some(merge_scene_transition(
+                                self.scene_transition.take(),
+                                next_transition,
+                            ));
+                        }
+                    }
+                    let frozen_window_ids = self.scene_transition.as_ref().map(|transition| {
+                        transition
+                            .affected_windows
+                            .iter()
+                            .cloned()
+                            .collect::<HashSet<_>>()
+                    });
+                    let mut overlay_emitted = false;
+                    let mut elements = build_compositor_render_elements(
+                        render_state,
                         renderer,
-                        &mut framebuffer,
-                        age,
-                        &elements,
-                        DEFAULT_CLEAR_COLOR,
-                    )
-                    .map_err(|error| SmithayRuntimeError::Winit(error.to_string()))?
-            };
+                        output_scale,
+                        &render_items,
+                        &window_items,
+                        &decoration_policies,
+                        &surfaces,
+                        &presented_window_ids,
+                        &newly_presented_window_ids,
+                        &close_requested_window_ids,
+                        &self.opening_transitions,
+                        frozen_window_ids.as_ref(),
+                        transition_now_value,
+                        &mut self.resize_transitions,
+                        &self.closing_transitions,
+                        &mut self.last_snapshot_used_window_ids,
+                        &mut self.last_live_window_ids,
+                        &mut frame_window_debug,
+                    );
+                    if let Some(scene_transition) = self.scene_transition.as_mut() {
+                        refresh_scene_transition_blocked_windows(
+                            scene_transition,
+                            &window_items,
+                            &surfaces,
+                            &presented_window_ids,
+                            &newly_presented_window_ids,
+                        );
+                        let layout_changed =
+                            layout_signature(&window_items) != scene_transition.captured_layouts;
+                        let scene_settled = scene_transition.blocked_windows.is_empty()
+                            && !scene_transition
+                                .affected_windows
+                                .iter()
+                                .any(|window_id| newly_presented_window_ids.contains(window_id));
+                        let alpha = scene_transition_alpha(
+                            transition_now_value,
+                            scene_transition,
+                            layout_changed,
+                            scene_settled,
+                        );
+                        let needs_overlay = scene_transition_needs_overlay(
+                            scene_transition,
+                            &window_items,
+                            &surfaces,
+                            &close_requested_window_ids,
+                            layout_changed,
+                        );
+                        if needs_overlay && alpha > 0.0 {
+                            if let Some(element) = build_scene_snapshot_element(
+                                &scene_transition.snapshot,
+                                alpha,
+                                output_scale,
+                                scene_transition.frozen_rect,
+                            ) {
+                                overlay_emitted = true;
+                                elements.push(CompositorRenderElement::from(element));
+                            }
+                        }
+                    }
+                    let scene_transaction_debug = scene_transaction_debug_record(
+                        self.scene_transition.as_ref(),
+                        &window_items,
+                        &surfaces,
+                        &newly_presented_window_ids,
+                        transition_now_value,
+                        overlay_emitted,
+                    );
+                    let actually_presented_window_ids = newly_presented_window_ids
+                        .iter()
+                        .filter(|window_id| self.last_live_window_ids.contains(*window_id))
+                        .cloned()
+                        .collect::<HashSet<_>>();
+                    self.last_newly_presented_window_ids = actually_presented_window_ids.clone();
+                    for window_id in &actually_presented_window_ids {
+                        self.opening_transitions.remove(window_id);
+                    }
+                    self.pending_presented_window_ids = newly_presented_window_ids
+                        .difference(&actually_presented_window_ids)
+                        .cloned()
+                        .collect();
+                    let result = render_state
+                        .damage_tracker
+                        .render_output(
+                            renderer,
+                            &mut framebuffer,
+                            age,
+                            &elements,
+                            DEFAULT_CLEAR_COLOR,
+                        )
+                        .map_err(|error| SmithayRuntimeError::Winit(error.to_string()))?;
+                    (result, frame_window_debug, scene_transaction_debug)
+                };
 
             let has_rendered = result.damage.is_some();
             let submitted_damage = result.damage.cloned();
@@ -578,15 +2585,101 @@ mod imp {
                     .submit(Some(damage))
                     .map_err(|error| SmithayRuntimeError::Winit(error.to_string()))?;
             }
-            let state = self.state_mut();
-            post_repaint(
-                state,
-                &output,
-                frame_target,
-                has_rendered,
-                &surfaces,
-                &render_states,
-            );
+            let _ = backend;
+            self.push_frame_debug(FrameDebugRecord {
+                frame_index: self.next_frame_debug_index,
+                rendered: true,
+                reason: "rendered".into(),
+                focused_window_id: self.state().snapshot().seat.focused_window_id,
+                presented_window_ids: presented_window_ids.iter().cloned().collect(),
+                pending_presented_window_ids: self
+                    .pending_presented_window_ids
+                    .iter()
+                    .cloned()
+                    .collect(),
+                scene_transaction: scene_transaction_debug,
+                windows: frame_window_debug,
+            });
+            self.next_frame_debug_index += 1;
+            let actually_presented_window_ids = self.last_newly_presented_window_ids.clone();
+            {
+                let state = self.state_mut();
+                for window_id in &actually_presented_window_ids {
+                    state.mark_presented(window_id);
+                }
+                post_repaint(
+                    state,
+                    &output,
+                    frame_target,
+                    has_rendered,
+                    &surfaces,
+                    &render_states,
+                );
+            }
+            let current_window_ids = self
+                .state()
+                .snapshot()
+                .known_surfaces
+                .toplevels
+                .iter()
+                .map(|surface| surface.window_id.clone())
+                .collect::<HashSet<_>>();
+            let current_window_plan = self.state().current_window_render_plan().to_vec();
+            let current_surfaces = self.state().renderable_toplevel_surfaces();
+            self.pending_presented_window_ids
+                .retain(|window_id| current_window_ids.contains(window_id));
+            if let Some(transition) = self.scene_transition.as_mut() {
+                refresh_scene_transition_blocked_windows(
+                    transition,
+                    &current_window_plan,
+                    &current_surfaces,
+                    &presented_window_ids,
+                    &newly_presented_window_ids,
+                );
+            }
+            let scene_settled = self.scene_transition.as_ref().is_none_or(|transition| {
+                transition.blocked_windows.is_empty()
+                    && !transition
+                        .affected_windows
+                        .iter()
+                        .any(|window_id| newly_presented_window_ids.contains(window_id))
+            });
+            self.opening_transitions
+                .retain(|window_id, _| current_window_ids.contains(window_id));
+            self.closing_transitions.retain(|window_id, transition| {
+                current_window_ids.contains(window_id)
+                    || closing_transition_is_active(transition_now_value, transition)
+            });
+            let current_layout_signature = layout_signature(&current_window_plan);
+            self.scene_transition = self.scene_transition.take().and_then(|mut transition| {
+                let layout_changed = current_layout_signature != transition.captured_layouts;
+                if layout_changed {
+                    transition.awaiting_layout_change = false;
+                }
+                if scene_settled {
+                    transition.awaiting_settle = false;
+                }
+                if transition.awaiting_layout_change || transition.awaiting_settle {
+                    transition.started_at = transition_now_value;
+                }
+
+                (scene_transition_alpha(
+                    transition_now_value,
+                    &transition,
+                    layout_changed,
+                    scene_settled,
+                ) > 0.0)
+                    .then_some(transition)
+            });
+            if !self.resize_transitions.is_empty()
+                || !self.closing_transitions.is_empty()
+                || !self.opening_transitions.is_empty()
+                || self.scene_transition.is_some()
+                || !self.pending_presented_window_ids.is_empty()
+            {
+                self.state_mut().request_redraw();
+            }
+            self.write_frame_debug_log();
 
             Ok(())
         }
@@ -658,15 +2751,49 @@ mod imp {
         windows: &[SmithayWindowRenderSnapshot],
         decoration_policies: &[(WindowId, SmithayWindowDecorationPolicySnapshot)],
         surfaces: &[SmithayRenderableToplevelSurface],
+        presented_window_ids: &std::collections::HashSet<WindowId>,
+        pending_presented_window_ids: &std::collections::HashSet<WindowId>,
+        close_requested_window_ids: &std::collections::HashSet<WindowId>,
+        opening_transitions: &HashMap<WindowId, OpeningWindowTransition>,
+        frozen_window_ids: Option<&std::collections::HashSet<WindowId>>,
+        transition_now_value: std::time::Duration,
+        resize_transitions: &mut HashMap<WindowId, ResizeTransition>,
+        closing_transitions: &HashMap<WindowId, ClosingWindowTransition>,
+        used_snapshot_window_ids: &mut HashSet<WindowId>,
+        used_live_window_ids: &mut HashSet<WindowId>,
+        frame_window_debug: &mut Vec<FrameWindowDebugRecord>,
     ) -> Vec<CompositorRenderElement<GlesRenderer>> {
         let mut elements = Vec::new();
+        let scene_transition_active = frozen_window_ids.is_some();
 
-        elements.extend(
-            windows
-                .iter()
-                .flat_map(|window| build_window_border_elements(window, decoration_policies))
+        for transition in closing_transitions.values() {
+            if scene_transition_active {
+                continue;
+            }
+            let window_id = &transition.window_id;
+            if windows.iter().any(|window| &window.window_id == window_id) {
+                continue;
+            }
+
+            elements.extend(
+                build_window_border_elements(
+                    &transition.snapshot.render_snapshot,
+                    decoration_policies,
+                )
+                .into_iter()
                 .map(CompositorRenderElement::from),
-        );
+            );
+            if let Some(element) = build_snapshot_fallback_element(
+                &transition.snapshot,
+                closing_transition_alpha(transition_now_value, transition),
+                output_scale,
+                None,
+                None,
+            ) {
+                elements.push(CompositorRenderElement::from(element));
+                used_snapshot_window_ids.insert(window_id.clone());
+            }
+        }
 
         for window in windows {
             let Some(surface) = surfaces
@@ -676,26 +2803,274 @@ mod imp {
                 continue;
             };
 
+            let expected_width = window.window_rect.width.max(0.0).round() as i32;
+            let expected_height = (window.window_rect.height - window.content_offset_y)
+                .max(0.0)
+                .round() as i32;
+            let considered_presented = presented_window_ids.contains(&window.window_id);
+            let pending_presented = pending_presented_window_ids.contains(&window.window_id);
+            let committed_size = surface.committed_size;
+            let committed_view_size = committed_root_surface_size(surface.surface.wl_surface());
+            let scene_masking_window =
+                frozen_window_ids.is_some_and(|window_ids| window_ids.contains(&window.window_id));
+            if let Some(transition) = resize_transitions.get_mut(&window.window_id) {
+                let effective_committed_size = committed_view_size.or(committed_size);
+                if committed_matches_transition_target(effective_committed_size, transition) {
+                    transition.awaiting_target_commit = false;
+                }
+            }
+            let transition_snapshot = if scene_masking_window {
+                None
+            } else {
+                resize_transitions
+                    .get(&window.window_id)
+                    .map(|transition| &transition.from)
+                    .or_else(|| {
+                        closing_transitions
+                            .get(&window.window_id)
+                            .map(|transition| &transition.snapshot)
+                    })
+            };
+            let has_resize_snapshot = transition_snapshot.is_some();
+            let snapshot_rect = transition_snapshot.map(|snapshot| {
+                (
+                    snapshot.render_snapshot.window_rect.x.round() as i32,
+                    snapshot.render_snapshot.window_rect.y.round() as i32,
+                    snapshot.render_snapshot.window_rect.width.round() as i32,
+                    snapshot.render_snapshot.window_rect.height.round() as i32,
+                )
+            });
+            let mut drew_live = false;
+            let mut drew_snapshot = false;
+
+            if !considered_presented && !pending_presented {
+                frame_window_debug.push(FrameWindowDebugRecord {
+                    window_id: window.window_id.clone(),
+                    target_rect: (
+                        window.window_rect.x.round() as i32,
+                        window.window_rect.y.round() as i32,
+                        window.window_rect.width.round() as i32,
+                        window.window_rect.height.round() as i32,
+                    ),
+                    committed_size,
+                    committed_view_size,
+                    has_buffer: surface.has_buffer,
+                    has_resize_snapshot,
+                    snapshot_rect,
+                    considered_presented,
+                    pending_presented,
+                    drew_live,
+                    drew_snapshot,
+                });
+                continue;
+            }
+
             let location = (
                 window.window_rect.x.round() as i32,
                 (window.window_rect.y + window.content_offset_y).round() as i32,
             );
-            elements.extend(render_elements_from_surface_tree::<
+            let render_alpha = opening_transitions
+                .get(&window.window_id)
+                .map(|transition| opening_transition_alpha(transition_now_value, transition))
+                .unwrap_or(1.0);
+            let resize_transition_progress_value = resize_transitions
+                .get(&window.window_id)
+                .map(|transition| resize_transition_progress(transition_now_value, transition))
+                .unwrap_or(1.0);
+            let surface_elements = render_elements_from_surface_tree::<
                 GlesRenderer,
-                CompositorRenderElement<GlesRenderer>,
+                WaylandSurfaceRenderElement<GlesRenderer>,
             >(
                 renderer,
                 surface.surface.wl_surface(),
                 location,
                 output_scale,
-                1.0,
+                render_alpha * resize_transition_progress_value.max(0.01),
                 Kind::Unspecified,
-            ));
+            );
+            let constrain_rect =
+                Rectangle::new(location.into(), (expected_width, expected_height).into());
+            if constrain_rect.size.w <= 0 || constrain_rect.size.h <= 0 {
+                continue;
+            }
+
+            let close_requested = close_requested_window_ids.contains(&window.window_id);
+            let has_live_content = surface.has_buffer && !surface_elements.is_empty();
+            if !has_live_content {
+                if let Some(snapshot) = transition_snapshot {
+                    elements.extend(
+                        build_window_border_elements_for_rect(
+                            window.window_id.clone(),
+                            window.window_rect,
+                            decoration_policies,
+                        )
+                        .into_iter()
+                        .map(CompositorRenderElement::from),
+                    );
+                    if let Some(element) = build_snapshot_fallback_element(
+                        snapshot,
+                        1.0,
+                        output_scale,
+                        Some(location),
+                        Some((expected_width, expected_height)),
+                    ) {
+                        elements.push(CompositorRenderElement::from(element));
+                        used_snapshot_window_ids.insert(window.window_id.clone());
+                        drew_snapshot = true;
+                    }
+                }
+                frame_window_debug.push(FrameWindowDebugRecord {
+                    window_id: window.window_id.clone(),
+                    target_rect: (
+                        window.window_rect.x.round() as i32,
+                        window.window_rect.y.round() as i32,
+                        window.window_rect.width.round() as i32,
+                        window.window_rect.height.round() as i32,
+                    ),
+                    committed_size,
+                    committed_view_size,
+                    has_buffer: surface.has_buffer,
+                    has_resize_snapshot,
+                    snapshot_rect,
+                    considered_presented,
+                    pending_presented,
+                    drew_live,
+                    drew_snapshot,
+                });
+                continue;
+            }
+
+            if let Some((committed_width, committed_height)) =
+                committed_root_surface_size(surface.surface.wl_surface()).or(surface.committed_size)
+            {
+                let needs_resize_preview = committed_width.max(1) != expected_width.max(1)
+                    || committed_height.max(1) != expected_height.max(1);
+                let awaiting_target_commit = resize_transitions
+                    .get(&window.window_id)
+                    .is_some_and(|transition| transition.awaiting_target_commit);
+                let should_prefer_transition = !scene_masking_window
+                    && (needs_resize_preview
+                        || awaiting_target_commit
+                        || (!opening_transitions.is_empty()
+                            && resize_transitions.contains_key(&window.window_id)));
+                if should_prefer_transition && committed_width > 0 && committed_height > 0 {
+                    if let Some(snapshot) = resize_transitions
+                        .get(&window.window_id)
+                        .map(|transition| &transition.from)
+                        .or_else(|| {
+                            closing_transitions
+                                .get(&window.window_id)
+                                .map(|transition| &transition.snapshot)
+                        })
+                    {
+                        let snapshot_alpha =
+                            if let Some(transition) = resize_transitions.get(&window.window_id) {
+                                1.0 - resize_transition_progress(transition_now_value, transition)
+                            } else {
+                                1.0
+                            };
+                        elements.extend(
+                            build_window_border_elements_for_rect(
+                                window.window_id.clone(),
+                                window.window_rect,
+                                decoration_policies,
+                            )
+                            .into_iter()
+                            .map(CompositorRenderElement::from),
+                        );
+                        if let Some(element) = build_snapshot_fallback_element(
+                            snapshot,
+                            snapshot_alpha,
+                            output_scale,
+                            Some(location),
+                            Some((expected_width, expected_height)),
+                        ) {
+                            elements.push(CompositorRenderElement::from(element));
+                            used_snapshot_window_ids.insert(window.window_id.clone());
+                            drew_snapshot = true;
+                        }
+                    }
+                    frame_window_debug.push(FrameWindowDebugRecord {
+                        window_id: window.window_id.clone(),
+                        target_rect: (
+                            window.window_rect.x.round() as i32,
+                            window.window_rect.y.round() as i32,
+                            window.window_rect.width.round() as i32,
+                            window.window_rect.height.round() as i32,
+                        ),
+                        committed_size,
+                        committed_view_size,
+                        has_buffer: surface.has_buffer,
+                        has_resize_snapshot,
+                        snapshot_rect,
+                        considered_presented,
+                        pending_presented,
+                        drew_live,
+                        drew_snapshot,
+                    });
+                    continue;
+                }
+            }
+
+            if !close_requested {
+                let effective_committed_size = committed_view_size.or(committed_size);
+                let should_release_transition = resize_transitions
+                    .get(&window.window_id)
+                    .is_some_and(|transition| {
+                        resize_transition_can_release(
+                            effective_committed_size,
+                            transition,
+                            transition_now_value,
+                        )
+                    });
+                if should_release_transition {
+                    resize_transitions.remove(&window.window_id);
+                }
+            }
+            elements.extend(
+                build_window_border_elements(window, decoration_policies)
+                    .into_iter()
+                    .map(CompositorRenderElement::from),
+            );
+
+            elements.extend(
+                surface_elements
+                    .into_iter()
+                    .filter_map(|element| {
+                        CropRenderElement::from_element(element, output_scale, constrain_rect)
+                    })
+                    .map(CompositorRenderElement::from),
+            );
+            used_live_window_ids.insert(window.window_id.clone());
+            drew_live = true;
+            frame_window_debug.push(FrameWindowDebugRecord {
+                window_id: window.window_id.clone(),
+                target_rect: (
+                    window.window_rect.x.round() as i32,
+                    window.window_rect.y.round() as i32,
+                    window.window_rect.width.round() as i32,
+                    window.window_rect.height.round() as i32,
+                ),
+                committed_size,
+                committed_view_size,
+                has_buffer: surface.has_buffer,
+                has_resize_snapshot,
+                snapshot_rect,
+                considered_presented,
+                pending_presented,
+                drew_live,
+                drew_snapshot,
+            });
         }
 
         elements.extend(
             titlebars
                 .iter()
+                .filter(|item| {
+                    presented_window_ids.contains(&item.window_id)
+                        || (pending_presented_window_ids.contains(&item.window_id)
+                            && !opening_transitions.contains_key(&item.window_id))
+                })
                 .filter_map(|item| {
                     let color = titlebar_background_color(item);
                     let width = item.titlebar_rect.width.max(0.0).round() as i32;
@@ -841,9 +3216,21 @@ mod imp {
         item: &SmithayWindowRenderSnapshot,
         decoration_policies: &[(WindowId, SmithayWindowDecorationPolicySnapshot)],
     ) -> Vec<SolidColorRenderElement> {
+        build_window_border_elements_for_rect(
+            item.window_id.clone(),
+            item.window_rect,
+            decoration_policies,
+        )
+    }
+
+    fn build_window_border_elements_for_rect(
+        window_id: WindowId,
+        window_rect: LayoutRect,
+        decoration_policies: &[(WindowId, SmithayWindowDecorationPolicySnapshot)],
+    ) -> Vec<SolidColorRenderElement> {
         let Some(style) = decoration_policies
             .iter()
-            .find(|(window_id, _)| *window_id == item.window_id)
+            .find(|(candidate_window_id, _)| *candidate_window_id == window_id)
             .map(|(_, policy)| &policy.window_style)
         else {
             return Vec::new();
@@ -864,10 +3251,10 @@ mod imp {
             );
         }
 
-        let x = item.window_rect.x.round() as i32;
-        let y = item.window_rect.y.round() as i32;
-        let w = item.window_rect.width.max(0.0).round() as i32;
-        let h = item.window_rect.height.max(0.0).round() as i32;
+        let x = window_rect.x.round() as i32;
+        let y = window_rect.y.round() as i32;
+        let w = window_rect.width.max(0.0).round() as i32;
+        let h = window_rect.height.max(0.0).round() as i32;
         if w <= 0 || h <= 0 {
             return Vec::new();
         }
@@ -1489,6 +3876,7 @@ mod imp {
             controller,
             runtime,
             report,
+            lifecycle_debug: SmithayLifecycleDebugSnapshot::default(),
         })
     }
 
@@ -1619,6 +4007,17 @@ mod imp {
             state: Some(smithay_state),
             render_state: None,
             presentation_state: PresentationRenderState::new(),
+            scene_transition: None,
+            resize_transitions: HashMap::new(),
+            closing_transitions: HashMap::new(),
+            opening_transitions: HashMap::new(),
+            pending_presented_window_ids: HashSet::new(),
+            frame_debug_history: VecDeque::new(),
+            next_frame_debug_index: 0,
+            last_snapshot_capture_window_ids: HashSet::new(),
+            last_snapshot_used_window_ids: HashSet::new(),
+            last_live_window_ids: HashSet::new(),
+            last_newly_presented_window_ids: HashSet::new(),
             backend: Some(backend),
             winit: Some(winit),
             stopped: false,
@@ -1745,6 +4144,17 @@ mod imp {
                 state: Some(state),
                 render_state: None,
                 presentation_state: PresentationRenderState::new(),
+                scene_transition: None,
+                resize_transitions: HashMap::new(),
+                closing_transitions: HashMap::new(),
+                opening_transitions: HashMap::new(),
+                pending_presented_window_ids: HashSet::new(),
+                frame_debug_history: VecDeque::new(),
+                next_frame_debug_index: 0,
+                last_snapshot_capture_window_ids: HashSet::new(),
+                last_snapshot_used_window_ids: HashSet::new(),
+                last_live_window_ids: HashSet::new(),
+                last_newly_presented_window_ids: HashSet::new(),
                 backend: None,
                 winit: None,
                 stopped: false,
@@ -1774,6 +4184,7 @@ mod imp {
                 controller,
                 runtime,
                 report,
+                lifecycle_debug: SmithayLifecycleDebugSnapshot::default(),
             }
         }
 
@@ -1998,6 +4409,7 @@ mod imp {
                 controller,
                 runtime,
                 report,
+                lifecycle_debug: SmithayLifecycleDebugSnapshot::default(),
             };
 
             let snapshot = bootstrap.snapshot();
@@ -2036,6 +4448,7 @@ mod imp {
                 controller,
                 runtime,
                 report,
+                lifecycle_debug: SmithayLifecycleDebugSnapshot::default(),
             };
 
             let applied = bootstrap.apply_pending_discovery_events().unwrap();
@@ -2088,6 +4501,7 @@ mod imp {
                     last_window_menu_serial: None,
                     last_window_menu_location: None,
                     minimize_requested: false,
+                    close_requested: false,
                     last_request_kind: None,
                     request_count: 0,
                 }
@@ -3167,6 +5581,27 @@ mod imp {
         }
 
         #[test]
+        fn runtime_snapshot_exposes_toplevel_buffer_presence() {
+            let mut runtime = test_runtime("wayland-test-toplevel-buffer-1");
+            runtime.state_mut().track_test_surface_snapshot(
+                crate::backend::BackendSurfaceSnapshot::Window {
+                    surface_id: "wl-toplevel-buffer-1".into(),
+                    window_id: WindowId::from("smithay-window-buffer-1"),
+                    output_id: None,
+                },
+            );
+
+            let snapshot = runtime.snapshot();
+            assert!(snapshot.state.known_surfaces.toplevels[0].has_buffer);
+
+            runtime
+                .state_mut()
+                .set_test_surface_has_buffer("wl-toplevel-buffer-1", false);
+            let snapshot = runtime.snapshot();
+            assert!(!snapshot.state.known_surfaces.toplevels[0].has_buffer);
+        }
+
+        #[test]
         fn runtime_snapshot_exposes_xdg_toplevel_request_sequence() {
             let mut runtime = test_runtime("wayland-test-toplevel-request-1");
             runtime.state_mut().track_test_surface_snapshot(
@@ -3185,6 +5620,7 @@ mod imp {
                     last_window_menu_serial: None,
                     last_window_menu_location: None,
                     minimize_requested: true,
+                    close_requested: false,
                     last_request_kind: Some("minimize".into()),
                     request_count: 2,
                 },
@@ -3200,6 +5636,7 @@ mod imp {
                     last_window_menu_serial: None,
                     last_window_menu_location: None,
                     minimize_requested: true,
+                    close_requested: false,
                     last_request_kind: Some("minimize".into()),
                     request_count: 2,
                 }
@@ -3287,6 +5724,7 @@ mod imp {
                 controller,
                 runtime,
                 report,
+                lifecycle_debug: SmithayLifecycleDebugSnapshot::default(),
             };
 
             assert_eq!(bootstrap.apply_pending_discovery_events().unwrap(), 1);
@@ -3456,6 +5894,7 @@ mod imp {
                 controller,
                 runtime,
                 report,
+                lifecycle_debug: SmithayLifecycleDebugSnapshot::default(),
             };
 
             assert_eq!(bootstrap.apply_pending_discovery_events().unwrap(), 1);
@@ -3554,6 +5993,7 @@ mod imp {
                 controller,
                 runtime,
                 report,
+                lifecycle_debug: SmithayLifecycleDebugSnapshot::default(),
             };
 
             assert_eq!(bootstrap.apply_pending_discovery_events().unwrap(), 2);
@@ -3694,6 +6134,7 @@ mod imp {
                 controller,
                 runtime,
                 report,
+                lifecycle_debug: SmithayLifecycleDebugSnapshot::default(),
             };
 
             assert_eq!(bootstrap.apply_pending_discovery_events().unwrap(), 1);
@@ -3756,6 +6197,7 @@ mod imp {
                 controller,
                 runtime,
                 report,
+                lifecycle_debug: SmithayLifecycleDebugSnapshot::default(),
             };
 
             assert_eq!(bootstrap.apply_pending_discovery_events().unwrap(), 1);
@@ -4047,6 +6489,7 @@ mod imp {
                 controller,
                 runtime,
                 report,
+                lifecycle_debug: SmithayLifecycleDebugSnapshot::default(),
             };
 
             let applied = bootstrap.apply_pending_discovery_events().unwrap();
@@ -4078,6 +6521,7 @@ mod imp {
                 controller,
                 runtime,
                 report,
+                lifecycle_debug: SmithayLifecycleDebugSnapshot::default(),
             };
             bootstrap.runtime.state_mut().track_test_surface_snapshot(
                 crate::backend::BackendSurfaceSnapshot::Layer {
@@ -4143,6 +6587,7 @@ mod imp {
                 controller,
                 runtime,
                 report,
+                lifecycle_debug: SmithayLifecycleDebugSnapshot::default(),
             };
             bootstrap
                 .runtime
@@ -4196,6 +6641,7 @@ mod imp {
                 controller,
                 runtime,
                 report,
+                lifecycle_debug: SmithayLifecycleDebugSnapshot::default(),
             };
 
             bootstrap
@@ -4280,6 +6726,7 @@ mod imp {
                 controller,
                 runtime,
                 report,
+                lifecycle_debug: SmithayLifecycleDebugSnapshot::default(),
             };
 
             initialize_smithay_workspace_export(
@@ -4356,6 +6803,7 @@ mod imp {
                 controller,
                 runtime,
                 report,
+                lifecycle_debug: SmithayLifecycleDebugSnapshot::default(),
             };
 
             initialize_smithay_workspace_export(
@@ -4428,6 +6876,7 @@ mod imp {
                 controller,
                 runtime,
                 report,
+                lifecycle_debug: SmithayLifecycleDebugSnapshot::default(),
             };
 
             bootstrap.runtime.state_mut().track_test_surface_snapshot(

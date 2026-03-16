@@ -286,12 +286,18 @@ impl DomainSession {
     }
 
     fn synchronize_topology_focus(&mut self) -> Result<(), TopologyError> {
-        if self.topology.seat("seat-0").is_none() {
-            self.topology.register_seat("seat-0");
+        let seat_name = self
+            .topology
+            .active_seat_name
+            .clone()
+            .unwrap_or_else(|| "seat-0".into());
+
+        if self.topology.seat(&seat_name).is_none() {
+            self.topology.register_seat(seat_name.clone());
         }
 
         self.topology.focus_seat_window(
-            "seat-0",
+            &seat_name,
             self.state().focused_window_id.clone(),
             self.state().current_output_id.clone(),
         )?;

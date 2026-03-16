@@ -11,10 +11,39 @@ use crate::topology::{CompositorTopologyState, SurfaceState, TopologyError};
 use crate::WindowDecorationPolicy;
 use crate::{CompositorLayoutError, LayoutService};
 
+fn append_winit_debug_log(message: &str) {
+    let Some(path) = std::env::var_os("SPIDERS_WM_WINIT_DEBUG_LOG_PATH") else {
+        return;
+    };
+
+    let _ = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .and_then(|mut file| {
+            use std::io::Write;
+            writeln!(file, "{message}")
+        });
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RuntimeBootstrapDebug {
+    pub existing_window_registrations: usize,
+    pub new_window_mappings: usize,
+    pub last_mapped_window_ids: Vec<WindowId>,
+    pub last_state_window_count: usize,
+    pub last_visible_window_count: usize,
+    pub last_bootstrap_event: Option<String>,
+    pub last_bootstrap_event_windows_before: usize,
+    pub last_bootstrap_event_windows_after: usize,
+    pub last_session_generation: u64,
+}
+
 #[derive(Debug)]
 pub struct CompositorApp<R> {
     pub session: CompositorSession<R>,
     pub startup: StartupRegistration,
+    pub runtime_bootstrap_debug: RuntimeBootstrapDebug,
 }
 
 impl<R> CompositorApp<R> {
@@ -175,6 +204,12 @@ impl<R: AuthoringLayoutRuntime<Config = Config>> CompositorApp<R> {
         &mut self,
         event: BootstrapEvent,
     ) -> Result<(), ActionError> {
+        append_winit_debug_log(&format!(
+            "app.apply_runtime_bootstrap_event start event={event:?} windows={} visible={} gen={}",
+            self.state().windows.len(),
+            self.state().visible_window_ids.len(),
+            self.session.debug_generation()
+        ));
         match event {
             BootstrapEvent::RegisterWindowSurface {
                 surface_id,
@@ -188,6 +223,7 @@ impl<R: AuthoringLayoutRuntime<Config = Config>> CompositorApp<R> {
                     .any(|window| window.id == window_id);
 
                 if known_window {
+                    self.runtime_bootstrap_debug.existing_window_registrations += 1;
                     let _ = self
                         .session
                         .register_window_surface(surface_id, window_id, output_id)
@@ -198,10 +234,38 @@ impl<R: AuthoringLayoutRuntime<Config = Config>> CompositorApp<R> {
                                 },
                             ))
                         })?;
+                    self.runtime_bootstrap_debug.last_state_window_count =
+                        self.state().windows.len();
+                    self.runtime_bootstrap_debug.last_visible_window_count =
+                        self.state().visible_window_ids.len();
+                    self.runtime_bootstrap_debug.last_session_generation =
+                        self.session.debug_generation();
                 } else {
+                    self.runtime_bootstrap_debug.new_window_mappings += 1;
+                    self.runtime_bootstrap_debug
+                        .last_mapped_window_ids
+                        .push(window_id.clone());
+                    if self.runtime_bootstrap_debug.last_mapped_window_ids.len() > 16 {
+                        self.runtime_bootstrap_debug
+                            .last_mapped_window_ids
+                            .remove(0);
+                    }
                     let window = self.backend_window_snapshot(&surface_id, window_id, output_id);
                     let _ = self.session.map_window_to_surface(surface_id, window)?;
+                    self.runtime_bootstrap_debug.last_state_window_count =
+                        self.state().windows.len();
+                    self.runtime_bootstrap_debug.last_visible_window_count =
+                        self.state().visible_window_ids.len();
+                    self.runtime_bootstrap_debug.last_session_generation =
+                        self.session.debug_generation();
                 }
+                append_winit_debug_log(&format!(
+                    "app.apply_runtime_bootstrap_event end register_window_surface known_window={} windows={} visible={} gen={}",
+                    known_window,
+                    self.state().windows.len(),
+                    self.state().visible_window_ids.len(),
+                    self.session.debug_generation()
+                ));
                 Ok(())
             }
             other => self.apply_bootstrap_event(other).map_err(|error| {
@@ -215,6 +279,9 @@ impl<R: AuthoringLayoutRuntime<Config = Config>> CompositorApp<R> {
     }
 
     pub fn apply_bootstrap_event(&mut self, event: BootstrapEvent) -> Result<(), TopologyError> {
+        self.runtime_bootstrap_debug.last_bootstrap_event = Some(format!("{event:?}"));
+        self.runtime_bootstrap_debug
+            .last_bootstrap_event_windows_before = self.state().windows.len();
         match event {
             BootstrapEvent::RegisterSeat { seat_name, active } => {
                 self.session.register_seat(seat_name.clone());
@@ -252,9 +319,23 @@ impl<R: AuthoringLayoutRuntime<Config = Config>> CompositorApp<R> {
                 window_id,
                 output_id,
             } => {
-                let _ = self
-                    .session
-                    .register_window_surface(surface_id, window_id, output_id)?;
+                let known_window = self
+                    .state()
+                    .windows
+                    .iter()
+                    .any(|window| window.id == window_id);
+
+                if known_window {
+                    let _ = self
+                        .session
+                        .register_window_surface(surface_id, window_id, output_id)?;
+                } else {
+                    let window = self.backend_window_snapshot(&surface_id, window_id, output_id);
+                    let _ = self
+                        .session
+                        .map_window_to_surface(surface_id, window)
+                        .map_err(|error| TopologyError::SurfaceNotFound(error.to_string()))?;
+                }
             }
             BootstrapEvent::RegisterPopupSurface {
                 surface_id,
@@ -275,9 +356,35 @@ impl<R: AuthoringLayoutRuntime<Config = Config>> CompositorApp<R> {
                 let _ = self.register_unmanaged_surface(surface_id)?;
             }
             BootstrapEvent::RemoveSurface { surface_id } => {
+                if let Some(window_id) = self
+                    .topology()
+                    .surface(&surface_id)
+                    .and_then(|surface| surface.window_id.clone())
+                {
+                    let next_focus = self
+                        .session
+                        .preferred_focus_after_window_removed(&window_id);
+                    let _ = self.session.destroy_window(&window_id);
+                    if let Some(next_focus) = next_focus {
+                        append_winit_debug_log(&format!(
+                            "app.remove_surface restoring_focus closed={window_id:?} next={next_focus:?}"
+                        ));
+                        let _ = self.session.focus_window(&next_focus);
+                    }
+                }
                 self.remove_surface(&surface_id)?;
             }
             BootstrapEvent::RemoveWindowSurface { window_id } => {
+                let next_focus = self
+                    .session
+                    .preferred_focus_after_window_removed(&window_id);
+                let _ = self.session.destroy_window(&window_id);
+                if let Some(next_focus) = next_focus {
+                    append_winit_debug_log(&format!(
+                        "app.remove_window_surface restoring_focus closed={window_id:?} next={next_focus:?}"
+                    ));
+                    let _ = self.session.focus_window(&next_focus);
+                }
                 self.remove_window_surface(&window_id)?;
             }
             BootstrapEvent::MoveSurfaceToOutput {
@@ -303,6 +410,9 @@ impl<R: AuthoringLayoutRuntime<Config = Config>> CompositorApp<R> {
                 self.remove_seat(&seat_name)?;
             }
         }
+
+        self.runtime_bootstrap_debug
+            .last_bootstrap_event_windows_after = self.state().windows.len();
 
         Ok(())
     }
@@ -345,7 +455,11 @@ impl<R: AuthoringLayoutRuntime<Config = Config>> CompositorApp<R> {
             let _ = session.activate_output(active_output);
         }
 
-        Ok(Self { session, startup })
+        Ok(Self {
+            session,
+            startup,
+            runtime_bootstrap_debug: RuntimeBootstrapDebug::default(),
+        })
     }
 }
 
@@ -877,6 +991,179 @@ mod tests {
         assert!(app.topology().surface("window-w1").is_none());
         assert!(app.topology().output(&OutputId::from("out-2")).is_none());
         assert!(!app.topology().surface("layer-1").unwrap().mapped);
+    }
+
+    #[test]
+    fn app_remove_surface_bootstrap_event_destroys_mapped_window_state() {
+        let temp_dir = std::env::temp_dir();
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let runtime_root = temp_dir.join(format!("spiders-app-remove-surface-window-{unique}"));
+        let _ = fs::create_dir_all(runtime_root.join("layouts"));
+        fs::write(
+            runtime_root.join("layouts/master-stack.js"),
+            "ctx => ({ type: 'workspace', children: [{ type: 'slot', id: 'rest' }] })",
+        )
+        .unwrap();
+
+        let loader =
+            RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
+        let runtime = QuickJsPreparedLayoutRuntime::with_loader(loader.clone());
+        let service = AuthoringLayoutService::new(runtime);
+
+        let mut snapshot = state();
+        snapshot.windows.clear();
+        snapshot.visible_window_ids.clear();
+        snapshot.focused_window_id = None;
+
+        let mut app =
+            CompositorApp::initialize(LayoutService, service, config(), snapshot).unwrap();
+
+        app.apply_runtime_bootstrap_event(BootstrapEvent::RegisterWindowSurface {
+            surface_id: "wl-surface-test-remove".into(),
+            window_id: WindowId::from("smithay-window-remove"),
+            output_id: Some(OutputId::from("out-1")),
+        })
+        .unwrap();
+
+        app.apply_bootstrap_event(BootstrapEvent::RemoveSurface {
+            surface_id: "wl-surface-test-remove".into(),
+        })
+        .unwrap();
+
+        assert!(app.topology().surface("wl-surface-test-remove").is_none());
+        assert!(app
+            .state()
+            .windows
+            .iter()
+            .all(|window| window.id != WindowId::from("smithay-window-remove")));
+        assert!(app.state().visible_window_ids.is_empty());
+    }
+
+    #[test]
+    fn app_remove_surface_preserves_layout_based_neighbor_focus() {
+        let temp_dir = std::env::temp_dir();
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let runtime_root = temp_dir.join(format!("spiders-app-remove-surface-focus-{unique}"));
+        let _ = fs::create_dir_all(runtime_root.join("layouts"));
+        fs::write(
+            runtime_root.join("layouts/master-stack.js"),
+            "ctx => ({ type: 'workspace', children: [{ type: 'slot', id: 'rest' }] })",
+        )
+        .unwrap();
+
+        let loader =
+            RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
+        let runtime = QuickJsPreparedLayoutRuntime::with_loader(loader.clone());
+        let service = AuthoringLayoutService::new(runtime);
+
+        let mut snapshot = state();
+        snapshot.windows.clear();
+        snapshot.visible_window_ids.clear();
+        snapshot.focused_window_id = None;
+
+        let mut app =
+            CompositorApp::initialize(LayoutService, service, config(), snapshot).unwrap();
+
+        app.apply_runtime_bootstrap_event(BootstrapEvent::RegisterWindowSurface {
+            surface_id: "wl-surface-test-1".into(),
+            window_id: WindowId::from("smithay-window-1"),
+            output_id: Some(OutputId::from("out-1")),
+        })
+        .unwrap();
+        app.apply_runtime_bootstrap_event(BootstrapEvent::RegisterWindowSurface {
+            surface_id: "wl-surface-test-2".into(),
+            window_id: WindowId::from("smithay-window-2"),
+            output_id: Some(OutputId::from("out-1")),
+        })
+        .unwrap();
+        app.apply_runtime_bootstrap_event(BootstrapEvent::RegisterWindowSurface {
+            surface_id: "wl-surface-test-3".into(),
+            window_id: WindowId::from("smithay-window-3"),
+            output_id: Some(OutputId::from("out-1")),
+        })
+        .unwrap();
+
+        let _ = app
+            .session
+            .focus_window(&WindowId::from("smithay-window-3"));
+
+        app.apply_bootstrap_event(BootstrapEvent::RemoveSurface {
+            surface_id: "wl-surface-test-3".into(),
+        })
+        .unwrap();
+
+        assert_eq!(
+            app.state().focused_window_id,
+            Some(WindowId::from("smithay-window-2"))
+        );
+    }
+
+    #[test]
+    fn app_remove_surface_preserves_latest_seat_focus_neighbor() {
+        let temp_dir = std::env::temp_dir();
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let runtime_root = temp_dir.join(format!("spiders-app-remove-surface-seat-focus-{unique}"));
+        let _ = fs::create_dir_all(runtime_root.join("layouts"));
+        fs::write(
+            runtime_root.join("layouts/master-stack.js"),
+            "ctx => ({ type: 'workspace', children: [{ type: 'slot', id: 'rest' }] })",
+        )
+        .unwrap();
+
+        let loader =
+            RuntimeProjectLayoutSourceLoader::new(RuntimePathResolver::new(".", &runtime_root));
+        let runtime = QuickJsPreparedLayoutRuntime::with_loader(loader.clone());
+        let service = AuthoringLayoutService::new(runtime);
+
+        let mut snapshot = state();
+        snapshot.windows.clear();
+        snapshot.visible_window_ids.clear();
+        snapshot.focused_window_id = None;
+
+        let mut app =
+            CompositorApp::initialize(LayoutService, service, config(), snapshot).unwrap();
+
+        for id in 1..=4 {
+            app.apply_runtime_bootstrap_event(BootstrapEvent::RegisterWindowSurface {
+                surface_id: format!("wl-surface-test-{id}"),
+                window_id: WindowId::from(format!("smithay-window-{id}")),
+                output_id: Some(OutputId::from("out-1")),
+            })
+            .unwrap();
+        }
+
+        for id in 1..=4 {
+            app.apply_bootstrap_event(BootstrapEvent::FocusSeat {
+                seat_name: "seat-0".into(),
+                window_id: Some(WindowId::from(format!("smithay-window-{id}"))),
+                output_id: Some(OutputId::from("out-1")),
+            })
+            .unwrap();
+        }
+
+        assert_eq!(
+            app.state().focused_window_id,
+            Some(WindowId::from("smithay-window-4"))
+        );
+
+        app.apply_bootstrap_event(BootstrapEvent::RemoveSurface {
+            surface_id: "wl-surface-test-4".into(),
+        })
+        .unwrap();
+
+        assert_eq!(
+            app.state().focused_window_id,
+            Some(WindowId::from("smithay-window-3"))
+        );
     }
 
     #[test]

@@ -157,7 +157,9 @@ where
             vec![event]
         }
         WmAction::CloseFocusedWindow => {
-            let focused = wm_state.focused_window_id()?.clone();
+            let Some(focused) = wm_state.snapshot().focused_window_id.clone() else {
+                return Ok(ActionOutcome::new(Vec::new(), false));
+            };
             let next_focus =
                 preferred_focus_after_close(runtime.current_window_placements(), &focused);
             recompute = true;
@@ -187,7 +189,7 @@ where
     Ok(ActionOutcome::new(events, recompute))
 }
 
-fn preferred_focus_after_close(
+pub(crate) fn preferred_focus_after_close(
     placements: Vec<WindowPlacement>,
     closed_window_id: &WindowId,
 ) -> Option<WindowId> {

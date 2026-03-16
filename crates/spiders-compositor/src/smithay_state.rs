@@ -6,7 +6,9 @@ mod imp {
         BackendDiscoveryEvent, BackendOutputSnapshot, BackendSeatSnapshot, BackendSource,
         BackendSurfaceSnapshot, BackendTopologySnapshot,
     };
-    use smithay::backend::renderer::utils::on_commit_buffer_handler;
+    use smithay::backend::renderer::utils::{
+        on_commit_buffer_handler, RendererSurfaceStateUserData,
+    };
     use smithay::delegate_compositor;
     use smithay::delegate_data_control;
     use smithay::delegate_data_device;
@@ -108,6 +110,8 @@ mod imp {
         pub configure: SmithayXdgToplevelConfigureSnapshot,
         pub metadata: SmithayXdgToplevelMetadataSnapshot,
         pub requests: SmithayXdgToplevelRequestSnapshot,
+        pub has_buffer: bool,
+        pub has_been_presented: bool,
     }
 
     #[derive(Debug, Clone, PartialEq, Eq)]
@@ -136,6 +140,8 @@ mod imp {
     pub struct SmithayRenderableToplevelSurface {
         pub window_id: WindowId,
         pub surface: ToplevelSurface,
+        pub has_buffer: bool,
+        pub committed_size: Option<(i32, i32)>,
     }
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -204,6 +210,7 @@ mod imp {
         pub last_window_menu_serial: Option<u32>,
         pub last_window_menu_location: Option<(i32, i32)>,
         pub minimize_requested: bool,
+        pub close_requested: bool,
         pub last_request_kind: Option<String>,
         pub request_count: usize,
     }
@@ -400,6 +407,7 @@ mod imp {
         primary_focus_client_id: Option<String>,
         titlebar_render_plan: Vec<TitlebarRenderItem>,
         window_render_plan: Vec<SmithayWindowRenderSnapshot>,
+        presented_window_ids: HashSet<WindowId>,
         floating_window_ids: HashSet<WindowId>,
         floating_window_overrides: HashMap<WindowId, LayoutRect>,
         active_titlebar_interaction: Option<ActiveTitlebarInteraction>,
@@ -508,6 +516,7 @@ mod imp {
                 primary_focus_client_id: None,
                 titlebar_render_plan: Vec::new(),
                 window_render_plan: Vec::new(),
+                presented_window_ids: HashSet::new(),
                 floating_window_ids: HashSet::new(),
                 floating_window_overrides: HashMap::new(),
                 active_titlebar_interaction: None,
@@ -852,6 +861,13 @@ mod imp {
             }
         }
 
+        pub fn preview_window_render_plan_configures(
+            &mut self,
+            plan: &[SmithayWindowRenderSnapshot],
+        ) {
+            self.sync_toplevel_render_plan_configures(plan);
+        }
+
         fn sync_toplevel_surface_render_configure(
             &mut self,
             surface_id: &str,
@@ -860,19 +876,27 @@ mod imp {
         ) {
             let changed = self.update_toplevel_surface_pending_state(surface, render);
 
-            if changed && surface.is_initial_configure_sent() {
-                surface.send_pending_configure();
+            if changed {
                 let configure = self
                     .xdg_toplevel_configures
                     .get(surface_id)
                     .cloned()
                     .unwrap_or_else(default_xdg_toplevel_configure_snapshot);
-                self.note_xdg_toplevel_configure_sent(
-                    surface_id.to_owned(),
-                    configure.activated,
-                    configure.fullscreen,
-                    configure.maximized,
-                );
+                let sent = if surface.is_initial_configure_sent() {
+                    surface.send_pending_configure().is_some()
+                } else {
+                    let _ = surface.send_configure();
+                    true
+                };
+
+                if sent {
+                    self.note_xdg_toplevel_configure_sent(
+                        surface_id.to_owned(),
+                        configure.activated,
+                        configure.fullscreen,
+                        configure.maximized,
+                    );
+                }
             }
         }
 
@@ -918,6 +942,14 @@ mod imp {
             &self.window_render_plan
         }
 
+        pub fn has_been_presented(&self, window_id: &WindowId) -> bool {
+            self.presented_window_ids.contains(window_id)
+        }
+
+        pub fn mark_presented(&mut self, window_id: &WindowId) {
+            self.presented_window_ids.insert(window_id.clone());
+        }
+
         pub fn current_window_decoration_policies(
             &self,
         ) -> Vec<(WindowId, SmithayWindowDecorationPolicySnapshot)> {
@@ -952,6 +984,10 @@ mod imp {
 
         pub fn take_redraw_request(&mut self) -> bool {
             std::mem::take(&mut self.needs_redraw)
+        }
+
+        pub fn request_redraw(&mut self) {
+            self.needs_redraw = true;
         }
 
         pub fn update_pointer_location(&mut self, x: f64, y: f64) {
@@ -1020,9 +1056,23 @@ mod imp {
                         .map(|window_id| SmithayRenderableToplevelSurface {
                             window_id,
                             surface: surface.clone(),
+                            has_buffer: self.mapped_surface_ids.contains(&surface_id),
+                            committed_size: surface.with_cached_state(|state| {
+                                state
+                                    .last_acked
+                                    .as_ref()
+                                    .and_then(|configure| configure.state.size)
+                                    .map(|size| (size.w, size.h))
+                            }),
                         })
                 })
                 .collect()
+        }
+
+        pub fn drop_presented_windows(&mut self, window_ids: &[WindowId]) {
+            for window_id in window_ids {
+                self.presented_window_ids.remove(window_id);
+            }
         }
 
         pub fn titlebar_hit_target_at_pointer(&self) -> Option<SmithayTitlebarHitTarget> {
@@ -1206,6 +1256,47 @@ mod imp {
             if let Some(keyboard) = self.seat.get_keyboard() {
                 keyboard.set_focus(self, Some(surface.wl_surface().clone()), serial);
             }
+        }
+
+        pub fn request_close_for_window(&mut self, window_id: &WindowId) -> bool {
+            let Some(surface) = self
+                .xdg_shell_state
+                .toplevel_surfaces()
+                .iter()
+                .find(|surface| {
+                    let surface_id = smithay_surface_id(surface.wl_surface());
+                    self.toplevel_window_ids.get(&surface_id) == Some(window_id)
+                })
+                .cloned()
+            else {
+                return false;
+            };
+
+            let surface_id = smithay_surface_id(surface.wl_surface());
+            let mut snapshot = self
+                .xdg_toplevel_requests
+                .get(&surface_id)
+                .cloned()
+                .unwrap_or_else(default_xdg_toplevel_request_snapshot);
+            snapshot.close_requested = true;
+            snapshot.last_request_kind = Some("close".into());
+            snapshot.request_count += 1;
+            let _ = self.xdg_toplevel_requests.insert(surface_id, snapshot);
+
+            surface.send_close();
+            true
+        }
+
+        pub fn close_requested_for_window(&self, window_id: &WindowId) -> bool {
+            self.toplevel_window_ids
+                .iter()
+                .any(|(surface_id, mapped_window_id)| {
+                    mapped_window_id == window_id
+                        && self
+                            .xdg_toplevel_requests
+                            .get(surface_id)
+                            .is_some_and(|request| request.close_requested)
+                })
         }
 
         pub fn focus_window_from_titlebar(&mut self, window_id: &WindowId) {
@@ -1733,6 +1824,15 @@ mod imp {
         }
 
         #[cfg(test)]
+        pub(crate) fn set_test_surface_has_buffer(&mut self, surface_id: &str, has_buffer: bool) {
+            if has_buffer {
+                self.mapped_surface_ids.insert(surface_id.to_owned());
+            } else {
+                self.mapped_surface_ids.remove(surface_id);
+            }
+        }
+
+        #[cfg(test)]
         pub(crate) fn set_test_clipboard_selection(
             &mut self,
             selection: Option<SmithaySelectionOfferSnapshot>,
@@ -1973,6 +2073,7 @@ mod imp {
                 match action {
                     SmithaySurfaceLifecycleAction::Unmap => {
                         if self.mapped_surface_ids.remove(&surface_id) {
+                            self.needs_redraw = true;
                             self.pending_discovery_events
                                 .push(BackendDiscoveryEvent::SurfaceUnmapped { surface_id });
                         }
@@ -1988,12 +2089,14 @@ mod imp {
                         self.xdg_toplevel_metadata.remove(&surface_id);
                         self.xdg_toplevel_requests.remove(&surface_id);
                         self.xdg_popup_configures.remove(&surface_id);
+                        self.needs_redraw = true;
                         self.pending_discovery_events
                             .push(BackendDiscoveryEvent::SurfaceLost { surface_id });
                     }
                 }
 
                 if focus_cleared {
+                    self.needs_redraw = true;
                     self.pending_discovery_events
                         .push(BackendDiscoveryEvent::SeatFocusChanged {
                             seat_name: self.current_seat_name().to_owned(),
@@ -2183,6 +2286,7 @@ mod imp {
                 .get(&surface_id)
                 .cloned()
                 .unwrap_or_else(default_xdg_toplevel_request_snapshot);
+            snapshot.close_requested |= request_kind == "close";
             snapshot.last_request_kind = Some(request_kind.to_owned());
             snapshot.request_count += 1;
             snapshot
@@ -2306,21 +2410,21 @@ mod imp {
 
             match role {
                 Some(XDG_TOPLEVEL_ROLE) => {
-                    if surface_has_buffer(&root) {
+                    if surface_is_renderable(&root) {
                         self.track_toplevel_surface(&root);
                     } else if self.tracked_surfaces.contains_key(&surface_id) {
                         self.track_surface_unmap_by_id(surface_id);
                     }
                 }
                 Some(XDG_POPUP_ROLE) => {
-                    if surface_has_buffer(&root) {
+                    if surface_is_renderable(&root) {
                         self.track_popup_surface_by_root(&root);
                     } else if self.tracked_surfaces.contains_key(&surface_id) {
                         self.track_surface_unmap_by_id(surface_id);
                     }
                 }
                 _ if is_layer_surface(&root) => {
-                    if surface_has_buffer(&root) {
+                    if surface_is_renderable(&root) {
                         if let Some(output_id) = self.layer_output_ids.get(&surface_id).cloned() {
                             let metadata = self
                                 .layer_metadata
@@ -2338,7 +2442,7 @@ mod imp {
                     }
                 }
                 _ => {
-                    if surface_has_buffer(&root) {
+                    if surface_is_renderable(&root) {
                         self.track_surface_snapshot(BackendSurfaceSnapshot::Unmanaged {
                             surface_id,
                         });
@@ -2507,6 +2611,8 @@ mod imp {
                             .get(surface_id)
                             .cloned()
                             .unwrap_or_else(default_xdg_toplevel_request_snapshot),
+                        has_buffer: self.mapped_surface_ids.contains(surface_id),
+                        has_been_presented: self.presented_window_ids.contains(window_id),
                     }
                 })
                 .collect::<Vec<_>>();
@@ -2619,8 +2725,18 @@ mod imp {
         root
     }
 
-    fn surface_has_buffer(surface: &WlSurface) -> bool {
+    fn surface_is_renderable(surface: &WlSurface) -> bool {
         with_states(surface, |states| {
+            let has_view = states
+                .data_map
+                .get::<RendererSurfaceStateUserData>()
+                .and_then(|data| data.lock().ok())
+                .and_then(|data| data.view())
+                .is_some();
+            if has_view {
+                return true;
+            }
+
             let mut attributes = states
                 .cached_state
                 .get::<smithay::wayland::compositor::SurfaceAttributes>();
@@ -2718,6 +2834,7 @@ mod imp {
             last_window_menu_serial: None,
             last_window_menu_location: None,
             minimize_requested: false,
+            close_requested: false,
             last_request_kind: None,
             request_count: 0,
         }
@@ -3087,23 +3204,30 @@ mod imp {
 
                 if needs_initial_configure {
                     let surface_id = smithay_surface_id(&root);
-                    let sent_count = self
+                    let Some(surface) = self
                         .xdg_shell_state
                         .toplevel_surfaces()
                         .iter()
-                        .filter(|surface| surface.wl_surface() == &root)
-                        .map(|surface| {
-                            let _ = surface.send_configure();
-                            1usize
-                        })
-                        .sum::<usize>();
-                    for _ in 0..sent_count {
-                        self.note_xdg_toplevel_configure_sent(
-                            surface_id.clone(),
-                            true,
-                            false,
-                            false,
-                        );
+                        .find(|surface| surface.wl_surface() == &root)
+                        .cloned()
+                    else {
+                        return;
+                    };
+                    let Some(window_id) = self.toplevel_window_ids.get(&surface_id).cloned() else {
+                        return;
+                    };
+                    let Some(render) = self
+                        .window_render_plan
+                        .iter()
+                        .find(|render| render.window_id == window_id)
+                        .cloned()
+                    else {
+                        return;
+                    };
+
+                    self.sync_toplevel_surface_render_configure(&surface_id, &surface, &render);
+                    if !surface.is_initial_configure_sent() {
+                        self.needs_redraw = true;
                     }
                 }
             }
@@ -3200,8 +3324,15 @@ mod imp {
             self.queue_workspace_action(WmAction::FocusWindow {
                 window_id: window_id.clone(),
             });
-            let _ = surface.send_configure();
-            self.note_xdg_toplevel_configure_sent(surface_id, true, false, false);
+
+            if let Some(render) = self
+                .window_render_plan
+                .iter()
+                .find(|render| render.window_id == window_id)
+                .cloned()
+            {
+                self.sync_toplevel_surface_render_configure(&surface_id, &surface, &render);
+            }
         }
 
         fn new_popup(&mut self, surface: PopupSurface, positioner: PositionerState) {
@@ -4417,6 +4548,25 @@ mod imp {
         }
 
         #[test]
+        fn smithay_state_snapshot_tracks_toplevel_buffer_presence() {
+            let display = Display::<SpidersSmithayState>::new().unwrap();
+            let mut state = SpidersSmithayState::new(&display, "test-seat").unwrap();
+
+            state.track_test_surface_snapshot(BackendSurfaceSnapshot::Window {
+                surface_id: "wl-surface-buffer-1".into(),
+                window_id: WindowId::from("smithay-window-buffer-1"),
+                output_id: None,
+            });
+
+            let snapshot = state.snapshot();
+            assert!(snapshot.known_surfaces.toplevels[0].has_buffer);
+
+            state.set_test_surface_has_buffer("wl-surface-buffer-1", false);
+            let snapshot = state.snapshot();
+            assert!(!snapshot.known_surfaces.toplevels[0].has_buffer);
+        }
+
+        #[test]
         fn smithay_state_initial_toplevel_configure_counts_as_pending() {
             let display = Display::<SpidersSmithayState>::new().unwrap();
             let mut state = SpidersSmithayState::new(&display, "test-seat").unwrap();
@@ -4694,6 +4844,7 @@ mod imp {
                     last_window_menu_serial: Some(23),
                     last_window_menu_location: Some((40, 50)),
                     minimize_requested: true,
+                    close_requested: false,
                     last_request_kind: Some("window-menu".into()),
                     request_count: 4,
                 },
@@ -4710,6 +4861,7 @@ mod imp {
                     last_window_menu_serial: Some(23),
                     last_window_menu_location: Some((40, 50)),
                     minimize_requested: true,
+                    close_requested: false,
                     last_request_kind: Some("window-menu".into()),
                     request_count: 4,
                 }
@@ -4758,6 +4910,7 @@ mod imp {
                     last_window_menu_serial: Some(12),
                     last_window_menu_location: Some((20, 30)),
                     minimize_requested: false,
+                    close_requested: false,
                     last_request_kind: Some("window-menu".into()),
                     request_count: 3,
                 }
