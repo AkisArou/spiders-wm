@@ -7,7 +7,7 @@ mod imp {
         BackendSurfaceSnapshot, BackendTopologySnapshot,
     };
     use smithay::backend::renderer::utils::{
-        RendererSurfaceStateUserData, on_commit_buffer_handler,
+        on_commit_buffer_handler, RendererSurfaceStateUserData,
     };
     use smithay::delegate_compositor;
     use smithay::delegate_data_control;
@@ -27,17 +27,17 @@ mod imp {
     use smithay::output::Output;
     use smithay::reexports::wayland_protocols::xdg::decoration::zv1::server::zxdg_toplevel_decoration_v1;
     use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel;
-    use smithay::reexports::wayland_server::Resource;
     use smithay::reexports::wayland_server::backend::{ClientData, ClientId, DisconnectReason};
     use smithay::reexports::wayland_server::protocol::wl_buffer;
     use smithay::reexports::wayland_server::protocol::wl_output::WlOutput;
     use smithay::reexports::wayland_server::protocol::wl_seat;
     use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
+    use smithay::reexports::wayland_server::Resource;
     use smithay::reexports::wayland_server::{BindError, Client, Display, DisplayHandle};
-    use smithay::utils::{SERIAL_COUNTER, Serial};
+    use smithay::utils::{Serial, SERIAL_COUNTER};
     use smithay::wayland::buffer::BufferHandler;
     use smithay::wayland::compositor::{
-        BufferAssignment, get_parent, get_role, is_sync_subsurface, with_states,
+        get_parent, get_role, is_sync_subsurface, with_states, BufferAssignment,
     };
     use smithay::wayland::compositor::{CompositorClientState, CompositorHandler, CompositorState};
     use smithay::wayland::output::{OutputHandler, OutputManagerState};
@@ -49,7 +49,7 @@ mod imp {
         DataControlHandler as ExtDataControlHandler, DataControlState as ExtDataControlState,
     };
     use smithay::wayland::selection::primary_selection::{
-        PrimarySelectionHandler, PrimarySelectionState, set_primary_focus,
+        set_primary_focus, PrimarySelectionHandler, PrimarySelectionState,
     };
     use smithay::wayland::selection::wlr_data_control::{
         DataControlHandler as WlrDataControlHandler, DataControlState as WlrDataControlState,
@@ -61,9 +61,9 @@ mod imp {
         WlrLayerShellHandler, WlrLayerShellState,
     };
     use smithay::wayland::shell::xdg::{
-        PopupSurface, PositionerState, ToplevelSurface, XDG_POPUP_ROLE, XDG_TOPLEVEL_ROLE,
-        XdgPopupSurfaceData, XdgShellHandler, XdgShellState, XdgToplevelSurfaceData,
         decoration::{XdgDecorationHandler, XdgDecorationState},
+        PopupSurface, PositionerState, ToplevelSurface, XdgPopupSurfaceData, XdgShellHandler,
+        XdgShellState, XdgToplevelSurfaceData, XDG_POPUP_ROLE, XDG_TOPLEVEL_ROLE,
     };
     use smithay::wayland::shm::{ShmHandler, ShmState};
     use smithay::wayland::socket::ListeningSocketSource;
@@ -414,6 +414,7 @@ mod imp {
         needs_redraw: bool,
         pointer_location: Option<(f64, f64)>,
         focused_surface_id: Option<String>,
+        fallback_focused_window_id: Option<WindowId>,
         cursor_image: String,
         cursor_surface_id: Option<String>,
         tracked_surfaces: HashMap<String, SmithayTrackedSurfaceKind>,
@@ -523,6 +524,7 @@ mod imp {
                 needs_redraw: true,
                 pointer_location: None,
                 focused_surface_id: None,
+                fallback_focused_window_id: None,
                 cursor_image: "default".into(),
                 cursor_surface_id: None,
                 tracked_surfaces: HashMap::new(),
@@ -754,6 +756,10 @@ mod imp {
                 .collect();
             self.floating_window_overrides
                 .retain(|window_id, _| self.floating_window_ids.contains(window_id));
+            self.fallback_focused_window_id = snapshot
+                .focused_window_id
+                .clone()
+                .or_else(|| snapshot.visible_window_ids.first().cloned());
         }
 
         pub fn refresh_workspace_output_groups(&mut self) {
@@ -767,6 +773,7 @@ mod imp {
         ) {
             let previous = self.xdg_toplevel_decoration_policies.clone();
             let mut next = HashMap::new();
+            let mut changed = false;
             let toplevels = self
                 .toplevel_window_ids
                 .iter()
@@ -782,13 +789,16 @@ mod imp {
 
                 if previous.get(&surface_id) != Some(&policy) {
                     self.apply_window_decoration_policy(&surface_id, &policy);
+                    changed = true;
                 }
 
                 next.insert(surface_id, policy);
             }
 
             self.xdg_toplevel_decoration_policies = next;
-            self.needs_redraw = true;
+            if changed {
+                self.needs_redraw = true;
+            }
         }
 
         pub fn refresh_titlebar_render_plan(&mut self, plan: &[TitlebarRenderItem]) {
@@ -1238,7 +1248,7 @@ mod imp {
             self.active_titlebar_interaction.is_some()
         }
 
-        pub fn set_keyboard_focus_for_window(&mut self, window_id: &WindowId) {
+        pub fn set_keyboard_focus_for_window(&mut self, window_id: &WindowId) -> bool {
             let Some(surface) = self
                 .xdg_shell_state
                 .toplevel_surfaces()
@@ -1249,13 +1259,18 @@ mod imp {
                 })
                 .cloned()
             else {
-                return;
+                return false;
             };
 
             let serial = SERIAL_COUNTER.next_serial();
             if let Some(keyboard) = self.seat.get_keyboard() {
+                self.fallback_focused_window_id = Some(window_id.clone());
+                self.focused_surface_id = Some(smithay_surface_id(surface.wl_surface()));
                 keyboard.set_focus(self, Some(surface.wl_surface().clone()), serial);
+                return true;
             }
+
+            false
         }
 
         pub fn request_close_for_window(&mut self, window_id: &WindowId) -> bool {
@@ -1869,7 +1884,8 @@ mod imp {
             let focused_window_id = self
                 .focused_surface_id
                 .as_ref()
-                .and_then(|surface_id| self.focused_window_id(surface_id));
+                .and_then(|surface_id| self.focused_window_id(surface_id))
+                .or_else(|| self.fallback_focused_window_id.clone());
             let focused_output_id = self
                 .focused_surface_id
                 .as_ref()
@@ -1902,7 +1918,8 @@ mod imp {
             let focused_window_id = self
                 .focused_surface_id
                 .as_ref()
-                .and_then(|surface_id| self.focused_window_id(surface_id));
+                .and_then(|surface_id| self.focused_window_id(surface_id))
+                .or_else(|| self.fallback_focused_window_id.clone());
             let focused_output_id = self
                 .focused_surface_id
                 .as_ref()
@@ -3679,6 +3696,26 @@ mod imp {
                 return;
             }
 
+            if focused.is_none() {
+                if let Some(previous_surface_id) = self.focused_surface_id.clone() {
+                    let previous_window_id = self.focused_window_id(&previous_surface_id);
+                    let other_mapped_toplevel_exists =
+                        self.toplevel_window_ids
+                            .iter()
+                            .any(|(surface_id, window_id)| {
+                                surface_id != &previous_surface_id
+                                    && self.mapped_surface_ids.contains(surface_id)
+                                    && previous_window_id.as_ref() != Some(window_id)
+                            });
+                    let preserve_focus = previous_window_id.as_ref().is_some_and(|window_id| {
+                        self.close_requested_for_window(window_id) || other_mapped_toplevel_exists
+                    });
+                    if preserve_focus {
+                        return;
+                    }
+                }
+            }
+
             let client =
                 focused.and_then(|surface| self.display_handle.get_client(surface.id()).ok());
             self.focused_surface_id = focused.map(smithay_surface_id);
@@ -3742,7 +3779,7 @@ mod imp {
         use spiders_shared::wm::{OutputSnapshot, ShellKind, WindowSnapshot, WorkspaceSnapshot};
         use wayland_client::protocol::{wl_compositor, wl_registry, wl_surface};
         use wayland_client::{
-            Connection, Dispatch, EventQueue, Proxy, QueueHandle, WEnum, delegate_noop,
+            delegate_noop, Connection, Dispatch, EventQueue, Proxy, QueueHandle, WEnum,
         };
         use wayland_protocols::xdg::decoration::zv1::client::{
             zxdg_decoration_manager_v1, zxdg_toplevel_decoration_v1,
@@ -4466,12 +4503,10 @@ mod imp {
                 &mut client_state,
             );
 
-            assert!(
-                !client_state
-                    .decoration_modes
-                    .iter()
-                    .any(|mode| *mode == zxdg_toplevel_decoration_v1::Mode::ClientSide)
-            );
+            assert!(!client_state
+                .decoration_modes
+                .iter()
+                .any(|mode| *mode == zxdg_toplevel_decoration_v1::Mode::ClientSide));
         }
 
         #[test]

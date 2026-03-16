@@ -340,14 +340,21 @@ impl<R: AuthoringLayoutRuntime<Config = Config>> CompositorSession<R> {
         window_id: Option<WindowId>,
         output_id: Option<OutputId>,
     ) -> Result<(), TopologyError> {
-        self.domain
-            .focus_seat(seat_name, window_id.clone(), output_id)?;
+        let resolved_window_id = window_id.or_else(|| {
+            self.state()
+                .focused_window_id
+                .clone()
+                .or_else(|| self.state().visible_window_ids.first().cloned())
+        });
 
-        if window_id.is_none() {
+        self.domain
+            .focus_seat(seat_name, resolved_window_id.clone(), output_id)?;
+
+        if resolved_window_id.is_none() {
             return Ok(());
         }
 
-        if let Some(window_id) = window_id.filter(|window_id| {
+        if let Some(window_id) = resolved_window_id.filter(|window_id| {
             self.state()
                 .windows
                 .iter()

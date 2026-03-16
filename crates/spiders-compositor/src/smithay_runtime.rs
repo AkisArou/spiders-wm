@@ -1617,9 +1617,16 @@ mod imp {
                 .focused_window_id
                 .clone();
             if runtime_focus.as_ref() != Some(&window_id) {
-                self.runtime
+                let applied = self
+                    .runtime
                     .state_mut()
                     .set_keyboard_focus_for_window(&window_id);
+                append_winit_debug_log(&format!(
+                    "bootstrap.sync_focus_state keyboard_focus target={window_id:?} runtime_focus_before={runtime_focus:?} applied={applied}"
+                ));
+                if applied {
+                    self.runtime.state_mut().request_redraw();
+                }
             }
 
             Ok(())
@@ -2191,7 +2198,6 @@ mod imp {
 
         pub fn run_startup_cycle(&mut self) -> Result<(), SmithayRuntimeError> {
             self.dispatch_winit_events()?;
-
             self.render_if_needed()?;
 
             let state = self.state.as_mut().ok_or_else(|| {
@@ -2206,6 +2212,8 @@ mod imp {
                 .display_handle
                 .flush_clients()
                 .map_err(|error| SmithayRuntimeError::Winit(error.to_string()))?;
+
+            self.render_if_needed()?;
 
             Ok(())
         }
@@ -2353,6 +2361,10 @@ mod imp {
                 || self.scene_transition.is_some()
                 || !self.pending_presented_window_ids.is_empty()
                 || has_close_requested_windows;
+            let effective_focused_window_id = effective_render_focus(
+                self.state().snapshot().seat.focused_window_id,
+                &window_items,
+            );
             if has_active_transitions {
                 self.state_mut().request_redraw();
             }
@@ -2368,6 +2380,9 @@ mod imp {
                     &presented_window_ids,
                     &newly_presented_window_ids,
                 );
+                if let Some(last) = self.frame_debug_history.back_mut() {
+                    last.focused_window_id = effective_focused_window_id;
+                }
                 return Ok(());
             }
 
@@ -2382,6 +2397,9 @@ mod imp {
                         &presented_window_ids,
                         &newly_presented_window_ids,
                     );
+                    if let Some(last) = self.frame_debug_history.back_mut() {
+                        last.focused_window_id = effective_focused_window_id;
+                    }
                     return Ok(());
                 }
             };
@@ -2589,7 +2607,7 @@ mod imp {
                 frame_index: self.next_frame_debug_index,
                 rendered: true,
                 reason: "rendered".into(),
-                focused_window_id: self.state().snapshot().seat.focused_window_id,
+                focused_window_id: effective_focused_window_id,
                 presented_window_ids: presented_window_ids.iter().cloned().collect(),
                 pending_presented_window_ids: self
                     .pending_presented_window_ids
@@ -3275,6 +3293,14 @@ mod imp {
                 SolidColorRenderElement::new(Id::new(), rect, 1usize, color, Kind::Unspecified)
             })
             .collect()
+    }
+
+    fn effective_render_focus(
+        smithay_focused_window_id: Option<WindowId>,
+        window_items: &[SmithayWindowRenderSnapshot],
+    ) -> Option<WindowId> {
+        smithay_focused_window_id
+            .or_else(|| window_items.first().map(|window| window.window_id.clone()))
     }
 
     fn titlebar_font_scale(item: &TitlebarRenderItem) -> i32 {

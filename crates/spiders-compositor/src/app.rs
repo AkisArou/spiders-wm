@@ -5,10 +5,10 @@ use spiders_shared::runtime::AuthoringLayoutRuntime;
 use spiders_shared::wm::{ShellKind, StateSnapshot, WindowSnapshot};
 use spiders_wm::{BootstrapEvent, LayerSurfaceMetadata, StartupRegistration};
 
-use crate::WindowDecorationPolicy;
 use crate::actions::ActionError;
 use crate::session::CompositorSession;
 use crate::topology::{CompositorTopologyState, SurfaceState, TopologyError};
+use crate::WindowDecorationPolicy;
 use crate::{CompositorLayoutError, LayoutService};
 
 fn append_winit_debug_log(message: &str) {
@@ -250,8 +250,13 @@ impl<R: AuthoringLayoutRuntime<Config = Config>> CompositorApp<R> {
                             .last_mapped_window_ids
                             .remove(0);
                     }
-                    let window = self.backend_window_snapshot(&surface_id, window_id, output_id);
+                    let window =
+                        self.backend_window_snapshot(&surface_id, window_id.clone(), output_id);
                     let _ = self.session.map_window_to_surface(surface_id, window)?;
+                    append_winit_debug_log(&format!(
+                        "app.apply_runtime_bootstrap_event prefocus_new_window window={window_id:?}"
+                    ));
+                    let _ = self.session.focus_window(&window_id);
                     self.runtime_bootstrap_debug.last_state_window_count =
                         self.state().windows.len();
                     self.runtime_bootstrap_debug.last_visible_window_count =
@@ -330,7 +335,8 @@ impl<R: AuthoringLayoutRuntime<Config = Config>> CompositorApp<R> {
                         .session
                         .register_window_surface(surface_id, window_id, output_id)?;
                 } else {
-                    let window = self.backend_window_snapshot(&surface_id, window_id, output_id);
+                    let window =
+                        self.backend_window_snapshot(&surface_id, window_id.clone(), output_id);
                     let _ = self
                         .session
                         .map_window_to_surface(surface_id, window)
@@ -364,6 +370,12 @@ impl<R: AuthoringLayoutRuntime<Config = Config>> CompositorApp<R> {
                     let next_focus = self
                         .session
                         .preferred_focus_after_window_removed(&window_id);
+                    if let Some(next_focus) = next_focus.as_ref() {
+                        append_winit_debug_log(&format!(
+                            "app.remove_surface prefocus closed={window_id:?} next={next_focus:?}"
+                        ));
+                        let _ = self.session.focus_window(next_focus);
+                    }
                     let _ = self.session.destroy_window(&window_id);
                     if let Some(next_focus) = next_focus {
                         append_winit_debug_log(&format!(
@@ -378,6 +390,12 @@ impl<R: AuthoringLayoutRuntime<Config = Config>> CompositorApp<R> {
                 let next_focus = self
                     .session
                     .preferred_focus_after_window_removed(&window_id);
+                if let Some(next_focus) = next_focus.as_ref() {
+                    append_winit_debug_log(&format!(
+                        "app.remove_window_surface prefocus closed={window_id:?} next={next_focus:?}"
+                    ));
+                    let _ = self.session.focus_window(next_focus);
+                }
                 let _ = self.session.destroy_window(&window_id);
                 if let Some(next_focus) = next_focus {
                     append_winit_debug_log(&format!(
@@ -764,12 +782,11 @@ mod tests {
         assert!(window.mapped);
         assert_eq!(window.output_id, Some(OutputId::from("out-1")));
         assert_eq!(window.workspace_id, Some(WorkspaceId::from("ws-1")));
-        assert!(
-            app.state()
-                .visible_window_ids
-                .iter()
-                .any(|window_id| window_id == &WindowId::from("smithay-window-1"))
-        );
+        assert!(app
+            .state()
+            .visible_window_ids
+            .iter()
+            .any(|window_id| window_id == &WindowId::from("smithay-window-1")));
         assert!(app.session.current_layout().is_some());
         assert_eq!(
             app.topology()
@@ -1035,12 +1052,11 @@ mod tests {
         .unwrap();
 
         assert!(app.topology().surface("wl-surface-test-remove").is_none());
-        assert!(
-            app.state()
-                .windows
-                .iter()
-                .all(|window| window.id != WindowId::from("smithay-window-remove"))
-        );
+        assert!(app
+            .state()
+            .windows
+            .iter()
+            .all(|window| window.id != WindowId::from("smithay-window-remove")));
         assert!(app.state().visible_window_ids.is_empty());
     }
 
