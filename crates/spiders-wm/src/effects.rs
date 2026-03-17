@@ -1,6 +1,6 @@
 use spiders_effects::{
-    compute_effect_style, parse_effect_stylesheet, EffectPseudoState, EffectStyle,
-    EffectStyleSheet, EffectTarget, EffectsCssParseError, TitlebarEffects, WindowEffects,
+    EffectPseudoState, EffectStyle, EffectStyleSheet, EffectTarget, EffectsCssParseError,
+    TitlebarEffects, WindowEffects, compute_effect_style, parse_effect_stylesheet,
 };
 use spiders_shared::ids::WindowId;
 use spiders_shared::wm::{StateSnapshot, WindowSnapshot, WorkspaceSnapshot};

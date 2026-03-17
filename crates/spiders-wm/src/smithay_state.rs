@@ -10,7 +10,7 @@ mod imp {
         LayerExclusiveZone, LayerKeyboardInteractivity, LayerSurfaceMetadata, LayerSurfaceTier,
     };
     use smithay::backend::renderer::utils::{
-        on_commit_buffer_handler, RendererSurfaceStateUserData,
+        RendererSurfaceStateUserData, on_commit_buffer_handler,
     };
     use smithay::delegate_compositor;
     use smithay::delegate_data_control;
@@ -30,17 +30,17 @@ mod imp {
     use smithay::output::Output;
     use smithay::reexports::wayland_protocols::xdg::decoration::zv1::server::zxdg_toplevel_decoration_v1;
     use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel;
+    use smithay::reexports::wayland_server::Resource;
     use smithay::reexports::wayland_server::backend::{ClientData, ClientId, DisconnectReason};
     use smithay::reexports::wayland_server::protocol::wl_buffer;
     use smithay::reexports::wayland_server::protocol::wl_output::WlOutput;
     use smithay::reexports::wayland_server::protocol::wl_seat;
     use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
-    use smithay::reexports::wayland_server::Resource;
     use smithay::reexports::wayland_server::{BindError, Client, Display, DisplayHandle};
-    use smithay::utils::{Serial, SERIAL_COUNTER};
+    use smithay::utils::{SERIAL_COUNTER, Serial};
     use smithay::wayland::buffer::BufferHandler;
     use smithay::wayland::compositor::{
-        get_parent, get_role, is_sync_subsurface, with_states, BufferAssignment,
+        BufferAssignment, get_parent, get_role, is_sync_subsurface, with_states,
     };
     use smithay::wayland::compositor::{CompositorClientState, CompositorHandler, CompositorState};
     use smithay::wayland::output::{OutputHandler, OutputManagerState};
@@ -52,7 +52,7 @@ mod imp {
         DataControlHandler as ExtDataControlHandler, DataControlState as ExtDataControlState,
     };
     use smithay::wayland::selection::primary_selection::{
-        set_primary_focus, PrimarySelectionHandler, PrimarySelectionState,
+        PrimarySelectionHandler, PrimarySelectionState, set_primary_focus,
     };
     use smithay::wayland::selection::wlr_data_control::{
         DataControlHandler as WlrDataControlHandler, DataControlState as WlrDataControlState,
@@ -64,9 +64,9 @@ mod imp {
         WlrLayerShellHandler, WlrLayerShellState,
     };
     use smithay::wayland::shell::xdg::{
+        PopupSurface, PositionerState, ToplevelSurface, XDG_POPUP_ROLE, XDG_TOPLEVEL_ROLE,
+        XdgPopupSurfaceData, XdgShellHandler, XdgShellState, XdgToplevelSurfaceData,
         decoration::{XdgDecorationHandler, XdgDecorationState},
-        PopupSurface, PositionerState, ToplevelSurface, XdgPopupSurfaceData, XdgShellHandler,
-        XdgShellState, XdgToplevelSurfaceData, XDG_POPUP_ROLE, XDG_TOPLEVEL_ROLE,
     };
     use smithay::wayland::shm::{ShmHandler, ShmState};
     use smithay::wayland::socket::ListeningSocketSource;
@@ -3779,7 +3779,7 @@ mod imp {
         use spiders_shared::wm::{OutputSnapshot, ShellKind, WindowSnapshot, WorkspaceSnapshot};
         use wayland_client::protocol::{wl_compositor, wl_registry, wl_surface};
         use wayland_client::{
-            delegate_noop, Connection, Dispatch, EventQueue, Proxy, QueueHandle, WEnum,
+            Connection, Dispatch, EventQueue, Proxy, QueueHandle, WEnum, delegate_noop,
         };
         use wayland_protocols::xdg::decoration::zv1::client::{
             zxdg_decoration_manager_v1, zxdg_toplevel_decoration_v1,
@@ -4503,10 +4503,12 @@ mod imp {
                 &mut client_state,
             );
 
-            assert!(!client_state
-                .decoration_modes
-                .iter()
-                .any(|mode| *mode == zxdg_toplevel_decoration_v1::Mode::ClientSide));
+            assert!(
+                !client_state
+                    .decoration_modes
+                    .iter()
+                    .any(|mode| *mode == zxdg_toplevel_decoration_v1::Mode::ClientSide)
+            );
         }
 
         #[test]

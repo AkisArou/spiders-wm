@@ -282,9 +282,9 @@ mod tests {
                 Some("req-3".into()),
                 QueryResponse::WorkspaceNames(vec!["1".into()])
             ),
-            IpcEnvelope::new(IpcServerMessage::Query(QueryResponse::WorkspaceNames(vec![
-                "1".into()
-            ])))
+            IpcEnvelope::new(IpcServerMessage::Query(QueryResponse::WorkspaceNames(
+                vec!["1".into()]
+            )))
             .with_request_id("req-3")
         );
         assert_eq!(

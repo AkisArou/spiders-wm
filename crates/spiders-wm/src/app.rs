@@ -5,10 +5,10 @@ use spiders_shared::ids::{OutputId, WindowId};
 use spiders_shared::runtime::AuthoringLayoutRuntime;
 use spiders_shared::wm::{ShellKind, StateSnapshot, WindowSnapshot};
 
+use crate::WindowDecorationPolicy;
 use crate::actions::ActionError;
 use crate::session::CompositorSession;
 use crate::topology::{CompositorTopologyState, LayerSurfaceMetadata, SurfaceState, TopologyError};
-use crate::WindowDecorationPolicy;
 use crate::{CompositorLayoutError, LayoutService};
 
 fn append_winit_debug_log(message: &str) {
@@ -796,11 +796,12 @@ mod tests {
         assert!(window.mapped);
         assert_eq!(window.output_id, Some(OutputId::from("out-1")));
         assert_eq!(window.workspace_id, Some(WorkspaceId::from("ws-1")));
-        assert!(app
-            .state()
-            .visible_window_ids
-            .iter()
-            .any(|window_id| window_id == &WindowId::from("smithay-window-1")));
+        assert!(
+            app.state()
+                .visible_window_ids
+                .iter()
+                .any(|window_id| window_id == &WindowId::from("smithay-window-1"))
+        );
         assert!(app.session.current_layout().is_some());
         assert_eq!(
             app.topology()
@@ -1066,11 +1067,12 @@ mod tests {
         .unwrap();
 
         assert!(app.topology().surface("wl-surface-test-remove").is_none());
-        assert!(app
-            .state()
-            .windows
-            .iter()
-            .all(|window| window.id != WindowId::from("smithay-window-remove")));
+        assert!(
+            app.state()
+                .windows
+                .iter()
+                .all(|window| window.id != WindowId::from("smithay-window-remove"))
+        );
         assert!(app.state().visible_window_ids.is_empty());
     }
 

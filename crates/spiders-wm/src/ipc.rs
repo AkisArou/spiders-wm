@@ -4,8 +4,8 @@ use std::os::unix::net::UnixStream;
 
 use spiders_config::model::Config;
 use spiders_ipc::{
-    bind_listener, IpcCodecError, IpcServeError, IpcServerHandleResult, IpcServerState,
-    IpcTransportError, UnknownClientError,
+    IpcCodecError, IpcServeError, IpcServerHandleResult, IpcServerState, IpcTransportError,
+    UnknownClientError, bind_listener,
 };
 use spiders_shared::api::{QueryRequest, QueryResponse};
 use spiders_shared::runtime::AuthoringLayoutRuntime;
@@ -315,8 +315,8 @@ mod tests {
     use spiders_config::authoring_layout::AuthoringLayoutService;
     use spiders_config::model::{Config, LayoutDefinition};
     use spiders_ipc::{
-        recv_response, send_request, IpcClientMessage, IpcEnvelope, IpcServerMessage,
-        IpcSubscriptionTopic,
+        IpcClientMessage, IpcEnvelope, IpcServerMessage, IpcSubscriptionTopic, recv_response,
+        send_request,
     };
     use spiders_runtime_js::loader::{RuntimePathResolver, RuntimeProjectLayoutSourceLoader};
     use spiders_runtime_js::runtime::QuickJsPreparedLayoutRuntime;
@@ -394,8 +394,8 @@ mod tests {
         }
     }
 
-    fn controller(
-    ) -> CompositorController<QuickJsPreparedLayoutRuntime<RuntimeProjectLayoutSourceLoader>> {
+    fn controller()
+    -> CompositorController<QuickJsPreparedLayoutRuntime<RuntimeProjectLayoutSourceLoader>> {
         let temp_dir = std::env::temp_dir();
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)

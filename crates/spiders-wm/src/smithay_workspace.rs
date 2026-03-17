@@ -12,8 +12,8 @@ mod imp {
     };
     use smithay::reexports::wayland_server::protocol::wl_output::WlOutput;
     use smithay::reexports::wayland_server::{
-        backend::{ClientId, GlobalId},
         Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, Resource, Weak,
+        backend::{ClientId, GlobalId},
     };
     use spiders_shared::ids::{OutputId, WorkspaceId};
     use spiders_shared::wm::StateSnapshot;
@@ -868,9 +868,9 @@ mod imp {
 
         use smithay::delegate_compositor;
         use smithay::delegate_output;
+        use smithay::reexports::wayland_server::Display;
         use smithay::reexports::wayland_server::backend::{ClientData, ClientId, DisconnectReason};
         use smithay::reexports::wayland_server::protocol::wl_output::WlOutput;
-        use smithay::reexports::wayland_server::Display;
         use smithay::reexports::wayland_server::{
             Client, DataInit, Dispatch, DisplayHandle, Resource,
         };
@@ -884,7 +884,7 @@ mod imp {
             WorkspaceSnapshot,
         };
         use wayland_client::protocol::{wl_output, wl_registry};
-        use wayland_client::{delegate_noop, Connection, EventQueue, QueueHandle};
+        use wayland_client::{Connection, EventQueue, QueueHandle, delegate_noop};
         use wayland_protocols::ext::workspace::v1::client::{
             ext_workspace_group_handle_v1, ext_workspace_handle_v1, ext_workspace_manager_v1,
         };
@@ -1549,10 +1549,12 @@ mod imp {
             assert_eq!(client_state.workspace_leave_count, 0);
             assert!(client_state.workspace_names.iter().any(|name| name == "1"));
             assert!(client_state.workspace_ids.iter().any(|id| id == "ws-1"));
-            assert!(client_state
-                .group_capabilities
-                .iter()
-                .all(|bits| *bits == GroupCapabilities::empty().bits()));
+            assert!(
+                client_state
+                    .group_capabilities
+                    .iter()
+                    .all(|bits| *bits == GroupCapabilities::empty().bits())
+            );
             assert!(client_state.workspace_capabilities.iter().all(|bits| {
                 *bits == (WorkspaceCapabilities::Activate | WorkspaceCapabilities::Assign).bits()
             }));
@@ -1579,12 +1581,14 @@ mod imp {
             );
             assert!(client_state.done_count > initial_done_count);
             assert!(client_state.workspace_states.len() > initial_state_event_count);
-            assert!(client_state
-                .workspace_states
-                .iter()
-                .rev()
-                .take(2)
-                .any(|bits| *bits == WorkspaceState::Active.bits()));
+            assert!(
+                client_state
+                    .workspace_states
+                    .iter()
+                    .rev()
+                    .take(2)
+                    .any(|bits| *bits == WorkspaceState::Active.bits())
+            );
             assert_eq!(client_state.workspace_leave_count, 0);
 
             let group = client_state.groups.first().cloned().unwrap();
@@ -1597,12 +1601,14 @@ mod imp {
                 &mut queue,
                 &mut client_state,
             );
-            assert!(server_state
-                .workspace_manager
-                .debug_snapshot()
-                .workspace_group_output_ids
-                .iter()
-                .any(|output_id| output_id.as_ref() == Some(&OutputId::from("out-1"))));
+            assert!(
+                server_state
+                    .workspace_manager
+                    .debug_snapshot()
+                    .workspace_group_output_ids
+                    .iter()
+                    .any(|output_id| output_id.as_ref() == Some(&OutputId::from("out-1")))
+            );
             assert!(client_state.done_count > assign_done_count);
             assert!(client_state.workspace_enter_count >= 2);
 

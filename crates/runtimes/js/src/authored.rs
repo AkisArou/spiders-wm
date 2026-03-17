@@ -826,7 +826,11 @@ fn decode_layout_selection(
 
     Ok(LayoutSelectionConfig {
         default: decode_optional_string(object.get("default"), path, "root.layouts.default")?,
-        per_workspace: decode_string_array(object.get("per_workspace"), path, "root.layouts.per_workspace")?,
+        per_workspace: decode_string_array(
+            object.get("per_workspace"),
+            path,
+            "root.layouts.per_workspace",
+        )?,
         per_monitor,
     })
 }
@@ -976,7 +980,10 @@ fn decode_focus_direction(
     }
 }
 
-fn decode_rule_workspaces(value: Option<&Value>, path: &Path) -> Result<Vec<String>, LayoutConfigError> {
+fn decode_rule_workspaces(
+    value: Option<&Value>,
+    path: &Path,
+) -> Result<Vec<String>, LayoutConfigError> {
     let Some(value) = value else {
         return Ok(Vec::new());
     };
@@ -985,11 +992,19 @@ fn decode_rule_workspaces(value: Option<&Value>, path: &Path) -> Result<Vec<Stri
             .iter()
             .map(|value| decode_workspace_string(path, value, "rule.workspaces"))
             .collect(),
-        _ => Ok(vec![decode_workspace_string(path, value, "rule.workspaces")?]),
+        _ => Ok(vec![decode_workspace_string(
+            path,
+            value,
+            "rule.workspaces",
+        )?]),
     }
 }
 
-fn decode_workspace_string(path: &Path, value: &Value, field: &str) -> Result<String, LayoutConfigError> {
+fn decode_workspace_string(
+    path: &Path,
+    value: &Value,
+    field: &str,
+) -> Result<String, LayoutConfigError> {
     match value {
         Value::String(value) => Ok(value.clone()),
         Value::Number(value) => Ok(value.to_string()),
@@ -1000,7 +1015,11 @@ fn decode_workspace_string(path: &Path, value: &Value, field: &str) -> Result<St
     }
 }
 
-fn decode_workspace_shortcut(path: &Path, value: &Value, field: &str) -> Result<u8, LayoutConfigError> {
+fn decode_workspace_shortcut(
+    path: &Path,
+    value: &Value,
+    field: &str,
+) -> Result<u8, LayoutConfigError> {
     match value {
         Value::Number(value) => {
             let Some(number) = value.as_u64() else {

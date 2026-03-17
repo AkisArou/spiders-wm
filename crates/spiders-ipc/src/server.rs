@@ -273,9 +273,9 @@ mod tests {
                 QueryResponse::WorkspaceNames(vec!["1".into()]),
             ),
             Ok(
-                IpcEnvelope::new(IpcServerMessage::Query(QueryResponse::WorkspaceNames(vec![
-                    "1".into()
-                ],)))
+                IpcEnvelope::new(IpcServerMessage::Query(QueryResponse::WorkspaceNames(
+                    vec!["1".into()],
+                )))
                 .with_request_id("req-3")
             )
         );
@@ -402,9 +402,9 @@ mod tests {
                             query: QueryRequest::WorkspaceNames,
                             ..
                         } => Ok::<IpcResponse, IpcServeError>(
-                            IpcEnvelope::new(IpcServerMessage::Query(QueryResponse::WorkspaceNames(
-                                vec!["1".into(), "2".into()],
-                            )))
+                            IpcEnvelope::new(IpcServerMessage::Query(
+                                QueryResponse::WorkspaceNames(vec!["1".into(), "2".into()]),
+                            ))
                             .with_request_id(request_id.unwrap_or_default()),
                         ),
                         other => panic!("unexpected serve result: {other:?}"),
@@ -414,10 +414,9 @@ mod tests {
 
         assert_eq!(
             response,
-            IpcEnvelope::new(IpcServerMessage::Query(QueryResponse::WorkspaceNames(vec![
-                "1".into(),
-                "2".into(),
-            ])))
+            IpcEnvelope::new(IpcServerMessage::Query(QueryResponse::WorkspaceNames(
+                vec!["1".into(), "2".into(),]
+            )))
             .with_request_id("req-10")
         );
 

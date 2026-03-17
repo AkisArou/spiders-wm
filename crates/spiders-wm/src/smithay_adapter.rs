@@ -1,8 +1,8 @@
+use crate::ControllerCommand;
 use crate::backend::{
     BackendDiscoveryEvent, BackendOutputSnapshot, BackendSeatSnapshot, BackendSource,
     BackendSurfaceSnapshot, BackendTopologySnapshot,
 };
-use crate::ControllerCommand;
 use spiders_shared::wm::OutputTransform;
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
