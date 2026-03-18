@@ -1,17 +1,22 @@
-#![allow(irrefutable_let_patterns)]
+use smithay::reexports::{calloop::EventLoop, wayland_server::Display};
 
 mod app;
 mod bindings;
 mod handlers;
-mod input;
+mod runtime;
 mod state;
-mod winit;
 mod wm;
 
-// use smithay::reexports::{calloop::EventLoop, wayland_server::Display};
-// use state::SpidersWm2;
-
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut event_loop: EventLoop<runtime::SpidersWm2> = EventLoop::try_new()?;
+    let display: Display<runtime::SpidersWm2> = Display::new()?;
+
+    let mut state = runtime::SpidersWm2::new(&mut event_loop, display);
+
+    eprintln!("WAYLAND_DISPLAY={:?}", state.runtime.socket_name);
+
+    event_loop.run(None, &mut state, |_| {})?;
+    Ok(())
     // init_logging();
     //
     // let mut event_loop: EventLoop<SpidersWm2> = EventLoop::try_new()?;
@@ -31,8 +36,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // spawn_client();
     //
     // event_loop.run(None, &mut state, |_| {})?;
-
-    Ok(())
 }
 
 // fn init_logging() {
