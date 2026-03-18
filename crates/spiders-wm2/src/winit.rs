@@ -124,7 +124,7 @@ pub fn init_winit(
                 state.runtime.loop_signal.stop();
             }
             _ => {}
-        });
+        })?;
 
     Ok(())
 }
