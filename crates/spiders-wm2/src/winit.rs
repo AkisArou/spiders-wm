@@ -13,7 +13,7 @@ use smithay::{
     utils::{Rectangle, Transform},
 };
 
-use crate::runtime::SpidersWm2;
+use crate::{runtime::SpidersWm2, state::OutputId, wm};
 
 pub fn init_winit(
     event_loop: &mut EventLoop<SpidersWm2>,
@@ -50,6 +50,13 @@ pub fn init_winit(
 
     state.runtime.smithay.space.map_output(&output, (0, 0));
 
+    wm::register_output(
+        &mut state.app.topology,
+        &mut state.app.wm,
+        OutputId(1),
+        "winit".to_string(),
+    );
+
     let mut damager_tracker = OutputDamageTracker::from_output(&output);
 
     backend.window().request_redraw();
@@ -70,6 +77,8 @@ pub fn init_winit(
             }
             WinitEvent::Input(event) => state.process_input_event(event),
             WinitEvent::Redraw => {
+                state.cleanup_dead_windows();
+
                 let size = backend.window_size();
                 let damage = Rectangle::from_size(size);
 

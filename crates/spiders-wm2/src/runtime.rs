@@ -1,4 +1,6 @@
-use std::{ffi::OsString, sync::Arc, time::Instant};
+use crate::{app::AppState, state::WorkspaceId, wm};
+
+use std::{collections::HashSet, ffi::OsString, sync::Arc, time::Instant};
 
 use smithay::{
     desktop::{PopupManager, Space, Window, WindowSurfaceType},
@@ -8,8 +10,9 @@ use smithay::{
         wayland_server::{
             Display, DisplayHandle, Resource, backend::ClientData, protocol::wl_surface::WlSurface,
         },
+        winit::window,
     },
-    utils::{Logical, Point, Serial},
+    utils::{IsAlive, Logical, Point, SERIAL_COUNTER, Serial},
     wayland::{
         compositor::{CompositorClientState, CompositorState},
         output::OutputManagerState,
@@ -19,8 +22,6 @@ use smithay::{
         socket::ListeningSocketSource,
     },
 };
-
-use crate::app::AppState;
 
 #[derive(Debug)]
 pub struct SpidersWm2 {
@@ -104,6 +105,101 @@ impl SpidersWm2 {
                 toplevel.send_pending_configure();
             }
         });
+
+        if let Some(keyboard) = self.runtime.smithay.seat.get_keyboard() {
+            keyboard.set_focus(self, surface, serial);
+        }
+    }
+
+    pub fn unmap_window_surface(&mut self, surface: &WlSurface) {
+        let removed_window_id = self.app.bindings.window_for_surface(&surface.id());
+
+        let was_focused = removed_window_id
+            .is_some_and(|window_id| self.app.wm.focused_window == Some(window_id));
+
+        if let Some(window_id) = self.app.bindings.unbind_surface(&surface.id()) {
+            wm::remove_window(&mut self.app.topology, &mut self.app.wm, window_id);
+        }
+
+        let window_to_unmap = self
+            .runtime
+            .smithay
+            .space
+            .elements()
+            .find(|window| {
+                window
+                    .toplevel()
+                    .is_some_and(|toplevel| toplevel.wl_surface() == surface)
+            })
+            .cloned();
+
+        if let Some(window) = window_to_unmap {
+            self.runtime.smithay.space.unmap_elem(&window);
+        }
+
+        if was_focused {
+            let next_surface = wm::next_focus_in_active_workspace(&self.app.wm)
+                .and_then(|window_id| self.app.bindings.surface_for_window(&window_id));
+
+            self.focus_window_surface(next_surface, SERIAL_COUNTER.next_serial());
+        }
+    }
+
+    pub fn refresh_active_workspace(&mut self) {
+        let visible: HashSet<_> = wm::active_workspace_windows(&self.app.wm)
+            .into_iter()
+            .collect();
+
+        for window_id in self.app.bindings.known_windows() {
+            let Some(window) = self.app.bindings.element_for_window(&window_id) else {
+                continue;
+            };
+
+            if visible.contains(&window_id) {
+                if self
+                    .runtime
+                    .smithay
+                    .space
+                    .element_location(&window)
+                    .is_none()
+                {
+                    self.runtime
+                        .smithay
+                        .space
+                        .map_element(window, (0, 0), false);
+                }
+            } else {
+                self.runtime.smithay.space.unmap_elem(&window);
+            }
+        }
+
+        let focused_surface = self
+            .app
+            .wm
+            .focused_window
+            .and_then(|window_id| self.app.bindings.surface_for_window(&window_id));
+
+        self.focus_window_surface(focused_surface, SERIAL_COUNTER.next_serial());
+    }
+
+    pub fn switch_workspace(&mut self, workspace_id: WorkspaceId) {
+        wm::switch_to_workspace(&mut self.app.wm, workspace_id);
+        self.refresh_active_workspace();
+    }
+
+    pub fn cleanup_dead_windows(&mut self) {
+        let dead_surfaces = self
+            .app
+            .bindings
+            .known_windows()
+            .into_iter()
+            .filter_map(|window_id| self.app.bindings.surface_for_window(&window_id))
+            .filter(|surface| !surface.alive())
+            .collect::<Vec<_>>();
+
+        for surface in dead_surfaces {
+            self.unmap_window_surface(&surface);
+        }
     }
 }
 
