@@ -8,6 +8,7 @@ members = [
   "crates/spiders-layout",
   "crates/runtimes/js",
   "crates/spiders-wm",
+  "crates/spiders-wm2",
   "crates/spiders-shared",
 ]
 
