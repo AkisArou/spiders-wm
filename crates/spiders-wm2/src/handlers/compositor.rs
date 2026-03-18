@@ -47,7 +47,11 @@ impl CompositorHandler for SpidersWm2 {
             }
         }
 
-        xdg_shell::handle_commit
+        xdg_shell::handle_commit(
+            &mut self.runtime.smithay.popups,
+            &self.runtime.smithay.space,
+            surface,
+        );
     }
 }
 

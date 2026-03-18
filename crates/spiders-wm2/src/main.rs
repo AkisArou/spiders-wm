@@ -3,8 +3,10 @@ use smithay::reexports::{calloop::EventLoop, wayland_server::Display};
 mod app;
 mod bindings;
 mod handlers;
+mod input;
 mod runtime;
 mod state;
+mod winit;
 mod wm;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -12,6 +14,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let display: Display<runtime::SpidersWm2> = Display::new()?;
 
     let mut state = runtime::SpidersWm2::new(&mut event_loop, display);
+
+    crate::winit::init_winit(&mut event_loop, &mut state)?;
 
     eprintln!("WAYLAND_DISPLAY={:?}", state.runtime.socket_name);
 

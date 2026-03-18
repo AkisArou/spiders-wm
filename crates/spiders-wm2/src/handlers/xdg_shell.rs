@@ -4,6 +4,7 @@ use smithay::{
         PopupKind, PopupManager, Space, Window, find_popup_root_surface, get_popup_toplevel_coords,
     },
     reexports::wayland_server::{Resource, protocol::wl_surface::WlSurface},
+    utils::SERIAL_COUNTER,
     wayland::{
         compositor::with_states,
         shell::xdg::{PopupSurface, XdgShellHandler, XdgToplevelSurfaceData},
@@ -29,11 +30,13 @@ impl XdgShellHandler for SpidersWm2 {
         register_window(&mut self.app.topology, window_id);
         place_new_window_in_active_workspace(&mut self.app.wm, window_id);
 
+        let wl_surface = surface.wl_surface().clone();
         let window = Window::new_wayland_window(surface.clone());
         self.runtime
             .smithay
             .space
             .map_element(window, (0, 0), false);
+        self.focus_window_surface(Some(wl_surface), SERIAL_COUNTER.next_serial());
 
         if !surface.is_initial_configure_sent() {
             surface.send_configure();

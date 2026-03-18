@@ -1,12 +1,15 @@
 use std::{ffi::OsString, sync::Arc, time::Instant};
 
 use smithay::{
-    desktop::{PopupManager, Space, Window},
+    desktop::{PopupManager, Space, Window, WindowSurfaceType},
     input::{Seat, SeatState},
     reexports::{
         calloop::{EventLoop, Interest, LoopSignal, Mode, PostAction, generic::Generic},
-        wayland_server::{Display, DisplayHandle, backend::ClientData},
+        wayland_server::{
+            Display, DisplayHandle, Resource, backend::ClientData, protocol::wl_surface::WlSurface,
+        },
     },
+    utils::{Logical, Point, Serial},
     wayland::{
         compositor::{CompositorClientState, CompositorState},
         output::OutputManagerState,
@@ -19,7 +22,7 @@ use smithay::{
 
 use crate::app::AppState;
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct SpidersWm2 {
     pub app: AppState,
     pub runtime: RuntimeState,
@@ -34,7 +37,7 @@ pub struct RuntimeState {
     pub smithay: SmithayState,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct SmithayState {
     pub space: Space<Window>,
     pub compositor_state: CompositorState,
@@ -55,6 +58,52 @@ impl SpidersWm2 {
             app: AppState::default(),
             runtime,
         }
+    }
+
+    pub fn surface_under(
+        &self,
+        pos: Point<f64, Logical>,
+    ) -> Option<(WlSurface, Point<f64, Logical>)> {
+        self.runtime
+            .smithay
+            .space
+            .element_under(pos)
+            .and_then(|(window, location)| {
+                window
+                    .surface_under(pos - location.to_f64(), WindowSurfaceType::ALL)
+                    .map(|(surface, point)| (surface, (point + location).to_f64()))
+            })
+    }
+
+    pub fn focus_window_surface(&mut self, surface: Option<WlSurface>, serial: Serial) {
+        let window_to_raise = surface
+            .as_ref()
+            .and_then(|target_surface| {
+                self.runtime.smithay.space.elements().find(|window| {
+                    window
+                        .toplevel()
+                        .is_some_and(|toplevel| toplevel.wl_surface().id() == target_surface.id())
+                })
+            })
+            .cloned();
+
+        if let Some(window) = window_to_raise {
+            self.runtime.smithay.space.raise_element(&window, true);
+        }
+
+        self.runtime.smithay.space.elements().for_each(|mapped| {
+            let is_focused = surface.as_ref().is_some_and(|target_surface| {
+                mapped
+                    .toplevel()
+                    .is_some_and(|toplevel| toplevel.wl_surface().id() == target_surface.id())
+            });
+
+            mapped.set_activated(is_focused);
+
+            if let Some(toplevel) = mapped.toplevel() {
+                toplevel.send_pending_configure();
+            }
+        });
     }
 }
 
