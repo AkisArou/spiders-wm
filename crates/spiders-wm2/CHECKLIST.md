@@ -210,4 +210,5 @@ These are documented or expected features that are not fully implemented in the 
 - Focus handoff now prefers the last committed focused surface while a transaction is pending, reducing focus/raise churn before the new scene commits.
 - Pending refresh now also prefers committed visible-window state for show/hide decisions, and output inspection exposes desired, committed, and live runtime views side by side.
 - Pending refresh now also keeps mapped window positions on committed geometry until commit, while still sending desired configure sizes ahead of the transaction boundary.
+- Render dirtiness from pending refresh plans is now staged and only promoted on transaction commit, so desired scene prep no longer forces early output presentation.
 - Scene application is still immediate after staging; smarter timeout policy and real subtree-scoped layout recomputation are the next transaction milestones.

@@ -86,7 +86,7 @@ impl SpidersWm2 {
         if let Some(plan) = refresh_plan.as_ref() {
             self.runtime
                 .render_plan
-                .mark_from_refresh_plan(plan, &self.app.wm);
+                .stage_from_refresh_plan(plan, &self.app.wm);
             self.recompute_layout(plan);
         }
         let affected_windows = refresh_plan

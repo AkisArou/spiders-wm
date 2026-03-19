@@ -9,36 +9,39 @@ use crate::{
 pub struct RenderPlan {
     full_scene: bool,
     dirty_outputs: HashSet<OutputId>,
+    staged_full_scene: bool,
+    staged_outputs: HashSet<OutputId>,
 }
 
 impl RenderPlan {
+    #[cfg(test)]
     pub fn mark_from_refresh_plan(&mut self, refresh_plan: &RefreshPlan, wm: &WmState) {
-        if refresh_plan.layout.full_scene {
+        let (full_scene, outputs) = collect_dirty_outputs(refresh_plan, wm);
+
+        if full_scene {
             self.mark_full_scene();
         }
 
-        self.dirty_outputs
-            .extend(refresh_plan.outputs.iter().cloned());
+        self.dirty_outputs.extend(outputs);
+    }
 
-        for workspace_id in &refresh_plan.workspaces {
-            if let Some(output_id) = wm
-                .workspaces
-                .get(workspace_id)
-                .and_then(|workspace| workspace.output.clone())
-            {
-                self.dirty_outputs.insert(output_id);
-            }
+    pub fn stage_from_refresh_plan(&mut self, refresh_plan: &RefreshPlan, wm: &WmState) {
+        let (full_scene, outputs) = collect_dirty_outputs(refresh_plan, wm);
+        self.staged_full_scene = full_scene;
+        self.staged_outputs = outputs;
+    }
+
+    pub fn promote_staged(&mut self) {
+        if self.staged_full_scene {
+            self.mark_full_scene();
         }
 
-        for window_id in &refresh_plan.windows {
-            if let Some(output_id) = wm
-                .windows
-                .get(window_id)
-                .and_then(|window| window.output.clone())
-            {
-                self.dirty_outputs.insert(output_id);
-            }
-        }
+        self.dirty_outputs.extend(self.staged_outputs.drain());
+        self.staged_full_scene = false;
+    }
+
+    pub fn has_staged_updates(&self) -> bool {
+        self.staged_full_scene || !self.staged_outputs.is_empty()
     }
 
     pub fn mark_output_dirty(&mut self, output_id: OutputId) {
@@ -63,6 +66,38 @@ impl RenderPlan {
     pub fn is_dirty(&self) -> bool {
         self.full_scene || !self.dirty_outputs.is_empty()
     }
+}
+
+fn collect_dirty_outputs(refresh_plan: &RefreshPlan, wm: &WmState) -> (bool, HashSet<OutputId>) {
+    let mut outputs = HashSet::new();
+
+    if refresh_plan.layout.full_scene {
+        return (true, HashSet::new());
+    }
+
+    outputs.extend(refresh_plan.outputs.iter().cloned());
+
+    for workspace_id in &refresh_plan.workspaces {
+        if let Some(output_id) = wm
+            .workspaces
+            .get(workspace_id)
+            .and_then(|workspace| workspace.output.clone())
+        {
+            outputs.insert(output_id);
+        }
+    }
+
+    for window_id in &refresh_plan.windows {
+        if let Some(output_id) = wm
+            .windows
+            .get(window_id)
+            .and_then(|window| window.output.clone())
+        {
+            outputs.insert(output_id);
+        }
+    }
+
+    (false, outputs)
 }
 
 #[cfg(test)]
@@ -138,5 +173,37 @@ mod tests {
         render_plan.clear_output(&OutputId::from("out-1"));
 
         assert!(!render_plan.is_dirty());
+    }
+
+    #[test]
+    fn staged_updates_do_not_render_until_promoted() {
+        let mut wm = WmState::default();
+        wm.windows.insert(
+            WindowId::from("w1"),
+            ManagedWindowState::tiled(
+                WindowId::from("w1"),
+                WorkspaceId::from("ws-1"),
+                Some(OutputId::from("out-1")),
+            ),
+        );
+
+        let mut render_plan = RenderPlan::default();
+        render_plan.stage_from_refresh_plan(
+            &RefreshPlan {
+                transaction_id: Some(3),
+                windows: HashSet::from([WindowId::from("w1")]),
+                workspaces: HashSet::new(),
+                outputs: HashSet::new(),
+                layout: LayoutRecomputePlan::default(),
+            },
+            &wm,
+        );
+
+        assert!(render_plan.has_staged_updates());
+        assert!(!render_plan.should_render_output(&OutputId::from("out-1")));
+
+        render_plan.promote_staged();
+
+        assert!(render_plan.should_render_output(&OutputId::from("out-1")));
     }
 }

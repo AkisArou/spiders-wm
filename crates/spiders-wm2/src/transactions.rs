@@ -577,6 +577,7 @@ impl SpidersWm2 {
         if let Some(reason) = self.runtime.transactions.pending_resolution(Instant::now()) {
             self.runtime.transactions.commit_pending(reason);
             self.app.layout.commit_desired();
+            self.runtime.render_plan.promote_staged();
             self.finalize_deferred_window_removals();
         }
     }

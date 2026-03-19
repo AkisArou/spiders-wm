@@ -327,6 +327,7 @@ impl SpidersWm2 {
                     },
                     "output_count": self.app.topology.outputs.len(),
                     "window_count": self.app.wm.windows.len(),
+                    "render_staged": self.runtime.render_plan.has_staged_updates(),
                 })),
             },
             RuntimeCommand::ListOutputs => {
