@@ -929,8 +929,8 @@ fn window_state_matches(
 ) -> bool {
     match state {
         EffectPseudoState::Focused => window.focused,
-        EffectPseudoState::Floating => window.floating,
-        EffectPseudoState::Fullscreen => window.fullscreen,
+        EffectPseudoState::Floating => window.is_floating(),
+        EffectPseudoState::Fullscreen => window.is_fullscreen(),
         EffectPseudoState::Urgent => window.urgent,
         EffectPseudoState::Closing => extra_states.contains(&EffectPseudoState::Closing),
         EffectPseudoState::EnterFromLeft
@@ -990,9 +990,7 @@ mod tests {
             role: None,
             window_type: None,
             mapped: true,
-            floating: false,
-            floating_rect: None,
-            fullscreen: false,
+            mode: spiders_shared::wm::WindowMode::Tiled,
             focused: true,
             urgent: false,
             output_id: None,

@@ -1,13 +1,20 @@
 use smithay::reexports::{calloop::EventLoop, wayland_server::Display};
 
+mod actions;
 mod app;
+mod backend;
 mod bindings;
+mod command;
+mod config;
 mod handlers;
-mod input;
+mod layout;
+mod layout_runtime;
+mod model;
+mod placement;
+mod render;
 mod runtime;
-mod state;
-mod winit;
-mod wm;
+mod runtime_support;
+mod transactions;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut event_loop: EventLoop<runtime::SpidersWm2> = EventLoop::try_new()?;
@@ -15,7 +22,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut state = runtime::SpidersWm2::new(&mut event_loop, display);
 
-    crate::winit::init_winit(&mut event_loop, &mut state)?;
+    crate::backend::winit::init_winit(&mut event_loop, &mut state)?;
 
     eprintln!("WAYLAND_DISPLAY={:?}", state.runtime.socket_name);
 

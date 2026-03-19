@@ -1,19 +1,19 @@
 use smithay::{
     delegate_xdg_shell,
     desktop::{
-        PopupKind, PopupManager, Space, Window, find_popup_root_surface, get_popup_toplevel_coords,
+        find_popup_root_surface, get_popup_toplevel_coords, PopupKind, PopupManager, Space, Window,
     },
-    reexports::wayland_server::protocol::wl_surface::WlSurface,
+    reexports::wayland_server::{protocol::wl_surface::WlSurface, Resource},
     utils::SERIAL_COUNTER,
     wayland::{
         compositor::with_states,
-        shell::xdg::{PopupSurface, XdgShellHandler, XdgToplevelSurfaceData},
+        shell::xdg::{Configure, PopupSurface, XdgShellHandler, XdgToplevelSurfaceData},
     },
 };
 
 use crate::{
+    actions::{place_new_window_in_active_workspace, register_window, update_window_metadata},
     runtime::SpidersWm2,
-    wm::{place_new_window_in_active_workspace, register_window},
 };
 
 impl XdgShellHandler for SpidersWm2 {
@@ -25,22 +25,40 @@ impl XdgShellHandler for SpidersWm2 {
         let window_id = self.app.bindings.alloc_window_id();
         self.app
             .bindings
-            .bind_surface(surface.wl_surface().clone(), window_id);
+            .bind_surface(surface.wl_surface().clone(), window_id.clone());
 
-        register_window(&mut self.app.topology, window_id);
-        place_new_window_in_active_workspace(&mut self.app.wm, window_id);
+        register_window(&mut self.app.topology, window_id.clone());
+        place_new_window_in_active_workspace(&mut self.app.wm, window_id.clone());
 
         let wl_surface = surface.wl_surface().clone();
         let window = Window::new_wayland_window(surface.clone());
 
         self.app
             .bindings
-            .bind_window_element(window_id, window.clone());
+            .bind_window_element(window_id.clone(), window.clone());
 
         self.runtime
             .smithay
             .space
             .map_element(window, (0, 0), false);
+
+        let (title, app_id) = with_states(surface.wl_surface(), |states| {
+            let data = states
+                .data_map
+                .get::<XdgToplevelSurfaceData>()
+                .unwrap()
+                .lock()
+                .unwrap();
+            (data.title.clone(), data.app_id.clone())
+        });
+
+        update_window_metadata(
+            &mut self.app.topology,
+            &mut self.app.wm,
+            &window_id,
+            title,
+            app_id,
+        );
 
         self.refresh_active_workspace();
         self.focus_window_surface(Some(wl_surface), SERIAL_COUNTER.next_serial());
@@ -84,6 +102,20 @@ impl XdgShellHandler for SpidersWm2 {
         _seat: smithay::reexports::wayland_server::protocol::wl_seat::WlSeat,
         _serial: smithay::utils::Serial,
     ) {
+    }
+
+    fn ack_configure(&mut self, surface: WlSurface, configure: Configure) {
+        if let Some(window_id) = self.app.bindings.window_for_surface(&surface.id()) {
+            match configure {
+                Configure::Toplevel(configure) => {
+                    self.runtime
+                        .transactions
+                        .mark_configure_acked(&window_id, configure.serial);
+                    self.maybe_commit_pending_transaction();
+                }
+                Configure::Popup(_) => {}
+            }
+        }
     }
 }
 

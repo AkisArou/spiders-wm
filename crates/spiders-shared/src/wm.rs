@@ -89,6 +89,40 @@ pub struct LayoutWindowContext {
     pub focused: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum WindowMode {
+    Tiled,
+    Floating {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        rect: Option<LayoutRect>,
+    },
+    Fullscreen,
+}
+
+impl Default for WindowMode {
+    fn default() -> Self {
+        Self::Tiled
+    }
+}
+
+impl WindowMode {
+    pub fn is_floating(self) -> bool {
+        matches!(self, Self::Floating { .. })
+    }
+
+    pub fn is_fullscreen(self) -> bool {
+        matches!(self, Self::Fullscreen)
+    }
+
+    pub fn floating_rect(self) -> Option<LayoutRect> {
+        match self {
+            Self::Floating { rect } => rect,
+            Self::Tiled | Self::Fullscreen => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LayoutStateContext {
     pub focused_window_id: Option<WindowId>,
@@ -111,15 +145,44 @@ pub struct WindowSnapshot {
     pub role: Option<String>,
     pub window_type: Option<String>,
     pub mapped: bool,
-    pub floating: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub floating_rect: Option<LayoutRect>,
-    pub fullscreen: bool,
+    #[serde(default)]
+    pub mode: WindowMode,
     pub focused: bool,
     pub urgent: bool,
     pub output_id: Option<OutputId>,
     pub workspace_id: Option<WorkspaceId>,
     pub workspaces: Vec<String>,
+}
+
+impl WindowSnapshot {
+    pub fn set_mode(&mut self, mode: WindowMode) {
+        self.mode = mode;
+    }
+
+    pub fn is_floating(&self) -> bool {
+        self.mode.is_floating()
+    }
+
+    pub fn is_fullscreen(&self) -> bool {
+        self.mode.is_fullscreen()
+    }
+
+    pub fn floating_rect(&self) -> Option<LayoutRect> {
+        self.mode.floating_rect()
+    }
+
+    pub fn set_floating_rect(&mut self, rect: Option<LayoutRect>) {
+        match rect {
+            Some(rect) => {
+                self.mode = WindowMode::Floating { rect: Some(rect) };
+            }
+            None => {
+                if self.is_floating() {
+                    self.mode = WindowMode::Tiled;
+                }
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -269,8 +332,8 @@ impl StateSnapshot {
                         ShellKind::Unknown => "unknown".into(),
                     }),
                     window_type: window.window_type.clone(),
-                    floating: window.floating,
-                    fullscreen: window.fullscreen,
+                    floating: window.is_floating(),
+                    fullscreen: window.is_fullscreen(),
                     focused: window.focused,
                 })
                 .collect(),
@@ -430,9 +493,7 @@ mod tests {
                     role: None,
                     window_type: None,
                     mapped: true,
-                    floating: false,
-                    floating_rect: None,
-                    fullscreen: false,
+                    mode: spiders_shared::wm::WindowMode::Tiled,
                     focused: true,
                     urgent: false,
                     output_id: Some(OutputId::from("out-1")),
@@ -449,9 +510,7 @@ mod tests {
                     role: None,
                     window_type: None,
                     mapped: true,
-                    floating: false,
-                    floating_rect: None,
-                    fullscreen: false,
+                    mode: spiders_shared::wm::WindowMode::Tiled,
                     focused: false,
                     urgent: false,
                     output_id: Some(OutputId::from("out-1")),
@@ -468,9 +527,7 @@ mod tests {
                     role: None,
                     window_type: None,
                     mapped: true,
-                    floating: false,
-                    floating_rect: None,
-                    fullscreen: false,
+                    mode: spiders_shared::wm::WindowMode::Tiled,
                     focused: false,
                     urgent: false,
                     output_id: Some(OutputId::from("out-2")),

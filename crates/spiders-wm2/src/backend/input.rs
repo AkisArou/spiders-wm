@@ -4,41 +4,102 @@ use smithay::{
         KeyState, KeyboardKeyEvent, PointerAxisEvent, PointerButtonEvent,
     },
     input::{
-        keyboard::{FilterResult, Keysym, keysyms as xkb},
+        keyboard::{keysyms as xkb, FilterResult, Keysym, ModifiersState},
         pointer::{AxisFrame, ButtonEvent, MotionEvent},
     },
     reexports::wayland_server::Resource,
     utils::SERIAL_COUNTER,
 };
 
-use crate::{runtime::SpidersWm2, state::WorkspaceId, wm};
+use crate::{actions, command::RuntimeCommand, model::WorkspaceId, runtime::SpidersWm2};
+
+const BTN_LEFT: u32 = 0x110;
+const BTN_RIGHT: u32 = 0x111;
 
 enum KeyboardAction {
     SwitchWorkspace(WorkspaceId),
+    MoveFocusedWindowToWorkspace(WorkspaceId),
+    FocusNextWindow,
+    FocusPreviousWindow,
+    SwapFocusedWindowWithNext,
+    SwapFocusedWindowWithPrevious,
+    ToggleFloatingFocusedWindow,
+    ToggleFullscreenFocusedWindow,
+    CloseFocusedWindow,
+    ReloadConfig,
 }
 
-fn keyboard_action_for_keysym(keysym: Keysym) -> Option<KeyboardAction> {
-    if keysym == Keysym::from(xkb::KEY_1) {
-        Some(KeyboardAction::SwitchWorkspace(WorkspaceId(1)))
+fn keyboard_action_for_keysym(
+    modifiers: &ModifiersState,
+    keysym: Keysym,
+) -> Option<KeyboardAction> {
+    if !modifiers.alt {
+        return None;
+    }
+
+    let workspace_action = if keysym == Keysym::from(xkb::KEY_1) {
+        Some(WorkspaceId::from("1"))
     } else if keysym == Keysym::from(xkb::KEY_2) {
-        Some(KeyboardAction::SwitchWorkspace(WorkspaceId(2)))
+        Some(WorkspaceId::from("2"))
     } else if keysym == Keysym::from(xkb::KEY_3) {
-        Some(KeyboardAction::SwitchWorkspace(WorkspaceId(3)))
+        Some(WorkspaceId::from("3"))
     } else if keysym == Keysym::from(xkb::KEY_4) {
-        Some(KeyboardAction::SwitchWorkspace(WorkspaceId(4)))
+        Some(WorkspaceId::from("4"))
     } else if keysym == Keysym::from(xkb::KEY_5) {
-        Some(KeyboardAction::SwitchWorkspace(WorkspaceId(5)))
+        Some(WorkspaceId::from("5"))
     } else if keysym == Keysym::from(xkb::KEY_6) {
-        Some(KeyboardAction::SwitchWorkspace(WorkspaceId(6)))
+        Some(WorkspaceId::from("6"))
     } else if keysym == Keysym::from(xkb::KEY_7) {
-        Some(KeyboardAction::SwitchWorkspace(WorkspaceId(7)))
+        Some(WorkspaceId::from("7"))
     } else if keysym == Keysym::from(xkb::KEY_8) {
-        Some(KeyboardAction::SwitchWorkspace(WorkspaceId(8)))
+        Some(WorkspaceId::from("8"))
     } else if keysym == Keysym::from(xkb::KEY_9) {
-        Some(KeyboardAction::SwitchWorkspace(WorkspaceId(9)))
+        Some(WorkspaceId::from("9"))
     } else {
         None
+    };
+
+    if let Some(workspace_id) = workspace_action {
+        if modifiers.shift {
+            return Some(KeyboardAction::MoveFocusedWindowToWorkspace(workspace_id));
+        }
+
+        return Some(KeyboardAction::SwitchWorkspace(workspace_id));
     }
+
+    if keysym == Keysym::from(xkb::KEY_j) {
+        if modifiers.shift {
+            return Some(KeyboardAction::SwapFocusedWindowWithNext);
+        }
+
+        return Some(KeyboardAction::FocusNextWindow);
+    }
+
+    if keysym == Keysym::from(xkb::KEY_k) {
+        if modifiers.shift {
+            return Some(KeyboardAction::SwapFocusedWindowWithPrevious);
+        }
+
+        return Some(KeyboardAction::FocusPreviousWindow);
+    }
+
+    if keysym == Keysym::from(xkb::KEY_q) {
+        return Some(KeyboardAction::CloseFocusedWindow);
+    }
+
+    if modifiers.shift && keysym == Keysym::from(xkb::KEY_r) {
+        return Some(KeyboardAction::ReloadConfig);
+    }
+
+    if keysym == Keysym::from(xkb::KEY_space) {
+        return Some(KeyboardAction::ToggleFloatingFocusedWindow);
+    }
+
+    if keysym == Keysym::from(xkb::KEY_f) {
+        return Some(KeyboardAction::ToggleFullscreenFocusedWindow);
+    }
+
+    None
 }
 
 impl SpidersWm2 {
@@ -61,10 +122,10 @@ impl SpidersWm2 {
                         event.state(),
                         serial,
                         time,
-                        |_, _, handle| {
+                        |_, modifiers, handle| {
                             if let KeyState::Pressed = key_state {
                                 if let Some(action) =
-                                    keyboard_action_for_keysym(handle.modified_sym())
+                                    keyboard_action_for_keysym(modifiers, handle.modified_sym())
                                 {
                                     return FilterResult::Intercept(action);
                                 }
@@ -79,16 +140,44 @@ impl SpidersWm2 {
                         KeyboardAction::SwitchWorkspace(workspace_id) => {
                             self.switch_workspace(workspace_id);
                         }
+                        KeyboardAction::MoveFocusedWindowToWorkspace(workspace_id) => {
+                            self.move_focused_window_to_workspace(workspace_id);
+                        }
+                        KeyboardAction::FocusNextWindow => {
+                            self.focus_next_window();
+                        }
+                        KeyboardAction::FocusPreviousWindow => {
+                            self.focus_previous_window();
+                        }
+                        KeyboardAction::SwapFocusedWindowWithNext => {
+                            self.swap_focused_window_with_next();
+                        }
+                        KeyboardAction::SwapFocusedWindowWithPrevious => {
+                            self.swap_focused_window_with_previous();
+                        }
+                        KeyboardAction::ToggleFloatingFocusedWindow => {
+                            self.toggle_floating_focused_window();
+                        }
+                        KeyboardAction::ToggleFullscreenFocusedWindow => {
+                            self.toggle_fullscreen_focused_window();
+                        }
+                        KeyboardAction::CloseFocusedWindow => {
+                            self.close_focused_window();
+                        }
+                        KeyboardAction::ReloadConfig => {
+                            self.handle_runtime_command(RuntimeCommand::ReloadConfig);
+                        }
                     }
                 }
             }
-
             InputEvent::PointerMotion { .. } => {}
-
             InputEvent::PointerMotionAbsolute { event, .. } => {
                 let output = self.runtime.smithay.space.outputs().next().unwrap();
                 let output_geo = self.runtime.smithay.space.output_geometry(output).unwrap();
                 let pos = event.position_transformed(output_geo.size) + output_geo.loc.to_f64();
+
+                self.update_floating_drag(pos);
+                self.update_floating_resize(pos);
 
                 let serial = SERIAL_COUNTER.next_serial();
                 let pointer = self.runtime.smithay.seat.get_pointer().unwrap();
@@ -106,9 +195,9 @@ impl SpidersWm2 {
 
                 pointer.frame(self);
             }
-
             InputEvent::PointerButton { event, .. } => {
                 let pointer = self.runtime.smithay.seat.get_pointer().unwrap();
+                let keyboard = self.runtime.smithay.seat.get_keyboard().unwrap();
                 let serial = SERIAL_COUNTER.next_serial();
                 let button = event.button_code();
                 let button_state = event.state();
@@ -128,11 +217,33 @@ impl SpidersWm2 {
                     if let Some(surface) = focused_surface.clone() {
                         if let Some(window_id) = self.app.bindings.window_for_surface(&surface.id())
                         {
-                            wm::focus_window(&mut self.app.wm, window_id);
+                            actions::focus_window(&mut self.app.wm, window_id);
                         }
                     }
 
-                    self.focus_window_surface(focused_surface, serial);
+                    self.focus_window_surface(focused_surface.clone(), serial);
+
+                    let modifiers = keyboard.modifier_state();
+
+                    if modifiers.alt && button == BTN_LEFT {
+                        if let Some(surface) = focused_surface.clone() {
+                            self.begin_floating_drag(surface, pointer.current_location());
+                        }
+                    }
+
+                    if modifiers.alt && button == BTN_RIGHT {
+                        if let Some(surface) = focused_surface {
+                            self.begin_floating_resize(surface, pointer.current_location());
+                        }
+                    }
+                }
+
+                if ButtonState::Released == button_state && button == BTN_LEFT {
+                    self.end_floating_drag();
+                }
+
+                if ButtonState::Released == button_state && button == BTN_RIGHT {
+                    self.end_floating_resize();
                 }
 
                 pointer.button(
@@ -147,7 +258,6 @@ impl SpidersWm2 {
 
                 pointer.frame(self);
             }
-
             InputEvent::PointerAxis { event, .. } => {
                 let source = event.source();
 

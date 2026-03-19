@@ -7,7 +7,7 @@ use spiders_shared::wm::StateSnapshot;
 
 use crate::effects::EffectsRuntimeState;
 use crate::startup::{self, StartupLayoutState, StartupSession};
-use crate::titlebar::{TitlebarRenderItem, compute_titlebar_render_plan};
+use crate::titlebar::{compute_titlebar_render_plan, TitlebarRenderItem};
 use crate::{CompositorLayoutError, LayoutService};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -205,7 +205,7 @@ pub fn compute_window_placements(
                 .windows
                 .iter()
                 .find(|window| window.id == *window_id)?;
-            let mode = if window.floating {
+            let mode = if window.is_floating() {
                 WindowPlacementMode::Floating
             } else {
                 WindowPlacementMode::Tiled
@@ -213,7 +213,7 @@ pub fn compute_window_placements(
             let rect = match mode {
                 WindowPlacementMode::Tiled => node.rect(),
                 WindowPlacementMode::Floating => {
-                    window.floating_rect.unwrap_or_else(|| node.rect())
+                    window.floating_rect().unwrap_or_else(|| node.rect())
                 }
             };
 
@@ -360,9 +360,7 @@ mod tests {
             role: None,
             window_type: None,
             mapped: true,
-            floating: false,
-            floating_rect: None,
-            fullscreen: false,
+            mode: spiders_shared::wm::WindowMode::Tiled,
             focused: true,
             urgent: false,
             output_id: Some(OutputId::from("out-1")),
@@ -376,11 +374,9 @@ mod tests {
                 .unwrap();
         let effects = &runtime.current_layout().unwrap().effects;
 
-        assert!(
-            effects
-                .window_style(&spiders_shared::ids::WindowId::from("w1"))
-                .is_some()
-        );
+        assert!(effects
+            .window_style(&spiders_shared::ids::WindowId::from("w1"))
+            .is_some());
 
         let policy = runtime
             .window_decoration_policy(&spiders_shared::ids::WindowId::from("w1"))
@@ -420,9 +416,7 @@ mod tests {
             role: None,
             window_type: None,
             mapped: true,
-            floating: false,
-            floating_rect: None,
-            fullscreen: false,
+            mode: spiders_shared::wm::WindowMode::Tiled,
             focused: true,
             urgent: false,
             output_id: Some(OutputId::from("out-1")),
@@ -456,14 +450,14 @@ mod tests {
             role: None,
             window_type: None,
             mapped: true,
-            floating: true,
-            floating_rect: Some(spiders_shared::layout::LayoutRect {
-                x: 220.0,
-                y: 140.0,
-                width: 640.0,
-                height: 480.0,
-            }),
-            fullscreen: false,
+            mode: spiders_shared::wm::WindowMode::Floating {
+                rect: Some(spiders_shared::layout::LayoutRect {
+                    x: 220.0,
+                    y: 140.0,
+                    width: 640.0,
+                    height: 480.0,
+                }),
+            },
             focused: true,
             urgent: false,
             output_id: Some(OutputId::from("out-1")),

@@ -1,18 +1,33 @@
-use crate::{app::AppState, state::WorkspaceId, wm};
+use crate::{
+    actions,
+    app::AppState,
+    command::{CommandResult, RuntimeCommand},
+    config::{built_in_default_config, ConfigSource},
+    layout_runtime::RuntimeLayoutService,
+    model::{PointerInteraction, WorkspaceId},
+    render::RenderPlan,
+    transactions::TransactionManager,
+};
 
-use std::{collections::HashSet, ffi::OsString, sync::Arc, time::Instant};
+use serde_json::json;
+use spiders_config::model::LayoutConfigError;
+use std::{
+    ffi::OsString,
+    io::{Read, Write},
+    os::unix::net::UnixListener,
+    sync::Arc,
+    time::Instant,
+};
+use tracing::warn;
 
 use smithay::{
-    desktop::{PopupManager, Space, Window, WindowSurfaceType},
+    desktop::{PopupManager, Space, Window},
     input::{Seat, SeatState},
     reexports::{
-        calloop::{EventLoop, Interest, LoopSignal, Mode, PostAction, generic::Generic},
-        wayland_server::{
-            Display, DisplayHandle, Resource, backend::ClientData, protocol::wl_surface::WlSurface,
-        },
-        winit::window,
+        calloop::{generic::Generic, EventLoop, Interest, LoopSignal, Mode, PostAction},
+        wayland_server::{backend::ClientData, Display, DisplayHandle},
     },
-    utils::{IsAlive, Logical, Point, SERIAL_COUNTER, Serial},
+    utils::{Logical, SERIAL_COUNTER},
     wayland::{
         compositor::{CompositorClientState, CompositorState},
         output::OutputManagerState,
@@ -35,6 +50,10 @@ pub struct RuntimeState {
     pub socket_name: OsString,
     pub display_handle: DisplayHandle,
     pub loop_signal: LoopSignal,
+    pub pointer_interaction: Option<PointerInteraction>,
+    pub layout_service: RuntimeLayoutService,
+    pub render_plan: RenderPlan,
+    pub transactions: TransactionManager,
     pub smithay: SmithayState,
 }
 
@@ -44,6 +63,7 @@ pub struct SmithayState {
     pub compositor_state: CompositorState,
     pub xdg_shell_state: XdgShellState,
     pub shm_state: ShmState,
+    #[allow(dead_code)]
     pub output_manager_state: OutputManagerState,
     pub seat_state: SeatState<SpidersWm2>,
     pub data_device_state: DataDeviceState,
@@ -54,152 +74,292 @@ pub struct SmithayState {
 impl SpidersWm2 {
     pub fn new(event_loop: &mut EventLoop<Self>, display: Display<Self>) -> Self {
         let runtime = RuntimeState::new(event_loop, display);
+        let mut app = AppState::default();
+        app.apply_config(built_in_default_config(), ConfigSource::BuiltInDefault);
 
-        Self {
-            app: AppState::default(),
-            runtime,
-        }
-    }
-
-    pub fn surface_under(
-        &self,
-        pos: Point<f64, Logical>,
-    ) -> Option<(WlSurface, Point<f64, Logical>)> {
-        self.runtime
-            .smithay
-            .space
-            .element_under(pos)
-            .and_then(|(window, location)| {
-                window
-                    .surface_under(pos - location.to_f64(), WindowSurfaceType::ALL)
-                    .map(|(surface, point)| (surface, (point + location).to_f64()))
-            })
-    }
-
-    pub fn focus_window_surface(&mut self, surface: Option<WlSurface>, serial: Serial) {
-        let window_to_raise = surface
-            .as_ref()
-            .and_then(|target_surface| {
-                self.runtime.smithay.space.elements().find(|window| {
-                    window
-                        .toplevel()
-                        .is_some_and(|toplevel| toplevel.wl_surface().id() == target_surface.id())
-                })
-            })
-            .cloned();
-
-        if let Some(window) = window_to_raise {
-            self.runtime.smithay.space.raise_element(&window, true);
-        }
-
-        self.runtime.smithay.space.elements().for_each(|mapped| {
-            let is_focused = surface.as_ref().is_some_and(|target_surface| {
-                mapped
-                    .toplevel()
-                    .is_some_and(|toplevel| toplevel.wl_surface().id() == target_surface.id())
-            });
-
-            mapped.set_activated(is_focused);
-
-            if let Some(toplevel) = mapped.toplevel() {
-                toplevel.send_pending_configure();
-            }
-        });
-
-        if let Some(keyboard) = self.runtime.smithay.seat.get_keyboard() {
-            keyboard.set_focus(self, surface, serial);
-        }
-    }
-
-    pub fn unmap_window_surface(&mut self, surface: &WlSurface) {
-        let removed_window_id = self.app.bindings.window_for_surface(&surface.id());
-
-        let was_focused = removed_window_id
-            .is_some_and(|window_id| self.app.wm.focused_window == Some(window_id));
-
-        if let Some(window_id) = self.app.bindings.unbind_surface(&surface.id()) {
-            wm::remove_window(&mut self.app.topology, &mut self.app.wm, window_id);
-        }
-
-        let window_to_unmap = self
-            .runtime
-            .smithay
-            .space
-            .elements()
-            .find(|window| {
-                window
-                    .toplevel()
-                    .is_some_and(|toplevel| toplevel.wl_surface() == surface)
-            })
-            .cloned();
-
-        if let Some(window) = window_to_unmap {
-            self.runtime.smithay.space.unmap_elem(&window);
-        }
-
-        if was_focused {
-            let next_surface = wm::next_focus_in_active_workspace(&self.app.wm)
-                .and_then(|window_id| self.app.bindings.surface_for_window(&window_id));
-
-            self.focus_window_surface(next_surface, SERIAL_COUNTER.next_serial());
-        }
-    }
-
-    pub fn refresh_active_workspace(&mut self) {
-        let visible: HashSet<_> = wm::active_workspace_windows(&self.app.wm)
-            .into_iter()
-            .collect();
-
-        for window_id in self.app.bindings.known_windows() {
-            let Some(window) = self.app.bindings.element_for_window(&window_id) else {
-                continue;
+        if let Some(config_path) = std::env::var_os("SPIDERS_WM2_CONFIG_PATH") {
+            let source = match std::env::var("SPIDERS_WM2_CONFIG_SOURCE").ok().as_deref() {
+                Some("authored") => ConfigSource::AuthoredConfig,
+                Some("prepared") => ConfigSource::PreparedConfig,
+                _ => ConfigSource::PreparedConfig,
             };
 
-            if visible.contains(&window_id) {
-                if self
-                    .runtime
-                    .smithay
-                    .space
-                    .element_location(&window)
-                    .is_none()
-                {
-                    self.runtime
-                        .smithay
-                        .space
-                        .map_element(window, (0, 0), false);
-                }
-            } else {
-                self.runtime.smithay.space.unmap_elem(&window);
+            if let Err(error) = app.load_config_from_path(&config_path, source) {
+                warn!(?config_path, ?source, %error, "failed to load configured wm2 config path");
             }
+        }
+
+        let mut state = Self { app, runtime };
+        state.refresh_layout_artifacts();
+
+        state
+    }
+
+    pub fn reload_config_from_path(
+        &mut self,
+        path: impl AsRef<std::path::Path>,
+        source: ConfigSource,
+    ) -> Result<(), LayoutConfigError> {
+        self.runtime.layout_service = RuntimeLayoutService::from_paths(
+            &spiders_config::model::ConfigPaths::new(path.as_ref(), path.as_ref()),
+        );
+        self.app.load_config_from_path(path, source)?;
+        self.refresh_layout_artifacts();
+        self.refresh_active_workspace();
+        Ok(())
+    }
+
+    pub fn refresh_layout_artifacts(&mut self) {
+        let state = self.app.wm.snapshot(
+            &self.app.topology.outputs,
+            self.app.config_runtime.current(),
+        );
+        let config = self.app.config_runtime.current().clone();
+
+        for workspace in &state.workspaces {
+            if let Ok(Some(evaluation)) = self
+                .runtime
+                .layout_service
+                .evaluate_prepared_for_workspace(&config, &state, workspace)
+            {
+                self.app.apply_prepared_layout_evaluation(evaluation);
+            }
+        }
+    }
+
+    pub fn handle_runtime_command(&mut self, command: RuntimeCommand) -> CommandResult {
+        match command {
+            RuntimeCommand::ReloadConfig => {
+                if let Some(config_path) = std::env::var_os("SPIDERS_WM2_CONFIG_PATH") {
+                    let source = match std::env::var("SPIDERS_WM2_CONFIG_SOURCE").ok().as_deref() {
+                        Some("authored") => ConfigSource::AuthoredConfig,
+                        _ => ConfigSource::PreparedConfig,
+                    };
+                    match self.reload_config_from_path(&config_path, source) {
+                        Ok(()) => CommandResult {
+                            ok: true,
+                            message: "reloaded config".into(),
+                            payload: None,
+                        },
+                        Err(error) => CommandResult {
+                            ok: false,
+                            message: format!("reload failed: {error}"),
+                            payload: None,
+                        },
+                    }
+                } else {
+                    CommandResult {
+                        ok: false,
+                        message: "SPIDERS_WM2_CONFIG_PATH is not set".into(),
+                        payload: None,
+                    }
+                }
+            }
+            RuntimeCommand::DumpTransaction => CommandResult {
+                ok: true,
+                message: format!(
+                    "config_revision={} layout_tree_revision={} render_dirty={} {}",
+                    self.app.config_runtime.revision(),
+                    self.app.config_runtime.layout_tree_revision(),
+                    self.runtime.render_plan.is_dirty(),
+                    self.runtime
+                        .transactions
+                        .pending_debug_summary(&self.app.wm)
+                        .unwrap_or_else(|| "no pending transaction".into())
+                ),
+                payload: Some(json!({
+                    "pending": self.runtime.transactions.pending().map(|pending| json!({
+                        "id": pending.id,
+                        "affected_windows": pending.affected_windows,
+                        "affected_workspaces": pending.affected_workspaces,
+                        "affected_outputs": pending.affected_outputs,
+                    })),
+                    "committed": self.runtime.transactions.committed().map(|snapshot| json!({
+                        "focused_window_id": snapshot.focused_window_id,
+                        "current_output_id": snapshot.current_output_id,
+                        "current_workspace_id": snapshot.current_workspace_id,
+                        "visible_window_ids": snapshot.visible_window_ids,
+                    })),
+                    "render_dirty": self.runtime.render_plan.is_dirty(),
+                })),
+            },
+            RuntimeCommand::SwitchWorkspace(workspace_id) => {
+                self.switch_workspace(workspace_id);
+                CommandResult {
+                    ok: true,
+                    message: format!("switched workspace to {}", self.app.wm.active_workspace),
+                    payload: None,
+                }
+            }
+            RuntimeCommand::RefreshLayoutArtifacts => {
+                self.refresh_layout_artifacts();
+                self.refresh_active_workspace();
+                CommandResult {
+                    ok: true,
+                    message: "refreshed layout artifacts".into(),
+                    payload: None,
+                }
+            }
+            RuntimeCommand::DumpGeometry => CommandResult {
+                ok: true,
+                message: "dumped geometry".into(),
+                payload: Some(json!({
+                    "desired": self.app.layout.desired_tiled_window_rects.iter().map(|(window_id, rect)| {
+                        json!({
+                            "window_id": window_id,
+                            "x": rect.loc.x,
+                            "y": rect.loc.y,
+                            "width": rect.size.w,
+                            "height": rect.size.h,
+                        })
+                    }).collect::<Vec<_>>(),
+                    "committed": self.app.layout.committed_tiled_window_rects.iter().map(|(window_id, rect)| {
+                        json!({
+                            "window_id": window_id,
+                            "x": rect.loc.x,
+                            "y": rect.loc.y,
+                            "width": rect.size.w,
+                            "height": rect.size.h,
+                        })
+                    }).collect::<Vec<_>>(),
+                })),
+            },
+            RuntimeCommand::DumpLayoutTree => CommandResult {
+                ok: true,
+                message: "dumped layout tree".into(),
+                payload: Some(json!({
+                    "desired": self.app.layout.desired_layout_snapshots,
+                    "committed": self.app.layout.committed_layout_snapshots,
+                })),
+            },
+            RuntimeCommand::ListOutputs => CommandResult {
+                ok: true,
+                message: "listed outputs".into(),
+                payload: Some(json!({
+                    "focused_output": self.app.wm.focused_output,
+                    "pending_transaction": self.runtime.transactions.pending().map(|pending| pending.id),
+                    "outputs": self.app.topology.outputs.values().map(|output| {
+                        json!({
+                            "id": output.id,
+                            "name": output.name,
+                            "enabled": output.enabled,
+                            "current_workspace": output.current_workspace,
+                            "logical_size": output.logical_size,
+                            "dirty": self.runtime.render_plan.should_render_output(&output.id),
+                        })
+                    }).collect::<Vec<_>>()
+                })),
+            },
+            RuntimeCommand::ListWorkspaces => CommandResult {
+                ok: true,
+                message: "listed workspaces".into(),
+                payload: Some(json!({
+                    "active_workspace": self.app.wm.active_workspace,
+                    "focused_window": self.app.wm.focused_window,
+                    "pending_transaction": self.runtime.transactions.pending().map(|pending| pending.id),
+                    "workspaces": self.app.wm.workspaces.values().map(|workspace| {
+                        json!({
+                            "id": workspace.id,
+                            "name": workspace.name,
+                            "output": workspace.output,
+                            "windows": workspace.windows,
+                        })
+                    }).collect::<Vec<_>>()
+                })),
+            },
+            RuntimeCommand::ListWindows => CommandResult {
+                ok: true,
+                message: "listed windows".into(),
+                payload: Some(json!({
+                    "focused_window": self.app.wm.focused_window,
+                    "pending_transaction": self.runtime.transactions.pending().map(|pending| pending.id),
+                    "windows": self.app.wm.windows.values().map(|window| {
+                        json!({
+                            "id": window.id,
+                            "workspace": window.workspace,
+                            "output": window.output,
+                            "mode": format!("{:?}", window.mode),
+                            "mapped": window.mapped,
+                            "title": window.title,
+                            "app_id": window.app_id,
+                            "focused": self.app.wm.focused_window.as_ref() == Some(&window.id),
+                        })
+                    }).collect::<Vec<_>>()
+                })),
+            },
+        }
+    }
+
+    pub fn switch_workspace(&mut self, workspace_id: WorkspaceId) {
+        actions::switch_to_workspace(&mut self.app.wm, workspace_id);
+        self.refresh_active_workspace();
+    }
+
+    pub fn move_focused_window_to_workspace(&mut self, workspace_id: WorkspaceId) {
+        actions::move_focused_window_to_workspace(&mut self.app.wm, workspace_id);
+        self.refresh_active_workspace();
+    }
+
+    pub fn focus_next_window(&mut self) {
+        actions::focus_next_window(&mut self.app.wm);
+        if let Some(output_id) = self.app.wm.focused_output.clone() {
+            self.runtime.render_plan.mark_output_dirty(output_id);
         }
 
         let focused_surface = self
             .app
             .wm
             .focused_window
+            .clone()
             .and_then(|window_id| self.app.bindings.surface_for_window(&window_id));
 
         self.focus_window_surface(focused_surface, SERIAL_COUNTER.next_serial());
     }
 
-    pub fn switch_workspace(&mut self, workspace_id: WorkspaceId) {
-        wm::switch_to_workspace(&mut self.app.wm, workspace_id);
+    pub fn focus_previous_window(&mut self) {
+        actions::focus_previous_window(&mut self.app.wm);
+        if let Some(output_id) = self.app.wm.focused_output.clone() {
+            self.runtime.render_plan.mark_output_dirty(output_id);
+        }
+
+        let focused_surface = self
+            .app
+            .wm
+            .focused_window
+            .clone()
+            .and_then(|window_id| self.app.bindings.surface_for_window(&window_id));
+
+        self.focus_window_surface(focused_surface, SERIAL_COUNTER.next_serial());
+    }
+
+    pub fn swap_focused_window_with_next(&mut self) {
+        actions::swap_focused_window_with_next(&mut self.app.wm);
         self.refresh_active_workspace();
     }
 
-    pub fn cleanup_dead_windows(&mut self) {
-        let dead_surfaces = self
-            .app
-            .bindings
-            .known_windows()
-            .into_iter()
-            .filter_map(|window_id| self.app.bindings.surface_for_window(&window_id))
-            .filter(|surface| !surface.alive())
-            .collect::<Vec<_>>();
+    pub fn swap_focused_window_with_previous(&mut self) {
+        actions::swap_focused_window_with_previous(&mut self.app.wm);
+        self.refresh_active_workspace();
+    }
 
-        for surface in dead_surfaces {
-            self.unmap_window_surface(&surface);
-        }
+    pub fn toggle_floating_focused_window(&mut self) {
+        actions::toggle_floating_focused_window(&mut self.app.wm);
+
+        self.refresh_active_workspace();
+    }
+
+    pub fn toggle_fullscreen_focused_window(&mut self) {
+        actions::toggle_fullscreen_focused_window(&mut self.app.wm);
+        self.refresh_active_workspace();
+    }
+
+    pub(crate) fn output_rect(&self) -> Option<smithay::utils::Rectangle<i32, Logical>> {
+        self.runtime
+            .smithay
+            .space
+            .outputs()
+            .next()
+            .and_then(|output| self.runtime.smithay.space.output_geometry(output))
     }
 }
 
@@ -216,6 +376,27 @@ impl RuntimeState {
             socket_name,
             display_handle,
             loop_signal,
+            pointer_interaction: None,
+            layout_service: if let Some(config_path) = std::env::var_os("SPIDERS_WM2_CONFIG_PATH") {
+                RuntimeLayoutService::from_paths(&spiders_config::model::ConfigPaths::new(
+                    &config_path,
+                    &config_path,
+                ))
+            } else {
+                #[cfg(feature = "built-in-layout-runtime")]
+                {
+                    RuntimeLayoutService::built_in()
+                }
+                #[cfg(not(feature = "built-in-layout-runtime"))]
+                {
+                    RuntimeLayoutService::from_paths(&spiders_config::model::ConfigPaths::new(
+                        "./config/spiders.js",
+                        "./config/runtime/spiders.json",
+                    ))
+                }
+            },
+            render_plan: RenderPlan::default(),
+            transactions: TransactionManager::default(),
             smithay,
         }
     }
@@ -250,6 +431,38 @@ impl RuntimeState {
                 },
             )
             .expect("failed to add wayland display source");
+
+        if let Some(control_socket_path) = std::env::var_os("SPIDERS_WM2_CONTROL_SOCKET") {
+            let _ = std::fs::remove_file(&control_socket_path);
+            let listener = UnixListener::bind(&control_socket_path)
+                .expect("failed to bind wm2 control socket");
+            listener
+                .set_nonblocking(true)
+                .expect("failed to make wm2 control socket nonblocking");
+
+            loop_handle
+                .insert_source(
+                    Generic::new(listener, Interest::READ, Mode::Level),
+                    |_, listener, state| unsafe {
+                        while let Ok((mut stream, _addr)) = listener.get_mut().accept() {
+                            let mut command = String::new();
+                            let _ = stream.read_to_string(&mut command);
+
+                            if let Some(command) = RuntimeCommand::parse(&command) {
+                                let result = state.handle_runtime_command(command);
+                                let _ =
+                                    stream.write_all(format!("{}\n", result.to_json()).as_bytes());
+                            } else {
+                                let _ = stream
+                                    .write_all(b"{\"ok\":false,\"message\":\"unknown command\"}\n");
+                            }
+                        }
+
+                        Ok(PostAction::Continue)
+                    },
+                )
+                .expect("failed to add wm2 control socket source");
+        }
 
         socket_name
     }

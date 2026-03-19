@@ -1,9 +1,10 @@
 use smithay::{
     backend::renderer::utils::on_commit_buffer_handler,
     delegate_compositor, delegate_shm,
+    reexports::wayland_server::Resource,
     wayland::{
         buffer::BufferHandler,
-        compositor::{CompositorHandler, get_parent, is_sync_subsurface},
+        compositor::{get_parent, is_sync_subsurface, CompositorHandler},
         shm::ShmHandler,
     },
 };
@@ -44,6 +45,11 @@ impl CompositorHandler for SpidersWm2 {
                 .find(|window| window.toplevel().unwrap().wl_surface() == &root)
             {
                 window.on_commit();
+            }
+
+            if let Some(window_id) = self.app.bindings.window_for_surface(&root.id()) {
+                self.runtime.transactions.mark_window_committed(&window_id);
+                self.maybe_commit_pending_transaction();
             }
         }
 

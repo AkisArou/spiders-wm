@@ -4,8 +4,8 @@ use std::os::unix::net::UnixStream;
 
 use spiders_config::model::Config;
 use spiders_ipc::{
-    IpcCodecError, IpcServeError, IpcServerHandleResult, IpcServerState, IpcTransportError,
-    UnknownClientError, bind_listener,
+    bind_listener, IpcCodecError, IpcServeError, IpcServerHandleResult, IpcServerState,
+    IpcTransportError, UnknownClientError,
 };
 use spiders_shared::api::{QueryRequest, QueryResponse};
 use spiders_shared::runtime::AuthoringLayoutRuntime;
@@ -315,8 +315,8 @@ mod tests {
     use spiders_config::authoring_layout::AuthoringLayoutService;
     use spiders_config::model::{Config, LayoutDefinition};
     use spiders_ipc::{
-        IpcClientMessage, IpcEnvelope, IpcServerMessage, IpcSubscriptionTopic, recv_response,
-        send_request,
+        recv_response, send_request, IpcClientMessage, IpcEnvelope, IpcServerMessage,
+        IpcSubscriptionTopic,
     };
     use spiders_runtime_js::loader::{RuntimePathResolver, RuntimeProjectLayoutSourceLoader};
     use spiders_runtime_js::runtime::QuickJsPreparedLayoutRuntime;
@@ -380,9 +380,7 @@ mod tests {
                 role: None,
                 window_type: None,
                 mapped: true,
-                floating: false,
-                floating_rect: None,
-                fullscreen: false,
+                mode: spiders_shared::wm::WindowMode::Tiled,
                 focused: true,
                 urgent: false,
                 output_id: Some(OutputId::from("out-1")),
@@ -394,8 +392,8 @@ mod tests {
         }
     }
 
-    fn controller()
-    -> CompositorController<QuickJsPreparedLayoutRuntime<RuntimeProjectLayoutSourceLoader>> {
+    fn controller(
+    ) -> CompositorController<QuickJsPreparedLayoutRuntime<RuntimeProjectLayoutSourceLoader>> {
         let temp_dir = std::env::temp_dir();
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -467,15 +465,13 @@ mod tests {
             decoded.message,
             spiders_ipc::IpcServerMessage::ActionAccepted
         ));
-        assert!(
-            controller
-                .state_snapshot()
-                .windows
-                .iter()
-                .find(|window| window.id == WindowId::from("w1"))
-                .unwrap()
-                .floating
-        );
+        assert!(controller
+            .state_snapshot()
+            .windows
+            .iter()
+            .find(|window| window.id == WindowId::from("w1"))
+            .unwrap()
+            .is_floating());
 
         drop(client);
         let _ = host.remove_client(client_id);

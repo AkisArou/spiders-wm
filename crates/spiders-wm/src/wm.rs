@@ -365,14 +365,18 @@ impl WmState {
             .find(|window| window.id == window_id)
             .ok_or_else(|| WmStateError::WindowNotFound(window_id.clone()))?;
 
-        window.floating = !window.floating;
-        if !window.floating {
-            window.floating_rect = None;
-        }
+        window.set_mode(match window.mode {
+            spiders_shared::wm::WindowMode::Floating { .. } => {
+                spiders_shared::wm::WindowMode::Tiled
+            }
+            spiders_shared::wm::WindowMode::Tiled | spiders_shared::wm::WindowMode::Fullscreen => {
+                spiders_shared::wm::WindowMode::Floating { rect: None }
+            }
+        });
 
         Ok(CompositorEvent::WindowFloatingChange {
             window_id,
-            floating: window.floating,
+            floating: window.is_floating(),
         })
     }
 
@@ -410,7 +414,7 @@ impl WmState {
             .find(|window| &window.id == window_id)
             .ok_or_else(|| WmStateError::WindowNotFound(window_id.clone()))?;
 
-        window.floating_rect = Some(rect);
+        window.set_floating_rect(Some(rect));
         if let Some(output_id) = target_output_id.clone() {
             window.output_id = Some(output_id.clone());
             if window.focused {
@@ -443,11 +447,17 @@ impl WmState {
             .find(|window| window.id == window_id)
             .ok_or_else(|| WmStateError::WindowNotFound(window_id.clone()))?;
 
-        window.fullscreen = !window.fullscreen;
+        window.set_mode(match window.mode {
+            spiders_shared::wm::WindowMode::Fullscreen => spiders_shared::wm::WindowMode::Tiled,
+            spiders_shared::wm::WindowMode::Tiled
+            | spiders_shared::wm::WindowMode::Floating { .. } => {
+                spiders_shared::wm::WindowMode::Fullscreen
+            }
+        });
 
         Ok(CompositorEvent::WindowFullscreenChange {
             window_id,
-            fullscreen: window.fullscreen,
+            fullscreen: window.is_fullscreen(),
         })
     }
 
@@ -573,7 +583,7 @@ impl WmState {
             .cloned()
             .ok_or_else(|| WmStateError::WindowNotFound(window_id.clone()))?;
 
-        let Some(mut rect) = window.floating_rect else {
+        let Some(mut rect) = window.floating_rect() else {
             return Ok(CompositorEvent::WindowGeometryChange {
                 window_id,
                 floating_rect: None,
@@ -660,15 +670,15 @@ impl WmState {
                 .iter_mut()
                 .find(|window| window.id == window_id)
                 .ok_or_else(|| WmStateError::WindowNotFound(window_id.clone()))?;
-            if let (Some(current_output), Some(rect)) =
-                (current_output, window.floating_rect.as_mut())
+            if let (Some(current_output), Some(mut rect)) = (current_output, window.floating_rect())
             {
                 rect.x += (target_output.logical_x - current_output.logical_x) as f32;
                 rect.y += (target_output.logical_y - current_output.logical_y) as f32;
+                window.set_floating_rect(Some(rect));
             }
             window.output_id = Some(target_output_id.clone());
             window.workspace_id = Some(target_workspace_id.clone());
-            (window.floating_rect, window.focused)
+            (window.floating_rect(), window.focused)
         };
         if focused {
             self.select_workspace(&target_workspace_id)?;
@@ -728,7 +738,7 @@ impl WmState {
             .find(|window| window.id == window_id)
             .cloned()
             .ok_or_else(|| WmStateError::WindowNotFound(window_id.clone()))?;
-        if let Some(mut rect) = window.floating_rect {
+        if let Some(mut rect) = window.floating_rect() {
             let delta = 32.0;
             match direction {
                 FocusDirection::Left => rect.x -= delta,
@@ -1022,9 +1032,7 @@ mod tests {
                     role: None,
                     window_type: None,
                     mapped: true,
-                    floating: false,
-                    floating_rect: None,
-                    fullscreen: false,
+                    mode: spiders_shared::wm::WindowMode::Tiled,
                     focused: true,
                     urgent: false,
                     output_id: Some(OutputId::from("out-1")),
@@ -1041,9 +1049,7 @@ mod tests {
                     role: None,
                     window_type: None,
                     mapped: true,
-                    floating: false,
-                    floating_rect: None,
-                    fullscreen: false,
+                    mode: spiders_shared::wm::WindowMode::Tiled,
                     focused: false,
                     urgent: false,
                     output_id: Some(OutputId::from("out-1")),
@@ -1123,9 +1129,7 @@ mod tests {
             role: None,
             window_type: None,
             mapped: false,
-            floating: false,
-            floating_rect: None,
-            fullscreen: false,
+            mode: spiders_shared::wm::WindowMode::Tiled,
             focused: false,
             urgent: false,
             output_id: Some(OutputId::from("out-1")),
@@ -1134,13 +1138,11 @@ mod tests {
         });
 
         assert!(matches!(event, CompositorEvent::WindowCreated { .. }));
-        assert!(
-            state
-                .snapshot()
-                .windows
-                .iter()
-                .any(|window| window.id == WindowId::from("w3") && window.mapped)
-        );
+        assert!(state
+            .snapshot()
+            .windows
+            .iter()
+            .any(|window| window.id == WindowId::from("w3") && window.mapped));
 
         let events = state.destroy_window(&WindowId::from("w3")).unwrap();
 
@@ -1148,13 +1150,11 @@ mod tests {
             event,
             CompositorEvent::WindowDestroyed { window_id } if window_id == &WindowId::from("w3")
         )));
-        assert!(
-            state
-                .snapshot()
-                .windows
-                .iter()
-                .all(|window| window.id != WindowId::from("w3"))
-        );
+        assert!(state
+            .snapshot()
+            .windows
+            .iter()
+            .all(|window| window.id != WindowId::from("w3")));
     }
 
     #[test]
@@ -1296,12 +1296,13 @@ mod tests {
         });
         snapshot.workspaces[1].output_id = Some(OutputId::from("out-2"));
         snapshot.workspaces[1].visible = true;
-        snapshot.windows[0].floating = true;
-        snapshot.windows[0].floating_rect = Some(LayoutRect {
-            x: 50.0,
-            y: 60.0,
-            width: 800.0,
-            height: 600.0,
+        snapshot.windows[0].set_mode(spiders_shared::wm::WindowMode::Floating {
+            rect: Some(LayoutRect {
+                x: 50.0,
+                y: 60.0,
+                width: 800.0,
+                height: 600.0,
+            }),
         });
 
         let mut state = WmState::from_snapshot(snapshot);
@@ -1391,19 +1392,20 @@ mod tests {
     #[test]
     fn wm_state_resize_direction_updates_focused_floating_geometry() {
         let mut snapshot = state();
-        snapshot.windows[0].floating = true;
-        snapshot.windows[0].floating_rect = Some(LayoutRect {
-            x: 20.0,
-            y: 30.0,
-            width: 400.0,
-            height: 300.0,
+        snapshot.windows[0].set_mode(spiders_shared::wm::WindowMode::Floating {
+            rect: Some(LayoutRect {
+                x: 20.0,
+                y: 30.0,
+                width: 400.0,
+                height: 300.0,
+            }),
         });
 
         let mut state = WmState::from_snapshot(snapshot);
         let event = state.resize_direction(FocusDirection::Right).unwrap();
 
         assert_eq!(
-            state.snapshot().windows[0].floating_rect,
+            state.snapshot().windows[0].floating_rect(),
             Some(LayoutRect {
                 x: 20.0,
                 y: 30.0,
@@ -1485,9 +1487,7 @@ mod tests {
             role: None,
             window_type: None,
             mapped: true,
-            floating: false,
-            floating_rect: None,
-            fullscreen: false,
+            mode: spiders_shared::wm::WindowMode::Tiled,
             focused: false,
             urgent: false,
             output_id: Some(OutputId::from("out-1")),

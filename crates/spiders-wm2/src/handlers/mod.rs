@@ -4,18 +4,18 @@ mod xdg_shell;
 use smithay::{
     delegate_data_device, delegate_output, delegate_seat,
     input::{
-        SeatHandler, SeatState,
         dnd::{DnDGrab, DndGrabHandler, GrabType},
         pointer::Focus,
+        SeatHandler, SeatState,
     },
-    reexports::wayland_server::{Resource, protocol::wl_surface::WlSurface},
+    reexports::wayland_server::{protocol::wl_surface::WlSurface, Resource},
     wayland::{
         output::OutputHandler,
         selection::{
-            SelectionHandler,
             data_device::{
-                DataDeviceHandler, DataDeviceState, WaylandDndGrabHandler, set_data_device_focus,
+                set_data_device_focus, DataDeviceHandler, DataDeviceState, WaylandDndGrabHandler,
             },
+            SelectionHandler,
         },
     },
 };

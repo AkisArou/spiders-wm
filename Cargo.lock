@@ -2724,7 +2724,13 @@ dependencies = [
 name = "spiders-wm2"
 version = "0.1.0"
 dependencies = [
+ "serde",
+ "serde_json",
  "smithay",
+ "spiders-config",
+ "spiders-layout",
+ "spiders-runtime-js",
+ "spiders-shared",
  "tracing",
  "tracing-subscriber",
 ]

@@ -2,10 +2,10 @@ use std::collections::HashMap;
 
 use smithay::{
     desktop::Window,
-    reexports::wayland_server::{Resource, backend::ObjectId, protocol::wl_surface::WlSurface},
+    reexports::wayland_server::{backend::ObjectId, protocol::wl_surface::WlSurface, Resource},
 };
 
-use crate::state::WindowId;
+use crate::model::WindowId;
 
 #[derive(Debug, Default)]
 pub struct SmithayBindings {
@@ -18,11 +18,12 @@ pub struct SmithayBindings {
 impl SmithayBindings {
     pub fn alloc_window_id(&mut self) -> WindowId {
         self.next_window_id += 1;
-        WindowId(self.next_window_id)
+        WindowId::from(self.next_window_id.to_string())
     }
 
     pub fn bind_surface(&mut self, surface: WlSurface, window_id: WindowId) {
-        self.surface_to_window.insert(surface.id(), window_id);
+        self.surface_to_window
+            .insert(surface.id(), window_id.clone());
         self.window_to_surface.insert(window_id, surface);
     }
 
@@ -37,12 +38,8 @@ impl SmithayBindings {
         Some(window_id)
     }
 
-    pub fn unbind_window_element(&mut self, window_id: &WindowId) -> Option<Window> {
-        self.window_to_element.remove(window_id)
-    }
-
     pub fn window_for_surface(&self, surface_id: &ObjectId) -> Option<WindowId> {
-        self.surface_to_window.get(surface_id).copied()
+        self.surface_to_window.get(surface_id).cloned()
     }
 
     pub fn surface_for_window(&self, window_id: &WindowId) -> Option<WlSurface> {
@@ -54,6 +51,6 @@ impl SmithayBindings {
     }
 
     pub fn known_windows(&self) -> Vec<WindowId> {
-        self.window_to_element.keys().copied().collect()
+        self.window_to_element.keys().cloned().collect()
     }
 }
