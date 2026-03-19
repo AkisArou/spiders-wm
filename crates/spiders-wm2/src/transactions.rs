@@ -128,30 +128,37 @@ impl TransactionManager {
         let mut coalescing_root_transaction_id = transaction_id;
         let mut coalescing_depth = 0;
         let mut timeout_extensions_budget = partial_timeout_extension_budget();
+        let previous_pending = self.pending.take();
 
-        if let Some(pending) = self.pending.take() {
+        if let Some(pending) = previous_pending.as_ref() {
             coalescing_root_transaction_id = pending.coalescing_root_transaction_id;
             coalescing_depth = pending.coalescing_depth + 1;
             timeout_extensions_budget = pending.timeout_extensions_budget;
-            self.record_history_entry(
-                pending,
-                TransactionCommitReason::Superseded,
-                Some(transaction_id),
-            );
         }
 
         let Some(committed) = self.committed.as_ref() else {
-            self.pending = Some(PendingTransaction::full(
+            let mut pending = PendingTransaction::full(
                 transaction_id,
                 desired,
                 coalescing_root_transaction_id,
                 coalescing_depth,
                 timeout_extensions_budget,
-            ));
+            );
+            if let Some(previous_pending) = previous_pending.as_ref() {
+                pending.preserve_progress_from(previous_pending);
+            }
+            if let Some(previous_pending) = previous_pending {
+                self.record_history_entry(
+                    previous_pending,
+                    TransactionCommitReason::Superseded,
+                    Some(transaction_id),
+                );
+            }
+            self.pending = Some(pending);
             return;
         };
 
-        let pending = PendingTransaction::from_diff(
+        let mut pending = PendingTransaction::from_diff(
             transaction_id,
             committed,
             desired,
@@ -159,6 +166,16 @@ impl TransactionManager {
             coalescing_depth,
             timeout_extensions_budget,
         );
+        if let Some(previous_pending) = previous_pending.as_ref() {
+            pending.preserve_progress_from(previous_pending);
+        }
+        if let Some(previous_pending) = previous_pending {
+            self.record_history_entry(
+                previous_pending,
+                TransactionCommitReason::Superseded,
+                Some(transaction_id),
+            );
+        }
         self.pending = Some(pending);
     }
 
@@ -589,6 +606,18 @@ impl PendingTransaction {
             TimeoutProgress::Stalled
         }
     }
+
+    fn preserve_progress_from(&mut self, previous: &PendingTransaction) {
+        for (window_id, participant) in &mut self.participants {
+            let Some(previous_participant) = previous.participants.get(window_id) else {
+                continue;
+            };
+
+            if previous_participant.status() == TransactionParticipantStatus::Ready {
+                *participant = previous_participant.clone();
+            }
+        }
+    }
 }
 
 impl TransactionParticipant {
@@ -800,7 +829,7 @@ mod tests {
 
     use super::{
         DirtyScope, PendingTransaction, TimeoutProgress, TransactionCoalescedChain,
-        TransactionCommitReason, TransactionManager,
+        TransactionCommitReason, TransactionManager, TransactionParticipantStatus,
     };
     use crate::model::{ManagedWindowState, WmState, WorkspaceState};
     use smithay::utils::SERIAL_COUNTER;
@@ -1562,6 +1591,101 @@ mod tests {
             transactions.history().front().unwrap().timeout_extensions,
             1
         );
+    }
+
+    #[test]
+    fn superseded_chain_preserves_ready_participant_progress_for_same_window() {
+        let committed = snapshot(
+            Some("w0"),
+            &["w0"],
+            vec![workspace("ws-0", true, true)],
+            vec![window("w0", "ws-0", true, WindowMode::Tiled)],
+        );
+        let desired = snapshot(
+            Some("w1"),
+            &["w1", "w2"],
+            vec![workspace("ws-1", true, true)],
+            vec![
+                window("w1", "ws-1", true, WindowMode::Tiled),
+                window("w2", "ws-1", false, WindowMode::Tiled),
+            ],
+        );
+        let replacement = snapshot(
+            Some("w1"),
+            &["w1", "w3"],
+            vec![workspace("ws-1", true, true)],
+            vec![
+                window("w1", "ws-1", true, WindowMode::Tiled),
+                window("w3", "ws-1", false, WindowMode::Tiled),
+            ],
+        );
+        let mut transactions = TransactionManager::default();
+        transactions.committed = Some(committed);
+
+        transactions.stage(desired);
+        let serial_1 = SERIAL_COUNTER.next_serial();
+        let serial_2 = SERIAL_COUNTER.next_serial();
+        transactions.register_configure(&WindowId::from("w1"), serial_1);
+        transactions.register_configure(&WindowId::from("w2"), serial_2);
+        transactions.mark_configure_acked(&WindowId::from("w1"), serial_1);
+        transactions.mark_window_committed(&WindowId::from("w1"));
+
+        transactions.stage(replacement);
+
+        let participant = transactions
+            .pending()
+            .unwrap()
+            .participants
+            .get(&WindowId::from("w1"))
+            .unwrap();
+        assert_eq!(participant.status(), TransactionParticipantStatus::Ready);
+
+        let newcomer = transactions
+            .pending()
+            .unwrap()
+            .participants
+            .get(&WindowId::from("w3"))
+            .unwrap();
+        assert_eq!(newcomer.status(), TransactionParticipantStatus::Idle);
+    }
+
+    #[test]
+    fn superseded_chain_does_not_preserve_incomplete_participant_progress() {
+        let committed = snapshot(
+            Some("w0"),
+            &["w0"],
+            vec![workspace("ws-0", true, true)],
+            vec![window("w0", "ws-0", true, WindowMode::Tiled)],
+        );
+        let desired = snapshot(
+            Some("w1"),
+            &["w1"],
+            vec![workspace("ws-1", true, true)],
+            vec![window("w1", "ws-1", true, WindowMode::Tiled)],
+        );
+        let replacement = snapshot(
+            Some("w1"),
+            &["w1"],
+            vec![workspace("ws-1", true, true)],
+            vec![window("w1", "ws-1", true, WindowMode::Tiled)],
+        );
+        let mut transactions = TransactionManager::default();
+        transactions.committed = Some(committed);
+
+        transactions.stage(desired);
+        let serial = SERIAL_COUNTER.next_serial();
+        transactions.register_configure(&WindowId::from("w1"), serial);
+        transactions.mark_configure_acked(&WindowId::from("w1"), serial);
+
+        transactions.stage(replacement);
+
+        let participant = transactions
+            .pending()
+            .unwrap()
+            .participants
+            .get(&WindowId::from("w1"))
+            .unwrap();
+        assert_eq!(participant.status(), TransactionParticipantStatus::Idle);
     }
 
     #[test]

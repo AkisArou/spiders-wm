@@ -219,4 +219,5 @@ These are documented or expected features that are not fully implemented in the 
 - Timeout diagnostics now distinguish stalled vs partially-ready pending transactions and record participant readiness counts in transaction history/inspection payloads.
 - Partially-ready timed-out transactions now get a short extension window before final timeout commit, while fully stalled transactions still time out immediately.
 - Timeout grace now has a coalescing-aware cap, so replacement storms preserve one short extension budget instead of extending indefinitely across superseded transactions.
+- Superseded replacements now preserve only fully-ready participant progress for windows that survive into the new transaction, avoiding needless re-waits without carrying unsafe partial state forward.
 - Scene application is still immediate after staging; smarter timeout policy and real subtree-scoped layout recomputation are the next transaction milestones.
