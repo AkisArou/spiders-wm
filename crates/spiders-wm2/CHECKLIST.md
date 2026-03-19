@@ -222,4 +222,7 @@ These are documented or expected features that are not fully implemented in the 
 - Superseded replacements now preserve only fully-ready participant progress for windows that survive into the new transaction, avoiding needless re-waits without carrying unsafe partial state forward.
 - Superseded replacements now also retain prior dirty layout scopes, so coalesced update storms do not throw away already-discovered workspace recompute needs.
 - Output-only diffs no longer automatically expand all visible windows unless fullscreen visibility actually changes, trimming one overly broad affected-window path.
+- Output dirty scopes are now split between presentation-only and layout-affecting changes, so non-layout output updates can avoid unnecessary workspace/layout recompute.
+- Workspace dirty scopes are now also split between presentation-only and layout-affecting changes, so focus/visibility-only workspace updates can avoid unnecessary layout subtree recompute.
+- Window dirty scopes are now split between presentation-only and layout-affecting changes, so focus-only window updates can avoid unnecessary layout expansion while mode/workspace/output changes still trigger layout-sensitive handling.
 - Scene application is still immediate after staging; smarter timeout policy and real subtree-scoped layout recomputation are the next transaction milestones.

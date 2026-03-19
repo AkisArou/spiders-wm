@@ -115,9 +115,12 @@ pub struct TransactionCoalescedChain {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum DirtyScope {
-    Window(WindowId),
-    Workspace(WorkspaceId),
-    Output(OutputId),
+    WindowPresentation(WindowId),
+    WindowLayout(WindowId),
+    WorkspacePresentation(WorkspaceId),
+    WorkspaceLayout(WorkspaceId),
+    OutputPresentation(OutputId),
+    OutputLayout(OutputId),
     LayoutSubtree { workspace_id: WorkspaceId },
     FullScene,
 }
@@ -692,14 +695,27 @@ fn dirty_scopes_for_diff(
 ) -> HashSet<DirtyScope> {
     let mut scopes = HashSet::new();
 
-    scopes.extend(affected_windows.iter().cloned().map(DirtyScope::Window));
-    scopes.extend(
-        affected_workspaces
-            .iter()
-            .cloned()
-            .map(DirtyScope::Workspace),
-    );
-    scopes.extend(affected_outputs.iter().cloned().map(DirtyScope::Output));
+    for window_id in affected_windows {
+        if window_layout_changed(committed, desired, window_id) {
+            scopes.insert(DirtyScope::WindowLayout(window_id.clone()));
+        } else {
+            scopes.insert(DirtyScope::WindowPresentation(window_id.clone()));
+        }
+    }
+    for workspace_id in affected_workspaces {
+        if workspace_layout_changed(committed, desired, workspace_id) {
+            scopes.insert(DirtyScope::WorkspaceLayout(workspace_id.clone()));
+        } else {
+            scopes.insert(DirtyScope::WorkspacePresentation(workspace_id.clone()));
+        }
+    }
+    for output_id in affected_outputs {
+        if output_layout_changed(committed, desired, output_id) {
+            scopes.insert(DirtyScope::OutputLayout(output_id.clone()));
+        } else {
+            scopes.insert(DirtyScope::OutputPresentation(output_id.clone()));
+        }
+    }
 
     let layout_workspaces = affected_workspaces
         .iter()
@@ -735,6 +751,80 @@ fn layout_workspaces_for_windows<'a>(
     })
 }
 
+fn output_layout_changed(
+    committed: &StateSnapshot,
+    desired: &StateSnapshot,
+    output_id: &OutputId,
+) -> bool {
+    let committed_output = committed
+        .outputs
+        .iter()
+        .find(|output| &output.id == output_id);
+    let desired_output = desired
+        .outputs
+        .iter()
+        .find(|output| &output.id == output_id);
+
+    match (committed_output, desired_output) {
+        (Some(committed), Some(desired)) => {
+            committed.logical_width != desired.logical_width
+                || committed.logical_height != desired.logical_height
+                || committed.current_workspace_id != desired.current_workspace_id
+                || committed.enabled != desired.enabled
+        }
+        _ => true,
+    }
+}
+
+fn workspace_layout_changed(
+    committed: &StateSnapshot,
+    desired: &StateSnapshot,
+    workspace_id: &WorkspaceId,
+) -> bool {
+    let committed_workspace = committed
+        .workspaces
+        .iter()
+        .find(|workspace| &workspace.id == workspace_id);
+    let desired_workspace = desired
+        .workspaces
+        .iter()
+        .find(|workspace| &workspace.id == workspace_id);
+
+    match (committed_workspace, desired_workspace) {
+        (Some(committed), Some(desired)) => {
+            committed.output_id != desired.output_id
+                || committed.visible != desired.visible
+                || committed.effective_layout != desired.effective_layout
+        }
+        _ => true,
+    }
+}
+
+fn window_layout_changed(
+    committed: &StateSnapshot,
+    desired: &StateSnapshot,
+    window_id: &WindowId,
+) -> bool {
+    let committed_window = committed
+        .windows
+        .iter()
+        .find(|window| &window.id == window_id);
+    let desired_window = desired
+        .windows
+        .iter()
+        .find(|window| &window.id == window_id);
+
+    match (committed_window, desired_window) {
+        (Some(committed), Some(desired)) => {
+            committed.mode != desired.mode
+                || committed.workspace_id != desired.workspace_id
+                || committed.output_id != desired.output_id
+                || committed.mapped != desired.mapped
+        }
+        _ => true,
+    }
+}
+
 fn refresh_plan_for_scopes(dirty_scopes: &HashSet<DirtyScope>, wm: &WmState) -> RefreshPlan {
     if dirty_scopes.contains(&DirtyScope::FullScene) {
         return RefreshPlan {
@@ -757,10 +847,22 @@ fn refresh_plan_for_scopes(dirty_scopes: &HashSet<DirtyScope>, wm: &WmState) -> 
 
     for scope in dirty_scopes {
         match scope {
-            DirtyScope::Window(window_id) => {
+            DirtyScope::WindowPresentation(window_id) | DirtyScope::WindowLayout(window_id) => {
                 plan.windows.insert(window_id.clone());
             }
-            DirtyScope::Workspace(workspace_id) | DirtyScope::LayoutSubtree { workspace_id } => {
+            DirtyScope::WorkspacePresentation(workspace_id) => {
+                plan.workspaces.insert(workspace_id.clone());
+
+                if let Some(workspace) = wm.workspaces.get(workspace_id) {
+                    plan.windows.extend(workspace.windows.iter().cloned());
+
+                    if let Some(output_id) = workspace.output.clone() {
+                        plan.outputs.insert(output_id);
+                    }
+                }
+            }
+            DirtyScope::WorkspaceLayout(workspace_id)
+            | DirtyScope::LayoutSubtree { workspace_id } => {
                 plan.workspaces.insert(workspace_id.clone());
                 plan.layout.workspace_roots.insert(workspace_id.clone());
 
@@ -772,7 +874,16 @@ fn refresh_plan_for_scopes(dirty_scopes: &HashSet<DirtyScope>, wm: &WmState) -> 
                     }
                 }
             }
-            DirtyScope::Output(output_id) => {
+            DirtyScope::OutputPresentation(output_id) => {
+                plan.outputs.insert(output_id.clone());
+
+                for (window_id, window) in &wm.windows {
+                    if window.output.as_ref() == Some(output_id) {
+                        plan.windows.insert(window_id.clone());
+                    }
+                }
+            }
+            DirtyScope::OutputLayout(output_id) => {
                 plan.outputs.insert(output_id.clone());
 
                 for workspace in wm.workspaces.values() {
@@ -1881,8 +1992,8 @@ mod tests {
             pending.affected_workspaces = HashSet::from([WorkspaceId::from("ws-1")]);
             pending.affected_outputs.clear();
             pending.dirty_scopes = HashSet::from([
-                DirtyScope::Window(WindowId::from("w1")),
-                DirtyScope::Workspace(WorkspaceId::from("ws-1")),
+                DirtyScope::WindowLayout(WindowId::from("w1")),
+                DirtyScope::WorkspaceLayout(WorkspaceId::from("ws-1")),
                 DirtyScope::LayoutSubtree {
                     workspace_id: WorkspaceId::from("ws-1"),
                 },
@@ -1920,7 +2031,8 @@ mod tests {
             pending.affected_windows.clear();
             pending.affected_workspaces.clear();
             pending.affected_outputs = HashSet::from([OutputId::from("out-1")]);
-            pending.dirty_scopes = HashSet::from([DirtyScope::Output(OutputId::from("out-1"))]);
+            pending.dirty_scopes =
+                HashSet::from([DirtyScope::OutputLayout(OutputId::from("out-1"))]);
         }
 
         let plan = transactions
@@ -1934,6 +2046,231 @@ mod tests {
             .layout
             .workspace_roots
             .contains(&WorkspaceId::from("ws-1")));
+    }
+
+    #[test]
+    fn refresh_plan_output_presentation_scope_skips_layout_recompute() {
+        let desired = snapshot(
+            Some("w1"),
+            &["w1", "w2"],
+            vec![
+                workspace("ws-1", true, true),
+                workspace("ws-2", false, false),
+            ],
+            vec![
+                window("w1", "ws-1", true, WindowMode::Tiled),
+                window("w2", "ws-1", false, WindowMode::Tiled),
+                window("w3", "ws-2", false, WindowMode::Tiled),
+            ],
+        );
+        let mut transactions = TransactionManager::default();
+        transactions.stage(desired);
+
+        if let Some(pending) = transactions.pending.as_mut() {
+            pending.affected_windows.clear();
+            pending.affected_workspaces.clear();
+            pending.affected_outputs = HashSet::from([OutputId::from("out-1")]);
+            pending.dirty_scopes =
+                HashSet::from([DirtyScope::OutputPresentation(OutputId::from("out-1"))]);
+        }
+
+        let plan = transactions
+            .pending_refresh_plan(&wm_for_refresh_plan())
+            .unwrap();
+
+        assert!(plan.outputs.contains(&OutputId::from("out-1")));
+        assert!(plan.windows.contains(&WindowId::from("w1")));
+        assert!(plan.windows.contains(&WindowId::from("w2")));
+        assert!(plan.layout.workspace_roots.is_empty());
+    }
+
+    #[test]
+    fn refresh_plan_workspace_presentation_scope_skips_layout_recompute() {
+        let desired = snapshot(
+            Some("w1"),
+            &["w1", "w2"],
+            vec![
+                workspace("ws-1", true, true),
+                workspace("ws-2", false, false),
+            ],
+            vec![
+                window("w1", "ws-1", true, WindowMode::Tiled),
+                window("w2", "ws-1", false, WindowMode::Tiled),
+                window("w3", "ws-2", false, WindowMode::Tiled),
+            ],
+        );
+        let mut transactions = TransactionManager::default();
+        transactions.stage(desired);
+
+        if let Some(pending) = transactions.pending.as_mut() {
+            pending.affected_windows = HashSet::from([WindowId::from("w1")]);
+            pending.affected_workspaces = HashSet::from([WorkspaceId::from("ws-1")]);
+            pending.dirty_scopes =
+                HashSet::from([DirtyScope::WorkspacePresentation(WorkspaceId::from("ws-1"))]);
+        }
+
+        let plan = transactions
+            .pending_refresh_plan(&wm_for_refresh_plan())
+            .unwrap();
+
+        assert!(plan.workspaces.contains(&WorkspaceId::from("ws-1")));
+        assert!(plan.windows.contains(&WindowId::from("w1")));
+        assert!(plan.windows.contains(&WindowId::from("w2")));
+        assert!(plan.layout.workspace_roots.is_empty());
+    }
+
+    #[test]
+    fn diff_classifies_non_layout_output_change_as_presentation_scope() {
+        let committed = snapshot(
+            Some("w1"),
+            &["w1"],
+            vec![workspace("ws-1", true, true)],
+            vec![window("w1", "ws-1", true, WindowMode::Tiled)],
+        );
+        let mut desired = committed.clone();
+        desired.outputs[0].logical_x = 50;
+
+        let pending = PendingTransaction::from_diff(1, &committed, desired, 1, 0, 1);
+
+        assert!(pending
+            .dirty_scopes
+            .contains(&DirtyScope::OutputPresentation(OutputId::from("out-1"))));
+        assert!(!pending
+            .dirty_scopes
+            .contains(&DirtyScope::OutputLayout(OutputId::from("out-1"))));
+    }
+
+    #[test]
+    fn diff_classifies_size_change_as_layout_output_scope() {
+        let committed = snapshot(
+            Some("w1"),
+            &["w1"],
+            vec![workspace("ws-1", true, true)],
+            vec![window("w1", "ws-1", true, WindowMode::Tiled)],
+        );
+        let mut desired = committed.clone();
+        desired.outputs[0].logical_width = 1440;
+
+        let pending = PendingTransaction::from_diff(1, &committed, desired, 1, 0, 1);
+
+        assert!(pending
+            .dirty_scopes
+            .contains(&DirtyScope::OutputLayout(OutputId::from("out-1"))));
+    }
+
+    #[test]
+    fn diff_classifies_workspace_focus_only_change_as_presentation_scope() {
+        let committed = snapshot(
+            Some("w1"),
+            &["w1"],
+            vec![workspace("ws-1", true, true)],
+            vec![window("w1", "ws-1", true, WindowMode::Tiled)],
+        );
+        let mut desired = committed.clone();
+        desired.workspaces[0].focused = false;
+
+        let pending = PendingTransaction::from_diff(1, &committed, desired, 1, 0, 1);
+
+        assert!(pending
+            .dirty_scopes
+            .contains(&DirtyScope::WorkspacePresentation(WorkspaceId::from(
+                "ws-1"
+            ))));
+        assert!(!pending
+            .dirty_scopes
+            .contains(&DirtyScope::WorkspaceLayout(WorkspaceId::from("ws-1"))));
+    }
+
+    #[test]
+    fn diff_classifies_workspace_layout_change_as_layout_scope() {
+        let committed = snapshot(
+            Some("w1"),
+            &["w1"],
+            vec![workspace("ws-1", true, true)],
+            vec![window("w1", "ws-1", true, WindowMode::Tiled)],
+        );
+        let mut desired = committed.clone();
+        desired.workspaces[0].effective_layout = Some(spiders_shared::wm::LayoutRef {
+            name: "grid".into(),
+        });
+
+        let pending = PendingTransaction::from_diff(1, &committed, desired, 1, 0, 1);
+
+        assert!(pending
+            .dirty_scopes
+            .contains(&DirtyScope::WorkspaceLayout(WorkspaceId::from("ws-1"))));
+    }
+
+    #[test]
+    fn diff_classifies_window_focus_only_change_as_presentation_scope() {
+        let committed = snapshot(
+            Some("w1"),
+            &["w1"],
+            vec![workspace("ws-1", true, true)],
+            vec![window("w1", "ws-1", true, WindowMode::Tiled)],
+        );
+        let mut desired = committed.clone();
+        desired.windows[0].focused = false;
+
+        let pending = PendingTransaction::from_diff(1, &committed, desired, 1, 0, 1);
+
+        assert!(pending
+            .dirty_scopes
+            .contains(&DirtyScope::WindowPresentation(WindowId::from("w1"))));
+        assert!(!pending
+            .dirty_scopes
+            .contains(&DirtyScope::WindowLayout(WindowId::from("w1"))));
+    }
+
+    #[test]
+    fn diff_classifies_window_mode_change_as_layout_scope() {
+        let committed = snapshot(
+            Some("w1"),
+            &["w1"],
+            vec![workspace("ws-1", true, true)],
+            vec![window("w1", "ws-1", true, WindowMode::Tiled)],
+        );
+        let mut desired = committed.clone();
+        desired.windows[0].mode = WindowMode::Fullscreen;
+
+        let pending = PendingTransaction::from_diff(1, &committed, desired, 1, 0, 1);
+
+        assert!(pending
+            .dirty_scopes
+            .contains(&DirtyScope::WindowLayout(WindowId::from("w1"))));
+    }
+
+    #[test]
+    fn refresh_plan_window_presentation_scope_skips_layout_recompute() {
+        let desired = snapshot(
+            Some("w1"),
+            &["w1", "w2"],
+            vec![
+                workspace("ws-1", true, true),
+                workspace("ws-2", false, false),
+            ],
+            vec![
+                window("w1", "ws-1", true, WindowMode::Tiled),
+                window("w2", "ws-1", false, WindowMode::Tiled),
+                window("w3", "ws-2", false, WindowMode::Tiled),
+            ],
+        );
+        let mut transactions = TransactionManager::default();
+        transactions.stage(desired);
+
+        if let Some(pending) = transactions.pending.as_mut() {
+            pending.affected_windows = HashSet::from([WindowId::from("w1")]);
+            pending.affected_workspaces.clear();
+            pending.dirty_scopes =
+                HashSet::from([DirtyScope::WindowPresentation(WindowId::from("w1"))]);
+        }
+
+        let plan = transactions
+            .pending_refresh_plan(&wm_for_refresh_plan())
+            .unwrap();
+
+        assert!(plan.windows.contains(&WindowId::from("w1")));
+        assert!(plan.layout.workspace_roots.is_empty());
     }
 
     #[test]
