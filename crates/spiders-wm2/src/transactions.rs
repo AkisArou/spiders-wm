@@ -26,6 +26,7 @@ pub struct PendingTransaction {
     pub coalescing_root_transaction_id: u64,
     pub coalescing_depth: usize,
     pub timeout_extensions: usize,
+    pub timeout_extensions_budget: usize,
     pub affected_windows: HashSet<WindowId>,
     pub affected_workspaces: HashSet<WorkspaceId>,
     pub affected_outputs: HashSet<OutputId>,
@@ -68,6 +69,7 @@ pub struct TransactionHistoryEntry {
     pub unresolved_window_ids: Vec<WindowId>,
     pub timeout_progress: Option<TimeoutProgress>,
     pub timeout_extensions: usize,
+    pub timeout_extensions_budget: usize,
     pub ready_participant_count: usize,
     pub waiting_for_ack_count: usize,
     pub waiting_for_commit_count: usize,
@@ -125,10 +127,12 @@ impl TransactionManager {
         let transaction_id = self.allocate_transaction_id();
         let mut coalescing_root_transaction_id = transaction_id;
         let mut coalescing_depth = 0;
+        let mut timeout_extensions_budget = partial_timeout_extension_budget();
 
         if let Some(pending) = self.pending.take() {
             coalescing_root_transaction_id = pending.coalescing_root_transaction_id;
             coalescing_depth = pending.coalescing_depth + 1;
+            timeout_extensions_budget = pending.timeout_extensions_budget;
             self.record_history_entry(
                 pending,
                 TransactionCommitReason::Superseded,
@@ -142,6 +146,7 @@ impl TransactionManager {
                 desired,
                 coalescing_root_transaction_id,
                 coalescing_depth,
+                timeout_extensions_budget,
             ));
             return;
         };
@@ -152,6 +157,7 @@ impl TransactionManager {
             desired,
             coalescing_root_transaction_id,
             coalescing_depth,
+            timeout_extensions_budget,
         );
         self.pending = Some(pending);
     }
@@ -299,7 +305,10 @@ impl TransactionManager {
             return false;
         };
 
-        if now < pending.deadline || pending.timeout_progress() != TimeoutProgress::Partial {
+        if now < pending.deadline
+            || pending.timeout_progress() != TimeoutProgress::Partial
+            || pending.timeout_extensions >= pending.timeout_extensions_budget
+        {
             return false;
         }
 
@@ -342,6 +351,7 @@ impl TransactionManager {
             timeout_progress: (reason == TransactionCommitReason::TimedOut)
                 .then(|| pending.timeout_progress()),
             timeout_extensions: pending.timeout_extensions,
+            timeout_extensions_budget: pending.timeout_extensions_budget,
             ready_participant_count: pending.participant_progress().ready,
             waiting_for_ack_count: pending.participant_progress().waiting_for_ack,
             waiting_for_commit_count: pending.participant_progress().waiting_for_commit,
@@ -361,6 +371,7 @@ impl PendingTransaction {
         desired: StateSnapshot,
         coalescing_root_transaction_id: u64,
         coalescing_depth: usize,
+        timeout_extensions_budget: usize,
     ) -> Self {
         let affected_windows = desired
             .windows
@@ -373,6 +384,7 @@ impl PendingTransaction {
             coalescing_root_transaction_id,
             coalescing_depth,
             timeout_extensions: 0,
+            timeout_extensions_budget,
             participants: participants_for_windows(&affected_windows),
             started_at: Instant::now(),
             affected_windows,
@@ -398,6 +410,7 @@ impl PendingTransaction {
         desired: StateSnapshot,
         coalescing_root_transaction_id: u64,
         coalescing_depth: usize,
+        timeout_extensions_budget: usize,
     ) -> Self {
         let committed_windows = committed
             .windows
@@ -497,6 +510,7 @@ impl PendingTransaction {
             coalescing_root_transaction_id,
             coalescing_depth,
             timeout_extensions: 0,
+            timeout_extensions_budget,
             participants: participants_for_windows(&affected_windows),
             desired,
             affected_windows,
@@ -629,6 +643,10 @@ fn transaction_timeout() -> Duration {
 
 fn transaction_timeout_extension() -> Duration {
     Duration::from_millis(75)
+}
+
+fn partial_timeout_extension_budget() -> usize {
+    1
 }
 
 fn dirty_scopes_for_diff(
@@ -936,7 +954,7 @@ mod tests {
             ],
         );
 
-        let pending = PendingTransaction::from_diff(1, &committed, desired, 1, 0);
+        let pending = PendingTransaction::from_diff(1, &committed, desired, 1, 0, 1);
 
         assert!(pending.affected_windows.contains(&WindowId::from("w1")));
         assert!(pending.affected_windows.contains(&WindowId::from("w2")));
@@ -963,7 +981,7 @@ mod tests {
             ],
         );
 
-        let pending = PendingTransaction::from_diff(1, &committed, desired, 1, 0);
+        let pending = PendingTransaction::from_diff(1, &committed, desired, 1, 0, 1);
 
         assert!(pending.affected_windows.contains(&WindowId::from("w1")));
         assert!(pending.affected_windows.contains(&WindowId::from("w2")));
@@ -1209,6 +1227,44 @@ mod tests {
     }
 
     #[test]
+    fn partial_timeout_extension_budget_is_capped() {
+        let desired = snapshot(
+            Some("w1"),
+            &["w1", "w2"],
+            vec![workspace("ws-1", true, true)],
+            vec![
+                window("w1", "ws-1", true, WindowMode::Tiled),
+                window("w2", "ws-1", false, WindowMode::Tiled),
+            ],
+        );
+        let mut transactions = TransactionManager::default();
+
+        transactions.stage(desired);
+        let serial_1 = SERIAL_COUNTER.next_serial();
+        let serial_2 = SERIAL_COUNTER.next_serial();
+        transactions.register_configure(&WindowId::from("w1"), serial_1);
+        transactions.register_configure(&WindowId::from("w2"), serial_2);
+        transactions.mark_configure_acked(&WindowId::from("w1"), serial_1);
+        transactions.mark_window_committed(&WindowId::from("w1"));
+
+        let now = Instant::now();
+        if let Some(pending) = transactions.pending.as_mut() {
+            pending.deadline = now - Duration::from_millis(1);
+        }
+        assert!(transactions.extend_partial_timeout(now));
+
+        let later = Instant::now();
+        if let Some(pending) = transactions.pending.as_mut() {
+            pending.deadline = later - Duration::from_millis(1);
+        }
+        assert!(!transactions.extend_partial_timeout(later));
+        assert_eq!(
+            transactions.pending_resolution(later),
+            Some(TransactionCommitReason::TimedOut)
+        );
+    }
+
+    #[test]
     fn stalled_timeout_does_not_extend() {
         let desired = snapshot(
             Some("w1"),
@@ -1251,6 +1307,14 @@ mod tests {
             TransactionCommitReason::Ready
         );
         assert_eq!(transactions.history().front().unwrap().duration_ms, 0);
+        assert_eq!(
+            transactions
+                .history()
+                .front()
+                .unwrap()
+                .timeout_extensions_budget,
+            1
+        );
         assert_eq!(
             transactions
                 .history()
@@ -1373,6 +1437,14 @@ mod tests {
             transactions.history().front().unwrap().timeout_extensions,
             0
         );
+        assert_eq!(
+            transactions
+                .history()
+                .front()
+                .unwrap()
+                .timeout_extensions_budget,
+            1
+        );
     }
 
     #[test]
@@ -1421,6 +1493,14 @@ mod tests {
                 .history()
                 .front()
                 .unwrap()
+                .timeout_extensions_budget,
+            1
+        );
+        assert_eq!(
+            transactions
+                .history()
+                .front()
+                .unwrap()
                 .ready_participant_count,
             1
         );
@@ -1430,6 +1510,56 @@ mod tests {
                 .front()
                 .unwrap()
                 .waiting_for_ack_count,
+            1
+        );
+    }
+
+    #[test]
+    fn superseded_chain_preserves_timeout_extension_budget() {
+        let committed = snapshot(
+            Some("w0"),
+            &["w0"],
+            vec![workspace("ws-0", true, true)],
+            vec![window("w0", "ws-0", true, WindowMode::Tiled)],
+        );
+        let desired = snapshot(
+            Some("w1"),
+            &["w1", "w2"],
+            vec![workspace("ws-1", true, true)],
+            vec![
+                window("w1", "ws-1", true, WindowMode::Tiled),
+                window("w2", "ws-1", false, WindowMode::Tiled),
+            ],
+        );
+        let replacement = snapshot(
+            Some("w3"),
+            &["w3"],
+            vec![workspace("ws-2", true, true)],
+            vec![window("w3", "ws-2", true, WindowMode::Tiled)],
+        );
+        let mut transactions = TransactionManager::default();
+        transactions.committed = Some(committed);
+
+        transactions.stage(desired);
+        let serial_1 = SERIAL_COUNTER.next_serial();
+        let serial_2 = SERIAL_COUNTER.next_serial();
+        transactions.register_configure(&WindowId::from("w1"), serial_1);
+        transactions.register_configure(&WindowId::from("w2"), serial_2);
+        transactions.mark_configure_acked(&WindowId::from("w1"), serial_1);
+        transactions.mark_window_committed(&WindowId::from("w1"));
+
+        let now = Instant::now();
+        if let Some(pending) = transactions.pending.as_mut() {
+            pending.deadline = now - Duration::from_millis(1);
+        }
+        assert!(transactions.extend_partial_timeout(now));
+
+        transactions.stage(replacement);
+
+        assert_eq!(transactions.pending().unwrap().timeout_extensions_budget, 1);
+        assert_eq!(transactions.pending().unwrap().timeout_extensions, 0);
+        assert_eq!(
+            transactions.history().front().unwrap().timeout_extensions,
             1
         );
     }
@@ -1481,6 +1611,10 @@ mod tests {
             1
         );
         assert_eq!(transactions.history().front().unwrap().coalescing_depth, 0);
+        assert_eq!(
+            transactions.history().front().unwrap().timeout_extensions,
+            0
+        );
         assert_eq!(
             transactions
                 .pending()
