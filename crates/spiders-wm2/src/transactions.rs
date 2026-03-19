@@ -146,6 +146,7 @@ impl TransactionManager {
             );
             if let Some(previous_pending) = previous_pending.as_ref() {
                 pending.preserve_progress_from(previous_pending);
+                pending.preserve_dirty_scopes_from(previous_pending);
             }
             if let Some(previous_pending) = previous_pending {
                 self.record_history_entry(
@@ -168,6 +169,7 @@ impl TransactionManager {
         );
         if let Some(previous_pending) = previous_pending.as_ref() {
             pending.preserve_progress_from(previous_pending);
+            pending.preserve_dirty_scopes_from(previous_pending);
         }
         if let Some(previous_pending) = previous_pending {
             self.record_history_entry(
@@ -617,6 +619,11 @@ impl PendingTransaction {
                 *participant = previous_participant.clone();
             }
         }
+    }
+
+    fn preserve_dirty_scopes_from(&mut self, previous: &PendingTransaction) {
+        self.dirty_scopes
+            .extend(previous.dirty_scopes.iter().cloned());
     }
 }
 
@@ -1686,6 +1693,48 @@ mod tests {
             .get(&WindowId::from("w1"))
             .unwrap();
         assert_eq!(participant.status(), TransactionParticipantStatus::Idle);
+    }
+
+    #[test]
+    fn superseded_chain_preserves_prior_layout_dirty_scope() {
+        let committed = snapshot(
+            Some("w0"),
+            &["w0"],
+            vec![workspace("ws-0", true, true)],
+            vec![window("w0", "ws-0", true, WindowMode::Tiled)],
+        );
+        let desired = snapshot(
+            Some("w1"),
+            &["w1"],
+            vec![workspace("ws-1", true, true)],
+            vec![window("w1", "ws-1", true, WindowMode::Tiled)],
+        );
+        let replacement = snapshot(
+            Some("w1"),
+            &["w1"],
+            vec![workspace("ws-1", true, true)],
+            vec![window("w1", "ws-1", true, WindowMode::Fullscreen)],
+        );
+        let mut transactions = TransactionManager::default();
+        transactions.committed = Some(committed);
+
+        transactions.stage(desired);
+        transactions
+            .pending
+            .as_mut()
+            .unwrap()
+            .dirty_scopes
+            .insert(DirtyScope::LayoutSubtree {
+                workspace_id: WorkspaceId::from("ws-legacy"),
+            });
+
+        transactions.stage(replacement);
+
+        assert!(transactions.pending().unwrap().dirty_scopes.contains(
+            &DirtyScope::LayoutSubtree {
+                workspace_id: WorkspaceId::from("ws-legacy"),
+            }
+        ));
     }
 
     #[test]
