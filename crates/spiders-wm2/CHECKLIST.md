@@ -215,4 +215,6 @@ These are documented or expected features that are not fully implemented in the 
 - Runtime inspection is moving to an explicit desired/committed/presented split; geometry, window, workspace, and output payloads now expose presented state directly instead of inferring it ad hoc.
 - `dump-transaction` and `dump-layout-tree` now expose presented state alongside desired/committed views so transaction and layout diagnostics align with the same presentation model.
 - Runtime payload builders for geometry and transaction inspection are now factored into testable helpers, making presented-state diagnostics easier to verify as the model evolves.
+- Transaction participants now ignore stale/untracked ack+commit events more strictly, reset cleanly on reconfigure, and require all tracked participants to become ready before commit.
+- Timeout diagnostics now distinguish stalled vs partially-ready pending transactions and record participant readiness counts in transaction history/inspection payloads.
 - Scene application is still immediate after staging; smarter timeout policy and real subtree-scoped layout recomputation are the next transaction milestones.
