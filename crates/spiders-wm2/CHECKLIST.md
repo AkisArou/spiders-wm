@@ -201,4 +201,7 @@ These are documented or expected features that are not fully implemented in the 
 - Installed layout trees now carry runtime provenance (`BuiltIn` vs `JsRuntime`), and artifact inspection reports which runtime path produced the currently installed tree for each selected layout.
 - Runtime/backend provenance is now inspectable through `dump-runtime`, and output inspection payloads now describe render capability/dirty-state metadata instead of only identity fields.
 - Transaction inspection now includes recent commit history with ready-vs-timeout resolution, so runtime diagnostics can show not just the current pending transaction but how recent transactions actually settled.
+- Transaction diagnostics now include timing metadata (pending age/deadline and historical commit durations), making timeout behavior inspectable instead of only inferable.
+- Participant-level transaction state is now inspectable (waiting-for-ack vs waiting-for-commit vs ready), and timeout history records which window ids were still unresolved when a transaction had to settle anyway.
+- Transaction history now also records superseded pending transactions, so inspection can distinguish "timed out" from "replaced by a newer desired scene" during rapid state churn.
 - Scene application is still immediate after staging; smarter timeout policy and real subtree-scoped layout recomputation are the next transaction milestones.

@@ -16,7 +16,7 @@ pub fn focused_fullscreen_window(app: &AppState) -> Option<WindowId> {
     })
 }
 
-pub fn window_rect(
+pub fn desired_window_rect(
     app: &AppState,
     output_rect: Option<Rectangle<i32, Logical>>,
     window_id: &WindowId,
@@ -24,7 +24,20 @@ pub fn window_rect(
     let window = app.wm.windows.get(window_id)?;
     let tiled_rect = app
         .layout
-        .tiled_rect(window_id)
+        .desired_tiled_rect(window_id)
+        .unwrap_or_else(default_tiled_rect);
+    window.rect(output_rect, tiled_rect)
+}
+
+pub fn committed_window_rect(
+    app: &AppState,
+    output_rect: Option<Rectangle<i32, Logical>>,
+    window_id: &WindowId,
+) -> Option<Rectangle<i32, Logical>> {
+    let window = app.wm.windows.get(window_id)?;
+    let tiled_rect = app
+        .layout
+        .committed_tiled_rect(window_id)
         .unwrap_or_else(default_tiled_rect);
     window.rect(output_rect, tiled_rect)
 }
@@ -51,7 +64,7 @@ mod tests {
 
     use smithay::utils::Rectangle;
 
-    use super::{focused_fullscreen_window, window_is_visible, window_rect};
+    use super::{committed_window_rect, focused_fullscreen_window, window_is_visible};
     use crate::{
         app::AppState,
         model::{ManagedWindowState, WindowId, WindowMode, WorkspaceId},
@@ -111,7 +124,7 @@ mod tests {
             },
         );
 
-        assert_eq!(window_rect(&app, None, &window_id), Some(rect));
+        assert_eq!(committed_window_rect(&app, None, &window_id), Some(rect));
     }
 
     #[test]
@@ -126,7 +139,7 @@ mod tests {
         );
 
         assert_eq!(
-            window_rect(&app, None, &window_id),
+            committed_window_rect(&app, None, &window_id),
             Some(Rectangle::new((0, 0).into(), (960, 640).into()))
         );
     }

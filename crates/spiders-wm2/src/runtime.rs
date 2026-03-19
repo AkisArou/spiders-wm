@@ -5,6 +5,7 @@ use crate::{
     config::{built_in_default_config, ConfigSource},
     layout_runtime::RuntimeLayoutService,
     model::{PointerInteraction, WorkspaceId},
+    placement,
     render::RenderPlan,
     transactions::TransactionManager,
 };
@@ -173,9 +174,18 @@ impl SpidersWm2 {
                 payload: Some(json!({
                     "pending": self.runtime.transactions.pending().map(|pending| json!({
                         "id": pending.id,
+                        "age_ms": pending.started_at.elapsed().as_millis(),
+                        "deadline_in_ms": pending.deadline.saturating_duration_since(std::time::Instant::now()).as_millis(),
                         "affected_windows": pending.affected_windows,
                         "affected_workspaces": pending.affected_workspaces,
                         "affected_outputs": pending.affected_outputs,
+                        "participants": pending.participants.iter().map(|(window_id, participant)| json!({
+                            "window_id": window_id,
+                            "status": format!("{:?}", participant.status()),
+                            "configure_serial": participant.configure_serial.map(|serial| format!("{serial:?}")),
+                            "acked": participant.acked,
+                            "committed": participant.committed,
+                        })).collect::<Vec<_>>(),
                     })),
                     "committed": self.runtime.transactions.committed().map(|snapshot| json!({
                         "focused_window_id": snapshot.focused_window_id,
@@ -186,6 +196,8 @@ impl SpidersWm2 {
                     "history": self.runtime.transactions.history().iter().map(|entry| json!({
                         "id": entry.id,
                         "reason": format!("{:?}", entry.reason),
+                        "duration_ms": entry.duration_ms,
+                        "unresolved_window_ids": entry.unresolved_window_ids,
                         "affected_window_count": entry.affected_window_count,
                         "affected_workspace_count": entry.affected_workspace_count,
                         "affected_output_count": entry.affected_output_count,
@@ -214,22 +226,26 @@ impl SpidersWm2 {
                 ok: true,
                 message: "dumped geometry".into(),
                 payload: Some(json!({
-                    "desired": self.app.layout.desired_tiled_window_rects.iter().map(|(window_id, rect)| {
-                        json!({
-                            "window_id": window_id,
-                            "x": rect.loc.x,
-                            "y": rect.loc.y,
-                            "width": rect.size.w,
-                            "height": rect.size.h,
+                    "desired": self.app.wm.windows.keys().filter_map(|window_id| {
+                        placement::desired_window_rect(&self.app, None, window_id).map(|rect| {
+                            json!({
+                                "window_id": window_id,
+                                "x": rect.loc.x,
+                                "y": rect.loc.y,
+                                "width": rect.size.w,
+                                "height": rect.size.h,
+                            })
                         })
                     }).collect::<Vec<_>>(),
-                    "committed": self.app.layout.committed_tiled_window_rects.iter().map(|(window_id, rect)| {
-                        json!({
-                            "window_id": window_id,
-                            "x": rect.loc.x,
-                            "y": rect.loc.y,
-                            "width": rect.size.w,
-                            "height": rect.size.h,
+                    "committed": self.app.wm.windows.keys().filter_map(|window_id| {
+                        placement::committed_window_rect(&self.app, None, window_id).map(|rect| {
+                            json!({
+                                "window_id": window_id,
+                                "x": rect.loc.x,
+                                "y": rect.loc.y,
+                                "width": rect.size.w,
+                                "height": rect.size.h,
+                            })
                         })
                     }).collect::<Vec<_>>(),
                 })),

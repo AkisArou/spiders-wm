@@ -94,9 +94,10 @@ impl SpidersWm2 {
             };
 
             let should_show = placement::window_is_visible(&self.app, &visible, &window_id);
-            let location = placement::window_rect(&self.app, self.output_rect(), &window_id)
-                .map(|rect| rect.loc)
-                .unwrap_or_else(|| (0, 0).into());
+            let location =
+                placement::desired_window_rect(&self.app, self.output_rect(), &window_id)
+                    .map(|rect| rect.loc)
+                    .unwrap_or_else(|| (0, 0).into());
 
             if should_show {
                 if self
@@ -166,7 +167,7 @@ impl SpidersWm2 {
             return;
         };
 
-        let rect = placement::window_rect(&self.app, self.output_rect(), &window_id);
+        let rect = placement::desired_window_rect(&self.app, self.output_rect(), &window_id);
 
         if let Some(rect) = rect {
             toplevel.with_pending_state(|state| {

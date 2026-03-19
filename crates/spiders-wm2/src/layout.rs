@@ -79,11 +79,10 @@ impl LayoutState {
         Some(summary)
     }
 
-    pub fn tiled_rect(&self, window_id: &WindowId) -> Option<Rectangle<i32, Logical>> {
+    pub fn desired_tiled_rect(&self, window_id: &WindowId) -> Option<Rectangle<i32, Logical>> {
         self.desired_tiled_window_rects.get(window_id).copied()
     }
 
-    #[cfg(test)]
     pub fn committed_tiled_rect(&self, window_id: &WindowId) -> Option<Rectangle<i32, Logical>> {
         self.committed_tiled_window_rects.get(window_id).copied()
     }
@@ -496,15 +495,27 @@ mod tests {
         );
 
         assert_eq!(
-            layout.tiled_rect(&WindowId::from("w1")).unwrap().size.w,
+            layout
+                .desired_tiled_rect(&WindowId::from("w1"))
+                .unwrap()
+                .size
+                .w,
             600
         );
         assert_eq!(
-            layout.tiled_rect(&WindowId::from("w2")).unwrap().size.w,
+            layout
+                .desired_tiled_rect(&WindowId::from("w2"))
+                .unwrap()
+                .size
+                .w,
             600
         );
         assert_eq!(
-            layout.tiled_rect(&WindowId::from("w1")).unwrap().size.h,
+            layout
+                .desired_tiled_rect(&WindowId::from("w1"))
+                .unwrap()
+                .size
+                .h,
             700
         );
         assert_eq!(
@@ -562,15 +573,27 @@ mod tests {
         );
 
         assert_eq!(
-            layout.tiled_rect(&WindowId::from("w1")).unwrap().size.w,
+            layout
+                .desired_tiled_rect(&WindowId::from("w1"))
+                .unwrap()
+                .size
+                .w,
             1200
         );
         assert_eq!(
-            layout.tiled_rect(&WindowId::from("w1")).unwrap().size.h,
+            layout
+                .desired_tiled_rect(&WindowId::from("w1"))
+                .unwrap()
+                .size
+                .h,
             350
         );
         assert_eq!(
-            layout.tiled_rect(&WindowId::from("w2")).unwrap().size.h,
+            layout
+                .desired_tiled_rect(&WindowId::from("w2"))
+                .unwrap()
+                .size
+                .h,
             350
         );
     }
@@ -604,11 +627,19 @@ mod tests {
         );
 
         assert_eq!(
-            layout.tiled_rect(&WindowId::from("w1")).unwrap().size.w,
+            layout
+                .desired_tiled_rect(&WindowId::from("w1"))
+                .unwrap()
+                .size
+                .w,
             600
         );
         assert_eq!(
-            layout.tiled_rect(&WindowId::from("w1")).unwrap().size.h,
+            layout
+                .desired_tiled_rect(&WindowId::from("w1"))
+                .unwrap()
+                .size
+                .h,
             700
         );
     }
@@ -670,11 +701,19 @@ mod tests {
         );
 
         assert_eq!(
-            layout.tiled_rect(&WindowId::from("w1")).unwrap().size.h,
+            layout
+                .desired_tiled_rect(&WindowId::from("w1"))
+                .unwrap()
+                .size
+                .h,
             200
         );
         assert_eq!(
-            layout.tiled_rect(&WindowId::from("w2")).unwrap().size.h,
+            layout
+                .desired_tiled_rect(&WindowId::from("w2"))
+                .unwrap()
+                .size
+                .h,
             500
         );
     }

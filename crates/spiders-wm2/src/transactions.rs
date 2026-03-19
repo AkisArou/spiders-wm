@@ -26,6 +26,7 @@ pub struct PendingTransaction {
     pub affected_workspaces: HashSet<WorkspaceId>,
     pub affected_outputs: HashSet<OutputId>,
     pub participants: std::collections::HashMap<WindowId, TransactionParticipant>,
+    pub started_at: Instant,
     pub deadline: Instant,
     pub dirty_scopes: HashSet<DirtyScope>,
 }
@@ -38,15 +39,26 @@ pub struct TransactionParticipant {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransactionParticipantStatus {
+    Idle,
+    WaitingForAck,
+    WaitingForCommit,
+    Ready,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TransactionCommitReason {
     Ready,
     TimedOut,
+    Superseded,
 }
 
 #[derive(Debug, Clone)]
 pub struct TransactionHistoryEntry {
     pub id: u64,
     pub reason: TransactionCommitReason,
+    pub duration_ms: u128,
+    pub unresolved_window_ids: Vec<WindowId>,
     pub affected_window_count: usize,
     pub affected_workspace_count: usize,
     pub affected_output_count: usize,
@@ -79,6 +91,10 @@ pub enum DirtyScope {
 impl TransactionManager {
     pub fn stage(&mut self, desired: StateSnapshot) {
         let transaction_id = self.allocate_transaction_id();
+
+        if let Some(pending) = self.pending.take() {
+            self.record_history_entry(pending, TransactionCommitReason::Superseded);
+        }
 
         let Some(committed) = self.committed.as_ref() else {
             self.pending = Some(PendingTransaction::full(transaction_id, desired));
@@ -175,23 +191,34 @@ impl TransactionManager {
 
     pub fn commit_pending(&mut self, reason: TransactionCommitReason) {
         if let Some(pending) = self.pending.take() {
-            self.history.push_front(TransactionHistoryEntry {
-                id: pending.id,
-                reason,
-                affected_window_count: pending.affected_windows.len(),
-                affected_workspace_count: pending.affected_workspaces.len(),
-                affected_output_count: pending.affected_outputs.len(),
-            });
-            while self.history.len() > 16 {
-                self.history.pop_back();
-            }
-            self.committed = Some(pending.desired);
+            let desired = pending.desired.clone();
+            self.record_history_entry(pending, reason);
+            self.committed = Some(desired);
         }
     }
 
     fn allocate_transaction_id(&mut self) -> u64 {
         self.next_transaction_id += 1;
         self.next_transaction_id
+    }
+
+    fn record_history_entry(
+        &mut self,
+        pending: PendingTransaction,
+        reason: TransactionCommitReason,
+    ) {
+        self.history.push_front(TransactionHistoryEntry {
+            id: pending.id,
+            reason,
+            duration_ms: pending.started_at.elapsed().as_millis(),
+            unresolved_window_ids: pending.unresolved_window_ids(),
+            affected_window_count: pending.affected_windows.len(),
+            affected_workspace_count: pending.affected_workspaces.len(),
+            affected_output_count: pending.affected_outputs.len(),
+        });
+        while self.history.len() > 16 {
+            self.history.pop_back();
+        }
     }
 }
 
@@ -206,6 +233,7 @@ impl PendingTransaction {
         Self {
             id,
             participants: participants_for_windows(&affected_windows),
+            started_at: Instant::now(),
             affected_windows,
             affected_workspaces: desired
                 .workspaces
@@ -323,6 +351,7 @@ impl PendingTransaction {
             affected_windows,
             affected_workspaces,
             affected_outputs,
+            started_at: Instant::now(),
             deadline: Instant::now() + transaction_timeout(),
             dirty_scopes,
         }
@@ -347,11 +376,33 @@ impl PendingTransaction {
         plan.transaction_id = Some(self.id);
         plan
     }
+
+    fn unresolved_window_ids(&self) -> Vec<WindowId> {
+        self.participants
+            .iter()
+            .filter_map(|(window_id, participant)| {
+                (!matches!(
+                    participant.status(),
+                    TransactionParticipantStatus::Idle | TransactionParticipantStatus::Ready
+                ))
+                .then(|| window_id.clone())
+            })
+            .collect()
+    }
 }
 
 impl TransactionParticipant {
     fn is_ready(&self) -> bool {
         self.configure_serial.is_none() || (self.acked && self.committed)
+    }
+
+    pub(crate) fn status(&self) -> TransactionParticipantStatus {
+        match (self.configure_serial.is_some(), self.acked, self.committed) {
+            (false, _, _) => TransactionParticipantStatus::Idle,
+            (true, false, _) => TransactionParticipantStatus::WaitingForAck,
+            (true, true, false) => TransactionParticipantStatus::WaitingForCommit,
+            (true, true, true) => TransactionParticipantStatus::Ready,
+        }
     }
 }
 
@@ -769,6 +820,7 @@ mod tests {
             transactions.history().front().unwrap().reason,
             TransactionCommitReason::Ready
         );
+        assert_eq!(transactions.history().front().unwrap().duration_ms, 0);
     }
 
     #[test]
@@ -792,6 +844,63 @@ mod tests {
         assert_eq!(
             transactions.pending_resolution(Instant::now()),
             Some(TransactionCommitReason::TimedOut)
+        );
+    }
+
+    #[test]
+    fn timeout_commit_records_unresolved_window_ids() {
+        let desired = snapshot(
+            Some("w1"),
+            &["w1"],
+            vec![workspace("ws-1", true, true)],
+            vec![window("w1", "ws-1", true, WindowMode::Tiled)],
+        );
+        let mut transactions = TransactionManager::default();
+
+        transactions.stage(desired);
+        let serial = SERIAL_COUNTER.next_serial();
+        transactions.register_configure(&WindowId::from("w1"), serial);
+        transactions.commit_pending(TransactionCommitReason::TimedOut);
+
+        assert_eq!(
+            transactions
+                .history()
+                .front()
+                .unwrap()
+                .unresolved_window_ids,
+            vec![WindowId::from("w1")]
+        );
+    }
+
+    #[test]
+    fn stage_replacement_records_superseded_history_entry() {
+        let committed = snapshot(
+            Some("w1"),
+            &["w1"],
+            vec![workspace("ws-1", true, true)],
+            vec![window("w1", "ws-1", true, WindowMode::Tiled)],
+        );
+        let desired = snapshot(
+            Some("w2"),
+            &["w2"],
+            vec![workspace("ws-2", true, true)],
+            vec![window("w2", "ws-2", true, WindowMode::Tiled)],
+        );
+        let replacement = snapshot(
+            Some("w3"),
+            &["w3"],
+            vec![workspace("ws-3", true, true)],
+            vec![window("w3", "ws-3", true, WindowMode::Tiled)],
+        );
+
+        let mut transactions = TransactionManager::default();
+        transactions.committed = Some(committed);
+        transactions.stage(desired);
+        transactions.stage(replacement);
+
+        assert_eq!(
+            transactions.history().front().unwrap().reason,
+            TransactionCommitReason::Superseded
         );
     }
 
