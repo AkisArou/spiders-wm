@@ -25,6 +25,7 @@ pub struct PendingTransaction {
     pub desired: StateSnapshot,
     pub coalescing_root_transaction_id: u64,
     pub coalescing_depth: usize,
+    pub timeout_extensions: usize,
     pub affected_windows: HashSet<WindowId>,
     pub affected_workspaces: HashSet<WorkspaceId>,
     pub affected_outputs: HashSet<OutputId>,
@@ -65,6 +66,8 @@ pub struct TransactionHistoryEntry {
     pub coalescing_depth: usize,
     pub replacement_transaction_id: Option<u64>,
     pub unresolved_window_ids: Vec<WindowId>,
+    pub timeout_progress: Option<TimeoutProgress>,
+    pub timeout_extensions: usize,
     pub ready_participant_count: usize,
     pub waiting_for_ack_count: usize,
     pub waiting_for_commit_count: usize,
@@ -291,6 +294,20 @@ impl TransactionManager {
             .and_then(|pending| pending.resolution(now))
     }
 
+    pub fn extend_partial_timeout(&mut self, now: Instant) -> bool {
+        let Some(pending) = self.pending.as_mut() else {
+            return false;
+        };
+
+        if now < pending.deadline || pending.timeout_progress() != TimeoutProgress::Partial {
+            return false;
+        }
+
+        pending.deadline = now + transaction_timeout_extension();
+        pending.timeout_extensions += 1;
+        true
+    }
+
     pub fn commit_pending(&mut self, reason: TransactionCommitReason) {
         if let Some(pending) = self.pending.take() {
             let desired = pending.desired.clone();
@@ -322,6 +339,9 @@ impl TransactionManager {
             coalescing_depth: pending.coalescing_depth,
             replacement_transaction_id,
             unresolved_window_ids: pending.unresolved_window_ids(),
+            timeout_progress: (reason == TransactionCommitReason::TimedOut)
+                .then(|| pending.timeout_progress()),
+            timeout_extensions: pending.timeout_extensions,
             ready_participant_count: pending.participant_progress().ready,
             waiting_for_ack_count: pending.participant_progress().waiting_for_ack,
             waiting_for_commit_count: pending.participant_progress().waiting_for_commit,
@@ -352,6 +372,7 @@ impl PendingTransaction {
             id,
             coalescing_root_transaction_id,
             coalescing_depth,
+            timeout_extensions: 0,
             participants: participants_for_windows(&affected_windows),
             started_at: Instant::now(),
             affected_windows,
@@ -475,6 +496,7 @@ impl PendingTransaction {
             id,
             coalescing_root_transaction_id,
             coalescing_depth,
+            timeout_extensions: 0,
             participants: participants_for_windows(&affected_windows),
             desired,
             affected_windows,
@@ -603,6 +625,10 @@ fn participants_for_windows(
 
 fn transaction_timeout() -> Duration {
     Duration::from_millis(150)
+}
+
+fn transaction_timeout_extension() -> Duration {
+    Duration::from_millis(75)
 }
 
 fn dirty_scopes_for_diff(
@@ -1152,6 +1178,62 @@ mod tests {
     }
 
     #[test]
+    fn partial_timeout_can_be_extended_before_commit() {
+        let desired = snapshot(
+            Some("w1"),
+            &["w1", "w2"],
+            vec![workspace("ws-1", true, true)],
+            vec![
+                window("w1", "ws-1", true, WindowMode::Tiled),
+                window("w2", "ws-1", false, WindowMode::Tiled),
+            ],
+        );
+        let mut transactions = TransactionManager::default();
+
+        transactions.stage(desired);
+        let serial_1 = SERIAL_COUNTER.next_serial();
+        let serial_2 = SERIAL_COUNTER.next_serial();
+        transactions.register_configure(&WindowId::from("w1"), serial_1);
+        transactions.register_configure(&WindowId::from("w2"), serial_2);
+        transactions.mark_configure_acked(&WindowId::from("w1"), serial_1);
+        transactions.mark_window_committed(&WindowId::from("w1"));
+
+        let now = Instant::now();
+        if let Some(pending) = transactions.pending.as_mut() {
+            pending.deadline = now - Duration::from_millis(1);
+        }
+
+        assert!(transactions.extend_partial_timeout(now));
+        assert_eq!(transactions.pending().unwrap().timeout_extensions, 1);
+        assert_eq!(transactions.pending_resolution(now), None);
+    }
+
+    #[test]
+    fn stalled_timeout_does_not_extend() {
+        let desired = snapshot(
+            Some("w1"),
+            &["w1"],
+            vec![workspace("ws-1", true, true)],
+            vec![window("w1", "ws-1", true, WindowMode::Tiled)],
+        );
+        let mut transactions = TransactionManager::default();
+
+        transactions.stage(desired);
+        transactions.register_configure(&WindowId::from("w1"), SERIAL_COUNTER.next_serial());
+
+        let now = Instant::now();
+        if let Some(pending) = transactions.pending.as_mut() {
+            pending.deadline = now - Duration::from_millis(1);
+        }
+
+        assert!(!transactions.extend_partial_timeout(now));
+        assert_eq!(
+            transactions.pending_resolution(now),
+            Some(TransactionCommitReason::TimedOut)
+        );
+    }
+
+    #[test]
     fn commit_pending_records_ready_history_entry() {
         let desired = snapshot(
             Some("w1"),
@@ -1282,6 +1364,73 @@ mod tests {
                 .unwrap()
                 .waiting_for_commit_count,
             0
+        );
+        assert_eq!(
+            transactions.history().front().unwrap().timeout_progress,
+            Some(TimeoutProgress::Stalled)
+        );
+        assert_eq!(
+            transactions.history().front().unwrap().timeout_extensions,
+            0
+        );
+    }
+
+    #[test]
+    fn partial_timeout_history_records_progress_and_extensions() {
+        let desired = snapshot(
+            Some("w1"),
+            &["w1", "w2"],
+            vec![workspace("ws-1", true, true)],
+            vec![
+                window("w1", "ws-1", true, WindowMode::Tiled),
+                window("w2", "ws-1", false, WindowMode::Tiled),
+            ],
+        );
+        let mut transactions = TransactionManager::default();
+
+        transactions.stage(desired);
+        let serial_1 = SERIAL_COUNTER.next_serial();
+        let serial_2 = SERIAL_COUNTER.next_serial();
+        transactions.register_configure(&WindowId::from("w1"), serial_1);
+        transactions.register_configure(&WindowId::from("w2"), serial_2);
+        transactions.mark_configure_acked(&WindowId::from("w1"), serial_1);
+        transactions.mark_window_committed(&WindowId::from("w1"));
+
+        let now = Instant::now();
+        if let Some(pending) = transactions.pending.as_mut() {
+            pending.deadline = now - Duration::from_millis(1);
+        }
+        assert!(transactions.extend_partial_timeout(now));
+
+        let later = Instant::now();
+        if let Some(pending) = transactions.pending.as_mut() {
+            pending.deadline = later - Duration::from_millis(1);
+        }
+        transactions.commit_pending(TransactionCommitReason::TimedOut);
+
+        assert_eq!(
+            transactions.history().front().unwrap().timeout_progress,
+            Some(TimeoutProgress::Partial)
+        );
+        assert_eq!(
+            transactions.history().front().unwrap().timeout_extensions,
+            1
+        );
+        assert_eq!(
+            transactions
+                .history()
+                .front()
+                .unwrap()
+                .ready_participant_count,
+            1
+        );
+        assert_eq!(
+            transactions
+                .history()
+                .front()
+                .unwrap()
+                .waiting_for_ack_count,
+            1
         );
     }
 

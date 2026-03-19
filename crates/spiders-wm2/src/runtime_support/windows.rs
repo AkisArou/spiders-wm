@@ -65,6 +65,14 @@ impl SpidersWm2 {
     pub fn refresh_active_workspace(&mut self) {
         self.refresh_layout_artifacts();
         self.sync_desired_transaction();
+        self.maybe_commit_pending_transaction();
+        if self
+            .runtime
+            .transactions
+            .extend_partial_timeout(std::time::Instant::now())
+        {
+            return;
+        }
 
         let committed_snapshot = self.runtime.transactions.committed().cloned();
         let visible = committed_snapshot
