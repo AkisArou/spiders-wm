@@ -30,6 +30,17 @@ pub fn desired_window_rect(
     window.rect(output_rect, tiled_rect)
 }
 
+pub fn presented_window_rect(
+    app: &AppState,
+    committed_snapshot: Option<&StateSnapshot>,
+    output_rect: Option<Rectangle<i32, Logical>>,
+    window_id: &WindowId,
+) -> Option<Rectangle<i32, Logical>> {
+    committed_snapshot
+        .and_then(|snapshot| committed_window_rect(app, Some(snapshot), output_rect, window_id))
+        .or_else(|| desired_window_rect(app, output_rect, window_id))
+}
+
 pub fn committed_window_rect(
     app: &AppState,
     committed_snapshot: Option<&StateSnapshot>,
@@ -109,7 +120,7 @@ mod tests {
 
     use super::{
         committed_window_rect, focused_fullscreen_window, focused_fullscreen_window_in_snapshot,
-        window_is_visible,
+        presented_window_rect, window_is_visible,
     };
     use crate::{
         app::AppState,
@@ -337,6 +348,70 @@ mod tests {
                 &window_id,
             ),
             Some(committed_rect)
+        );
+    }
+
+    #[test]
+    fn presented_window_rect_prefers_committed_geometry_while_pending() {
+        let mut app = AppState::default();
+        let workspace = WorkspaceId::from("1");
+        let window_id = WindowId::from("3");
+        let desired_rect = Rectangle::new((300, 200).into(), (800, 600).into());
+        let committed_rect = Rectangle::new((20, 10).into(), (500, 400).into());
+
+        app.wm.windows.insert(
+            window_id.clone(),
+            ManagedWindowState::tiled(window_id.clone(), workspace.clone(), None),
+        );
+        app.layout
+            .desired_tiled_window_rects
+            .insert(window_id.clone(), desired_rect);
+        app.layout
+            .committed_tiled_window_rects
+            .insert(window_id.clone(), committed_rect);
+
+        let committed = committed_snapshot(vec![WindowSnapshot {
+            id: window_id.clone(),
+            shell: ShellKind::XdgToplevel,
+            app_id: None,
+            title: None,
+            class: None,
+            instance: None,
+            role: None,
+            window_type: None,
+            mapped: true,
+            mode: SharedWindowMode::Tiled,
+            focused: true,
+            urgent: false,
+            output_id: None,
+            workspace_id: Some(workspace),
+            workspaces: vec![],
+        }]);
+
+        assert_eq!(
+            presented_window_rect(&app, Some(&committed), None, &window_id),
+            Some(committed_rect)
+        );
+    }
+
+    #[test]
+    fn presented_window_rect_falls_back_to_desired_without_committed_scene() {
+        let mut app = AppState::default();
+        let workspace = WorkspaceId::from("1");
+        let window_id = WindowId::from("4");
+        let desired_rect = Rectangle::new((300, 200).into(), (800, 600).into());
+
+        app.wm.windows.insert(
+            window_id.clone(),
+            ManagedWindowState::tiled(window_id.clone(), workspace, None),
+        );
+        app.layout
+            .desired_tiled_window_rects
+            .insert(window_id.clone(), desired_rect);
+
+        assert_eq!(
+            presented_window_rect(&app, None, None, &window_id),
+            Some(desired_rect)
         );
     }
 

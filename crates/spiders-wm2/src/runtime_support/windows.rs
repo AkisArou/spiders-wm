@@ -111,10 +111,15 @@ impl SpidersWm2 {
                 &visible,
                 &window_id,
             );
-            let location =
-                placement::desired_window_rect(&self.app, self.output_rect(), &window_id)
-                    .map(|rect| rect.loc)
-                    .unwrap_or_else(|| (0, 0).into());
+            let presented_rect = placement::presented_window_rect(
+                &self.app,
+                committed_snapshot.as_ref(),
+                self.output_rect(),
+                &window_id,
+            );
+            let location = presented_rect
+                .map(|rect| rect.loc)
+                .unwrap_or_else(|| (0, 0).into());
 
             if should_show {
                 if self
