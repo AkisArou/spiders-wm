@@ -509,9 +509,7 @@ impl PendingTransaction {
                 .cloned(),
         );
 
-        if focused_fullscreen_window(committed) != focused_fullscreen_window(&desired)
-            || !affected_outputs.is_empty()
-        {
+        if focused_fullscreen_window(committed) != focused_fullscreen_window(&desired) {
             affected_windows.extend(committed.visible_window_ids.iter().cloned());
             affected_windows.extend(desired.visible_window_ids.iter().cloned());
         }
@@ -1021,6 +1019,32 @@ mod tests {
 
         assert!(pending.affected_windows.contains(&WindowId::from("w1")));
         assert!(pending.affected_windows.contains(&WindowId::from("w2")));
+    }
+
+    #[test]
+    fn diff_does_not_expand_all_visible_windows_for_output_only_change() {
+        let committed = snapshot(
+            Some("w1"),
+            &["w1", "w2"],
+            vec![
+                workspace("ws-1", true, true),
+                workspace("ws-2", false, false),
+            ],
+            vec![
+                window("w1", "ws-1", true, WindowMode::Tiled),
+                window("w2", "ws-1", false, WindowMode::Tiled),
+                window("w3", "ws-2", false, WindowMode::Tiled),
+            ],
+        );
+        let mut desired = committed.clone();
+        desired.outputs[0].logical_width = 1920;
+
+        let pending = PendingTransaction::from_diff(1, &committed, desired, 1, 0, 1);
+
+        assert!(pending.affected_outputs.contains(&OutputId::from("out-1")));
+        assert!(!pending.affected_windows.contains(&WindowId::from("w1")));
+        assert!(!pending.affected_windows.contains(&WindowId::from("w2")));
+        assert!(!pending.affected_windows.contains(&WindowId::from("w3")));
     }
 
     #[test]

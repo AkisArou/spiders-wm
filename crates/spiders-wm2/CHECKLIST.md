@@ -221,4 +221,5 @@ These are documented or expected features that are not fully implemented in the 
 - Timeout grace now has a coalescing-aware cap, so replacement storms preserve one short extension budget instead of extending indefinitely across superseded transactions.
 - Superseded replacements now preserve only fully-ready participant progress for windows that survive into the new transaction, avoiding needless re-waits without carrying unsafe partial state forward.
 - Superseded replacements now also retain prior dirty layout scopes, so coalesced update storms do not throw away already-discovered workspace recompute needs.
+- Output-only diffs no longer automatically expand all visible windows unless fullscreen visibility actually changes, trimming one overly broad affected-window path.
 - Scene application is still immediate after staging; smarter timeout policy and real subtree-scoped layout recomputation are the next transaction milestones.
