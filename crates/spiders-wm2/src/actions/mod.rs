@@ -12,7 +12,7 @@ pub use focus::{
 pub use fullscreen::toggle_fullscreen_focused_window;
 pub use output::register_output;
 pub use window::{
-    place_new_window_in_active_workspace, register_window, remove_window,
+    begin_window_removal, place_new_window_in_active_workspace, register_window, remove_window,
     swap_focused_window_with_next, swap_focused_window_with_previous, update_window_metadata,
 };
 pub use workspace::{

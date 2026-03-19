@@ -205,4 +205,8 @@ These are documented or expected features that are not fully implemented in the 
 - Participant-level transaction state is now inspectable (waiting-for-ack vs waiting-for-commit vs ready), and timeout history records which window ids were still unresolved when a transaction had to settle anyway.
 - Transaction history now also records superseded pending transactions, so inspection can distinguish "timed out" from "replaced by a newer desired scene" during rapid state churn.
 - Committed geometry inspection now reads committed transaction snapshot windows/modes instead of only live WM state, so `dump-geometry` can still report the last committed scene during pending closes/mode flips.
+- Workspace/window inspection now exposes desired vs committed views, and window unmap now defers final binding/state removal until the pending transaction commits.
+- Dirty layout subtree planning now derives workspace roots from affected windows in both committed and desired snapshots instead of only explicit workspace diffs.
+- Focus handoff now prefers the last committed focused surface while a transaction is pending, reducing focus/raise churn before the new scene commits.
+- Pending refresh now also prefers committed visible-window state for show/hide decisions, and output inspection exposes desired, committed, and live runtime views side by side.
 - Scene application is still immediate after staging; smarter timeout policy and real subtree-scoped layout recomputation are the next transaction milestones.

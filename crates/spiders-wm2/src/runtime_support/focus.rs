@@ -23,6 +23,29 @@ impl SpidersWm2 {
     }
 
     pub fn focus_window_surface(&mut self, surface: Option<WlSurface>, serial: Serial) {
+        if let Some(committed_surface) = self.committed_focus_surface() {
+            if surface
+                .as_ref()
+                .is_none_or(|target| target.id() != committed_surface.id())
+            {
+                self.apply_focus_surface(Some(committed_surface), serial);
+                return;
+            }
+        }
+
+        self.apply_focus_surface(surface, serial);
+    }
+
+    fn committed_focus_surface(&self) -> Option<WlSurface> {
+        self.runtime
+            .transactions
+            .pending()
+            .and(self.runtime.transactions.committed())
+            .and_then(|snapshot| snapshot.focused_window_id.as_ref())
+            .and_then(|window_id| self.app.bindings.surface_for_window(window_id))
+    }
+
+    fn apply_focus_surface(&mut self, surface: Option<WlSurface>, serial: Serial) {
         let window_to_raise = surface
             .as_ref()
             .and_then(|target_surface| {

@@ -12,6 +12,7 @@ use crate::{
 
 use serde_json::json;
 use spiders_config::model::LayoutConfigError;
+use spiders_shared::wm::StateSnapshot;
 use std::{
     ffi::OsString,
     io::{Read, Write},
@@ -73,6 +74,13 @@ pub struct SmithayState {
 }
 
 impl SpidersWm2 {
+    fn desired_snapshot(&self) -> StateSnapshot {
+        self.app.wm.snapshot(
+            &self.app.topology.outputs,
+            self.app.config_runtime.current(),
+        )
+    }
+
     pub fn new(event_loop: &mut EventLoop<Self>, display: Display<Self>) -> Self {
         let runtime = RuntimeState::new(event_loop, display);
         let mut app = AppState::default();
@@ -321,67 +329,66 @@ impl SpidersWm2 {
                     "window_count": self.app.wm.windows.len(),
                 })),
             },
-            RuntimeCommand::ListOutputs => CommandResult {
-                ok: true,
-                message: "listed outputs".into(),
-                payload: Some(json!({
-                    "backend": "winit",
-                    "focused_output": self.app.wm.focused_output,
-                    "pending_transaction": self.runtime.transactions.pending().map(|pending| pending.id),
-                    "outputs": self.app.topology.outputs.values().map(|output| {
-                        json!({
-                            "id": output.id,
-                            "name": output.name,
-                            "enabled": output.enabled,
-                            "current_workspace": output.current_workspace,
-                            "logical_size": output.logical_size,
-                            "dirty": self.runtime.render_plan.should_render_output(&output.id),
-                            "capabilities": {
-                                "renderable": output.enabled,
-                                "single_window_backend": true,
-                                "transactional_damage_tracking": true,
-                            },
-                        })
-                    }).collect::<Vec<_>>()
-                })),
-            },
-            RuntimeCommand::ListWorkspaces => CommandResult {
-                ok: true,
-                message: "listed workspaces".into(),
-                payload: Some(json!({
-                    "active_workspace": self.app.wm.active_workspace,
-                    "focused_window": self.app.wm.focused_window,
-                    "pending_transaction": self.runtime.transactions.pending().map(|pending| pending.id),
-                    "workspaces": self.app.wm.workspaces.values().map(|workspace| {
-                        json!({
-                            "id": workspace.id,
-                            "name": workspace.name,
-                            "output": workspace.output,
-                            "windows": workspace.windows,
-                        })
-                    }).collect::<Vec<_>>()
-                })),
-            },
-            RuntimeCommand::ListWindows => CommandResult {
-                ok: true,
-                message: "listed windows".into(),
-                payload: Some(json!({
-                    "focused_window": self.app.wm.focused_window,
-                    "pending_transaction": self.runtime.transactions.pending().map(|pending| pending.id),
-                    "windows": self.app.wm.windows.values().map(|window| {
-                        json!({
-                            "id": window.id,
-                            "workspace": window.workspace,
-                            "output": window.output,
-                            "mode": format!("{:?}", window.mode),
-                            "mapped": window.mapped,
-                            "title": window.title,
-                            "app_id": window.app_id,
-                            "focused": self.app.wm.focused_window.as_ref() == Some(&window.id),
-                        })
-                    }).collect::<Vec<_>>()
-                })),
-            },
+            RuntimeCommand::ListOutputs => {
+                let desired = self.desired_snapshot();
+                let committed = self.runtime.transactions.committed();
+                let pending_transaction = self
+                    .runtime
+                    .transactions
+                    .pending()
+                    .map(|pending| pending.id);
+
+                CommandResult {
+                    ok: true,
+                    message: "listed outputs".into(),
+                    payload: Some(list_outputs_payload(
+                        &self.app.topology.outputs,
+                        &desired,
+                        committed,
+                        pending_transaction,
+                        &self.runtime.render_plan,
+                    )),
+                }
+            }
+            RuntimeCommand::ListWorkspaces => {
+                let desired = self.desired_snapshot();
+                let committed = self.runtime.transactions.committed();
+                let pending_transaction = self
+                    .runtime
+                    .transactions
+                    .pending()
+                    .map(|pending| pending.id);
+
+                CommandResult {
+                    ok: true,
+                    message: "listed workspaces".into(),
+                    payload: Some(list_workspaces_payload(
+                        &desired,
+                        committed,
+                        pending_transaction,
+                    )),
+                }
+            }
+            RuntimeCommand::ListWindows => {
+                let desired = self.desired_snapshot();
+                let committed = self.runtime.transactions.committed();
+                let pending_transaction = self
+                    .runtime
+                    .transactions
+                    .pending()
+                    .map(|pending| pending.id);
+
+                CommandResult {
+                    ok: true,
+                    message: "listed windows".into(),
+                    payload: Some(list_windows_payload(
+                        &desired,
+                        committed,
+                        pending_transaction,
+                        self.runtime.transactions.deferred_removals(),
+                    )),
+                }
+            }
         }
     }
 
@@ -589,6 +596,310 @@ impl SmithayState {
             data_device_state,
             popups: PopupManager::default(),
             seat,
+        }
+    }
+}
+
+fn list_workspaces_payload(
+    desired: &StateSnapshot,
+    committed: Option<&StateSnapshot>,
+    pending_transaction: Option<u64>,
+) -> serde_json::Value {
+    json!({
+        "active_workspace": desired.current_workspace_id,
+        "focused_window": desired.focused_window_id,
+        "pending_transaction": pending_transaction,
+        "desired": desired.workspaces.iter().map(|workspace| {
+            json!({
+                "id": workspace.id,
+                "name": workspace.name,
+                "output_id": workspace.output_id,
+                "focused": workspace.focused,
+                "visible": workspace.visible,
+                "effective_layout": workspace.effective_layout.as_ref().map(|layout| layout.name.clone()),
+                "visible_windows": desired.windows_for_workspace(workspace).into_iter().map(|window| window.id).collect::<Vec<_>>(),
+            })
+        }).collect::<Vec<_>>(),
+        "committed": committed.map(|snapshot| snapshot.workspaces.iter().map(|workspace| {
+            json!({
+                "id": workspace.id,
+                "name": workspace.name,
+                "output_id": workspace.output_id,
+                "focused": workspace.focused,
+                "visible": workspace.visible,
+                "effective_layout": workspace.effective_layout.as_ref().map(|layout| layout.name.clone()),
+                "visible_windows": snapshot.windows_for_workspace(workspace).into_iter().map(|window| window.id).collect::<Vec<_>>(),
+            })
+        }).collect::<Vec<_>>())
+    })
+}
+
+fn list_outputs_payload(
+    outputs: &std::collections::HashMap<crate::model::OutputId, crate::model::OutputNode>,
+    desired: &StateSnapshot,
+    committed: Option<&StateSnapshot>,
+    pending_transaction: Option<u64>,
+    render_plan: &RenderPlan,
+) -> serde_json::Value {
+    json!({
+        "backend": "winit",
+        "focused_output": desired.current_output_id,
+        "current_workspace": desired.current_workspace_id,
+        "pending_transaction": pending_transaction,
+        "desired": desired.outputs.iter().map(|output| {
+            json!({
+                "id": output.id,
+                "name": output.name,
+                "enabled": output.enabled,
+                "current_workspace": output.current_workspace_id,
+                "logical_size": [output.logical_width, output.logical_height],
+                "dirty": render_plan.should_render_output(&output.id),
+                "capabilities": {
+                    "renderable": output.enabled,
+                    "single_window_backend": true,
+                    "transactional_damage_tracking": true,
+                },
+            })
+        }).collect::<Vec<_>>(),
+        "committed": committed.map(|snapshot| snapshot.outputs.iter().map(|output| {
+            json!({
+                "id": output.id,
+                "name": output.name,
+                "enabled": output.enabled,
+                "current_workspace": output.current_workspace_id,
+                "logical_size": [output.logical_width, output.logical_height],
+                "dirty": render_plan.should_render_output(&output.id),
+            })
+        }).collect::<Vec<_>>()),
+        "runtime_outputs": outputs.values().map(|output| {
+            json!({
+                "id": output.id,
+                "name": output.name,
+                "enabled": output.enabled,
+                "current_workspace": output.current_workspace,
+                "logical_size": output.logical_size,
+            })
+        }).collect::<Vec<_>>()
+    })
+}
+
+fn list_windows_payload(
+    desired: &StateSnapshot,
+    committed: Option<&StateSnapshot>,
+    pending_transaction: Option<u64>,
+    deferred_removals: &std::collections::HashSet<crate::model::WindowId>,
+) -> serde_json::Value {
+    json!({
+        "focused_window": desired.focused_window_id,
+        "pending_transaction": pending_transaction,
+        "deferred_removals": deferred_removals,
+        "desired": desired.windows.iter().map(|window| {
+            json!({
+                "id": window.id,
+                "workspace": window.workspace_id,
+                "output": window.output_id,
+                "mode": format!("{:?}", window.mode),
+                "mapped": window.mapped,
+                "title": window.title,
+                "app_id": window.app_id,
+                "focused": window.focused,
+            })
+        }).collect::<Vec<_>>(),
+        "committed": committed.map(|snapshot| snapshot.windows.iter().map(|window| {
+            json!({
+                "id": window.id,
+                "workspace": window.workspace_id,
+                "output": window.output_id,
+                "mode": format!("{:?}", window.mode),
+                "mapped": window.mapped,
+                "title": window.title,
+                "app_id": window.app_id,
+                "focused": window.focused,
+            })
+        }).collect::<Vec<_>>())
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashSet;
+
+    use serde_json::json;
+    use spiders_shared::{
+        ids::{OutputId, WindowId, WorkspaceId},
+        wm::{
+            LayoutRef, OutputSnapshot, OutputTransform, ShellKind, StateSnapshot, WindowMode,
+            WindowSnapshot, WorkspaceSnapshot,
+        },
+    };
+
+    use crate::{model::OutputNode, render::RenderPlan};
+
+    use super::{list_outputs_payload, list_windows_payload, list_workspaces_payload};
+
+    #[test]
+    fn list_windows_payload_separates_desired_and_committed_views() {
+        let desired = snapshot(
+            Some("w2"),
+            vec![window("w2", Some("ws-2"), true, false)],
+            vec![workspace("ws-2", true)],
+        );
+        let committed = snapshot(
+            Some("w1"),
+            vec![window("w1", Some("ws-1"), true, true)],
+            vec![workspace("ws-1", true)],
+        );
+
+        let payload = list_windows_payload(
+            &desired,
+            Some(&committed),
+            Some(7),
+            &HashSet::from([WindowId::from("w1")]),
+        );
+
+        assert_eq!(payload["pending_transaction"], json!(7));
+        assert_eq!(payload["desired"][0]["id"], json!(WindowId::from("w2")));
+        assert_eq!(payload["committed"][0]["id"], json!(WindowId::from("w1")));
+        assert_eq!(payload["deferred_removals"][0], json!(WindowId::from("w1")));
+    }
+
+    #[test]
+    fn list_workspaces_payload_separates_desired_and_committed_views() {
+        let desired = snapshot(
+            Some("w2"),
+            vec![window("w2", Some("ws-2"), true, false)],
+            vec![workspace("ws-2", true)],
+        );
+        let committed = snapshot(
+            Some("w1"),
+            vec![window("w1", Some("ws-1"), true, true)],
+            vec![workspace("ws-1", true)],
+        );
+
+        let payload = list_workspaces_payload(&desired, Some(&committed), Some(3));
+
+        assert_eq!(payload["pending_transaction"], json!(3));
+        assert_eq!(
+            payload["desired"][0]["id"],
+            json!(WorkspaceId::from("ws-2"))
+        );
+        assert_eq!(
+            payload["committed"][0]["id"],
+            json!(WorkspaceId::from("ws-1"))
+        );
+        assert_eq!(
+            payload["desired"][0]["visible_windows"][0],
+            json!(WindowId::from("w2"))
+        );
+        assert_eq!(
+            payload["committed"][0]["visible_windows"][0],
+            json!(WindowId::from("w1"))
+        );
+    }
+
+    #[test]
+    fn list_outputs_payload_separates_desired_and_committed_views() {
+        let desired = snapshot(
+            Some("w2"),
+            vec![window("w2", Some("ws-2"), true, false)],
+            vec![workspace("ws-2", true)],
+        );
+        let committed = snapshot(
+            Some("w1"),
+            vec![window("w1", Some("ws-1"), true, true)],
+            vec![workspace("ws-1", true)],
+        );
+        let outputs = std::collections::HashMap::from([(
+            OutputId::from("out-1"),
+            OutputNode {
+                id: OutputId::from("out-1"),
+                name: "winit".into(),
+                enabled: true,
+                current_workspace: Some(WorkspaceId::from("ws-live")),
+                logical_size: (1280, 720),
+            },
+        )]);
+        let mut render_plan = RenderPlan::default();
+        render_plan.mark_output_dirty(OutputId::from("out-1"));
+
+        let payload =
+            list_outputs_payload(&outputs, &desired, Some(&committed), Some(5), &render_plan);
+
+        assert_eq!(payload["pending_transaction"], json!(5));
+        assert_eq!(
+            payload["desired"][0]["current_workspace"],
+            json!(WorkspaceId::from("ws-2"))
+        );
+        assert_eq!(
+            payload["committed"][0]["current_workspace"],
+            json!(WorkspaceId::from("ws-1"))
+        );
+        assert_eq!(
+            payload["runtime_outputs"][0]["current_workspace"],
+            json!(WorkspaceId::from("ws-live"))
+        );
+        assert_eq!(payload["desired"][0]["dirty"], json!(true));
+    }
+
+    fn snapshot(
+        focused_window_id: Option<&str>,
+        windows: Vec<WindowSnapshot>,
+        workspaces: Vec<WorkspaceSnapshot>,
+    ) -> StateSnapshot {
+        StateSnapshot {
+            focused_window_id: focused_window_id.map(WindowId::from),
+            current_output_id: Some(OutputId::from("out-1")),
+            current_workspace_id: workspaces.first().map(|workspace| workspace.id.clone()),
+            outputs: vec![OutputSnapshot {
+                id: OutputId::from("out-1"),
+                name: "winit".into(),
+                logical_x: 0,
+                logical_y: 0,
+                logical_width: 1280,
+                logical_height: 720,
+                scale: 1,
+                transform: OutputTransform::Normal,
+                enabled: true,
+                current_workspace_id: workspaces.first().map(|workspace| workspace.id.clone()),
+            }],
+            workspaces,
+            windows,
+            visible_window_ids: vec![],
+            workspace_names: vec!["1".into(), "2".into()],
+        }
+    }
+
+    fn window(id: &str, workspace_id: Option<&str>, mapped: bool, focused: bool) -> WindowSnapshot {
+        WindowSnapshot {
+            id: WindowId::from(id),
+            shell: ShellKind::XdgToplevel,
+            app_id: None,
+            title: None,
+            class: None,
+            instance: None,
+            role: None,
+            window_type: None,
+            mapped,
+            mode: WindowMode::Tiled,
+            focused,
+            urgent: false,
+            output_id: Some(OutputId::from("out-1")),
+            workspace_id: workspace_id.map(WorkspaceId::from),
+            workspaces: vec![],
+        }
+    }
+
+    fn workspace(id: &str, focused: bool) -> WorkspaceSnapshot {
+        WorkspaceSnapshot {
+            id: WorkspaceId::from(id),
+            name: id.into(),
+            output_id: Some(OutputId::from("out-1")),
+            active_workspaces: vec![id.into()],
+            focused,
+            visible: true,
+            effective_layout: Some(LayoutRef {
+                name: "columns".into(),
+            }),
         }
     }
 }

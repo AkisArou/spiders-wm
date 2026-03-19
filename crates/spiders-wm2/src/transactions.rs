@@ -16,6 +16,7 @@ pub struct TransactionManager {
     committed: Option<StateSnapshot>,
     history: VecDeque<TransactionHistoryEntry>,
     pending: Option<PendingTransaction>,
+    deferred_removals: HashSet<WindowId>,
 }
 
 #[derive(Debug, Clone)]
@@ -122,6 +123,14 @@ impl TransactionManager {
         &self.history
     }
 
+    pub fn deferred_removals(&self) -> &HashSet<WindowId> {
+        &self.deferred_removals
+    }
+
+    pub fn defer_window_removal(&mut self, window_id: WindowId) {
+        self.deferred_removals.insert(window_id);
+    }
+
     pub fn pending_refresh_plan(&self, wm: &WmState) -> Option<RefreshPlan> {
         self.pending
             .as_ref()
@@ -200,6 +209,10 @@ impl TransactionManager {
             self.record_history_entry(pending, reason, None);
             self.committed = Some(desired);
         }
+    }
+
+    pub fn drain_deferred_removals(&mut self) -> Vec<WindowId> {
+        self.deferred_removals.drain().collect()
     }
 
     fn allocate_transaction_id(&mut self) -> u64 {
@@ -349,6 +362,7 @@ impl PendingTransaction {
             &affected_workspaces,
             &affected_outputs,
             committed,
+            &desired,
         );
 
         Self {
@@ -432,6 +446,7 @@ fn dirty_scopes_for_diff(
     affected_workspaces: &HashSet<WorkspaceId>,
     affected_outputs: &HashSet<OutputId>,
     committed: &StateSnapshot,
+    desired: &StateSnapshot,
 ) -> HashSet<DirtyScope> {
     let mut scopes = HashSet::new();
 
@@ -444,11 +459,17 @@ fn dirty_scopes_for_diff(
     );
     scopes.extend(affected_outputs.iter().cloned().map(DirtyScope::Output));
 
-    if focused_fullscreen_window(committed).is_some() || !affected_workspaces.is_empty() {
+    let layout_workspaces = affected_workspaces
+        .iter()
+        .cloned()
+        .chain(layout_workspaces_for_windows(committed, affected_windows))
+        .chain(layout_workspaces_for_windows(desired, affected_windows))
+        .collect::<HashSet<_>>();
+
+    if focused_fullscreen_window(committed).is_some() || !layout_workspaces.is_empty() {
         scopes.extend(
-            affected_workspaces
-                .iter()
-                .cloned()
+            layout_workspaces
+                .into_iter()
                 .map(|workspace_id| DirtyScope::LayoutSubtree { workspace_id }),
         );
     }
@@ -458,6 +479,18 @@ fn dirty_scopes_for_diff(
     }
 
     scopes
+}
+
+fn layout_workspaces_for_windows<'a>(
+    snapshot: &'a StateSnapshot,
+    affected_windows: &'a HashSet<WindowId>,
+) -> impl Iterator<Item = WorkspaceId> + 'a {
+    snapshot.windows.iter().filter_map(|window| {
+        affected_windows
+            .contains(&window.id)
+            .then(|| window.workspace_id.clone())
+            .flatten()
+    })
 }
 
 fn refresh_plan_for_scopes(dirty_scopes: &HashSet<DirtyScope>, wm: &WmState) -> RefreshPlan {
@@ -544,6 +577,7 @@ impl SpidersWm2 {
         if let Some(reason) = self.runtime.transactions.pending_resolution(Instant::now()) {
             self.runtime.transactions.commit_pending(reason);
             self.app.layout.commit_desired();
+            self.finalize_deferred_window_removals();
         }
     }
 }

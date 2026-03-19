@@ -55,14 +55,30 @@ pub fn committed_window_rect(
 
 pub fn window_is_visible(
     app: &AppState,
+    committed_snapshot: Option<&StateSnapshot>,
     visible: &HashSet<WindowId>,
     window_id: &WindowId,
 ) -> bool {
-    if let Some(fullscreen_window) = focused_fullscreen_window(app) {
+    if let Some(fullscreen_window) = committed_snapshot
+        .and_then(focused_fullscreen_window_in_snapshot)
+        .or_else(|| focused_fullscreen_window(app))
+    {
         return visible.contains(window_id) && fullscreen_window == *window_id;
     }
 
     visible.contains(window_id)
+}
+
+fn focused_fullscreen_window_in_snapshot(snapshot: &StateSnapshot) -> Option<WindowId> {
+    let focused_window_id = snapshot.focused_window_id.as_ref()?;
+    let focused_window = snapshot
+        .windows
+        .iter()
+        .find(|window| &window.id == focused_window_id)?;
+
+    focused_window
+        .is_fullscreen()
+        .then(|| focused_window_id.clone())
 }
 
 fn default_tiled_rect() -> Rectangle<i32, Logical> {
@@ -91,7 +107,10 @@ mod tests {
         WindowSnapshot,
     };
 
-    use super::{committed_window_rect, focused_fullscreen_window, window_is_visible};
+    use super::{
+        committed_window_rect, focused_fullscreen_window, focused_fullscreen_window_in_snapshot,
+        window_is_visible,
+    };
     use crate::{
         app::AppState,
         model::{ManagedWindowState, WindowId, WindowMode, WorkspaceId},
@@ -127,8 +146,103 @@ mod tests {
         let visible = HashSet::from([fullscreen.clone(), other.clone()]);
 
         assert_eq!(focused_fullscreen_window(&app), Some(fullscreen.clone()));
-        assert!(window_is_visible(&app, &visible, &fullscreen));
-        assert!(!window_is_visible(&app, &visible, &other));
+        assert!(window_is_visible(&app, None, &visible, &fullscreen));
+        assert!(!window_is_visible(&app, None, &visible, &other));
+    }
+
+    #[test]
+    fn committed_snapshot_visibility_blocks_desired_visibility_during_pending_transaction() {
+        let app = AppState::default();
+        let committed = committed_snapshot(vec![WindowSnapshot {
+            id: WindowId::from("1"),
+            shell: ShellKind::XdgToplevel,
+            app_id: None,
+            title: None,
+            class: None,
+            instance: None,
+            role: None,
+            window_type: None,
+            mapped: true,
+            mode: SharedWindowMode::Tiled,
+            focused: true,
+            urgent: false,
+            output_id: None,
+            workspace_id: Some(WorkspaceId::from("1")),
+            workspaces: vec![],
+        }]);
+        let visible = HashSet::from([WindowId::from("1")]);
+
+        assert!(window_is_visible(
+            &app,
+            Some(&committed),
+            &visible,
+            &WindowId::from("1")
+        ));
+        assert!(!window_is_visible(
+            &app,
+            Some(&committed),
+            &visible,
+            &WindowId::from("2")
+        ));
+    }
+
+    #[test]
+    fn committed_snapshot_fullscreen_controls_pending_visibility() {
+        let app = AppState::default();
+        let committed = committed_snapshot(vec![
+            WindowSnapshot {
+                id: WindowId::from("1"),
+                shell: ShellKind::XdgToplevel,
+                app_id: None,
+                title: None,
+                class: None,
+                instance: None,
+                role: None,
+                window_type: None,
+                mapped: true,
+                mode: SharedWindowMode::Fullscreen,
+                focused: true,
+                urgent: false,
+                output_id: None,
+                workspace_id: Some(WorkspaceId::from("1")),
+                workspaces: vec![],
+            },
+            WindowSnapshot {
+                id: WindowId::from("2"),
+                shell: ShellKind::XdgToplevel,
+                app_id: None,
+                title: None,
+                class: None,
+                instance: None,
+                role: None,
+                window_type: None,
+                mapped: true,
+                mode: SharedWindowMode::Tiled,
+                focused: false,
+                urgent: false,
+                output_id: None,
+                workspace_id: Some(WorkspaceId::from("1")),
+                workspaces: vec![],
+            },
+        ]);
+        let visible = HashSet::from([WindowId::from("1"), WindowId::from("2")]);
+
+        assert_eq!(
+            focused_fullscreen_window_in_snapshot(&committed),
+            Some(WindowId::from("1"))
+        );
+        assert!(window_is_visible(
+            &app,
+            Some(&committed),
+            &visible,
+            &WindowId::from("1")
+        ));
+        assert!(!window_is_visible(
+            &app,
+            Some(&committed),
+            &visible,
+            &WindowId::from("2")
+        ));
     }
 
     #[test]

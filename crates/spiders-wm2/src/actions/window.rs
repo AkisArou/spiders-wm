@@ -48,6 +48,18 @@ pub fn place_new_window_in_active_workspace(wm: &mut WmState, window_id: WindowI
     wm.focused_window = Some(window_id);
 }
 
+pub fn begin_window_removal(topology: &mut TopologyState, wm: &mut WmState, window_id: &WindowId) {
+    mark_window_unmapped(topology, wm, window_id);
+
+    for workspace in wm.workspaces.values_mut() {
+        workspace.windows.retain(|id| id != window_id);
+    }
+
+    if wm.focused_window.as_ref() == Some(window_id) {
+        wm.focused_window = None;
+    }
+}
+
 pub fn remove_window(topology: &mut TopologyState, wm: &mut WmState, window_id: WindowId) {
     if let Some(window) = topology.windows.get_mut(&window_id) {
         window.alive = false;
@@ -62,6 +74,17 @@ pub fn remove_window(topology: &mut TopologyState, wm: &mut WmState, window_id: 
 
     if wm.focused_window == Some(window_id) {
         wm.focused_window = None;
+    }
+}
+
+pub fn mark_window_unmapped(topology: &mut TopologyState, wm: &mut WmState, window_id: &WindowId) {
+    if let Some(window) = topology.windows.get_mut(window_id) {
+        window.alive = false;
+        window.mapped = false;
+    }
+
+    if let Some(window) = wm.windows.get_mut(window_id) {
+        window.mapped = false;
     }
 }
 

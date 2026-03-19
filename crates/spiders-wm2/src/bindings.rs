@@ -31,11 +31,15 @@ impl SmithayBindings {
         self.window_to_element.insert(window_id, window);
     }
 
-    pub fn unbind_surface(&mut self, surface_id: &ObjectId) -> Option<WindowId> {
-        let window_id = self.surface_to_window.remove(surface_id)?;
-        self.window_to_surface.remove(&window_id);
-        self.window_to_element.remove(&window_id);
-        Some(window_id)
+    pub fn unbind_window(&mut self, window_id: &WindowId) -> bool {
+        let Some(surface) = self.window_to_surface.remove(window_id) else {
+            self.window_to_element.remove(window_id);
+            return false;
+        };
+
+        self.surface_to_window.remove(&surface.id());
+        self.window_to_element.remove(window_id);
+        true
     }
 
     pub fn window_for_surface(&self, surface_id: &ObjectId) -> Option<WindowId> {

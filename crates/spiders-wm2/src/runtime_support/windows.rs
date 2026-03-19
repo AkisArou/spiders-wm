@@ -26,10 +26,14 @@ impl SpidersWm2 {
         let removed_window_id = self.app.bindings.window_for_surface(&surface.id());
 
         let was_focused = removed_window_id
-            .is_some_and(|window_id| self.app.wm.focused_window == Some(window_id));
+            .as_ref()
+            .is_some_and(|window_id| self.app.wm.focused_window.as_ref() == Some(window_id));
 
-        if let Some(window_id) = self.app.bindings.unbind_surface(&surface.id()) {
-            actions::remove_window(&mut self.app.topology, &mut self.app.wm, window_id);
+        if let Some(window_id) = removed_window_id.clone() {
+            self.runtime
+                .transactions
+                .defer_window_removal(window_id.clone());
+            actions::begin_window_removal(&mut self.app.topology, &mut self.app.wm, &window_id);
         }
 
         let window_to_unmap = self
@@ -54,15 +58,23 @@ impl SpidersWm2 {
 
             self.focus_window_surface(next_surface, SERIAL_COUNTER.next_serial());
         }
+
+        self.refresh_active_workspace();
     }
 
     pub fn refresh_active_workspace(&mut self) {
         self.refresh_layout_artifacts();
         self.sync_desired_transaction();
 
-        let visible = actions::active_workspace_windows(&self.app.wm)
-            .into_iter()
-            .collect();
+        let committed_snapshot = self.runtime.transactions.committed().cloned();
+        let visible = committed_snapshot
+            .as_ref()
+            .map(|snapshot| snapshot.visible_window_ids.iter().cloned().collect())
+            .unwrap_or_else(|| {
+                actions::active_workspace_windows(&self.app.wm)
+                    .into_iter()
+                    .collect()
+            });
         let refresh_plan = self.runtime.transactions.pending_refresh_plan(&self.app.wm);
         if let Some(summary) = self
             .runtime
@@ -93,7 +105,12 @@ impl SpidersWm2 {
                 continue;
             };
 
-            let should_show = placement::window_is_visible(&self.app, &visible, &window_id);
+            let should_show = placement::window_is_visible(
+                &self.app,
+                committed_snapshot.as_ref(),
+                &visible,
+                &window_id,
+            );
             let location =
                 placement::desired_window_rect(&self.app, self.output_rect(), &window_id)
                     .map(|rect| rect.loc)
@@ -151,6 +168,13 @@ impl SpidersWm2 {
 
         for surface in dead_surfaces {
             self.unmap_window_surface(&surface);
+        }
+    }
+
+    pub(crate) fn finalize_deferred_window_removals(&mut self) {
+        for window_id in self.runtime.transactions.drain_deferred_removals() {
+            self.app.bindings.unbind_window(&window_id);
+            actions::remove_window(&mut self.app.topology, &mut self.app.wm, window_id);
         }
     }
 
@@ -213,9 +237,16 @@ mod tests {
     use crate::{
         config::built_in_default_config,
         model::{OutputId, OutputNode, WmState, WorkspaceId},
+        placement,
         transactions::TransactionManager,
     };
-    use spiders_shared::ids::WindowId;
+    use spiders_shared::{
+        ids::WindowId,
+        wm::{
+            OutputSnapshot, OutputTransform, ShellKind, StateSnapshot,
+            WindowMode as SharedWindowMode, WindowSnapshot,
+        },
+    };
 
     #[test]
     fn affected_windows_fallbacks_to_known_windows_without_pending_transaction() {
@@ -282,5 +313,94 @@ mod tests {
             .pending_refresh_plan(wm)
             .map(|plan| plan.windows)
             .unwrap_or_else(|| known_windows.iter().cloned().collect())
+    }
+
+    #[test]
+    fn deferred_window_removals_are_drained_on_commit() {
+        let mut transactions = TransactionManager::default();
+        let window_id = WindowId::from("w9");
+
+        transactions.defer_window_removal(window_id.clone());
+
+        assert!(transactions.deferred_removals().contains(&window_id));
+        assert_eq!(
+            transactions.drain_deferred_removals(),
+            vec![window_id.clone()]
+        );
+        assert!(!transactions.deferred_removals().contains(&window_id));
+    }
+
+    #[test]
+    fn committed_visible_window_ids_drive_pending_visibility() {
+        let visible = HashSet::from([WindowId::from("w1")]);
+        let committed = committed_snapshot(
+            Some("w1"),
+            vec![
+                window("w1", SharedWindowMode::Tiled, true),
+                window("w2", SharedWindowMode::Tiled, false),
+            ],
+            vec![WindowId::from("w1")],
+        );
+
+        assert!(placement::window_is_visible(
+            &crate::app::AppState::default(),
+            Some(&committed),
+            &visible,
+            &WindowId::from("w1"),
+        ));
+        assert!(!placement::window_is_visible(
+            &crate::app::AppState::default(),
+            Some(&committed),
+            &visible,
+            &WindowId::from("w2"),
+        ));
+    }
+
+    fn committed_snapshot(
+        focused_window_id: Option<&str>,
+        windows: Vec<WindowSnapshot>,
+        visible_window_ids: Vec<WindowId>,
+    ) -> StateSnapshot {
+        StateSnapshot {
+            focused_window_id: focused_window_id.map(WindowId::from),
+            current_output_id: Some(OutputId::from("out-1")),
+            current_workspace_id: Some(WorkspaceId::from("ws-1")),
+            outputs: vec![OutputSnapshot {
+                id: OutputId::from("out-1"),
+                name: "winit".into(),
+                logical_x: 0,
+                logical_y: 0,
+                logical_width: 1280,
+                logical_height: 720,
+                scale: 1,
+                transform: OutputTransform::Normal,
+                enabled: true,
+                current_workspace_id: Some(WorkspaceId::from("ws-1")),
+            }],
+            workspaces: vec![],
+            windows,
+            visible_window_ids,
+            workspace_names: vec!["ws-1".into()],
+        }
+    }
+
+    fn window(id: &str, mode: SharedWindowMode, focused: bool) -> WindowSnapshot {
+        WindowSnapshot {
+            id: WindowId::from(id),
+            shell: ShellKind::XdgToplevel,
+            app_id: None,
+            title: None,
+            class: None,
+            instance: None,
+            role: None,
+            window_type: None,
+            mapped: true,
+            mode,
+            focused,
+            urgent: false,
+            output_id: Some(OutputId::from("out-1")),
+            workspace_id: Some(WorkspaceId::from("ws-1")),
+            workspaces: vec![],
+        }
     }
 }
