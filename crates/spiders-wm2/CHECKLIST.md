@@ -225,4 +225,19 @@ These are documented or expected features that are not fully implemented in the 
 - Output dirty scopes are now split between presentation-only and layout-affecting changes, so non-layout output updates can avoid unnecessary workspace/layout recompute.
 - Workspace dirty scopes are now also split between presentation-only and layout-affecting changes, so focus/visibility-only workspace updates can avoid unnecessary layout subtree recompute.
 - Window dirty scopes are now split between presentation-only and layout-affecting changes, so focus-only window updates can avoid unnecessary layout expansion while mode/workspace/output changes still trigger layout-sensitive handling.
+- Full-scene escalation now depends on layout-affecting changes across all outputs, not merely any output diff, which keeps multi-output presentation-only churn from forcing global recompute.
+- Execution now also honors that split more directly: presentation-only refresh plans skip layout recompute entirely when their `LayoutRecomputePlan` is empty.
+- Configure churn is starting to come down too: window configure sizes are tracked so unchanged desired sizes can skip resend during presentation-only refresh.
+- Refresh plans now carry explicit `configure_windows`, so layout-affecting windows drive configure churn while pure presentation refreshes can avoid touching toplevel size state entirely.
+- Render staging now distinguishes presentation-only staged work too, so redraw bookkeeping can tell when pending work is visual/presentational without layout or configure churn.
+- Presentation-only staged redraw short-circuit is now guarded by actual staged output work, so no-op plans do not get mistaken for deferred redraw work.
+- Refresh plans now explicitly report whether they are presentation-only and whether they have any visual work at all, so execution paths can skip both no-op staging and needless layout/configure handling.
+- Commit-time render promotion now also skips no-op staged state cleanly, so transactions that resolve without visual delta do not pretend to promote redraw work.
+- Commit-time layout promotion is now also gated on whether the pending refresh plan actually needed layout recompute, so presentation-only transactions do not promote layout state unnecessarily.
+- Transaction diagnostics now expose refresh-plan execution details directly, including configure windows and presentation-only/visual-update classification, so the new execution distinctions are inspectable at runtime.
+- Pending transaction debug summaries now surface configure-window counts plus presentation-only/visual-update flags, so lightweight logs reflect the same execution model as the JSON diagnostics.
+- Real output resize handling now updates topology through a transaction-aware output action and refresh path instead of only marking render dirtiness, so output geometry changes participate in the same diff/planning pipeline.
+- Focus-next/focus-previous now also route through the transaction-aware refresh path instead of directly marking render dirtiness, so focus churn uses the same planning and presentation rules as other state changes.
+- Initial winit output registration now records the real backend size and immediately feeds the transaction-aware refresh path, keeping startup output state aligned with the same topology/diff machinery.
+- Floating rect updates now short-circuit when the geometry is unchanged, so resize/drag input does not trigger needless transaction refresh work on no-op steps.
 - Scene application is still immediate after staging; smarter timeout policy and real subtree-scoped layout recomputation are the next transaction milestones.

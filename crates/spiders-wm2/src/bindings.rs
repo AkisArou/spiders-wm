@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use smithay::{
     desktop::Window,
     reexports::wayland_server::{backend::ObjectId, protocol::wl_surface::WlSurface, Resource},
+    utils::Logical,
 };
 
 use crate::model::WindowId;
@@ -13,6 +14,7 @@ pub struct SmithayBindings {
     surface_to_window: HashMap<ObjectId, WindowId>,
     window_to_surface: HashMap<WindowId, WlSurface>,
     window_to_element: HashMap<WindowId, Window>,
+    window_to_last_configure_size: HashMap<WindowId, (i32, i32)>,
 }
 
 impl SmithayBindings {
@@ -34,11 +36,13 @@ impl SmithayBindings {
     pub fn unbind_window(&mut self, window_id: &WindowId) -> bool {
         let Some(surface) = self.window_to_surface.remove(window_id) else {
             self.window_to_element.remove(window_id);
+            self.window_to_last_configure_size.remove(window_id);
             return false;
         };
 
         self.surface_to_window.remove(&surface.id());
         self.window_to_element.remove(window_id);
+        self.window_to_last_configure_size.remove(window_id);
         true
     }
 
@@ -56,5 +60,18 @@ impl SmithayBindings {
 
     pub fn known_windows(&self) -> Vec<WindowId> {
         self.window_to_element.keys().cloned().collect()
+    }
+
+    pub fn last_configure_size(&self, window_id: &WindowId) -> Option<(i32, i32)> {
+        self.window_to_last_configure_size.get(window_id).copied()
+    }
+
+    pub fn record_configure_size(
+        &mut self,
+        window_id: &WindowId,
+        size: smithay::utils::Size<i32, Logical>,
+    ) {
+        self.window_to_last_configure_size
+            .insert(window_id.clone(), (size.w, size.h));
     }
 }

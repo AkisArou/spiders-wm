@@ -92,14 +92,26 @@ impl SpidersWm2 {
             trace!(target: "spiders_wm2::transactions", "refresh plan: {summary}");
         }
         if let Some(plan) = refresh_plan.as_ref() {
-            self.runtime
-                .render_plan
-                .stage_from_refresh_plan(plan, &self.app.wm);
-            self.recompute_layout(plan);
+            if plan.has_visual_updates() {
+                self.runtime
+                    .render_plan
+                    .stage_from_refresh_plan(plan, &self.app.wm);
+            }
+            if plan.layout.needs_recompute() {
+                self.recompute_layout(plan);
+            }
         }
-        let affected_windows = refresh_plan
-            .map(|plan| plan.windows)
-            .unwrap_or_else(|| self.app.bindings.known_windows().into_iter().collect());
+        let (affected_windows, configure_windows) = refresh_plan
+            .map(|plan| (plan.windows, plan.configure_windows))
+            .unwrap_or_else(|| {
+                let known = self
+                    .app
+                    .bindings
+                    .known_windows()
+                    .into_iter()
+                    .collect::<std::collections::HashSet<_>>();
+                (known.clone(), known)
+            });
 
         let focused_before = self
             .runtime
@@ -143,7 +155,8 @@ impl SpidersWm2 {
                         .map_element(window.clone(), location, false);
                 }
 
-                self.apply_window_geometry(&window);
+                let should_configure = configure_windows.contains(&window_id);
+                self.apply_window_geometry(&window, should_configure);
 
                 if self.runtime.smithay.space.element_location(&window) != Some(location) {
                     self.runtime
@@ -191,7 +204,7 @@ impl SpidersWm2 {
         }
     }
 
-    fn apply_window_geometry(&mut self, window: &Window) {
+    fn apply_window_geometry(&mut self, window: &Window, should_configure: bool) {
         let Some(toplevel) = window.toplevel() else {
             return;
         };
@@ -207,9 +220,24 @@ impl SpidersWm2 {
         let rect = placement::desired_window_rect(&self.app, self.output_rect(), &window_id);
 
         if let Some(rect) = rect {
+            if !should_configure {
+                return;
+            }
+
+            let next_size = (rect.size.w, rect.size.h);
+            let already_sent = self.app.bindings.last_configure_size(&window_id) == Some(next_size);
+
+            if already_sent && toplevel.is_initial_configure_sent() {
+                return;
+            }
+
             toplevel.with_pending_state(|state| {
                 state.size = Some(rect.size);
             });
+
+            self.app
+                .bindings
+                .record_configure_size(&window_id, rect.size);
 
             if toplevel.is_initial_configure_sent() {
                 if let Some(serial) = toplevel.send_pending_configure() {
@@ -251,8 +279,9 @@ mod tests {
         config::built_in_default_config,
         model::{OutputId, OutputNode, WmState, WorkspaceId},
         placement,
-        transactions::TransactionManager,
+        transactions::{LayoutRecomputePlan, RefreshPlan, TransactionManager},
     };
+    use smithay::utils::Size;
     use spiders_shared::{
         ids::WindowId,
         wm::{
@@ -326,6 +355,48 @@ mod tests {
             .pending_refresh_plan(wm)
             .map(|plan| plan.windows)
             .unwrap_or_else(|| known_windows.iter().cloned().collect())
+    }
+
+    #[test]
+    fn presentation_only_refresh_plan_does_not_need_layout_recompute() {
+        let plan = RefreshPlan {
+            transaction_id: Some(1),
+            windows: HashSet::from([WindowId::from("w1")]),
+            configure_windows: HashSet::new(),
+            workspaces: HashSet::new(),
+            outputs: HashSet::new(),
+            layout: LayoutRecomputePlan::default(),
+        };
+
+        assert!(!plan.layout.needs_recompute());
+        assert!(plan.configure_windows.is_empty());
+        assert!(plan.has_visual_updates());
+    }
+
+    #[test]
+    fn empty_refresh_plan_has_no_visual_updates() {
+        let plan = RefreshPlan::default();
+
+        assert!(!plan.has_visual_updates());
+    }
+
+    #[test]
+    fn configure_size_tracking_dedups_unchanged_geometry() {
+        let mut bindings = crate::bindings::SmithayBindings::default();
+        let window_id = WindowId::from("w1");
+
+        assert_eq!(bindings.last_configure_size(&window_id), None);
+
+        bindings.record_configure_size(&window_id, Size::from((800, 600)));
+
+        assert_eq!(bindings.last_configure_size(&window_id), Some((800, 600)));
+
+        bindings.record_configure_size(&window_id, Size::from((800, 600)));
+
+        assert_eq!(bindings.last_configure_size(&window_id), Some((800, 600)));
+
+        bindings.unbind_window(&window_id);
+        assert_eq!(bindings.last_configure_size(&window_id), None);
     }
 
     #[test]

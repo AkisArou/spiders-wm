@@ -55,11 +55,9 @@ pub fn init_winit(
         &mut state.app.wm,
         OutputId::from("1"),
         "winit".to_string(),
+        (mode.size.w as u32, mode.size.h as u32),
     );
-    state
-        .runtime
-        .render_plan
-        .mark_output_dirty(OutputId::from("1"));
+    state.refresh_active_workspace();
 
     let mut damager_tracker = OutputDamageTracker::from_output(&output);
 
@@ -78,15 +76,31 @@ pub fn init_winit(
                     None,
                     None,
                 );
-                state
-                    .runtime
-                    .render_plan
-                    .mark_output_dirty(OutputId::from("1"));
+                if actions::update_output_logical_size(
+                    &mut state.app.topology,
+                    &OutputId::from("1"),
+                    (size.w as u32, size.h as u32),
+                ) {
+                    state.refresh_active_workspace();
+                } else {
+                    state
+                        .runtime
+                        .render_plan
+                        .mark_output_dirty(OutputId::from("1"));
+                }
             }
             WinitEvent::Input(event) => state.process_input_event(event),
             WinitEvent::Redraw => {
                 state.cleanup_dead_windows();
                 state.maybe_commit_pending_transaction();
+
+                if state.runtime.render_plan.can_skip_redraw_until_commit() {
+                    state.runtime.smithay.space.refresh();
+                    state.runtime.smithay.popups.cleanup();
+                    let _ = state.runtime.display_handle.flush_clients();
+                    backend.window().request_redraw();
+                    return;
+                }
 
                 let outputs = state
                     .runtime

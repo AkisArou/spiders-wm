@@ -11,6 +11,7 @@ pub struct RenderPlan {
     dirty_outputs: HashSet<OutputId>,
     staged_full_scene: bool,
     staged_outputs: HashSet<OutputId>,
+    staged_presentation_only: bool,
 }
 
 impl RenderPlan {
@@ -28,20 +29,47 @@ impl RenderPlan {
     pub fn stage_from_refresh_plan(&mut self, refresh_plan: &RefreshPlan, wm: &WmState) {
         let (full_scene, outputs) = collect_dirty_outputs(refresh_plan, wm);
         self.staged_full_scene = full_scene;
+        self.staged_presentation_only = refresh_plan.is_presentation_only()
+            && refresh_plan.has_visual_updates()
+            && (full_scene || !outputs.is_empty());
         self.staged_outputs = outputs;
     }
 
     pub fn promote_staged(&mut self) {
+        if !self.has_staged_updates() {
+            self.staged_presentation_only = false;
+            return;
+        }
+
         if self.staged_full_scene {
             self.mark_full_scene();
         }
 
         self.dirty_outputs.extend(self.staged_outputs.drain());
         self.staged_full_scene = false;
+        self.staged_presentation_only = false;
+    }
+
+    pub fn promote_staged_if_needed(&mut self) -> bool {
+        if !self.has_staged_updates() {
+            self.staged_presentation_only = false;
+            return false;
+        }
+
+        self.promote_staged();
+        true
     }
 
     pub fn has_staged_updates(&self) -> bool {
         self.staged_full_scene || !self.staged_outputs.is_empty()
+    }
+
+    pub fn staged_presentation_only(&self) -> bool {
+        self.staged_presentation_only
+    }
+
+    pub fn can_skip_redraw_until_commit(&self) -> bool {
+        self.staged_presentation_only && !self.is_dirty()
     }
 
     pub fn mark_output_dirty(&mut self, output_id: OutputId) {
@@ -127,6 +155,7 @@ mod tests {
             &RefreshPlan {
                 transaction_id: Some(1),
                 windows: HashSet::from([WindowId::from("w1")]),
+                configure_windows: HashSet::from([WindowId::from("w1")]),
                 workspaces: HashSet::new(),
                 outputs: HashSet::new(),
                 layout: LayoutRecomputePlan::default(),
@@ -155,6 +184,7 @@ mod tests {
             &RefreshPlan {
                 transaction_id: Some(2),
                 windows: HashSet::new(),
+                configure_windows: HashSet::new(),
                 workspaces: HashSet::from([WorkspaceId::from("ws-1")]),
                 outputs: HashSet::new(),
                 layout: LayoutRecomputePlan::default(),
@@ -192,6 +222,7 @@ mod tests {
             &RefreshPlan {
                 transaction_id: Some(3),
                 windows: HashSet::from([WindowId::from("w1")]),
+                configure_windows: HashSet::from([WindowId::from("w1")]),
                 workspaces: HashSet::new(),
                 outputs: HashSet::new(),
                 layout: LayoutRecomputePlan::default(),
@@ -204,6 +235,162 @@ mod tests {
 
         render_plan.promote_staged();
 
+        assert!(render_plan.should_render_output(&OutputId::from("out-1")));
+    }
+
+    #[test]
+    fn presentation_only_staged_updates_are_tracked() {
+        let mut wm = WmState::default();
+        wm.windows.insert(
+            WindowId::from("w1"),
+            ManagedWindowState::tiled(
+                WindowId::from("w1"),
+                WorkspaceId::from("ws-1"),
+                Some(OutputId::from("out-1")),
+            ),
+        );
+
+        let mut render_plan = RenderPlan::default();
+        render_plan.stage_from_refresh_plan(
+            &RefreshPlan {
+                transaction_id: Some(4),
+                windows: HashSet::from([WindowId::from("w1")]),
+                configure_windows: HashSet::new(),
+                workspaces: HashSet::new(),
+                outputs: HashSet::new(),
+                layout: LayoutRecomputePlan::default(),
+            },
+            &wm,
+        );
+
+        assert!(render_plan.staged_presentation_only());
+        assert!(render_plan.has_staged_updates());
+    }
+
+    #[test]
+    fn layout_or_configure_staged_updates_are_not_presentation_only() {
+        let mut wm = WmState::default();
+        wm.windows.insert(
+            WindowId::from("w1"),
+            ManagedWindowState::tiled(
+                WindowId::from("w1"),
+                WorkspaceId::from("ws-1"),
+                Some(OutputId::from("out-1")),
+            ),
+        );
+
+        let mut render_plan = RenderPlan::default();
+        render_plan.stage_from_refresh_plan(
+            &RefreshPlan {
+                transaction_id: Some(5),
+                windows: HashSet::from([WindowId::from("w1")]),
+                configure_windows: HashSet::from([WindowId::from("w1")]),
+                workspaces: HashSet::new(),
+                outputs: HashSet::new(),
+                layout: LayoutRecomputePlan::default(),
+            },
+            &wm,
+        );
+
+        assert!(!render_plan.staged_presentation_only());
+    }
+
+    #[test]
+    fn presentation_only_without_staged_outputs_does_not_skip_as_pending_redraw() {
+        let mut render_plan = RenderPlan::default();
+        render_plan.stage_from_refresh_plan(
+            &RefreshPlan {
+                transaction_id: Some(6),
+                windows: HashSet::new(),
+                configure_windows: HashSet::new(),
+                workspaces: HashSet::new(),
+                outputs: HashSet::new(),
+                layout: LayoutRecomputePlan::default(),
+            },
+            &WmState::default(),
+        );
+
+        assert!(!render_plan.staged_presentation_only());
+        assert!(!render_plan.can_skip_redraw_until_commit());
+    }
+
+    #[test]
+    fn empty_refresh_plan_does_not_stage_presentation_only_work() {
+        let mut render_plan = RenderPlan::default();
+        render_plan.stage_from_refresh_plan(&RefreshPlan::default(), &WmState::default());
+
+        assert!(!render_plan.staged_presentation_only());
+        assert!(!render_plan.has_staged_updates());
+    }
+
+    #[test]
+    fn presentation_only_staged_updates_can_skip_redraw_until_commit() {
+        let mut wm = WmState::default();
+        wm.windows.insert(
+            WindowId::from("w1"),
+            ManagedWindowState::tiled(
+                WindowId::from("w1"),
+                WorkspaceId::from("ws-1"),
+                Some(OutputId::from("out-1")),
+            ),
+        );
+
+        let mut render_plan = RenderPlan::default();
+        render_plan.stage_from_refresh_plan(
+            &RefreshPlan {
+                transaction_id: Some(7),
+                windows: HashSet::from([WindowId::from("w1")]),
+                configure_windows: HashSet::new(),
+                workspaces: HashSet::new(),
+                outputs: HashSet::new(),
+                layout: LayoutRecomputePlan::default(),
+            },
+            &wm,
+        );
+
+        assert!(render_plan.staged_presentation_only());
+        assert!(render_plan.can_skip_redraw_until_commit());
+
+        render_plan.mark_output_dirty(OutputId::from("out-1"));
+
+        assert!(!render_plan.can_skip_redraw_until_commit());
+    }
+
+    #[test]
+    fn promote_staged_if_needed_is_noop_without_staged_updates() {
+        let mut render_plan = RenderPlan::default();
+
+        assert!(!render_plan.promote_staged_if_needed());
+        assert!(!render_plan.is_dirty());
+    }
+
+    #[test]
+    fn promote_staged_if_needed_promotes_real_staged_outputs() {
+        let mut wm = WmState::default();
+        wm.windows.insert(
+            WindowId::from("w1"),
+            ManagedWindowState::tiled(
+                WindowId::from("w1"),
+                WorkspaceId::from("ws-1"),
+                Some(OutputId::from("out-1")),
+            ),
+        );
+
+        let mut render_plan = RenderPlan::default();
+        render_plan.stage_from_refresh_plan(
+            &RefreshPlan {
+                transaction_id: Some(8),
+                windows: HashSet::from([WindowId::from("w1")]),
+                configure_windows: HashSet::new(),
+                workspaces: HashSet::new(),
+                outputs: HashSet::new(),
+                layout: LayoutRecomputePlan::default(),
+            },
+            &wm,
+        );
+
+        assert!(render_plan.promote_staged_if_needed());
+        assert!(render_plan.is_dirty());
         assert!(render_plan.should_render_output(&OutputId::from("out-1")));
     }
 }

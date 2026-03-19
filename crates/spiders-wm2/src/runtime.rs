@@ -29,7 +29,7 @@ use smithay::{
         calloop::{generic::Generic, EventLoop, Interest, LoopSignal, Mode, PostAction},
         wayland_server::{backend::ClientData, Display, DisplayHandle},
     },
-    utils::{Logical, SERIAL_COUNTER},
+    utils::Logical,
     wayland::{
         compositor::{CompositorClientState, CompositorState},
         output::OutputManagerState,
@@ -110,6 +110,7 @@ impl SpidersWm2 {
         transaction_payload(
             &self.runtime.transactions,
             &self.runtime.render_plan,
+            &self.app.wm,
             desired,
             presented,
         )
@@ -302,6 +303,7 @@ impl SpidersWm2 {
                     "output_count": self.app.topology.outputs.len(),
                     "window_count": self.app.wm.windows.len(),
                     "render_staged": self.runtime.render_plan.has_staged_updates(),
+                    "render_staged_presentation_only": self.runtime.render_plan.staged_presentation_only(),
                 })),
             },
             RuntimeCommand::ListOutputs => {
@@ -385,34 +387,12 @@ impl SpidersWm2 {
 
     pub fn focus_next_window(&mut self) {
         actions::focus_next_window(&mut self.app.wm);
-        if let Some(output_id) = self.app.wm.focused_output.clone() {
-            self.runtime.render_plan.mark_output_dirty(output_id);
-        }
-
-        let focused_surface = self
-            .app
-            .wm
-            .focused_window
-            .clone()
-            .and_then(|window_id| self.app.bindings.surface_for_window(&window_id));
-
-        self.focus_window_surface(focused_surface, SERIAL_COUNTER.next_serial());
+        self.refresh_active_workspace();
     }
 
     pub fn focus_previous_window(&mut self) {
         actions::focus_previous_window(&mut self.app.wm);
-        if let Some(output_id) = self.app.wm.focused_output.clone() {
-            self.runtime.render_plan.mark_output_dirty(output_id);
-        }
-
-        let focused_surface = self
-            .app
-            .wm
-            .focused_window
-            .clone()
-            .and_then(|window_id| self.app.bindings.surface_for_window(&window_id));
-
-        self.focus_window_surface(focused_surface, SERIAL_COUNTER.next_serial());
+        self.refresh_active_workspace();
     }
 
     pub fn swap_focused_window_with_next(&mut self) {
@@ -688,10 +668,12 @@ fn geometry_payload(
 fn transaction_payload(
     transactions: &TransactionManager,
     render_plan: &RenderPlan,
+    wm: &crate::model::WmState,
     desired: &StateSnapshot,
     presented: &StateSnapshot,
 ) -> serde_json::Value {
     let committed = transactions.committed();
+    let pending_refresh_plan = transactions.pending_refresh_plan(wm);
 
     json!({
         "pending": transactions.pending().map(|pending| json!({
@@ -711,6 +693,17 @@ fn transaction_payload(
                 "waiting_for_ack": pending.participant_progress().waiting_for_ack,
                 "waiting_for_commit": pending.participant_progress().waiting_for_commit,
             },
+            "refresh_plan": pending_refresh_plan.as_ref().map(|plan| json!({
+                "windows": &plan.windows,
+                "configure_windows": &plan.configure_windows,
+                "workspaces": &plan.workspaces,
+                "outputs": &plan.outputs,
+                "layout_workspace_roots": &plan.layout.workspace_roots,
+                "layout_full_scene": plan.layout.full_scene,
+                "layout_needs_recompute": plan.layout.needs_recompute(),
+                "presentation_only": plan.is_presentation_only(),
+                "has_visual_updates": plan.has_visual_updates(),
+            })),
             "participants": pending.participants.iter().map(|(window_id, participant)| json!({
                 "window_id": window_id,
                 "status": format!("{:?}", participant.status()),
@@ -888,7 +881,10 @@ mod tests {
     };
 
     use crate::{
-        app::AppState, model::OutputNode, render::RenderPlan, transactions::TransactionManager,
+        app::AppState,
+        model::{OutputNode, WmState, WorkspaceState},
+        render::RenderPlan,
+        transactions::TransactionManager,
     };
 
     use super::{
@@ -1115,8 +1111,13 @@ mod tests {
         transactions.stage(presented.clone());
         transactions.commit_pending(crate::transactions::TransactionCommitReason::Ready);
 
-        let payload =
-            transaction_payload(&transactions, &RenderPlan::default(), &desired, &presented);
+        let payload = transaction_payload(
+            &transactions,
+            &RenderPlan::default(),
+            &wm_for_transaction_payload(),
+            &desired,
+            &presented,
+        );
 
         assert_eq!(
             payload["desired"]["focused_window_id"],
@@ -1129,6 +1130,47 @@ mod tests {
         assert_eq!(
             payload["committed"]["focused_window_id"],
             json!(WindowId::from("w1"))
+        );
+    }
+
+    #[test]
+    fn transaction_payload_exposes_refresh_plan_execution_details() {
+        let desired = snapshot(
+            Some("w1"),
+            vec![window("w1", Some("ws-1"), true, true)],
+            vec![workspace("ws-1", true)],
+        );
+        let mut transactions = TransactionManager::default();
+        transactions.stage(desired.clone());
+        if let Some(pending) = transactions.pending_mut() {
+            pending.dirty_scopes = std::collections::HashSet::from([
+                crate::transactions::DirtyScope::WindowPresentation(WindowId::from("w1")),
+            ]);
+        }
+
+        let payload = transaction_payload(
+            &transactions,
+            &RenderPlan::default(),
+            &wm_for_transaction_payload(),
+            &desired,
+            &desired,
+        );
+
+        assert_eq!(
+            payload["pending"]["refresh_plan"]["presentation_only"],
+            json!(true)
+        );
+        assert_eq!(
+            payload["pending"]["refresh_plan"]["layout_needs_recompute"],
+            json!(false)
+        );
+        assert_eq!(
+            payload["pending"]["refresh_plan"]["has_visual_updates"],
+            json!(true)
+        );
+        assert_eq!(
+            payload["pending"]["refresh_plan"]["configure_windows"],
+            json!([])
         );
     }
 
@@ -1192,6 +1234,28 @@ mod tests {
                 name: "columns".into(),
             }),
         }
+    }
+
+    fn wm_for_transaction_payload() -> WmState {
+        let mut wm = WmState::default();
+        wm.workspaces.insert(
+            WorkspaceId::from("ws-1"),
+            WorkspaceState {
+                id: WorkspaceId::from("ws-1"),
+                name: "ws-1".into(),
+                output: Some(OutputId::from("out-1")),
+                windows: vec![WindowId::from("w1")],
+            },
+        );
+        wm.windows.insert(
+            WindowId::from("w1"),
+            crate::model::ManagedWindowState::tiled(
+                WindowId::from("w1"),
+                WorkspaceId::from("ws-1"),
+                Some(OutputId::from("out-1")),
+            ),
+        );
+        wm
     }
 }
 

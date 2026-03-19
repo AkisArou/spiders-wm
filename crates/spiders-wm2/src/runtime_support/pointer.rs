@@ -54,8 +54,9 @@ impl SpidersWm2 {
         let new_loc = pointer_location - drag.pointer_offset;
         let updated_rect = smithay::utils::Rectangle::new(new_loc.to_i32_round(), rect.size);
 
-        actions::set_floating_rect(&mut self.app.wm, drag.window_id.clone(), updated_rect);
-        self.refresh_active_workspace();
+        if actions::set_floating_rect(&mut self.app.wm, drag.window_id.clone(), updated_rect) {
+            self.refresh_active_workspace();
+        }
     }
 
     pub fn end_floating_drag(&mut self) {
@@ -118,8 +119,9 @@ impl SpidersWm2 {
             smithay::utils::Size::from((width, height)),
         );
 
-        actions::set_floating_rect(&mut self.app.wm, resize.window_id.clone(), updated_rect);
-        self.refresh_active_workspace();
+        if actions::set_floating_rect(&mut self.app.wm, resize.window_id.clone(), updated_rect) {
+            self.refresh_active_workspace();
+        }
     }
 
     pub fn end_floating_resize(&mut self) {

@@ -95,15 +95,35 @@ pub struct ParticipantProgressSummary {
 pub struct RefreshPlan {
     pub transaction_id: Option<u64>,
     pub windows: HashSet<WindowId>,
+    pub configure_windows: HashSet<WindowId>,
     pub workspaces: HashSet<WorkspaceId>,
     pub outputs: HashSet<OutputId>,
     pub layout: LayoutRecomputePlan,
+}
+
+impl RefreshPlan {
+    pub fn is_presentation_only(&self) -> bool {
+        !self.layout.needs_recompute() && self.configure_windows.is_empty()
+    }
+
+    pub fn has_visual_updates(&self) -> bool {
+        self.layout.needs_recompute()
+            || !self.windows.is_empty()
+            || !self.workspaces.is_empty()
+            || !self.outputs.is_empty()
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct LayoutRecomputePlan {
     pub workspace_roots: HashSet<WorkspaceId>,
     pub full_scene: bool,
+}
+
+impl LayoutRecomputePlan {
+    pub fn needs_recompute(&self) -> bool {
+        self.full_scene || !self.workspace_roots.is_empty()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -188,6 +208,11 @@ impl TransactionManager {
         self.pending.as_ref()
     }
 
+    #[cfg(test)]
+    pub(crate) fn pending_mut(&mut self) -> Option<&mut PendingTransaction> {
+        self.pending.as_mut()
+    }
+
     pub fn committed(&self) -> Option<&StateSnapshot> {
         self.committed.as_ref()
     }
@@ -255,18 +280,27 @@ impl TransactionManager {
             .map(|pending| pending.refresh_plan(wm))
     }
 
+    pub fn pending_needs_layout_commit(&self, wm: &WmState) -> bool {
+        self.pending_refresh_plan(wm)
+            .map(|plan| plan.layout.needs_recompute())
+            .unwrap_or(false)
+    }
+
     pub fn pending_debug_summary(&self, wm: &WmState) -> Option<String> {
         self.pending.as_ref().map(|pending| {
             let plan = pending.refresh_plan(wm);
             let progress = pending.participant_progress();
             format!(
-                "tx={} windows={} workspaces={} outputs={} layout_roots={} full_scene={} participants={} ready={} waiting_ack={} waiting_commit={}",
+                "tx={} windows={} configure_windows={} workspaces={} outputs={} layout_roots={} full_scene={} presentation_only={} visual_updates={} participants={} ready={} waiting_ack={} waiting_commit={}",
                 pending.id,
                 plan.windows.len(),
+                plan.configure_windows.len(),
                 plan.workspaces.len(),
                 plan.outputs.len(),
                 plan.layout.workspace_roots.len(),
                 plan.layout.full_scene,
+                plan.is_presentation_only(),
+                plan.has_visual_updates(),
                 pending.participants.len(),
                 progress.ready,
                 progress.waiting_for_ack,
@@ -709,8 +743,10 @@ fn dirty_scopes_for_diff(
             scopes.insert(DirtyScope::WorkspacePresentation(workspace_id.clone()));
         }
     }
+    let mut layout_affected_output_count = 0usize;
     for output_id in affected_outputs {
         if output_layout_changed(committed, desired, output_id) {
+            layout_affected_output_count += 1;
             scopes.insert(DirtyScope::OutputLayout(output_id.clone()));
         } else {
             scopes.insert(DirtyScope::OutputPresentation(output_id.clone()));
@@ -732,7 +768,7 @@ fn dirty_scopes_for_diff(
         );
     }
 
-    if !affected_outputs.is_empty() && affected_outputs.len() >= committed.outputs.len() {
+    if layout_affected_output_count >= committed.outputs.len() {
         scopes.insert(DirtyScope::FullScene);
     }
 
@@ -830,6 +866,7 @@ fn refresh_plan_for_scopes(dirty_scopes: &HashSet<DirtyScope>, wm: &WmState) -> 
         return RefreshPlan {
             transaction_id: None,
             windows: wm.windows.keys().cloned().collect(),
+            configure_windows: wm.windows.keys().cloned().collect(),
             workspaces: wm.workspaces.keys().cloned().collect(),
             outputs: wm
                 .workspaces
@@ -847,8 +884,12 @@ fn refresh_plan_for_scopes(dirty_scopes: &HashSet<DirtyScope>, wm: &WmState) -> 
 
     for scope in dirty_scopes {
         match scope {
-            DirtyScope::WindowPresentation(window_id) | DirtyScope::WindowLayout(window_id) => {
+            DirtyScope::WindowPresentation(window_id) => {
                 plan.windows.insert(window_id.clone());
+            }
+            DirtyScope::WindowLayout(window_id) => {
+                plan.windows.insert(window_id.clone());
+                plan.configure_windows.insert(window_id.clone());
             }
             DirtyScope::WorkspacePresentation(workspace_id) => {
                 plan.workspaces.insert(workspace_id.clone());
@@ -868,6 +909,8 @@ fn refresh_plan_for_scopes(dirty_scopes: &HashSet<DirtyScope>, wm: &WmState) -> 
 
                 if let Some(workspace) = wm.workspaces.get(workspace_id) {
                     plan.windows.extend(workspace.windows.iter().cloned());
+                    plan.configure_windows
+                        .extend(workspace.windows.iter().cloned());
 
                     if let Some(output_id) = workspace.output.clone() {
                         plan.outputs.insert(output_id);
@@ -891,12 +934,15 @@ fn refresh_plan_for_scopes(dirty_scopes: &HashSet<DirtyScope>, wm: &WmState) -> 
                         plan.workspaces.insert(workspace.id.clone());
                         plan.layout.workspace_roots.insert(workspace.id.clone());
                         plan.windows.extend(workspace.windows.iter().cloned());
+                        plan.configure_windows
+                            .extend(workspace.windows.iter().cloned());
                     }
                 }
 
                 for (window_id, window) in &wm.windows {
                     if window.output.as_ref() == Some(output_id) {
                         plan.windows.insert(window_id.clone());
+                        plan.configure_windows.insert(window_id.clone());
                     }
                 }
             }
@@ -928,9 +974,15 @@ impl SpidersWm2 {
 
     pub fn maybe_commit_pending_transaction(&mut self) {
         if let Some(reason) = self.runtime.transactions.pending_resolution(Instant::now()) {
+            let needs_layout_commit = self
+                .runtime
+                .transactions
+                .pending_needs_layout_commit(&self.app.wm);
             self.runtime.transactions.commit_pending(reason);
-            self.app.layout.commit_desired();
-            self.runtime.render_plan.promote_staged();
+            if needs_layout_commit {
+                self.app.layout.commit_desired();
+            }
+            self.runtime.render_plan.promote_staged_if_needed();
             self.finalize_deferred_window_removals();
         }
     }
@@ -944,8 +996,9 @@ mod tests {
     };
 
     use super::{
-        DirtyScope, PendingTransaction, TimeoutProgress, TransactionCoalescedChain,
-        TransactionCommitReason, TransactionManager, TransactionParticipantStatus,
+        DirtyScope, LayoutRecomputePlan, PendingTransaction, RefreshPlan, TimeoutProgress,
+        TransactionCoalescedChain, TransactionCommitReason, TransactionManager,
+        TransactionParticipantStatus,
     };
     use crate::model::{ManagedWindowState, WmState, WorkspaceState};
     use smithay::utils::SERIAL_COUNTER;
@@ -2081,6 +2134,7 @@ mod tests {
         assert!(plan.outputs.contains(&OutputId::from("out-1")));
         assert!(plan.windows.contains(&WindowId::from("w1")));
         assert!(plan.windows.contains(&WindowId::from("w2")));
+        assert!(plan.configure_windows.is_empty());
         assert!(plan.layout.workspace_roots.is_empty());
     }
 
@@ -2116,6 +2170,7 @@ mod tests {
         assert!(plan.workspaces.contains(&WorkspaceId::from("ws-1")));
         assert!(plan.windows.contains(&WindowId::from("w1")));
         assert!(plan.windows.contains(&WindowId::from("w2")));
+        assert!(plan.configure_windows.is_empty());
         assert!(plan.layout.workspace_roots.is_empty());
     }
 
@@ -2270,7 +2325,113 @@ mod tests {
             .unwrap();
 
         assert!(plan.windows.contains(&WindowId::from("w1")));
+        assert!(!plan.configure_windows.contains(&WindowId::from("w1")));
         assert!(plan.layout.workspace_roots.is_empty());
+        assert!(!plan.layout.needs_recompute());
+    }
+
+    #[test]
+    fn refresh_plan_window_layout_scope_marks_window_for_configure() {
+        let desired = snapshot(
+            Some("w1"),
+            &["w1", "w2"],
+            vec![
+                workspace("ws-1", true, true),
+                workspace("ws-2", false, false),
+            ],
+            vec![
+                window("w1", "ws-1", true, WindowMode::Tiled),
+                window("w2", "ws-1", false, WindowMode::Tiled),
+                window("w3", "ws-2", false, WindowMode::Tiled),
+            ],
+        );
+        let mut transactions = TransactionManager::default();
+        transactions.stage(desired);
+
+        if let Some(pending) = transactions.pending.as_mut() {
+            pending.affected_windows = HashSet::from([WindowId::from("w1")]);
+            pending.affected_workspaces.clear();
+            pending.dirty_scopes = HashSet::from([DirtyScope::WindowLayout(WindowId::from("w1"))]);
+        }
+
+        let plan = transactions
+            .pending_refresh_plan(&wm_for_refresh_plan())
+            .unwrap();
+
+        assert!(plan.windows.contains(&WindowId::from("w1")));
+        assert!(plan.configure_windows.contains(&WindowId::from("w1")));
+    }
+
+    #[test]
+    fn layout_recompute_plan_reports_when_recompute_is_needed() {
+        assert!(!LayoutRecomputePlan::default().needs_recompute());
+
+        let mut workspace_plan = LayoutRecomputePlan::default();
+        workspace_plan
+            .workspace_roots
+            .insert(WorkspaceId::from("ws-1"));
+        assert!(workspace_plan.needs_recompute());
+
+        let full_scene_plan = LayoutRecomputePlan {
+            workspace_roots: HashSet::new(),
+            full_scene: true,
+        };
+        assert!(full_scene_plan.needs_recompute());
+    }
+
+    #[test]
+    fn refresh_plan_reports_presentation_only_and_visual_update_state() {
+        let empty = RefreshPlan::default();
+        assert!(empty.is_presentation_only());
+        assert!(!empty.has_visual_updates());
+
+        let presentation = RefreshPlan {
+            transaction_id: Some(1),
+            windows: HashSet::from([WindowId::from("w1")]),
+            configure_windows: HashSet::new(),
+            workspaces: HashSet::new(),
+            outputs: HashSet::new(),
+            layout: LayoutRecomputePlan::default(),
+        };
+        assert!(presentation.is_presentation_only());
+        assert!(presentation.has_visual_updates());
+
+        let configure = RefreshPlan {
+            transaction_id: Some(2),
+            windows: HashSet::from([WindowId::from("w1")]),
+            configure_windows: HashSet::from([WindowId::from("w1")]),
+            workspaces: HashSet::new(),
+            outputs: HashSet::new(),
+            layout: LayoutRecomputePlan::default(),
+        };
+        assert!(!configure.is_presentation_only());
+        assert!(configure.has_visual_updates());
+    }
+
+    #[test]
+    fn pending_needs_layout_commit_tracks_layout_recompute_need() {
+        let desired = snapshot(
+            Some("w1"),
+            &["w1"],
+            vec![workspace("ws-1", true, true)],
+            vec![window("w1", "ws-1", true, WindowMode::Tiled)],
+        );
+        let mut transactions = TransactionManager::default();
+        transactions.stage(desired);
+
+        if let Some(pending) = transactions.pending.as_mut() {
+            pending.dirty_scopes =
+                HashSet::from([DirtyScope::WindowPresentation(WindowId::from("w1"))]);
+        }
+
+        assert!(!transactions.pending_needs_layout_commit(&wm_for_refresh_plan()));
+
+        if let Some(pending) = transactions.pending.as_mut() {
+            pending.dirty_scopes =
+                HashSet::from([DirtyScope::WorkspaceLayout(WorkspaceId::from("ws-1"))]);
+        }
+
+        assert!(transactions.pending_needs_layout_commit(&wm_for_refresh_plan()));
     }
 
     #[test]
@@ -2343,6 +2504,78 @@ mod tests {
     }
 
     #[test]
+    fn presentation_only_output_changes_do_not_escalate_to_full_scene() {
+        let mut committed = snapshot(
+            Some("w1"),
+            &["w1", "w2"],
+            vec![
+                workspace("ws-1", true, true),
+                workspace("ws-2", false, false),
+            ],
+            vec![
+                window("w1", "ws-1", true, WindowMode::Tiled),
+                window("w2", "ws-1", false, WindowMode::Tiled),
+                window("w3", "ws-2", false, WindowMode::Tiled),
+            ],
+        );
+        committed.outputs.push(spiders_shared::wm::OutputSnapshot {
+            id: OutputId::from("out-2"),
+            name: "other".into(),
+            logical_x: 20,
+            logical_y: 0,
+            logical_width: 1280,
+            logical_height: 720,
+            scale: 1,
+            transform: spiders_shared::wm::OutputTransform::Normal,
+            enabled: true,
+            current_workspace_id: Some(WorkspaceId::from("ws-2")),
+        });
+        let mut desired = committed.clone();
+        desired.outputs[0].logical_x = 10;
+        desired.outputs[1].logical_x = 40;
+
+        let pending = PendingTransaction::from_diff(1, &committed, desired, 1, 0, 1);
+
+        assert!(!pending.dirty_scopes.contains(&DirtyScope::FullScene));
+    }
+
+    #[test]
+    fn layout_affecting_changes_on_all_outputs_escalate_to_full_scene() {
+        let committed = snapshot(
+            Some("w1"),
+            &["w1", "w2"],
+            vec![
+                workspace("ws-1", true, true),
+                workspace("ws-2", false, false),
+            ],
+            vec![
+                window("w1", "ws-1", true, WindowMode::Tiled),
+                window("w2", "ws-1", false, WindowMode::Tiled),
+                window("w3", "ws-2", false, WindowMode::Tiled),
+            ],
+        );
+        let mut desired = committed.clone();
+        desired.outputs.push(spiders_shared::wm::OutputSnapshot {
+            id: OutputId::from("out-2"),
+            name: "other".into(),
+            logical_x: 0,
+            logical_y: 0,
+            logical_width: 1280,
+            logical_height: 720,
+            scale: 1,
+            transform: spiders_shared::wm::OutputTransform::Normal,
+            enabled: true,
+            current_workspace_id: Some(WorkspaceId::from("ws-2")),
+        });
+        desired.outputs[0].logical_width = 1440;
+        desired.outputs[1].logical_width = 1440;
+
+        let pending = PendingTransaction::from_diff(1, &committed, desired, 1, 0, 1);
+
+        assert!(pending.dirty_scopes.contains(&DirtyScope::FullScene));
+    }
+
+    #[test]
     fn pending_debug_summary_reports_layout_scope_counts() {
         let desired = snapshot(
             Some("w1"),
@@ -2371,7 +2604,10 @@ mod tests {
             .unwrap();
 
         assert!(summary.contains("tx=1"));
+        assert!(summary.contains("configure_windows=2"));
         assert!(summary.contains("layout_roots=1"));
         assert!(summary.contains("full_scene=false"));
+        assert!(summary.contains("presentation_only=false"));
+        assert!(summary.contains("visual_updates=true"));
     }
 }
