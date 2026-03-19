@@ -11,6 +11,8 @@ pub enum RuntimeCommand {
     RefreshLayoutArtifacts,
     DumpGeometry,
     DumpLayoutTree,
+    DumpLayoutArtifacts,
+    DumpRuntime,
     ListOutputs,
     ListWorkspaces,
     ListWindows,
@@ -57,6 +59,8 @@ impl RuntimeCommand {
             "refresh-layout-artifacts" => Some(Self::RefreshLayoutArtifacts),
             "dump-geometry" => Some(Self::DumpGeometry),
             "dump-layout-tree" => Some(Self::DumpLayoutTree),
+            "dump-layout-artifacts" => Some(Self::DumpLayoutArtifacts),
+            "dump-runtime" => Some(Self::DumpRuntime),
             "list-outputs" => Some(Self::ListOutputs),
             "list-workspaces" => Some(Self::ListWorkspaces),
             "list-windows" => Some(Self::ListWindows),
@@ -113,6 +117,22 @@ mod tests {
         assert_eq!(
             RuntimeCommand::parse("dump-layout-tree"),
             Some(RuntimeCommand::DumpLayoutTree)
+        );
+    }
+
+    #[test]
+    fn parses_dump_layout_artifacts_command() {
+        assert_eq!(
+            RuntimeCommand::parse("dump-layout-artifacts"),
+            Some(RuntimeCommand::DumpLayoutArtifacts)
+        );
+    }
+
+    #[test]
+    fn parses_dump_runtime_command() {
+        assert_eq!(
+            RuntimeCommand::parse("dump-runtime"),
+            Some(RuntimeCommand::DumpRuntime)
         );
     }
 

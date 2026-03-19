@@ -15,6 +15,8 @@ use spiders_shared::{
     wm::{LayoutEvaluationContext, WorkspaceSnapshot},
 };
 
+use crate::config::LayoutTreeSource;
+
 #[cfg(feature = "built-in-layout-runtime")]
 #[derive(Debug, Clone, Default)]
 pub struct BuiltInLayoutRuntime;
@@ -52,6 +54,22 @@ impl RuntimeLayoutService {
                 service.evaluate_prepared_for_workspace(config, state, workspace)
             }
             Self::Js(service) => service.evaluate_prepared_for_workspace(config, state, workspace),
+        }
+    }
+
+    pub fn provenance(&self) -> LayoutTreeSource {
+        match self {
+            #[cfg(feature = "built-in-layout-runtime")]
+            Self::BuiltIn(_) => LayoutTreeSource::BuiltIn,
+            Self::Js(_) => LayoutTreeSource::JsRuntime,
+        }
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            #[cfg(feature = "built-in-layout-runtime")]
+            Self::BuiltIn(_) => "built-in",
+            Self::Js(_) => "js-runtime",
         }
     }
 }

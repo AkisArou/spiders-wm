@@ -655,6 +655,7 @@ mod tests {
                     },
                 ],
             },
+            crate::config::LayoutTreeSource::JsRuntime,
         );
 
         layout.recompute(

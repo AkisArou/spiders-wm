@@ -12,6 +12,13 @@ pub enum ConfigSource {
     AuthoredConfig,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum LayoutTreeSource {
+    #[default]
+    BuiltIn,
+    JsRuntime,
+}
+
 #[derive(Debug, Default)]
 pub struct ConfigRuntimeState {
     revision: u64,
@@ -19,6 +26,7 @@ pub struct ConfigRuntimeState {
     source: ConfigSource,
     current: Config,
     layout_trees: BTreeMap<String, SourceLayoutNode>,
+    layout_tree_sources: BTreeMap<String, LayoutTreeSource>,
 }
 
 impl ConfigRuntimeState {
@@ -42,16 +50,32 @@ impl ConfigRuntimeState {
         self.layout_trees.get(layout_name)
     }
 
+    pub fn layout_tree_source(&self, layout_name: &str) -> Option<LayoutTreeSource> {
+        self.layout_tree_sources.get(layout_name).copied()
+    }
+
+    pub fn installed_layout_names(&self) -> Vec<String> {
+        self.layout_trees.keys().cloned().collect()
+    }
+
     pub fn replace(&mut self, config: Config, source: ConfigSource) {
         self.revision += 1;
         self.source = source;
         self.current = config;
         self.layout_trees.clear();
+        self.layout_tree_sources.clear();
     }
 
-    pub fn install_layout_tree(&mut self, layout_name: impl Into<String>, tree: SourceLayoutNode) {
+    pub fn install_layout_tree(
+        &mut self,
+        layout_name: impl Into<String>,
+        tree: SourceLayoutNode,
+        source: LayoutTreeSource,
+    ) {
+        let layout_name = layout_name.into();
         self.layout_tree_revision += 1;
-        self.layout_trees.insert(layout_name.into(), tree);
+        self.layout_trees.insert(layout_name.clone(), tree);
+        self.layout_tree_sources.insert(layout_name, source);
     }
 }
 
@@ -78,7 +102,7 @@ mod tests {
     use spiders_config::model::LayoutDefinition;
     use spiders_shared::layout::SourceLayoutNode;
 
-    use super::{ConfigRuntimeState, ConfigSource};
+    use super::{ConfigRuntimeState, ConfigSource, LayoutTreeSource};
 
     #[test]
     fn replacing_config_updates_revision_and_source() {
@@ -106,9 +130,14 @@ mod tests {
                 meta: Default::default(),
                 children: vec![],
             },
+            LayoutTreeSource::BuiltIn,
         );
 
         assert_eq!(state.layout_tree_revision(), 1);
         assert!(state.layout_tree("columns").is_some());
+        assert_eq!(
+            state.layout_tree_source("columns"),
+            Some(LayoutTreeSource::BuiltIn)
+        );
     }
 }

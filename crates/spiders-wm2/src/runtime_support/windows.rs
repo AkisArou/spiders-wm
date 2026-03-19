@@ -258,7 +258,7 @@ mod tests {
 
         let mut transactions = TransactionManager::default();
         transactions.stage(wm.snapshot(&outputs, &built_in_default_config()));
-        transactions.commit_pending();
+        transactions.commit_pending(crate::transactions::TransactionCommitReason::Ready);
 
         wm.active_workspace = WorkspaceId::from("ws-2");
         transactions.stage(wm.snapshot(&outputs, &built_in_default_config()));

@@ -1,5 +1,5 @@
 use std::{
-    collections::HashSet,
+    collections::{HashSet, VecDeque},
     time::{Duration, Instant},
 };
 
@@ -14,6 +14,7 @@ use spiders_shared::wm::StateSnapshot;
 pub struct TransactionManager {
     next_transaction_id: u64,
     committed: Option<StateSnapshot>,
+    history: VecDeque<TransactionHistoryEntry>,
     pending: Option<PendingTransaction>,
 }
 
@@ -34,6 +35,21 @@ pub struct TransactionParticipant {
     pub configure_serial: Option<Serial>,
     pub acked: bool,
     pub committed: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransactionCommitReason {
+    Ready,
+    TimedOut,
+}
+
+#[derive(Debug, Clone)]
+pub struct TransactionHistoryEntry {
+    pub id: u64,
+    pub reason: TransactionCommitReason,
+    pub affected_window_count: usize,
+    pub affected_workspace_count: usize,
+    pub affected_output_count: usize,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -79,6 +95,10 @@ impl TransactionManager {
 
     pub fn committed(&self) -> Option<&StateSnapshot> {
         self.committed.as_ref()
+    }
+
+    pub fn history(&self) -> &VecDeque<TransactionHistoryEntry> {
+        &self.history
     }
 
     pub fn pending_refresh_plan(&self, wm: &WmState) -> Option<RefreshPlan> {
@@ -142,18 +162,29 @@ impl TransactionManager {
         }
     }
 
+    #[cfg(test)]
     pub fn is_pending_ready(&self) -> bool {
-        self.is_pending_ready_at(Instant::now())
+        self.pending_resolution(Instant::now()).is_some()
     }
 
-    pub fn is_pending_ready_at(&self, now: Instant) -> bool {
+    pub fn pending_resolution(&self, now: Instant) -> Option<TransactionCommitReason> {
         self.pending
             .as_ref()
-            .is_none_or(|pending| pending.is_ready(now))
+            .and_then(|pending| pending.resolution(now))
     }
 
-    pub fn commit_pending(&mut self) {
+    pub fn commit_pending(&mut self, reason: TransactionCommitReason) {
         if let Some(pending) = self.pending.take() {
+            self.history.push_front(TransactionHistoryEntry {
+                id: pending.id,
+                reason,
+                affected_window_count: pending.affected_windows.len(),
+                affected_workspace_count: pending.affected_workspaces.len(),
+                affected_output_count: pending.affected_outputs.len(),
+            });
+            while self.history.len() > 16 {
+                self.history.pop_back();
+            }
             self.committed = Some(pending.desired);
         }
     }
@@ -297,12 +328,18 @@ impl PendingTransaction {
         }
     }
 
-    fn is_ready(&self, now: Instant) -> bool {
-        now >= self.deadline
-            || self
-                .participants
-                .values()
-                .all(TransactionParticipant::is_ready)
+    fn resolution(&self, now: Instant) -> Option<TransactionCommitReason> {
+        if now >= self.deadline {
+            Some(TransactionCommitReason::TimedOut)
+        } else if self
+            .participants
+            .values()
+            .all(TransactionParticipant::is_ready)
+        {
+            Some(TransactionCommitReason::Ready)
+        } else {
+            None
+        }
     }
 
     fn refresh_plan(&self, wm: &WmState) -> RefreshPlan {
@@ -446,8 +483,8 @@ impl SpidersWm2 {
     }
 
     pub fn maybe_commit_pending_transaction(&mut self) {
-        if self.runtime.transactions.is_pending_ready() {
-            self.runtime.transactions.commit_pending();
+        if let Some(reason) = self.runtime.transactions.pending_resolution(Instant::now()) {
+            self.runtime.transactions.commit_pending(reason);
             self.app.layout.commit_desired();
         }
     }
@@ -460,7 +497,7 @@ mod tests {
         time::{Duration, Instant},
     };
 
-    use super::{DirtyScope, PendingTransaction, TransactionManager};
+    use super::{DirtyScope, PendingTransaction, TransactionCommitReason, TransactionManager};
     use crate::model::{ManagedWindowState, WmState, WorkspaceState};
     use smithay::utils::SERIAL_COUNTER;
     use spiders_shared::{
@@ -713,6 +750,49 @@ mod tests {
         }
 
         assert!(transactions.is_pending_ready());
+    }
+
+    #[test]
+    fn commit_pending_records_ready_history_entry() {
+        let desired = snapshot(
+            Some("w1"),
+            &["w1"],
+            vec![workspace("ws-1", true, true)],
+            vec![window("w1", "ws-1", true, WindowMode::Tiled)],
+        );
+        let mut transactions = TransactionManager::default();
+
+        transactions.stage(desired);
+        transactions.commit_pending(TransactionCommitReason::Ready);
+
+        assert_eq!(
+            transactions.history().front().unwrap().reason,
+            TransactionCommitReason::Ready
+        );
+    }
+
+    #[test]
+    fn pending_resolution_reports_timeout_reason() {
+        let desired = snapshot(
+            Some("w1"),
+            &["w1"],
+            vec![workspace("ws-1", true, true)],
+            vec![window("w1", "ws-1", true, WindowMode::Tiled)],
+        );
+        let mut transactions = TransactionManager::default();
+
+        transactions.stage(desired);
+        let serial = SERIAL_COUNTER.next_serial();
+        transactions.register_configure(&WindowId::from("w1"), serial);
+
+        if let Some(pending) = transactions.pending.as_mut() {
+            pending.deadline = Instant::now() - Duration::from_millis(1);
+        }
+
+        assert_eq!(
+            transactions.pending_resolution(Instant::now()),
+            Some(TransactionCommitReason::TimedOut)
+        );
     }
 
     #[test]

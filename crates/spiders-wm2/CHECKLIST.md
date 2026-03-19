@@ -197,4 +197,8 @@ These are documented or expected features that are not fully implemented in the 
 - Winit redraw now flows through a reusable output render helper, and inspection payloads include focus/pending-transaction/render-dirty metadata instead of only bare lists.
 - Layout state now tracks both desired and committed tiled geometry, and `dump-geometry` exposes both over the control socket for transaction-aware placement inspection.
 - Layout inspection now includes desired/committed layout snapshots via `dump-layout-tree`, and the winit render path now iterates Smithay outputs through a reusable helper shape instead of a single hard-wired render block.
+- Layout artifact provenance is now inspectable through the control socket (`dump-layout-artifacts`), including config source/revision, installed layout trees, and per-workspace effective layout selection/install status.
+- Installed layout trees now carry runtime provenance (`BuiltIn` vs `JsRuntime`), and artifact inspection reports which runtime path produced the currently installed tree for each selected layout.
+- Runtime/backend provenance is now inspectable through `dump-runtime`, and output inspection payloads now describe render capability/dirty-state metadata instead of only identity fields.
+- Transaction inspection now includes recent commit history with ready-vs-timeout resolution, so runtime diagnostics can show not just the current pending transaction but how recent transactions actually settled.
 - Scene application is still immediate after staging; smarter timeout policy and real subtree-scoped layout recomputation are the next transaction milestones.

@@ -122,7 +122,10 @@ impl SpidersWm2 {
                 .layout_service
                 .evaluate_prepared_for_workspace(&config, &state, workspace)
             {
-                self.app.apply_prepared_layout_evaluation(evaluation);
+                self.app.apply_prepared_layout_evaluation(
+                    evaluation,
+                    self.runtime.layout_service.provenance(),
+                );
             }
         }
     }
@@ -180,6 +183,13 @@ impl SpidersWm2 {
                         "current_workspace_id": snapshot.current_workspace_id,
                         "visible_window_ids": snapshot.visible_window_ids,
                     })),
+                    "history": self.runtime.transactions.history().iter().map(|entry| json!({
+                        "id": entry.id,
+                        "reason": format!("{:?}", entry.reason),
+                        "affected_window_count": entry.affected_window_count,
+                        "affected_workspace_count": entry.affected_workspace_count,
+                        "affected_output_count": entry.affected_output_count,
+                    })).collect::<Vec<_>>(),
                     "render_dirty": self.runtime.render_plan.is_dirty(),
                 })),
             },
@@ -232,10 +242,58 @@ impl SpidersWm2 {
                     "committed": self.app.layout.committed_layout_snapshots,
                 })),
             },
+            RuntimeCommand::DumpLayoutArtifacts => {
+                let snapshot = self.app.wm.snapshot(
+                    &self.app.topology.outputs,
+                    self.app.config_runtime.current(),
+                );
+
+                CommandResult {
+                    ok: true,
+                    message: "dumped layout artifacts".into(),
+                    payload: Some(json!({
+                        "config_revision": self.app.config_runtime.revision(),
+                        "layout_tree_revision": self.app.config_runtime.layout_tree_revision(),
+                        "config_source": format!("{:?}", self.app.config_runtime.source()),
+                        "installed_layouts": self.app.config_runtime.installed_layout_names(),
+                        "workspaces": snapshot.workspaces.iter().map(|workspace| {
+                            json!({
+                                "workspace_id": workspace.id,
+                                "workspace_name": workspace.name,
+                                "effective_layout": workspace.effective_layout.as_ref().map(|layout| layout.name.clone()),
+                                "selected_layout_installed": workspace.effective_layout.as_ref().map(|layout| {
+                                    self.app.config_runtime.layout_tree(&layout.name).is_some()
+                                }),
+                                "selected_layout_source": workspace.effective_layout.as_ref().and_then(|layout| {
+                                    self.app.config_runtime.layout_tree_source(&layout.name)
+                                }).map(|source| format!("{:?}", source)),
+                            })
+                        }).collect::<Vec<_>>()
+                    })),
+                }
+            }
+            RuntimeCommand::DumpRuntime => CommandResult {
+                ok: true,
+                message: "dumped runtime".into(),
+                payload: Some(json!({
+                    "backend": "winit",
+                    "layout_runtime": self.runtime.layout_service.label(),
+                    "layout_runtime_provenance": format!("{:?}", self.runtime.layout_service.provenance()),
+                    "socket_name": self.runtime.socket_name.to_string_lossy(),
+                    "control_socket": std::env::var_os("SPIDERS_WM2_CONTROL_SOCKET").map(|path| path.to_string_lossy().to_string()),
+                    "config_path": std::env::var_os("SPIDERS_WM2_CONFIG_PATH").map(|path| path.to_string_lossy().to_string()),
+                    "features": {
+                        "built_in_layout_runtime": cfg!(feature = "built-in-layout-runtime"),
+                    },
+                    "output_count": self.app.topology.outputs.len(),
+                    "window_count": self.app.wm.windows.len(),
+                })),
+            },
             RuntimeCommand::ListOutputs => CommandResult {
                 ok: true,
                 message: "listed outputs".into(),
                 payload: Some(json!({
+                    "backend": "winit",
                     "focused_output": self.app.wm.focused_output,
                     "pending_transaction": self.runtime.transactions.pending().map(|pending| pending.id),
                     "outputs": self.app.topology.outputs.values().map(|output| {
@@ -246,6 +304,11 @@ impl SpidersWm2 {
                             "current_workspace": output.current_workspace,
                             "logical_size": output.logical_size,
                             "dirty": self.runtime.render_plan.should_render_output(&output.id),
+                            "capabilities": {
+                                "renderable": output.enabled,
+                                "single_window_backend": true,
+                                "transactional_damage_tracking": true,
+                            },
                         })
                     }).collect::<Vec<_>>()
                 })),
