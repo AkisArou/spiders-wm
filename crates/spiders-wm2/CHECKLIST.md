@@ -204,4 +204,5 @@ These are documented or expected features that are not fully implemented in the 
 - Transaction diagnostics now include timing metadata (pending age/deadline and historical commit durations), making timeout behavior inspectable instead of only inferable.
 - Participant-level transaction state is now inspectable (waiting-for-ack vs waiting-for-commit vs ready), and timeout history records which window ids were still unresolved when a transaction had to settle anyway.
 - Transaction history now also records superseded pending transactions, so inspection can distinguish "timed out" from "replaced by a newer desired scene" during rapid state churn.
+- Committed geometry inspection now reads committed transaction snapshot windows/modes instead of only live WM state, so `dump-geometry` can still report the last committed scene during pending closes/mode flips.
 - Scene application is still immediate after staging; smarter timeout policy and real subtree-scoped layout recomputation are the next transaction milestones.

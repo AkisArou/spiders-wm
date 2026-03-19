@@ -58,6 +58,7 @@ pub struct TransactionHistoryEntry {
     pub id: u64,
     pub reason: TransactionCommitReason,
     pub duration_ms: u128,
+    pub replacement_transaction_id: Option<u64>,
     pub unresolved_window_ids: Vec<WindowId>,
     pub affected_window_count: usize,
     pub affected_workspace_count: usize,
@@ -93,7 +94,11 @@ impl TransactionManager {
         let transaction_id = self.allocate_transaction_id();
 
         if let Some(pending) = self.pending.take() {
-            self.record_history_entry(pending, TransactionCommitReason::Superseded);
+            self.record_history_entry(
+                pending,
+                TransactionCommitReason::Superseded,
+                Some(transaction_id),
+            );
         }
 
         let Some(committed) = self.committed.as_ref() else {
@@ -192,7 +197,7 @@ impl TransactionManager {
     pub fn commit_pending(&mut self, reason: TransactionCommitReason) {
         if let Some(pending) = self.pending.take() {
             let desired = pending.desired.clone();
-            self.record_history_entry(pending, reason);
+            self.record_history_entry(pending, reason, None);
             self.committed = Some(desired);
         }
     }
@@ -206,11 +211,13 @@ impl TransactionManager {
         &mut self,
         pending: PendingTransaction,
         reason: TransactionCommitReason,
+        replacement_transaction_id: Option<u64>,
     ) {
         self.history.push_front(TransactionHistoryEntry {
             id: pending.id,
             reason,
             duration_ms: pending.started_at.elapsed().as_millis(),
+            replacement_transaction_id,
             unresolved_window_ids: pending.unresolved_window_ids(),
             affected_window_count: pending.affected_windows.len(),
             affected_workspace_count: pending.affected_workspaces.len(),
@@ -821,6 +828,14 @@ mod tests {
             TransactionCommitReason::Ready
         );
         assert_eq!(transactions.history().front().unwrap().duration_ms, 0);
+        assert_eq!(
+            transactions
+                .history()
+                .front()
+                .unwrap()
+                .replacement_transaction_id,
+            None
+        );
     }
 
     #[test]
@@ -901,6 +916,14 @@ mod tests {
         assert_eq!(
             transactions.history().front().unwrap().reason,
             TransactionCommitReason::Superseded
+        );
+        assert_eq!(
+            transactions
+                .history()
+                .front()
+                .unwrap()
+                .replacement_transaction_id,
+            Some(2)
         );
     }
 

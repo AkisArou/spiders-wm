@@ -197,6 +197,7 @@ impl SpidersWm2 {
                         "id": entry.id,
                         "reason": format!("{:?}", entry.reason),
                         "duration_ms": entry.duration_ms,
+                        "replacement_transaction_id": entry.replacement_transaction_id,
                         "unresolved_window_ids": entry.unresolved_window_ids,
                         "affected_window_count": entry.affected_window_count,
                         "affected_workspace_count": entry.affected_workspace_count,
@@ -237,17 +238,32 @@ impl SpidersWm2 {
                             })
                         })
                     }).collect::<Vec<_>>(),
-                    "committed": self.app.wm.windows.keys().filter_map(|window_id| {
-                        placement::committed_window_rect(&self.app, None, window_id).map(|rect| {
-                            json!({
-                                "window_id": window_id,
-                                "x": rect.loc.x,
-                                "y": rect.loc.y,
-                                "width": rect.size.w,
-                                "height": rect.size.h,
+                    "committed": self.runtime.transactions.committed().into_iter().flat_map(|snapshot| {
+                        snapshot.windows.iter().filter_map(|window| {
+                            placement::committed_window_rect(&self.app, Some(snapshot), None, &window.id).map(|rect| {
+                                json!({
+                                    "window_id": window.id,
+                                    "x": rect.loc.x,
+                                    "y": rect.loc.y,
+                                    "width": rect.size.w,
+                                    "height": rect.size.h,
+                                })
                             })
-                        })
+                        }).collect::<Vec<_>>()
                     }).collect::<Vec<_>>(),
+                    "committed_fallback": self.runtime.transactions.committed().is_none().then(|| {
+                        self.app.wm.windows.keys().filter_map(|window_id| {
+                            placement::committed_window_rect(&self.app, None, None, window_id).map(|rect| {
+                                json!({
+                                    "window_id": window_id,
+                                    "x": rect.loc.x,
+                                    "y": rect.loc.y,
+                                    "width": rect.size.w,
+                                    "height": rect.size.h,
+                                })
+                            })
+                        }).collect::<Vec<_>>()
+                    }),
                 })),
             },
             RuntimeCommand::DumpLayoutTree => CommandResult {
