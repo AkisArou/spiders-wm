@@ -81,6 +81,40 @@ impl SpidersWm2 {
         )
     }
 
+    fn presented_snapshot(&self, desired: &StateSnapshot) -> StateSnapshot {
+        self.runtime
+            .transactions
+            .committed()
+            .cloned()
+            .unwrap_or_else(|| desired.clone())
+    }
+
+    fn geometry_payload(
+        &self,
+        desired: &StateSnapshot,
+        presented: &StateSnapshot,
+    ) -> serde_json::Value {
+        geometry_payload(
+            &self.app,
+            desired,
+            presented,
+            self.runtime.transactions.committed(),
+        )
+    }
+
+    fn transaction_payload(
+        &self,
+        desired: &StateSnapshot,
+        presented: &StateSnapshot,
+    ) -> serde_json::Value {
+        transaction_payload(
+            &self.runtime.transactions,
+            &self.runtime.render_plan,
+            desired,
+            presented,
+        )
+    }
+
     pub fn new(event_loop: &mut EventLoop<Self>, display: Display<Self>) -> Self {
         let runtime = RuntimeState::new(event_loop, display);
         let mut app = AppState::default();
@@ -167,53 +201,25 @@ impl SpidersWm2 {
                     }
                 }
             }
-            RuntimeCommand::DumpTransaction => CommandResult {
-                ok: true,
-                message: format!(
-                    "config_revision={} layout_tree_revision={} render_dirty={} {}",
-                    self.app.config_runtime.revision(),
-                    self.app.config_runtime.layout_tree_revision(),
-                    self.runtime.render_plan.is_dirty(),
-                    self.runtime
-                        .transactions
-                        .pending_debug_summary(&self.app.wm)
-                        .unwrap_or_else(|| "no pending transaction".into())
-                ),
-                payload: Some(json!({
-                    "pending": self.runtime.transactions.pending().map(|pending| json!({
-                        "id": pending.id,
-                        "age_ms": pending.started_at.elapsed().as_millis(),
-                        "deadline_in_ms": pending.deadline.saturating_duration_since(std::time::Instant::now()).as_millis(),
-                        "affected_windows": pending.affected_windows,
-                        "affected_workspaces": pending.affected_workspaces,
-                        "affected_outputs": pending.affected_outputs,
-                        "participants": pending.participants.iter().map(|(window_id, participant)| json!({
-                            "window_id": window_id,
-                            "status": format!("{:?}", participant.status()),
-                            "configure_serial": participant.configure_serial.map(|serial| format!("{serial:?}")),
-                            "acked": participant.acked,
-                            "committed": participant.committed,
-                        })).collect::<Vec<_>>(),
-                    })),
-                    "committed": self.runtime.transactions.committed().map(|snapshot| json!({
-                        "focused_window_id": snapshot.focused_window_id,
-                        "current_output_id": snapshot.current_output_id,
-                        "current_workspace_id": snapshot.current_workspace_id,
-                        "visible_window_ids": snapshot.visible_window_ids,
-                    })),
-                    "history": self.runtime.transactions.history().iter().map(|entry| json!({
-                        "id": entry.id,
-                        "reason": format!("{:?}", entry.reason),
-                        "duration_ms": entry.duration_ms,
-                        "replacement_transaction_id": entry.replacement_transaction_id,
-                        "unresolved_window_ids": entry.unresolved_window_ids,
-                        "affected_window_count": entry.affected_window_count,
-                        "affected_workspace_count": entry.affected_workspace_count,
-                        "affected_output_count": entry.affected_output_count,
-                    })).collect::<Vec<_>>(),
-                    "render_dirty": self.runtime.render_plan.is_dirty(),
-                })),
-            },
+            RuntimeCommand::DumpTransaction => {
+                let desired = self.desired_snapshot();
+                let presented = self.presented_snapshot(&desired);
+
+                CommandResult {
+                    ok: true,
+                    message: format!(
+                        "config_revision={} layout_tree_revision={} render_dirty={} {}",
+                        self.app.config_runtime.revision(),
+                        self.app.config_runtime.layout_tree_revision(),
+                        self.runtime.render_plan.is_dirty(),
+                        self.runtime
+                            .transactions
+                            .pending_debug_summary(&self.app.wm)
+                            .unwrap_or_else(|| "no pending transaction".into())
+                    ),
+                    payload: Some(self.transaction_payload(&desired, &presented)),
+                }
+            }
             RuntimeCommand::SwitchWorkspace(workspace_id) => {
                 self.switch_workspace(workspace_id);
                 CommandResult {
@@ -231,54 +237,22 @@ impl SpidersWm2 {
                     payload: None,
                 }
             }
-            RuntimeCommand::DumpGeometry => CommandResult {
-                ok: true,
-                message: "dumped geometry".into(),
-                payload: Some(json!({
-                    "desired": self.app.wm.windows.keys().filter_map(|window_id| {
-                        placement::desired_window_rect(&self.app, None, window_id).map(|rect| {
-                            json!({
-                                "window_id": window_id,
-                                "x": rect.loc.x,
-                                "y": rect.loc.y,
-                                "width": rect.size.w,
-                                "height": rect.size.h,
-                            })
-                        })
-                    }).collect::<Vec<_>>(),
-                    "committed": self.runtime.transactions.committed().into_iter().flat_map(|snapshot| {
-                        snapshot.windows.iter().filter_map(|window| {
-                            placement::committed_window_rect(&self.app, Some(snapshot), None, &window.id).map(|rect| {
-                                json!({
-                                    "window_id": window.id,
-                                    "x": rect.loc.x,
-                                    "y": rect.loc.y,
-                                    "width": rect.size.w,
-                                    "height": rect.size.h,
-                                })
-                            })
-                        }).collect::<Vec<_>>()
-                    }).collect::<Vec<_>>(),
-                    "committed_fallback": self.runtime.transactions.committed().is_none().then(|| {
-                        self.app.wm.windows.keys().filter_map(|window_id| {
-                            placement::committed_window_rect(&self.app, None, None, window_id).map(|rect| {
-                                json!({
-                                    "window_id": window_id,
-                                    "x": rect.loc.x,
-                                    "y": rect.loc.y,
-                                    "width": rect.size.w,
-                                    "height": rect.size.h,
-                                })
-                            })
-                        }).collect::<Vec<_>>()
-                    }),
-                })),
-            },
+            RuntimeCommand::DumpGeometry => {
+                let desired = self.desired_snapshot();
+                let presented = self.presented_snapshot(&desired);
+
+                CommandResult {
+                    ok: true,
+                    message: "dumped geometry".into(),
+                    payload: Some(self.geometry_payload(&desired, &presented)),
+                }
+            }
             RuntimeCommand::DumpLayoutTree => CommandResult {
                 ok: true,
                 message: "dumped layout tree".into(),
                 payload: Some(json!({
                     "desired": self.app.layout.desired_layout_snapshots,
+                    "presented": self.app.layout.committed_layout_snapshots,
                     "committed": self.app.layout.committed_layout_snapshots,
                 })),
             },
@@ -332,6 +306,7 @@ impl SpidersWm2 {
             },
             RuntimeCommand::ListOutputs => {
                 let desired = self.desired_snapshot();
+                let presented = self.presented_snapshot(&desired);
                 let committed = self.runtime.transactions.committed();
                 let pending_transaction = self
                     .runtime
@@ -345,6 +320,7 @@ impl SpidersWm2 {
                     payload: Some(list_outputs_payload(
                         &self.app.topology.outputs,
                         &desired,
+                        &presented,
                         committed,
                         pending_transaction,
                         &self.runtime.render_plan,
@@ -353,6 +329,7 @@ impl SpidersWm2 {
             }
             RuntimeCommand::ListWorkspaces => {
                 let desired = self.desired_snapshot();
+                let presented = self.presented_snapshot(&desired);
                 let committed = self.runtime.transactions.committed();
                 let pending_transaction = self
                     .runtime
@@ -365,6 +342,7 @@ impl SpidersWm2 {
                     message: "listed workspaces".into(),
                     payload: Some(list_workspaces_payload(
                         &desired,
+                        &presented,
                         committed,
                         pending_transaction,
                     )),
@@ -372,6 +350,7 @@ impl SpidersWm2 {
             }
             RuntimeCommand::ListWindows => {
                 let desired = self.desired_snapshot();
+                let presented = self.presented_snapshot(&desired);
                 let committed = self.runtime.transactions.committed();
                 let pending_transaction = self
                     .runtime
@@ -384,6 +363,7 @@ impl SpidersWm2 {
                     message: "listed windows".into(),
                     payload: Some(list_windows_payload(
                         &desired,
+                        &presented,
                         committed,
                         pending_transaction,
                         self.runtime.transactions.deferred_removals(),
@@ -603,12 +583,13 @@ impl SmithayState {
 
 fn list_workspaces_payload(
     desired: &StateSnapshot,
+    presented: &StateSnapshot,
     committed: Option<&StateSnapshot>,
     pending_transaction: Option<u64>,
 ) -> serde_json::Value {
     json!({
-        "active_workspace": desired.current_workspace_id,
-        "focused_window": desired.focused_window_id,
+        "active_workspace": presented.current_workspace_id,
+        "focused_window": presented.focused_window_id,
         "pending_transaction": pending_transaction,
         "desired": desired.workspaces.iter().map(|workspace| {
             json!({
@@ -619,6 +600,17 @@ fn list_workspaces_payload(
                 "visible": workspace.visible,
                 "effective_layout": workspace.effective_layout.as_ref().map(|layout| layout.name.clone()),
                 "visible_windows": desired.windows_for_workspace(workspace).into_iter().map(|window| window.id).collect::<Vec<_>>(),
+            })
+        }).collect::<Vec<_>>(),
+        "presented": presented.workspaces.iter().map(|workspace| {
+            json!({
+                "id": workspace.id,
+                "name": workspace.name,
+                "output_id": workspace.output_id,
+                "focused": workspace.focused,
+                "visible": workspace.visible,
+                "effective_layout": workspace.effective_layout.as_ref().map(|layout| layout.name.clone()),
+                "visible_windows": presented.windows_for_workspace(workspace).into_iter().map(|window| window.id).collect::<Vec<_>>(),
             })
         }).collect::<Vec<_>>(),
         "committed": committed.map(|snapshot| snapshot.workspaces.iter().map(|workspace| {
@@ -635,17 +627,141 @@ fn list_workspaces_payload(
     })
 }
 
+fn geometry_payload(
+    app: &AppState,
+    desired: &StateSnapshot,
+    presented: &StateSnapshot,
+    committed: Option<&StateSnapshot>,
+) -> serde_json::Value {
+    json!({
+        "desired": desired.windows.iter().filter_map(|window| {
+            placement::desired_window_rect(app, None, &window.id).map(|rect| {
+                json!({
+                    "window_id": window.id,
+                    "x": rect.loc.x,
+                    "y": rect.loc.y,
+                    "width": rect.size.w,
+                    "height": rect.size.h,
+                })
+            })
+        }).collect::<Vec<_>>(),
+        "presented": presented.windows.iter().filter_map(|window| {
+            placement::presented_window_rect(app, Some(presented), None, &window.id).map(|rect| {
+                json!({
+                    "window_id": window.id,
+                    "x": rect.loc.x,
+                    "y": rect.loc.y,
+                    "width": rect.size.w,
+                    "height": rect.size.h,
+                })
+            })
+        }).collect::<Vec<_>>(),
+        "committed": committed.into_iter().flat_map(|snapshot| {
+            snapshot.windows.iter().filter_map(|window| {
+                placement::committed_window_rect(app, Some(snapshot), None, &window.id).map(|rect| {
+                    json!({
+                        "window_id": window.id,
+                        "x": rect.loc.x,
+                        "y": rect.loc.y,
+                        "width": rect.size.w,
+                        "height": rect.size.h,
+                    })
+                })
+            }).collect::<Vec<_>>()
+        }).collect::<Vec<_>>(),
+        "committed_fallback": committed.is_none().then(|| {
+            app.wm.windows.keys().filter_map(|window_id| {
+                placement::committed_window_rect(app, None, None, window_id).map(|rect| {
+                    json!({
+                        "window_id": window_id,
+                        "x": rect.loc.x,
+                        "y": rect.loc.y,
+                        "width": rect.size.w,
+                        "height": rect.size.h,
+                    })
+                })
+            }).collect::<Vec<_>>()
+        }),
+    })
+}
+
+fn transaction_payload(
+    transactions: &TransactionManager,
+    render_plan: &RenderPlan,
+    desired: &StateSnapshot,
+    presented: &StateSnapshot,
+) -> serde_json::Value {
+    let committed = transactions.committed();
+
+    json!({
+        "pending": transactions.pending().map(|pending| json!({
+            "id": pending.id,
+            "coalescing_root_transaction_id": pending.coalescing_root_transaction_id,
+            "coalescing_depth": pending.coalescing_depth,
+            "age_ms": pending.started_at.elapsed().as_millis(),
+            "deadline_in_ms": pending.deadline.saturating_duration_since(std::time::Instant::now()).as_millis(),
+            "affected_windows": pending.affected_windows,
+            "affected_workspaces": pending.affected_workspaces,
+            "affected_outputs": pending.affected_outputs,
+            "participants": pending.participants.iter().map(|(window_id, participant)| json!({
+                "window_id": window_id,
+                "status": format!("{:?}", participant.status()),
+                "configure_serial": participant.configure_serial.map(|serial| format!("{serial:?}")),
+                "acked": participant.acked,
+                "committed": participant.committed,
+            })).collect::<Vec<_>>(),
+        })),
+        "desired": {
+            "focused_window_id": desired.focused_window_id,
+            "current_output_id": desired.current_output_id,
+            "current_workspace_id": desired.current_workspace_id,
+            "visible_window_ids": desired.visible_window_ids,
+        },
+        "presented": {
+            "focused_window_id": presented.focused_window_id,
+            "current_output_id": presented.current_output_id,
+            "current_workspace_id": presented.current_workspace_id,
+            "visible_window_ids": presented.visible_window_ids,
+        },
+        "committed": committed.map(|snapshot| json!({
+            "focused_window_id": snapshot.focused_window_id,
+            "current_output_id": snapshot.current_output_id,
+            "current_workspace_id": snapshot.current_workspace_id,
+            "visible_window_ids": snapshot.visible_window_ids,
+        })),
+        "history": transactions.history().iter().map(|entry| json!({
+            "id": entry.id,
+            "reason": format!("{:?}", entry.reason),
+            "duration_ms": entry.duration_ms,
+            "coalescing_root_transaction_id": entry.coalescing_root_transaction_id,
+            "coalescing_depth": entry.coalescing_depth,
+            "replacement_transaction_id": entry.replacement_transaction_id,
+            "unresolved_window_ids": entry.unresolved_window_ids,
+            "affected_window_count": entry.affected_window_count,
+            "affected_workspace_count": entry.affected_workspace_count,
+            "affected_output_count": entry.affected_output_count,
+         })).collect::<Vec<_>>(),
+        "coalesced_chains": transactions.coalesced_chains().iter().map(|chain| json!({
+            "root_transaction_id": chain.root_transaction_id,
+            "transaction_ids": chain.transaction_ids,
+            "active_transaction_id": chain.active_transaction_id,
+        })).collect::<Vec<_>>(),
+        "render_dirty": render_plan.is_dirty(),
+    })
+}
+
 fn list_outputs_payload(
     outputs: &std::collections::HashMap<crate::model::OutputId, crate::model::OutputNode>,
     desired: &StateSnapshot,
+    presented: &StateSnapshot,
     committed: Option<&StateSnapshot>,
     pending_transaction: Option<u64>,
     render_plan: &RenderPlan,
 ) -> serde_json::Value {
     json!({
         "backend": "winit",
-        "focused_output": desired.current_output_id,
-        "current_workspace": desired.current_workspace_id,
+        "focused_output": presented.current_output_id,
+        "current_workspace": presented.current_workspace_id,
         "pending_transaction": pending_transaction,
         "desired": desired.outputs.iter().map(|output| {
             json!({
@@ -660,6 +776,16 @@ fn list_outputs_payload(
                     "single_window_backend": true,
                     "transactional_damage_tracking": true,
                 },
+            })
+        }).collect::<Vec<_>>(),
+        "presented": presented.outputs.iter().map(|output| {
+            json!({
+                "id": output.id,
+                "name": output.name,
+                "enabled": output.enabled,
+                "current_workspace": output.current_workspace_id,
+                "logical_size": [output.logical_width, output.logical_height],
+                "dirty": render_plan.should_render_output(&output.id),
             })
         }).collect::<Vec<_>>(),
         "committed": committed.map(|snapshot| snapshot.outputs.iter().map(|output| {
@@ -686,15 +812,28 @@ fn list_outputs_payload(
 
 fn list_windows_payload(
     desired: &StateSnapshot,
+    presented: &StateSnapshot,
     committed: Option<&StateSnapshot>,
     pending_transaction: Option<u64>,
     deferred_removals: &std::collections::HashSet<crate::model::WindowId>,
 ) -> serde_json::Value {
     json!({
-        "focused_window": desired.focused_window_id,
+        "focused_window": presented.focused_window_id,
         "pending_transaction": pending_transaction,
         "deferred_removals": deferred_removals,
         "desired": desired.windows.iter().map(|window| {
+            json!({
+                "id": window.id,
+                "workspace": window.workspace_id,
+                "output": window.output_id,
+                "mode": format!("{:?}", window.mode),
+                "mapped": window.mapped,
+                "title": window.title,
+                "app_id": window.app_id,
+                "focused": window.focused,
+            })
+        }).collect::<Vec<_>>(),
+        "presented": presented.windows.iter().map(|window| {
             json!({
                 "id": window.id,
                 "workspace": window.workspace_id,
@@ -734,9 +873,14 @@ mod tests {
         },
     };
 
-    use crate::{model::OutputNode, render::RenderPlan};
+    use crate::{
+        app::AppState, model::OutputNode, render::RenderPlan, transactions::TransactionManager,
+    };
 
-    use super::{list_outputs_payload, list_windows_payload, list_workspaces_payload};
+    use super::{
+        geometry_payload, list_outputs_payload, list_windows_payload, list_workspaces_payload,
+        transaction_payload,
+    };
 
     #[test]
     fn list_windows_payload_separates_desired_and_committed_views() {
@@ -753,6 +897,7 @@ mod tests {
 
         let payload = list_windows_payload(
             &desired,
+            &committed,
             Some(&committed),
             Some(7),
             &HashSet::from([WindowId::from("w1")]),
@@ -760,6 +905,7 @@ mod tests {
 
         assert_eq!(payload["pending_transaction"], json!(7));
         assert_eq!(payload["desired"][0]["id"], json!(WindowId::from("w2")));
+        assert_eq!(payload["presented"][0]["id"], json!(WindowId::from("w1")));
         assert_eq!(payload["committed"][0]["id"], json!(WindowId::from("w1")));
         assert_eq!(payload["deferred_removals"][0], json!(WindowId::from("w1")));
     }
@@ -777,7 +923,7 @@ mod tests {
             vec![workspace("ws-1", true)],
         );
 
-        let payload = list_workspaces_payload(&desired, Some(&committed), Some(3));
+        let payload = list_workspaces_payload(&desired, &committed, Some(&committed), Some(3));
 
         assert_eq!(payload["pending_transaction"], json!(3));
         assert_eq!(
@@ -791,6 +937,10 @@ mod tests {
         assert_eq!(
             payload["desired"][0]["visible_windows"][0],
             json!(WindowId::from("w2"))
+        );
+        assert_eq!(
+            payload["presented"][0]["visible_windows"][0],
+            json!(WindowId::from("w1"))
         );
         assert_eq!(
             payload["committed"][0]["visible_windows"][0],
@@ -823,13 +973,23 @@ mod tests {
         let mut render_plan = RenderPlan::default();
         render_plan.mark_output_dirty(OutputId::from("out-1"));
 
-        let payload =
-            list_outputs_payload(&outputs, &desired, Some(&committed), Some(5), &render_plan);
+        let payload = list_outputs_payload(
+            &outputs,
+            &desired,
+            &committed,
+            Some(&committed),
+            Some(5),
+            &render_plan,
+        );
 
         assert_eq!(payload["pending_transaction"], json!(5));
         assert_eq!(
             payload["desired"][0]["current_workspace"],
             json!(WorkspaceId::from("ws-2"))
+        );
+        assert_eq!(
+            payload["presented"][0]["current_workspace"],
+            json!(WorkspaceId::from("ws-1"))
         );
         assert_eq!(
             payload["committed"][0]["current_workspace"],
@@ -840,6 +1000,122 @@ mod tests {
             json!(WorkspaceId::from("ws-live"))
         );
         assert_eq!(payload["desired"][0]["dirty"], json!(true));
+    }
+
+    #[test]
+    fn presented_payloads_are_distinct_from_desired_payloads() {
+        let desired = snapshot(
+            Some("w2"),
+            vec![window("w2", Some("ws-2"), true, false)],
+            vec![workspace("ws-2", true)],
+        );
+        let committed = snapshot(
+            Some("w1"),
+            vec![window("w1", Some("ws-1"), true, true)],
+            vec![workspace("ws-1", true)],
+        );
+
+        let windows_payload = list_windows_payload(
+            &desired,
+            &committed,
+            Some(&committed),
+            Some(9),
+            &HashSet::new(),
+        );
+        let workspaces_payload =
+            list_workspaces_payload(&desired, &committed, Some(&committed), Some(9));
+
+        assert_eq!(
+            windows_payload["focused_window"],
+            json!(WindowId::from("w1"))
+        );
+        assert_eq!(
+            windows_payload["desired"][0]["id"],
+            json!(WindowId::from("w2"))
+        );
+        assert_eq!(
+            windows_payload["presented"][0]["id"],
+            json!(WindowId::from("w1"))
+        );
+
+        assert_eq!(
+            workspaces_payload["active_workspace"],
+            json!(WorkspaceId::from("ws-1"))
+        );
+        assert_eq!(
+            workspaces_payload["desired"][0]["id"],
+            json!(WorkspaceId::from("ws-2"))
+        );
+        assert_eq!(
+            workspaces_payload["presented"][0]["id"],
+            json!(WorkspaceId::from("ws-1"))
+        );
+    }
+
+    #[test]
+    fn geometry_payload_exposes_presented_geometry_separately() {
+        let mut app = AppState::default();
+        let workspace_id = WorkspaceId::from("ws-1");
+        let window_id = WindowId::from("w1");
+
+        app.wm.windows.insert(
+            window_id.clone(),
+            crate::model::ManagedWindowState::tiled(window_id.clone(), workspace_id.clone(), None),
+        );
+        app.layout.desired_tiled_window_rects.insert(
+            window_id.clone(),
+            smithay::utils::Rectangle::new((100, 0).into(), (900, 500).into()),
+        );
+        app.layout.committed_tiled_window_rects.insert(
+            window_id.clone(),
+            smithay::utils::Rectangle::new((0, 0).into(), (500, 500).into()),
+        );
+
+        let desired = snapshot(
+            Some("w1"),
+            vec![window("w1", Some("ws-1"), true, true)],
+            vec![workspace("ws-1", true)],
+        );
+        let presented = desired.clone();
+
+        let payload = geometry_payload(&app, &desired, &presented, Some(&presented));
+
+        assert_eq!(payload["desired"][0]["x"], json!(100));
+        assert_eq!(payload["presented"][0]["x"], json!(0));
+        assert_eq!(payload["committed"][0]["x"], json!(0));
+    }
+
+    #[test]
+    fn transaction_payload_exposes_presented_and_desired_state() {
+        let desired = snapshot(
+            Some("w2"),
+            vec![window("w2", Some("ws-2"), true, false)],
+            vec![workspace("ws-2", true)],
+        );
+        let presented = snapshot(
+            Some("w1"),
+            vec![window("w1", Some("ws-1"), true, true)],
+            vec![workspace("ws-1", true)],
+        );
+        let mut transactions = TransactionManager::default();
+        transactions.stage(presented.clone());
+        transactions.commit_pending(crate::transactions::TransactionCommitReason::Ready);
+
+        let payload =
+            transaction_payload(&transactions, &RenderPlan::default(), &desired, &presented);
+
+        assert_eq!(
+            payload["desired"]["focused_window_id"],
+            json!(WindowId::from("w2"))
+        );
+        assert_eq!(
+            payload["presented"]["focused_window_id"],
+            json!(WindowId::from("w1"))
+        );
+        assert_eq!(
+            payload["committed"]["focused_window_id"],
+            json!(WindowId::from("w1"))
+        );
     }
 
     fn snapshot(

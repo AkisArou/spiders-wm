@@ -211,4 +211,8 @@ These are documented or expected features that are not fully implemented in the 
 - Pending refresh now also prefers committed visible-window state for show/hide decisions, and output inspection exposes desired, committed, and live runtime views side by side.
 - Pending refresh now also keeps mapped window positions on committed geometry until commit, while still sending desired configure sizes ahead of the transaction boundary.
 - Render dirtiness from pending refresh plans is now staged and only promoted on transaction commit, so desired scene prep no longer forces early output presentation.
+- Transaction diagnostics now track coalescing root/depth metadata so rapid superseded updates can be inspected as a replacement chain instead of isolated history rows.
+- Runtime inspection is moving to an explicit desired/committed/presented split; geometry, window, workspace, and output payloads now expose presented state directly instead of inferring it ad hoc.
+- `dump-transaction` and `dump-layout-tree` now expose presented state alongside desired/committed views so transaction and layout diagnostics align with the same presentation model.
+- Runtime payload builders for geometry and transaction inspection are now factored into testable helpers, making presented-state diagnostics easier to verify as the model evolves.
 - Scene application is still immediate after staging; smarter timeout policy and real subtree-scoped layout recomputation are the next transaction milestones.

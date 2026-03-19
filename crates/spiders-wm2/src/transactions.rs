@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashSet, VecDeque},
+    collections::{BTreeMap, HashSet, VecDeque},
     time::{Duration, Instant},
 };
 
@@ -23,6 +23,8 @@ pub struct TransactionManager {
 pub struct PendingTransaction {
     pub id: u64,
     pub desired: StateSnapshot,
+    pub coalescing_root_transaction_id: u64,
+    pub coalescing_depth: usize,
     pub affected_windows: HashSet<WindowId>,
     pub affected_workspaces: HashSet<WorkspaceId>,
     pub affected_outputs: HashSet<OutputId>,
@@ -59,6 +61,8 @@ pub struct TransactionHistoryEntry {
     pub id: u64,
     pub reason: TransactionCommitReason,
     pub duration_ms: u128,
+    pub coalescing_root_transaction_id: u64,
+    pub coalescing_depth: usize,
     pub replacement_transaction_id: Option<u64>,
     pub unresolved_window_ids: Vec<WindowId>,
     pub affected_window_count: usize,
@@ -81,6 +85,13 @@ pub struct LayoutRecomputePlan {
     pub full_scene: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TransactionCoalescedChain {
+    pub root_transaction_id: u64,
+    pub transaction_ids: Vec<u64>,
+    pub active_transaction_id: Option<u64>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum DirtyScope {
     Window(WindowId),
@@ -93,8 +104,12 @@ pub enum DirtyScope {
 impl TransactionManager {
     pub fn stage(&mut self, desired: StateSnapshot) {
         let transaction_id = self.allocate_transaction_id();
+        let mut coalescing_root_transaction_id = transaction_id;
+        let mut coalescing_depth = 0;
 
         if let Some(pending) = self.pending.take() {
+            coalescing_root_transaction_id = pending.coalescing_root_transaction_id;
+            coalescing_depth = pending.coalescing_depth + 1;
             self.record_history_entry(
                 pending,
                 TransactionCommitReason::Superseded,
@@ -103,11 +118,22 @@ impl TransactionManager {
         }
 
         let Some(committed) = self.committed.as_ref() else {
-            self.pending = Some(PendingTransaction::full(transaction_id, desired));
+            self.pending = Some(PendingTransaction::full(
+                transaction_id,
+                desired,
+                coalescing_root_transaction_id,
+                coalescing_depth,
+            ));
             return;
         };
 
-        let pending = PendingTransaction::from_diff(transaction_id, committed, desired);
+        let pending = PendingTransaction::from_diff(
+            transaction_id,
+            committed,
+            desired,
+            coalescing_root_transaction_id,
+            coalescing_depth,
+        );
         self.pending = Some(pending);
     }
 
@@ -121,6 +147,51 @@ impl TransactionManager {
 
     pub fn history(&self) -> &VecDeque<TransactionHistoryEntry> {
         &self.history
+    }
+
+    pub fn coalesced_chains(&self) -> Vec<TransactionCoalescedChain> {
+        let mut chains = BTreeMap::<u64, Vec<(usize, u64)>>::new();
+
+        for entry in &self.history {
+            chains
+                .entry(entry.coalescing_root_transaction_id)
+                .or_default()
+                .push((entry.coalescing_depth, entry.id));
+        }
+
+        let mut result = chains
+            .into_iter()
+            .map(|(root_transaction_id, mut entries)| {
+                entries.sort_by_key(|(depth, _)| *depth);
+                let active_transaction_id = self
+                    .pending
+                    .as_ref()
+                    .filter(|pending| pending.coalescing_root_transaction_id == root_transaction_id)
+                    .map(|pending| pending.id);
+
+                TransactionCoalescedChain {
+                    root_transaction_id,
+                    transaction_ids: entries.into_iter().map(|(_, id)| id).collect(),
+                    active_transaction_id,
+                }
+            })
+            .collect::<Vec<_>>();
+
+        if let Some(pending) = self.pending.as_ref() {
+            if !result
+                .iter()
+                .any(|chain| chain.root_transaction_id == pending.coalescing_root_transaction_id)
+            {
+                result.push(TransactionCoalescedChain {
+                    root_transaction_id: pending.coalescing_root_transaction_id,
+                    transaction_ids: Vec::new(),
+                    active_transaction_id: Some(pending.id),
+                });
+            }
+        }
+
+        result.sort_by_key(|chain| chain.root_transaction_id);
+        result
     }
 
     pub fn deferred_removals(&self) -> &HashSet<WindowId> {
@@ -230,6 +301,8 @@ impl TransactionManager {
             id: pending.id,
             reason,
             duration_ms: pending.started_at.elapsed().as_millis(),
+            coalescing_root_transaction_id: pending.coalescing_root_transaction_id,
+            coalescing_depth: pending.coalescing_depth,
             replacement_transaction_id,
             unresolved_window_ids: pending.unresolved_window_ids(),
             affected_window_count: pending.affected_windows.len(),
@@ -243,7 +316,12 @@ impl TransactionManager {
 }
 
 impl PendingTransaction {
-    fn full(id: u64, desired: StateSnapshot) -> Self {
+    fn full(
+        id: u64,
+        desired: StateSnapshot,
+        coalescing_root_transaction_id: u64,
+        coalescing_depth: usize,
+    ) -> Self {
         let affected_windows = desired
             .windows
             .iter()
@@ -252,6 +330,8 @@ impl PendingTransaction {
 
         Self {
             id,
+            coalescing_root_transaction_id,
+            coalescing_depth,
             participants: participants_for_windows(&affected_windows),
             started_at: Instant::now(),
             affected_windows,
@@ -271,7 +351,13 @@ impl PendingTransaction {
         }
     }
 
-    fn from_diff(id: u64, committed: &StateSnapshot, desired: StateSnapshot) -> Self {
+    fn from_diff(
+        id: u64,
+        committed: &StateSnapshot,
+        desired: StateSnapshot,
+        coalescing_root_transaction_id: u64,
+        coalescing_depth: usize,
+    ) -> Self {
         let committed_windows = committed
             .windows
             .iter()
@@ -367,6 +453,8 @@ impl PendingTransaction {
 
         Self {
             id,
+            coalescing_root_transaction_id,
+            coalescing_depth,
             participants: participants_for_windows(&affected_windows),
             desired,
             affected_windows,
@@ -590,7 +678,10 @@ mod tests {
         time::{Duration, Instant},
     };
 
-    use super::{DirtyScope, PendingTransaction, TransactionCommitReason, TransactionManager};
+    use super::{
+        DirtyScope, PendingTransaction, TransactionCoalescedChain, TransactionCommitReason,
+        TransactionManager,
+    };
     use crate::model::{ManagedWindowState, WmState, WorkspaceState};
     use smithay::utils::SERIAL_COUNTER;
     use spiders_shared::{
@@ -743,7 +834,7 @@ mod tests {
             ],
         );
 
-        let pending = PendingTransaction::from_diff(1, &committed, desired);
+        let pending = PendingTransaction::from_diff(1, &committed, desired, 1, 0);
 
         assert!(pending.affected_windows.contains(&WindowId::from("w1")));
         assert!(pending.affected_windows.contains(&WindowId::from("w2")));
@@ -770,7 +861,7 @@ mod tests {
             ],
         );
 
-        let pending = PendingTransaction::from_diff(1, &committed, desired);
+        let pending = PendingTransaction::from_diff(1, &committed, desired, 1, 0);
 
         assert!(pending.affected_windows.contains(&WindowId::from("w1")));
         assert!(pending.affected_windows.contains(&WindowId::from("w2")));
@@ -868,6 +959,15 @@ mod tests {
                 .history()
                 .front()
                 .unwrap()
+                .coalescing_root_transaction_id,
+            1
+        );
+        assert_eq!(transactions.history().front().unwrap().coalescing_depth, 0);
+        assert_eq!(
+            transactions
+                .history()
+                .front()
+                .unwrap()
                 .replacement_transaction_id,
             None
         );
@@ -959,6 +1059,59 @@ mod tests {
                 .unwrap()
                 .replacement_transaction_id,
             Some(2)
+        );
+        assert_eq!(
+            transactions
+                .history()
+                .front()
+                .unwrap()
+                .coalescing_root_transaction_id,
+            1
+        );
+        assert_eq!(transactions.history().front().unwrap().coalescing_depth, 0);
+        assert_eq!(
+            transactions
+                .pending()
+                .unwrap()
+                .coalescing_root_transaction_id,
+            1
+        );
+        assert_eq!(transactions.pending().unwrap().coalescing_depth, 1);
+    }
+
+    #[test]
+    fn coalesced_chains_track_superseded_history_and_active_pending() {
+        let committed = snapshot(
+            Some("w1"),
+            &["w1"],
+            vec![workspace("ws-1", true, true)],
+            vec![window("w1", "ws-1", true, WindowMode::Tiled)],
+        );
+        let desired = snapshot(
+            Some("w2"),
+            &["w2"],
+            vec![workspace("ws-2", true, true)],
+            vec![window("w2", "ws-2", true, WindowMode::Tiled)],
+        );
+        let replacement = snapshot(
+            Some("w3"),
+            &["w3"],
+            vec![workspace("ws-3", true, true)],
+            vec![window("w3", "ws-3", true, WindowMode::Tiled)],
+        );
+
+        let mut transactions = TransactionManager::default();
+        transactions.committed = Some(committed);
+        transactions.stage(desired);
+        transactions.stage(replacement);
+
+        assert_eq!(
+            transactions.coalesced_chains(),
+            vec![TransactionCoalescedChain {
+                root_transaction_id: 1,
+                transaction_ids: vec![1],
+                active_transaction_id: Some(2),
+            }]
         );
     }
 
