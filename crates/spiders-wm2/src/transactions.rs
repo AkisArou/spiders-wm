@@ -1186,6 +1186,119 @@ mod tests {
     }
 
     #[test]
+    fn floating_transition_recomputes_workspace_and_configures_siblings() {
+        let committed = snapshot(
+            Some("w1"),
+            &["w1", "w2"],
+            vec![workspace("ws-1", true, true)],
+            vec![
+                window("w1", "ws-1", true, WindowMode::Tiled),
+                window("w2", "ws-1", false, WindowMode::Tiled),
+            ],
+        );
+        let desired = snapshot(
+            Some("w1"),
+            &["w1", "w2"],
+            vec![workspace("ws-1", true, true)],
+            vec![
+                window("w1", "ws-1", true, WindowMode::Floating { rect: None }),
+                window("w2", "ws-1", false, WindowMode::Tiled),
+            ],
+        );
+
+        let pending = PendingTransaction::from_diff(1, &committed, desired, 1, 0, 1);
+        assert!(pending.dirty_scopes.contains(&DirtyScope::LayoutSubtree {
+            workspace_id: WorkspaceId::from("ws-1"),
+        }));
+
+        let mut transactions = TransactionManager::default();
+        transactions.pending = Some(pending);
+        let plan = transactions
+            .pending_refresh_plan(&wm_for_refresh_plan())
+            .unwrap();
+
+        assert!(plan.layout.needs_recompute());
+        assert!(plan.windows.contains(&WindowId::from("w1")));
+        assert!(plan.windows.contains(&WindowId::from("w2")));
+        assert!(plan.configure_windows.contains(&WindowId::from("w1")));
+        assert!(plan.configure_windows.contains(&WindowId::from("w2")));
+    }
+
+    #[test]
+    fn fullscreen_transition_requires_layout_commit_and_workspace_reconfigure() {
+        let committed = snapshot(
+            Some("w1"),
+            &["w1", "w2"],
+            vec![workspace("ws-1", true, true)],
+            vec![
+                window("w1", "ws-1", true, WindowMode::Tiled),
+                window("w2", "ws-1", false, WindowMode::Tiled),
+            ],
+        );
+        let desired = snapshot(
+            Some("w1"),
+            &["w1", "w2"],
+            vec![workspace("ws-1", true, true)],
+            vec![
+                window("w1", "ws-1", true, WindowMode::Fullscreen),
+                window("w2", "ws-1", false, WindowMode::Tiled),
+            ],
+        );
+
+        let mut transactions = TransactionManager::default();
+        transactions.committed = Some(committed.clone());
+        transactions.stage(desired);
+
+        assert!(transactions.pending_needs_layout_commit(&wm_for_refresh_plan()));
+
+        let plan = transactions
+            .pending_refresh_plan(&wm_for_refresh_plan())
+            .unwrap();
+        assert!(plan.layout.needs_recompute());
+        assert!(plan.configure_windows.contains(&WindowId::from("w1")));
+        assert!(plan.configure_windows.contains(&WindowId::from("w2")));
+    }
+
+    #[test]
+    fn newly_added_window_requires_configure_before_transaction_can_commit() {
+        let committed = snapshot(
+            Some("w1"),
+            &["w1"],
+            vec![workspace("ws-1", true, true)],
+            vec![window("w1", "ws-1", true, WindowMode::Tiled)],
+        );
+        let desired = snapshot(
+            Some("w2"),
+            &["w1", "w2"],
+            vec![workspace("ws-1", true, true)],
+            vec![
+                window("w1", "ws-1", false, WindowMode::Tiled),
+                window("w2", "ws-1", true, WindowMode::Tiled),
+            ],
+        );
+
+        let mut transactions = TransactionManager::default();
+        transactions.committed = Some(committed);
+        transactions.stage(desired);
+
+        let plan = transactions
+            .pending_refresh_plan(&wm_for_refresh_plan())
+            .unwrap();
+        assert!(plan.windows.contains(&WindowId::from("w2")));
+        assert!(plan.configure_windows.contains(&WindowId::from("w2")));
+
+        let serial = SERIAL_COUNTER.next_serial();
+        transactions.register_configure(&WindowId::from("w2"), serial);
+        assert!(!transactions.is_pending_ready());
+
+        transactions.mark_configure_acked(&WindowId::from("w2"), serial);
+        assert!(!transactions.is_pending_ready());
+
+        transactions.mark_window_committed(&WindowId::from("w2"));
+        assert!(transactions.is_pending_ready());
+    }
+
+    #[test]
     fn diff_does_not_expand_all_visible_windows_for_output_only_change() {
         let committed = snapshot(
             Some("w1"),

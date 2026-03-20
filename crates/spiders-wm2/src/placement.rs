@@ -19,10 +19,10 @@ pub fn focused_fullscreen_window(app: &AppState) -> Option<WindowId> {
 
 pub fn desired_window_rect(
     app: &AppState,
-    output_rect: Option<Rectangle<i32, Logical>>,
     window_id: &WindowId,
 ) -> Option<Rectangle<i32, Logical>> {
     let window = app.wm.windows.get(window_id)?;
+    let output_rect = live_output_rect_for_window(app, window_id);
     let tiled_rect = app
         .layout
         .desired_tiled_rect(window_id)
@@ -33,18 +33,16 @@ pub fn desired_window_rect(
 pub fn presented_window_rect(
     app: &AppState,
     committed_snapshot: Option<&StateSnapshot>,
-    output_rect: Option<Rectangle<i32, Logical>>,
     window_id: &WindowId,
 ) -> Option<Rectangle<i32, Logical>> {
     committed_snapshot
-        .and_then(|snapshot| committed_window_rect(app, Some(snapshot), output_rect, window_id))
-        .or_else(|| desired_window_rect(app, output_rect, window_id))
+        .and_then(|snapshot| committed_window_rect(app, Some(snapshot), window_id))
+        .or_else(|| desired_window_rect(app, window_id))
 }
 
 pub fn committed_window_rect(
     app: &AppState,
     committed_snapshot: Option<&StateSnapshot>,
-    output_rect: Option<Rectangle<i32, Logical>>,
     window_id: &WindowId,
 ) -> Option<Rectangle<i32, Logical>> {
     let tiled_rect = app
@@ -52,16 +50,19 @@ pub fn committed_window_rect(
         .committed_tiled_rect(window_id)
         .unwrap_or_else(default_tiled_rect);
 
-    committed_snapshot
-        .and_then(|snapshot| {
-            snapshot
-                .windows
-                .iter()
-                .find(|window| &window.id == window_id)
-        })
-        .map(|window| window.mode.into())
-        .or_else(|| app.wm.windows.get(window_id).map(|window| window.mode()))
-        .and_then(|mode| rect_for_mode(mode, output_rect, tiled_rect))
+    let (mode, output_rect) = if let Some(snapshot) = committed_snapshot {
+        let mode = snapshot
+            .windows
+            .iter()
+            .find(|window| &window.id == window_id)
+            .map(|window| window.mode.into())?;
+        (mode, snapshot_output_rect_for_window(snapshot, window_id))
+    } else {
+        let mode = app.wm.windows.get(window_id).map(|window| window.mode())?;
+        (mode, live_output_rect_for_window(app, window_id))
+    };
+
+    rect_for_mode(mode, output_rect, tiled_rect)
 }
 
 pub fn window_is_visible(
@@ -96,6 +97,40 @@ fn default_tiled_rect() -> Rectangle<i32, Logical> {
     Rectangle::new((0, 0).into(), (960, 640).into())
 }
 
+fn live_output_rect_for_window(
+    app: &AppState,
+    window_id: &WindowId,
+) -> Option<Rectangle<i32, Logical>> {
+    let output_id = app.wm.windows.get(window_id)?.output.as_ref()?;
+    let output = app.topology.outputs.get(output_id)?;
+
+    Some(Rectangle::new(
+        (0, 0).into(),
+        (output.logical_size.0 as i32, output.logical_size.1 as i32).into(),
+    ))
+}
+
+fn snapshot_output_rect_for_window(
+    snapshot: &StateSnapshot,
+    window_id: &WindowId,
+) -> Option<Rectangle<i32, Logical>> {
+    let output_id = snapshot
+        .windows
+        .iter()
+        .find(|window| &window.id == window_id)?
+        .output_id
+        .as_ref()?;
+    let output = snapshot
+        .outputs
+        .iter()
+        .find(|output| &output.id == output_id)?;
+
+    Some(Rectangle::new(
+        (output.logical_x, output.logical_y).into(),
+        (output.logical_width as i32, output.logical_height as i32).into(),
+    ))
+}
+
 fn rect_for_mode(
     mode: WindowMode,
     output_rect: Option<Rectangle<i32, Logical>>,
@@ -124,7 +159,7 @@ mod tests {
     };
     use crate::{
         app::AppState,
-        model::{ManagedWindowState, WindowId, WindowMode, WorkspaceId},
+        model::{ManagedWindowState, OutputId, OutputNode, WindowId, WindowMode, WorkspaceId},
     };
 
     #[test]
@@ -276,10 +311,7 @@ mod tests {
             },
         );
 
-        assert_eq!(
-            committed_window_rect(&app, None, None, &window_id),
-            Some(rect)
-        );
+        assert_eq!(committed_window_rect(&app, None, &window_id), Some(rect));
     }
 
     #[test]
@@ -294,7 +326,7 @@ mod tests {
         );
 
         assert_eq!(
-            committed_window_rect(&app, None, None, &window_id),
+            committed_window_rect(&app, None, &window_id),
             Some(Rectangle::new((0, 0).into(), (960, 640).into()))
         );
     }
@@ -311,11 +343,21 @@ mod tests {
             ManagedWindowState {
                 id: window_id.clone(),
                 workspace: workspace.clone(),
-                output: None,
+                output: Some(OutputId::from("out-1")),
                 mode: WindowMode::Fullscreen,
                 mapped: true,
                 app_id: None,
                 title: None,
+            },
+        );
+        app.topology.outputs.insert(
+            OutputId::from("out-1"),
+            crate::model::OutputNode {
+                id: OutputId::from("out-1"),
+                name: "winit".into(),
+                enabled: true,
+                current_workspace: Some(workspace.clone()),
+                logical_size: (1920, 1080),
             },
         );
         app.layout
@@ -335,18 +377,13 @@ mod tests {
             mode: SharedWindowMode::Tiled,
             focused: true,
             urgent: false,
-            output_id: None,
+            output_id: Some(OutputId::from("out-1")),
             workspace_id: Some(workspace),
             workspaces: vec![],
         }]);
 
         assert_eq!(
-            committed_window_rect(
-                &app,
-                Some(&committed),
-                Some(Rectangle::new((0, 0).into(), (1920, 1080).into())),
-                &window_id,
-            ),
+            committed_window_rect(&app, Some(&committed), &window_id),
             Some(committed_rect)
         );
     }
@@ -389,8 +426,47 @@ mod tests {
         }]);
 
         assert_eq!(
-            presented_window_rect(&app, Some(&committed), None, &window_id),
+            presented_window_rect(&app, Some(&committed), &window_id),
             Some(committed_rect)
+        );
+    }
+
+    #[test]
+    fn presented_window_rect_uses_desired_geometry_for_new_uncommitted_window() {
+        let mut app = AppState::default();
+        let workspace = WorkspaceId::from("1");
+        let window_id = WindowId::from("new");
+        let desired_rect = Rectangle::new((300, 200).into(), (800, 600).into());
+
+        app.wm.windows.insert(
+            window_id.clone(),
+            ManagedWindowState::tiled(window_id.clone(), workspace, None),
+        );
+        app.layout
+            .desired_tiled_window_rects
+            .insert(window_id.clone(), desired_rect);
+
+        let committed = committed_snapshot(vec![WindowSnapshot {
+            id: WindowId::from("old"),
+            shell: ShellKind::XdgToplevel,
+            app_id: None,
+            title: None,
+            class: None,
+            instance: None,
+            role: None,
+            window_type: None,
+            mapped: true,
+            mode: SharedWindowMode::Tiled,
+            focused: true,
+            urgent: false,
+            output_id: None,
+            workspace_id: Some(WorkspaceId::from("1")),
+            workspaces: vec![],
+        }]);
+
+        assert_eq!(
+            presented_window_rect(&app, Some(&committed), &window_id),
+            Some(desired_rect)
         );
     }
 
@@ -410,7 +486,7 @@ mod tests {
             .insert(window_id.clone(), desired_rect);
 
         assert_eq!(
-            presented_window_rect(&app, None, None, &window_id),
+            presented_window_rect(&app, None, &window_id),
             Some(desired_rect)
         );
     }
@@ -445,8 +521,151 @@ mod tests {
         }]);
 
         assert_eq!(
-            committed_window_rect(&app, Some(&committed), None, &window_id),
+            committed_window_rect(&app, Some(&committed), &window_id),
             Some(committed_rect)
+        );
+    }
+
+    #[test]
+    fn committed_window_rect_does_not_fall_back_to_live_window_when_snapshot_omits_it() {
+        let mut app = AppState::default();
+        let workspace = WorkspaceId::from("1");
+        let window_id = WindowId::from("late");
+
+        app.wm.windows.insert(
+            window_id.clone(),
+            ManagedWindowState::tiled(window_id.clone(), workspace, None),
+        );
+
+        let committed = committed_snapshot(vec![WindowSnapshot {
+            id: WindowId::from("existing"),
+            shell: ShellKind::XdgToplevel,
+            app_id: None,
+            title: None,
+            class: None,
+            instance: None,
+            role: None,
+            window_type: None,
+            mapped: true,
+            mode: SharedWindowMode::Tiled,
+            focused: true,
+            urgent: false,
+            output_id: None,
+            workspace_id: Some(WorkspaceId::from("1")),
+            workspaces: vec![],
+        }]);
+
+        assert_eq!(
+            committed_window_rect(&app, Some(&committed), &window_id),
+            None
+        );
+    }
+
+    #[test]
+    fn desired_window_rect_uses_window_output_size_for_fullscreen_windows() {
+        let mut app = AppState::default();
+        let workspace = WorkspaceId::from("1");
+        let window_id = WindowId::from("fullscreen");
+
+        app.wm.windows.insert(
+            window_id.clone(),
+            ManagedWindowState {
+                id: window_id.clone(),
+                workspace: workspace.clone(),
+                output: Some(OutputId::from("out-2")),
+                mode: WindowMode::Fullscreen,
+                mapped: true,
+                app_id: None,
+                title: None,
+            },
+        );
+        app.topology.outputs.insert(
+            OutputId::from("out-2"),
+            OutputNode {
+                id: OutputId::from("out-2"),
+                name: "two".into(),
+                enabled: true,
+                current_workspace: Some(workspace),
+                logical_size: (1600, 900),
+            },
+        );
+
+        assert_eq!(
+            super::desired_window_rect(&app, &window_id),
+            Some(Rectangle::new((0, 0).into(), (1600, 900).into()))
+        );
+    }
+
+    #[test]
+    fn presented_window_rect_uses_committed_output_size_for_fullscreen_windows() {
+        let mut app = AppState::default();
+        let workspace = WorkspaceId::from("1");
+        let window_id = WindowId::from("fullscreen");
+
+        app.wm.windows.insert(
+            window_id.clone(),
+            ManagedWindowState {
+                id: window_id.clone(),
+                workspace: workspace.clone(),
+                output: Some(OutputId::from("out-2")),
+                mode: WindowMode::Fullscreen,
+                mapped: true,
+                app_id: None,
+                title: None,
+            },
+        );
+        app.topology.outputs.insert(
+            OutputId::from("out-2"),
+            OutputNode {
+                id: OutputId::from("out-2"),
+                name: "two".into(),
+                enabled: true,
+                current_workspace: Some(workspace.clone()),
+                logical_size: (1920, 1080),
+            },
+        );
+
+        let committed = StateSnapshot {
+            focused_window_id: Some(window_id.clone()),
+            current_output_id: Some(OutputId::from("out-2")),
+            current_workspace_id: Some(workspace.clone()),
+            outputs: vec![OutputSnapshot {
+                id: OutputId::from("out-2"),
+                name: "two".into(),
+                logical_x: 0,
+                logical_y: 0,
+                logical_width: 1280,
+                logical_height: 720,
+                scale: 1,
+                transform: OutputTransform::Normal,
+                enabled: true,
+                current_workspace_id: Some(workspace.clone()),
+            }],
+            workspaces: vec![],
+            windows: vec![WindowSnapshot {
+                id: window_id.clone(),
+                shell: ShellKind::XdgToplevel,
+                app_id: None,
+                title: None,
+                class: None,
+                instance: None,
+                role: None,
+                window_type: None,
+                mapped: true,
+                mode: SharedWindowMode::Fullscreen,
+                focused: true,
+                urgent: false,
+                output_id: Some(OutputId::from("out-2")),
+                workspace_id: Some(workspace),
+                workspaces: vec![],
+            }],
+            visible_window_ids: vec![window_id.clone()],
+            workspace_names: vec!["1".into()],
+        };
+
+        assert_eq!(
+            presented_window_rect(&app, Some(&committed), &window_id),
+            Some(Rectangle::new((0, 0).into(), (1280, 720).into()))
         );
     }
 

@@ -14,6 +14,7 @@ use serde_json::json;
 use spiders_config::model::LayoutConfigError;
 use spiders_shared::wm::StateSnapshot;
 use std::{
+    collections::HashSet,
     ffi::OsString,
     io::{Read, Write},
     os::unix::net::UnixListener,
@@ -29,7 +30,6 @@ use smithay::{
         calloop::{generic::Generic, EventLoop, Interest, LoopSignal, Mode, PostAction},
         wayland_server::{backend::ClientData, Display, DisplayHandle},
     },
-    utils::Logical,
     wayland::{
         compositor::{CompositorClientState, CompositorState},
         output::OutputManagerState,
@@ -82,11 +82,11 @@ impl SpidersWm2 {
     }
 
     fn presented_snapshot(&self, desired: &StateSnapshot) -> StateSnapshot {
-        self.runtime
-            .transactions
-            .committed()
-            .cloned()
-            .unwrap_or_else(|| desired.clone())
+        resolve_presented_snapshot(
+            &self.runtime.transactions,
+            desired,
+            self.runtime.transactions.deferred_removals(),
+        )
     }
 
     fn geometry_payload(
@@ -377,11 +377,13 @@ impl SpidersWm2 {
 
     pub fn switch_workspace(&mut self, workspace_id: WorkspaceId) {
         actions::switch_to_workspace(&mut self.app.wm, workspace_id);
+        actions::sync_active_workspace_to_output(&mut self.app.topology, &mut self.app.wm);
         self.refresh_active_workspace();
     }
 
     pub fn move_focused_window_to_workspace(&mut self, workspace_id: WorkspaceId) {
         actions::move_focused_window_to_workspace(&mut self.app.wm, workspace_id);
+        actions::sync_active_workspace_to_output(&mut self.app.topology, &mut self.app.wm);
         self.refresh_active_workspace();
     }
 
@@ -415,15 +417,112 @@ impl SpidersWm2 {
         actions::toggle_fullscreen_focused_window(&mut self.app.wm);
         self.refresh_active_workspace();
     }
+}
 
-    pub(crate) fn output_rect(&self) -> Option<smithay::utils::Rectangle<i32, Logical>> {
-        self.runtime
-            .smithay
-            .space
-            .outputs()
-            .next()
-            .and_then(|output| self.runtime.smithay.space.output_geometry(output))
+fn resolve_presented_snapshot(
+    transactions: &TransactionManager,
+    desired: &StateSnapshot,
+    deferred_removals: &HashSet<crate::model::WindowId>,
+) -> StateSnapshot {
+    let mut presented = transactions
+        .committed()
+        .cloned()
+        .unwrap_or_else(|| desired.clone());
+
+    if deferred_removals.is_empty() {
+        return presented;
     }
+
+    presented
+        .windows
+        .retain(|window| !deferred_removals.contains(&window.id));
+    presented
+        .visible_window_ids
+        .retain(|window_id| !deferred_removals.contains(window_id));
+
+    let focus_retargeted = if presented
+        .focused_window_id
+        .as_ref()
+        .is_some_and(|window_id| deferred_removals.contains(window_id))
+    {
+        presented.focused_window_id = desired.focused_window_id.clone().filter(|window_id| {
+            presented
+                .windows
+                .iter()
+                .any(|window| &window.id == window_id)
+        });
+        true
+    } else {
+        false
+    };
+
+    if focus_retargeted {
+        presented.current_workspace_id = desired.current_workspace_id.clone();
+        presented.current_output_id = desired.current_output_id.clone();
+
+        for output in &mut presented.outputs {
+            if desired.current_output_id.as_ref() == Some(&output.id) {
+                output.current_workspace_id = desired.current_workspace_id.clone();
+            }
+        }
+
+        let visible_workspaces = presented
+            .outputs
+            .iter()
+            .filter_map(|output| output.current_workspace_id.clone())
+            .collect::<HashSet<_>>();
+
+        for workspace in &mut presented.workspaces {
+            workspace.focused = presented.current_workspace_id.as_ref() == Some(&workspace.id);
+            workspace.visible = visible_workspaces.contains(&workspace.id);
+        }
+
+        let desired_visible_window_ids = desired
+            .visible_window_ids
+            .iter()
+            .cloned()
+            .collect::<HashSet<_>>();
+
+        presented.visible_window_ids = presented
+            .windows
+            .iter()
+            .filter(|window| {
+                window
+                    .workspace_id
+                    .as_ref()
+                    .is_some_and(|workspace_id| visible_workspaces.contains(workspace_id))
+                    && (desired_visible_window_ids.is_empty()
+                        || desired_visible_window_ids.contains(&window.id))
+            })
+            .map(|window| window.id.clone())
+            .collect();
+    }
+
+    for window in &mut presented.windows {
+        window.focused = presented.focused_window_id.as_ref() == Some(&window.id);
+    }
+
+    presented
+}
+
+#[cfg(test)]
+fn visible_window_ids_for_presented_workspace(
+    presented: &StateSnapshot,
+    workspace_id: &crate::model::WorkspaceId,
+) -> Vec<crate::model::WindowId> {
+    presented
+        .windows
+        .iter()
+        .filter(|window| window.workspace_id.as_ref() == Some(workspace_id))
+        .filter(|window| {
+            presented.visible_window_ids.is_empty()
+                || presented
+                    .visible_window_ids
+                    .iter()
+                    .any(|id| id == &window.id)
+        })
+        .map(|window| window.id.clone())
+        .collect()
 }
 
 impl RuntimeState {
@@ -615,7 +714,7 @@ fn geometry_payload(
 ) -> serde_json::Value {
     json!({
         "desired": desired.windows.iter().filter_map(|window| {
-            placement::desired_window_rect(app, None, &window.id).map(|rect| {
+            placement::desired_window_rect(app, &window.id).map(|rect| {
                 json!({
                     "window_id": window.id,
                     "x": rect.loc.x,
@@ -626,7 +725,7 @@ fn geometry_payload(
             })
         }).collect::<Vec<_>>(),
         "presented": presented.windows.iter().filter_map(|window| {
-            placement::presented_window_rect(app, Some(presented), None, &window.id).map(|rect| {
+            placement::presented_window_rect(app, Some(presented), &window.id).map(|rect| {
                 json!({
                     "window_id": window.id,
                     "x": rect.loc.x,
@@ -638,7 +737,7 @@ fn geometry_payload(
         }).collect::<Vec<_>>(),
         "committed": committed.into_iter().flat_map(|snapshot| {
             snapshot.windows.iter().filter_map(|window| {
-                placement::committed_window_rect(app, Some(snapshot), None, &window.id).map(|rect| {
+                placement::committed_window_rect(app, Some(snapshot), &window.id).map(|rect| {
                     json!({
                         "window_id": window.id,
                         "x": rect.loc.x,
@@ -651,7 +750,7 @@ fn geometry_payload(
         }).collect::<Vec<_>>(),
         "committed_fallback": committed.is_none().then(|| {
             app.wm.windows.keys().filter_map(|window_id| {
-                placement::committed_window_rect(app, None, None, window_id).map(|rect| {
+                placement::committed_window_rect(app, None, window_id).map(|rect| {
                     json!({
                         "window_id": window_id,
                         "x": rect.loc.x,
@@ -889,7 +988,8 @@ mod tests {
 
     use super::{
         geometry_payload, list_outputs_payload, list_windows_payload, list_workspaces_payload,
-        transaction_payload,
+        resolve_presented_snapshot, transaction_payload,
+        visible_window_ids_for_presented_workspace,
     };
 
     #[test]
@@ -1096,6 +1196,92 @@ mod tests {
     }
 
     #[test]
+    fn geometry_payload_keeps_committed_fullscreen_size_during_pending_resize() {
+        let mut app = AppState::default();
+        let workspace_id = WorkspaceId::from("ws-2");
+        let window_id = WindowId::from("fullscreen");
+
+        app.wm.active_workspace = workspace_id.clone();
+        app.wm.windows.insert(
+            window_id.clone(),
+            crate::model::ManagedWindowState {
+                id: window_id.clone(),
+                workspace: workspace_id.clone(),
+                output: Some(OutputId::from("out-2")),
+                mode: crate::model::WindowMode::Fullscreen,
+                mapped: true,
+                app_id: None,
+                title: None,
+            },
+        );
+        app.topology.outputs.insert(
+            OutputId::from("out-2"),
+            OutputNode {
+                id: OutputId::from("out-2"),
+                name: "two".into(),
+                enabled: true,
+                current_workspace: Some(workspace_id.clone()),
+                logical_size: (1920, 1080),
+            },
+        );
+
+        let desired = StateSnapshot {
+            focused_window_id: Some(window_id.clone()),
+            current_output_id: Some(OutputId::from("out-2")),
+            current_workspace_id: Some(workspace_id.clone()),
+            outputs: vec![OutputSnapshot {
+                id: OutputId::from("out-2"),
+                name: "two".into(),
+                logical_x: 0,
+                logical_y: 0,
+                logical_width: 1920,
+                logical_height: 1080,
+                scale: 1,
+                transform: OutputTransform::Normal,
+                enabled: true,
+                current_workspace_id: Some(workspace_id.clone()),
+            }],
+            workspaces: vec![workspace("ws-2", true)],
+            windows: vec![WindowSnapshot {
+                id: window_id.clone(),
+                shell: ShellKind::XdgToplevel,
+                app_id: None,
+                title: None,
+                class: None,
+                instance: None,
+                role: None,
+                window_type: None,
+                mapped: true,
+                mode: WindowMode::Fullscreen,
+                focused: true,
+                urgent: false,
+                output_id: Some(OutputId::from("out-2")),
+                workspace_id: Some(workspace_id.clone()),
+                workspaces: vec![],
+            }],
+            visible_window_ids: vec![window_id.clone()],
+            workspace_names: vec!["ws-2".into()],
+        };
+        let committed = StateSnapshot {
+            outputs: vec![OutputSnapshot {
+                logical_width: 1280,
+                logical_height: 720,
+                ..desired.outputs[0].clone()
+            }],
+            ..desired.clone()
+        };
+
+        let payload = geometry_payload(&app, &desired, &committed, Some(&committed));
+
+        assert_eq!(payload["desired"][0]["width"], json!(1920));
+        assert_eq!(payload["desired"][0]["height"], json!(1080));
+        assert_eq!(payload["presented"][0]["width"], json!(1280));
+        assert_eq!(payload["presented"][0]["height"], json!(720));
+        assert_eq!(payload["committed"][0]["width"], json!(1280));
+        assert_eq!(payload["committed"][0]["height"], json!(720));
+    }
+
+    #[test]
     fn transaction_payload_exposes_presented_and_desired_state() {
         let desired = snapshot(
             Some("w2"),
@@ -1131,6 +1317,515 @@ mod tests {
             payload["committed"]["focused_window_id"],
             json!(WindowId::from("w1"))
         );
+    }
+
+    #[test]
+    fn transaction_payload_keeps_presented_focus_committed_while_new_focus_is_pending() {
+        let committed = snapshot(
+            Some("w1"),
+            vec![
+                window("w1", Some("ws-1"), true, true),
+                window("w2", Some("ws-1"), true, false),
+            ],
+            vec![workspace("ws-1", true)],
+        );
+        let desired = snapshot(
+            Some("w2"),
+            vec![
+                window("w1", Some("ws-1"), true, false),
+                window("w2", Some("ws-1"), true, true),
+            ],
+            vec![workspace("ws-1", true)],
+        );
+
+        let mut transactions = TransactionManager::default();
+        transactions.stage(committed.clone());
+        transactions.commit_pending(crate::transactions::TransactionCommitReason::Ready);
+        transactions.stage(desired.clone());
+
+        let payload = transaction_payload(
+            &transactions,
+            &RenderPlan::default(),
+            &wm_for_transaction_payload(),
+            &desired,
+            &committed,
+        );
+
+        assert_eq!(
+            payload["desired"]["focused_window_id"],
+            json!(WindowId::from("w2"))
+        );
+        assert_eq!(
+            payload["presented"]["focused_window_id"],
+            json!(WindowId::from("w1"))
+        );
+        assert_eq!(
+            payload["committed"]["focused_window_id"],
+            json!(WindowId::from("w1"))
+        );
+    }
+
+    #[test]
+    fn presented_snapshot_drops_deferred_removals_and_retargets_focus() {
+        let committed = snapshot(
+            Some("w1"),
+            vec![
+                window("w1", Some("ws-1"), true, true),
+                window("w2", Some("ws-1"), true, false),
+            ],
+            vec![workspace("ws-1", true)],
+        );
+        let desired = snapshot(
+            Some("w2"),
+            vec![window("w2", Some("ws-1"), true, true)],
+            vec![workspace("ws-1", true)],
+        );
+
+        let mut transactions = TransactionManager::default();
+        transactions.stage(committed.clone());
+        transactions.commit_pending(crate::transactions::TransactionCommitReason::Ready);
+
+        let presented = resolve_presented_snapshot(
+            &transactions,
+            &desired,
+            &HashSet::from([WindowId::from("w1")]),
+        );
+
+        assert_eq!(presented.focused_window_id, Some(WindowId::from("w2")));
+        assert_eq!(
+            presented.current_workspace_id,
+            Some(WorkspaceId::from("ws-1"))
+        );
+        assert_eq!(presented.windows.len(), 1);
+        assert_eq!(presented.windows[0].id, WindowId::from("w2"));
+        assert!(presented.windows[0].focused);
+    }
+
+    #[test]
+    fn list_windows_payload_shows_deferred_close_as_presented_removal() {
+        let desired = snapshot(
+            Some("w2"),
+            vec![window("w2", Some("ws-1"), true, true)],
+            vec![workspace("ws-1", true)],
+        );
+        let committed = snapshot(
+            Some("w1"),
+            vec![
+                window("w1", Some("ws-1"), true, true),
+                window("w2", Some("ws-1"), true, false),
+            ],
+            vec![workspace("ws-1", true)],
+        );
+
+        let mut transactions = TransactionManager::default();
+        transactions.stage(committed.clone());
+        transactions.commit_pending(crate::transactions::TransactionCommitReason::Ready);
+        let presented = resolve_presented_snapshot(
+            &transactions,
+            &desired,
+            &HashSet::from([WindowId::from("w1")]),
+        );
+
+        let payload = list_windows_payload(
+            &desired,
+            &presented,
+            transactions.committed(),
+            Some(11),
+            &HashSet::from([WindowId::from("w1")]),
+        );
+
+        assert_eq!(payload["focused_window"], json!(WindowId::from("w2")));
+        assert_eq!(payload["presented"].as_array().unwrap().len(), 1);
+        assert_eq!(payload["presented"][0]["id"], json!(WindowId::from("w2")));
+        assert_eq!(payload["committed"].as_array().unwrap().len(), 2);
+        assert_eq!(payload["deferred_removals"][0], json!(WindowId::from("w1")));
+    }
+
+    #[test]
+    fn presented_snapshot_switches_workspace_when_deferred_close_retargets_focus() {
+        let committed = snapshot(
+            Some("w1"),
+            vec![
+                window("w1", Some("ws-1"), true, true),
+                window("w2", Some("ws-2"), true, false),
+            ],
+            vec![workspace("ws-1", true), workspace("ws-2", false)],
+        );
+        let mut desired = snapshot(
+            Some("w2"),
+            vec![window("w2", Some("ws-2"), true, true)],
+            vec![workspace("ws-1", false), workspace("ws-2", true)],
+        );
+        desired.current_workspace_id = Some(WorkspaceId::from("ws-2"));
+        desired.current_output_id = Some(OutputId::from("out-1"));
+        desired.visible_window_ids = vec![WindowId::from("w2")];
+        desired.outputs[0].current_workspace_id = Some(WorkspaceId::from("ws-2"));
+
+        let mut transactions = TransactionManager::default();
+        transactions.stage(committed.clone());
+        transactions.commit_pending(crate::transactions::TransactionCommitReason::Ready);
+
+        let presented = resolve_presented_snapshot(
+            &transactions,
+            &desired,
+            &HashSet::from([WindowId::from("w1")]),
+        );
+
+        assert_eq!(presented.focused_window_id, Some(WindowId::from("w2")));
+        assert_eq!(
+            presented.current_workspace_id,
+            Some(WorkspaceId::from("ws-2"))
+        );
+        assert_eq!(presented.visible_window_ids, vec![WindowId::from("w2")]);
+        assert_eq!(
+            presented.outputs[0].current_workspace_id,
+            Some(WorkspaceId::from("ws-2"))
+        );
+        assert_eq!(presented.workspaces[0].focused, false);
+        assert_eq!(presented.workspaces[1].focused, true);
+        assert_eq!(presented.workspaces[0].visible, false);
+        assert_eq!(presented.workspaces[1].visible, true);
+        assert!(
+            visible_window_ids_for_presented_workspace(&presented, &WorkspaceId::from("ws-1"))
+                .is_empty()
+        );
+        assert_eq!(
+            visible_window_ids_for_presented_workspace(&presented, &WorkspaceId::from("ws-2")),
+            vec![WindowId::from("w2")]
+        );
+    }
+
+    #[test]
+    fn list_workspaces_payload_shows_retargeted_presented_workspace_after_close_and_switch() {
+        let committed = snapshot(
+            Some("w1"),
+            vec![
+                window("w1", Some("ws-1"), true, true),
+                window("w2", Some("ws-2"), true, false),
+            ],
+            vec![workspace("ws-1", true), workspace("ws-2", false)],
+        );
+        let mut desired = snapshot(
+            Some("w2"),
+            vec![window("w2", Some("ws-2"), true, true)],
+            vec![workspace("ws-1", false), workspace("ws-2", true)],
+        );
+        desired.current_workspace_id = Some(WorkspaceId::from("ws-2"));
+        desired.current_output_id = Some(OutputId::from("out-1"));
+        desired.visible_window_ids = vec![WindowId::from("w2")];
+        desired.outputs[0].current_workspace_id = Some(WorkspaceId::from("ws-2"));
+
+        let mut transactions = TransactionManager::default();
+        transactions.stage(committed.clone());
+        transactions.commit_pending(crate::transactions::TransactionCommitReason::Ready);
+        let presented = resolve_presented_snapshot(
+            &transactions,
+            &desired,
+            &HashSet::from([WindowId::from("w1")]),
+        );
+
+        let payload =
+            list_workspaces_payload(&desired, &presented, transactions.committed(), Some(12));
+
+        assert_eq!(
+            payload["active_workspace"],
+            json!(WorkspaceId::from("ws-2"))
+        );
+        assert_eq!(
+            payload["presented"][0]["id"],
+            json!(WorkspaceId::from("ws-1"))
+        );
+        assert_eq!(payload["presented"][0]["focused"], json!(false));
+        assert_eq!(payload["presented"][0]["visible"], json!(false));
+        assert_eq!(
+            payload["presented"][1]["id"],
+            json!(WorkspaceId::from("ws-2"))
+        );
+        assert_eq!(payload["presented"][1]["focused"], json!(true));
+        assert_eq!(
+            payload["presented"][1]["visible_windows"][0],
+            json!(WindowId::from("w2"))
+        );
+    }
+
+    #[test]
+    fn list_outputs_payload_shows_retargeted_presented_workspace_after_close_and_switch() {
+        let committed = snapshot(
+            Some("w1"),
+            vec![
+                window("w1", Some("ws-1"), true, true),
+                window("w2", Some("ws-2"), true, false),
+            ],
+            vec![workspace("ws-1", true), workspace("ws-2", false)],
+        );
+        let mut desired = snapshot(
+            Some("w2"),
+            vec![window("w2", Some("ws-2"), true, true)],
+            vec![workspace("ws-1", false), workspace("ws-2", true)],
+        );
+        desired.current_workspace_id = Some(WorkspaceId::from("ws-2"));
+        desired.current_output_id = Some(OutputId::from("out-1"));
+        desired.visible_window_ids = vec![WindowId::from("w2")];
+        desired.outputs[0].current_workspace_id = Some(WorkspaceId::from("ws-2"));
+
+        let outputs = std::collections::HashMap::from([(
+            OutputId::from("out-1"),
+            OutputNode {
+                id: OutputId::from("out-1"),
+                name: "winit".into(),
+                enabled: true,
+                current_workspace: Some(WorkspaceId::from("ws-live")),
+                logical_size: (1280, 720),
+            },
+        )]);
+
+        let mut transactions = TransactionManager::default();
+        transactions.stage(committed.clone());
+        transactions.commit_pending(crate::transactions::TransactionCommitReason::Ready);
+        let presented = resolve_presented_snapshot(
+            &transactions,
+            &desired,
+            &HashSet::from([WindowId::from("w1")]),
+        );
+
+        let payload = list_outputs_payload(
+            &outputs,
+            &desired,
+            &presented,
+            transactions.committed(),
+            Some(13),
+            &RenderPlan::default(),
+        );
+
+        assert_eq!(payload["focused_output"], json!(OutputId::from("out-1")));
+        assert_eq!(
+            payload["current_workspace"],
+            json!(WorkspaceId::from("ws-2"))
+        );
+        assert_eq!(
+            payload["presented"][0]["current_workspace"],
+            json!(WorkspaceId::from("ws-2"))
+        );
+        assert_eq!(
+            payload["committed"][0]["current_workspace"],
+            json!(WorkspaceId::from("ws-1"))
+        );
+    }
+
+    #[test]
+    fn list_outputs_payload_preserves_other_output_workspace_during_close_and_switch() {
+        let mut committed = snapshot(
+            Some("w1"),
+            vec![
+                window("w1", Some("ws-1"), true, true),
+                window("w2", Some("ws-2"), true, false),
+                window("w3", Some("ws-3"), true, false),
+            ],
+            vec![
+                workspace("ws-1", true),
+                workspace("ws-2", false),
+                workspace("ws-3", false),
+            ],
+        );
+        committed.outputs.push(OutputSnapshot {
+            id: OutputId::from("out-2"),
+            name: "other".into(),
+            logical_x: 1280,
+            logical_y: 0,
+            logical_width: 1280,
+            logical_height: 720,
+            scale: 1,
+            transform: OutputTransform::Normal,
+            enabled: true,
+            current_workspace_id: Some(WorkspaceId::from("ws-3")),
+        });
+        committed.workspaces[2].output_id = Some(OutputId::from("out-2"));
+        committed.windows[2].output_id = Some(OutputId::from("out-2"));
+
+        let mut desired = snapshot(
+            Some("w2"),
+            vec![
+                window("w2", Some("ws-2"), true, true),
+                window("w3", Some("ws-3"), true, false),
+            ],
+            vec![
+                workspace("ws-1", false),
+                workspace("ws-2", true),
+                workspace("ws-3", false),
+            ],
+        );
+        desired.current_workspace_id = Some(WorkspaceId::from("ws-2"));
+        desired.current_output_id = Some(OutputId::from("out-1"));
+        desired.visible_window_ids = vec![WindowId::from("w2")];
+        desired.outputs[0].current_workspace_id = Some(WorkspaceId::from("ws-2"));
+        desired.outputs.push(OutputSnapshot {
+            id: OutputId::from("out-2"),
+            name: "other".into(),
+            logical_x: 1280,
+            logical_y: 0,
+            logical_width: 1280,
+            logical_height: 720,
+            scale: 1,
+            transform: OutputTransform::Normal,
+            enabled: true,
+            current_workspace_id: Some(WorkspaceId::from("ws-3")),
+        });
+        desired.workspaces[2].output_id = Some(OutputId::from("out-2"));
+        desired.windows[1].output_id = Some(OutputId::from("out-2"));
+
+        let outputs = std::collections::HashMap::from([
+            (
+                OutputId::from("out-1"),
+                OutputNode {
+                    id: OutputId::from("out-1"),
+                    name: "winit".into(),
+                    enabled: true,
+                    current_workspace: Some(WorkspaceId::from("ws-live-1")),
+                    logical_size: (1280, 720),
+                },
+            ),
+            (
+                OutputId::from("out-2"),
+                OutputNode {
+                    id: OutputId::from("out-2"),
+                    name: "other".into(),
+                    enabled: true,
+                    current_workspace: Some(WorkspaceId::from("ws-live-2")),
+                    logical_size: (1280, 720),
+                },
+            ),
+        ]);
+
+        let mut transactions = TransactionManager::default();
+        transactions.stage(committed.clone());
+        transactions.commit_pending(crate::transactions::TransactionCommitReason::Ready);
+        let presented = resolve_presented_snapshot(
+            &transactions,
+            &desired,
+            &HashSet::from([WindowId::from("w1")]),
+        );
+
+        let payload = list_outputs_payload(
+            &outputs,
+            &desired,
+            &presented,
+            transactions.committed(),
+            Some(14),
+            &RenderPlan::default(),
+        );
+
+        assert_eq!(payload["focused_output"], json!(OutputId::from("out-1")));
+        assert_eq!(
+            payload["current_workspace"],
+            json!(WorkspaceId::from("ws-2"))
+        );
+        assert_eq!(
+            payload["presented"][0]["current_workspace"],
+            json!(WorkspaceId::from("ws-2"))
+        );
+        assert_eq!(
+            payload["presented"][1]["current_workspace"],
+            json!(WorkspaceId::from("ws-3"))
+        );
+        assert_eq!(
+            payload["committed"][1]["current_workspace"],
+            json!(WorkspaceId::from("ws-3"))
+        );
+    }
+
+    #[test]
+    fn presented_snapshot_preserves_other_output_workspace_during_close_and_switch() {
+        let mut committed = snapshot(
+            Some("w1"),
+            vec![
+                window("w1", Some("ws-1"), true, true),
+                window("w2", Some("ws-2"), true, false),
+                window("w3", Some("ws-3"), true, false),
+            ],
+            vec![
+                workspace("ws-1", true),
+                workspace("ws-2", false),
+                workspace("ws-3", false),
+            ],
+        );
+        committed.outputs.push(OutputSnapshot {
+            id: OutputId::from("out-2"),
+            name: "other".into(),
+            logical_x: 1280,
+            logical_y: 0,
+            logical_width: 1280,
+            logical_height: 720,
+            scale: 1,
+            transform: OutputTransform::Normal,
+            enabled: true,
+            current_workspace_id: Some(WorkspaceId::from("ws-3")),
+        });
+        committed.workspaces[2].output_id = Some(OutputId::from("out-2"));
+        committed.windows[2].output_id = Some(OutputId::from("out-2"));
+
+        let mut desired = snapshot(
+            Some("w2"),
+            vec![
+                window("w2", Some("ws-2"), true, true),
+                window("w3", Some("ws-3"), true, false),
+            ],
+            vec![
+                workspace("ws-1", false),
+                workspace("ws-2", true),
+                workspace("ws-3", false),
+            ],
+        );
+        desired.current_workspace_id = Some(WorkspaceId::from("ws-2"));
+        desired.current_output_id = Some(OutputId::from("out-1"));
+        desired.visible_window_ids = vec![WindowId::from("w2")];
+        desired.outputs[0].current_workspace_id = Some(WorkspaceId::from("ws-2"));
+        desired.outputs.push(OutputSnapshot {
+            id: OutputId::from("out-2"),
+            name: "other".into(),
+            logical_x: 1280,
+            logical_y: 0,
+            logical_width: 1280,
+            logical_height: 720,
+            scale: 1,
+            transform: OutputTransform::Normal,
+            enabled: true,
+            current_workspace_id: Some(WorkspaceId::from("ws-3")),
+        });
+        desired.workspaces[2].output_id = Some(OutputId::from("out-2"));
+        desired.windows[1].output_id = Some(OutputId::from("out-2"));
+
+        let mut transactions = TransactionManager::default();
+        transactions.stage(committed.clone());
+        transactions.commit_pending(crate::transactions::TransactionCommitReason::Ready);
+
+        let presented = resolve_presented_snapshot(
+            &transactions,
+            &desired,
+            &HashSet::from([WindowId::from("w1")]),
+        );
+
+        assert_eq!(
+            presented.current_workspace_id,
+            Some(WorkspaceId::from("ws-2"))
+        );
+        assert_eq!(presented.outputs.len(), 2);
+        assert_eq!(
+            presented.outputs[0].current_workspace_id,
+            Some(WorkspaceId::from("ws-2"))
+        );
+        assert_eq!(
+            presented.outputs[1].current_workspace_id,
+            Some(WorkspaceId::from("ws-3"))
+        );
+        assert_eq!(
+            visible_window_ids_for_presented_workspace(&presented, &WorkspaceId::from("ws-2")),
+            vec![WindowId::from("w2")]
+        );
+        assert_eq!(
+            visible_window_ids_for_presented_workspace(&presented, &WorkspaceId::from("ws-3")),
+            vec![]
+        );
+        assert_eq!(presented.visible_window_ids, vec![WindowId::from("w2")]);
     }
 
     #[test]

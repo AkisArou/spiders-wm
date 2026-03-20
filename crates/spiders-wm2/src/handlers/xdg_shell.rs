@@ -64,7 +64,7 @@ impl XdgShellHandler for SpidersWm2 {
         self.focus_window_surface(Some(wl_surface), SERIAL_COUNTER.next_serial());
 
         if !surface.is_initial_configure_sent() {
-            surface.send_configure();
+            self.maybe_commit_pending_transaction();
         }
     }
 
@@ -138,7 +138,7 @@ pub fn handle_commit(popups: &mut PopupManager, space: &Space<Window>, surface: 
         });
 
         if !initial_configure_sent {
-            window.toplevel().unwrap().send_configure();
+            window.toplevel().unwrap().send_pending_configure();
         }
     }
 

@@ -57,6 +57,7 @@ pub fn init_winit(
         "winit".to_string(),
         (mode.size.w as u32, mode.size.h as u32),
     );
+    actions::sync_active_workspace_to_output(&mut state.app.topology, &mut state.app.wm);
     state.refresh_active_workspace();
 
     let mut damager_tracker = OutputDamageTracker::from_output(&output);

@@ -1,9 +1,16 @@
 use crate::model::{WindowId, WmState};
 
-pub fn focus_window(wm: &mut WmState, window_id: WindowId) {
-    if wm.windows.contains_key(&window_id) {
-        wm.focused_window = Some(window_id);
+pub fn focus_window(wm: &mut WmState, window_id: WindowId) -> bool {
+    if !wm.windows.contains_key(&window_id) {
+        return false;
     }
+
+    if wm.focused_window.as_ref() == Some(&window_id) {
+        return false;
+    }
+
+    wm.focused_window = Some(window_id);
+    true
 }
 
 pub fn next_focus_in_active_workspace(wm: &WmState) -> Option<WindowId> {
@@ -65,7 +72,7 @@ pub fn focus_previous_window(wm: &mut WmState) {
 
 #[cfg(test)]
 mod tests {
-    use super::{focus_next_window, focus_previous_window};
+    use super::{focus_next_window, focus_previous_window, focus_window};
     use crate::model::{ManagedWindowState, WindowId, WmState};
 
     fn wm_with_windows(window_ids: &[WindowId]) -> WmState {
@@ -122,6 +129,19 @@ mod tests {
 
         focus_next_window(&mut wm);
 
+        assert_eq!(wm.focused_window, Some(WindowId::from("10")));
+    }
+
+    #[test]
+    fn focus_window_reports_real_focus_changes_only() {
+        let ids = [WindowId::from("10"), WindowId::from("20")];
+        let mut wm = wm_with_windows(&ids);
+
+        assert!(focus_window(&mut wm, WindowId::from("10")));
+        assert_eq!(wm.focused_window, Some(WindowId::from("10")));
+
+        assert!(!focus_window(&mut wm, WindowId::from("10")));
+        assert!(!focus_window(&mut wm, WindowId::from("missing")));
         assert_eq!(wm.focused_window, Some(WindowId::from("10")));
     }
 }

@@ -52,20 +52,19 @@ impl SpidersWm2 {
             self.runtime.smithay.space.unmap_elem(&window);
         }
 
-        if was_focused {
+        self.refresh_active_workspace();
+
+        if was_focused && self.runtime.transactions.committed().is_none() {
             let next_surface = actions::next_focus_in_active_workspace(&self.app.wm)
                 .and_then(|window_id| self.app.bindings.surface_for_window(&window_id));
 
             self.focus_window_surface(next_surface, SERIAL_COUNTER.next_serial());
         }
-
-        self.refresh_active_workspace();
     }
 
     pub fn refresh_active_workspace(&mut self) {
         self.refresh_layout_artifacts();
         self.sync_desired_transaction();
-        self.maybe_commit_pending_transaction();
         if self
             .runtime
             .transactions
@@ -134,12 +133,14 @@ impl SpidersWm2 {
             let presented_rect = placement::presented_window_rect(
                 &self.app,
                 committed_snapshot.as_ref(),
-                self.output_rect(),
                 &window_id,
             );
             let location = presented_rect
                 .map(|rect| rect.loc)
                 .unwrap_or_else(|| (0, 0).into());
+
+            let should_configure = configure_windows.contains(&window_id);
+            self.apply_window_geometry(&window, should_configure);
 
             if should_show {
                 if self
@@ -154,9 +155,6 @@ impl SpidersWm2 {
                         .space
                         .map_element(window.clone(), location, false);
                 }
-
-                let should_configure = configure_windows.contains(&window_id);
-                self.apply_window_geometry(&window, should_configure);
 
                 if self.runtime.smithay.space.element_location(&window) != Some(location) {
                     self.runtime
@@ -217,7 +215,7 @@ impl SpidersWm2 {
             return;
         };
 
-        let rect = placement::desired_window_rect(&self.app, self.output_rect(), &window_id);
+        let rect = placement::desired_window_rect(&self.app, &window_id);
 
         if let Some(rect) = rect {
             if !should_configure {
@@ -239,12 +237,16 @@ impl SpidersWm2 {
                 .bindings
                 .record_configure_size(&window_id, rect.size);
 
-            if toplevel.is_initial_configure_sent() {
-                if let Some(serial) = toplevel.send_pending_configure() {
-                    self.runtime
-                        .transactions
-                        .register_configure(&window_id, serial);
-                }
+            let serial = if toplevel.is_initial_configure_sent() {
+                toplevel.send_pending_configure()
+            } else {
+                Some(toplevel.send_configure())
+            };
+
+            if let Some(serial) = serial {
+                self.runtime
+                    .transactions
+                    .register_configure(&window_id, serial);
             }
         }
     }

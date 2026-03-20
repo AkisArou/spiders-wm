@@ -63,7 +63,12 @@ pub fn active_workspace_windows(wm: &WmState) -> Vec<WindowId> {
 #[cfg(test)]
 mod tests {
     use super::{move_focused_window_to_workspace, switch_to_workspace};
-    use crate::model::{ManagedWindowState, WindowId, WmState, WorkspaceId};
+    use crate::{
+        actions::sync_active_workspace_to_output,
+        model::{
+            ManagedWindowState, OutputId, OutputNode, TopologyState, WindowId, WmState, WorkspaceId,
+        },
+    };
 
     #[test]
     fn move_focused_window_updates_both_workspaces_and_focus() {
@@ -121,5 +126,124 @@ mod tests {
 
         assert_eq!(wm.active_workspace, target);
         assert_eq!(wm.focused_window, Some(last));
+    }
+
+    #[test]
+    fn switch_to_workspace_and_sync_updates_focused_output_and_output_workspace() {
+        let mut wm = WmState::default();
+        let mut topology = TopologyState::default();
+        let target = WorkspaceId::from("2");
+
+        wm.focused_output = Some(OutputId::from("out-1"));
+        wm.workspaces
+            .get_mut(&WorkspaceId::from("1"))
+            .unwrap()
+            .output = Some(OutputId::from("out-1"));
+        wm.workspaces.insert(
+            target.clone(),
+            crate::model::WorkspaceState {
+                id: target.clone(),
+                name: "2".into(),
+                output: Some(OutputId::from("out-2")),
+                windows: vec![],
+            },
+        );
+        topology.outputs.insert(
+            OutputId::from("out-1"),
+            OutputNode {
+                id: OutputId::from("out-1"),
+                name: "one".into(),
+                enabled: true,
+                current_workspace: Some(WorkspaceId::from("1")),
+                logical_size: (1280, 720),
+            },
+        );
+        topology.outputs.insert(
+            OutputId::from("out-2"),
+            OutputNode {
+                id: OutputId::from("out-2"),
+                name: "two".into(),
+                enabled: true,
+                current_workspace: None,
+                logical_size: (1280, 720),
+            },
+        );
+
+        switch_to_workspace(&mut wm, target.clone());
+        assert!(sync_active_workspace_to_output(&mut topology, &mut wm));
+
+        assert_eq!(wm.focused_output, Some(OutputId::from("out-2")));
+        assert_eq!(
+            topology
+                .outputs
+                .get(&OutputId::from("out-2"))
+                .unwrap()
+                .current_workspace,
+            Some(target)
+        );
+    }
+
+    #[test]
+    fn move_focused_window_to_workspace_and_sync_keeps_target_output_aligned() {
+        let mut wm = WmState::default();
+        let mut topology = TopologyState::default();
+        let source = WorkspaceId::from("1");
+        let target = WorkspaceId::from("2");
+        let moved = WindowId::from("7");
+
+        wm.focused_output = Some(OutputId::from("out-1"));
+        wm.workspaces.get_mut(&source).unwrap().output = Some(OutputId::from("out-1"));
+        wm.workspaces.insert(
+            target.clone(),
+            crate::model::WorkspaceState {
+                id: target.clone(),
+                name: "2".into(),
+                output: Some(OutputId::from("out-2")),
+                windows: vec![],
+            },
+        );
+        topology.outputs.insert(
+            OutputId::from("out-1"),
+            OutputNode {
+                id: OutputId::from("out-1"),
+                name: "one".into(),
+                enabled: true,
+                current_workspace: Some(source.clone()),
+                logical_size: (1280, 720),
+            },
+        );
+        topology.outputs.insert(
+            OutputId::from("out-2"),
+            OutputNode {
+                id: OutputId::from("out-2"),
+                name: "two".into(),
+                enabled: true,
+                current_workspace: None,
+                logical_size: (1280, 720),
+            },
+        );
+        wm.workspaces.get_mut(&source).unwrap().windows = vec![moved.clone()];
+        wm.windows.insert(
+            moved.clone(),
+            ManagedWindowState::tiled(moved.clone(), source.clone(), Some(OutputId::from("out-1"))),
+        );
+        wm.focused_window = Some(moved.clone());
+
+        move_focused_window_to_workspace(&mut wm, target.clone());
+        assert!(sync_active_workspace_to_output(&mut topology, &mut wm));
+
+        assert_eq!(wm.focused_output, Some(OutputId::from("out-2")));
+        assert_eq!(
+            wm.windows.get(&moved).unwrap().output,
+            Some(OutputId::from("out-2"))
+        );
+        assert_eq!(
+            topology
+                .outputs
+                .get(&OutputId::from("out-2"))
+                .unwrap()
+                .current_workspace,
+            Some(target)
+        );
     }
 }

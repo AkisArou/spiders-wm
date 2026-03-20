@@ -214,14 +214,20 @@ impl SpidersWm2 {
                                 .map(|toplevel| toplevel.wl_surface().clone())
                         });
 
+                    let mut focus_changed = false;
+
                     if let Some(surface) = focused_surface.clone() {
                         if let Some(window_id) = self.app.bindings.window_for_surface(&surface.id())
                         {
-                            actions::focus_window(&mut self.app.wm, window_id);
+                            focus_changed = actions::focus_window(&mut self.app.wm, window_id);
                         }
                     }
 
-                    self.focus_window_surface(focused_surface.clone(), serial);
+                    if focus_changed {
+                        self.refresh_active_workspace();
+                    } else {
+                        self.focus_window_surface(focused_surface.clone(), serial);
+                    }
 
                     let modifiers = keyboard.modifier_state();
 

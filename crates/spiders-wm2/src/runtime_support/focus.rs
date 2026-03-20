@@ -68,10 +68,12 @@ impl SpidersWm2 {
                     .is_some_and(|toplevel| toplevel.wl_surface().id() == target_surface.id())
             });
 
-            mapped.set_activated(is_focused);
+            let activation_changed = mapped.set_activated(is_focused);
 
-            if let Some(toplevel) = mapped.toplevel() {
-                toplevel.send_pending_configure();
+            if activation_changed {
+                if let Some(toplevel) = mapped.toplevel() {
+                    toplevel.send_pending_configure();
+                }
             }
         });
 
