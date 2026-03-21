@@ -238,7 +238,7 @@ impl<'i> QualifiedRuleParser<'i> for LayoutCssRuleParser {
     }
 }
 
-fn compile_stylo_declaration(
+pub(super) fn compile_stylo_declaration(
     declaration: &style::properties::PropertyDeclaration,
 ) -> Result<Option<CompiledDeclaration>, CssParseError> {
     use style::properties::PropertyDeclaration::*;

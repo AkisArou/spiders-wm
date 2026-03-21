@@ -9,7 +9,6 @@ use super::apply::*;
 use super::compile::{compile_declaration, CompiledDeclaration, CssValueError};
 use super::parse_values::*;
 use super::values::*;
-
 #[derive(Default)]
 pub(super) struct GridFallbackDeclarationParser;
 
