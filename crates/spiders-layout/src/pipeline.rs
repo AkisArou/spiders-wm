@@ -5,8 +5,8 @@ use taffy::prelude::{AvailableSpace, Size as TaffyAvailableSize, TaffyTree};
 use taffy::tree::{Layout as TaffyLayout, NodeId as TaffyNodeId};
 
 use crate::css::{
-    CssParseError, CssValueError, NodeComputedStyle, StyledLayoutTree, compute_style,
-    map_computed_style_to_taffy, parse_stylesheet,
+    compute_style, map_computed_style_to_taffy, parse_stylesheet, CssParseError, CssValueError,
+    NodeComputedStyle, StyledLayoutTree,
 };
 
 #[derive(Debug, thiserror::Error, PartialEq)]
@@ -150,7 +150,7 @@ fn root_node_with_space(node: &NodeComputedStyle, width: f32, height: f32) -> No
 
 pub fn build_styled_layout_tree_from_sheet(
     root: &ResolvedLayoutNode,
-    sheet: &crate::css::StyleSheet,
+    sheet: &crate::css::CompiledStyleSheet,
 ) -> Result<StyledLayoutTree, CssValueError> {
     Ok(StyledLayoutTree {
         root: style_node(root, sheet)?,
@@ -159,7 +159,7 @@ pub fn build_styled_layout_tree_from_sheet(
 
 fn style_node(
     node: &ResolvedLayoutNode,
-    sheet: &crate::css::StyleSheet,
+    sheet: &crate::css::CompiledStyleSheet,
 ) -> Result<NodeComputedStyle, CssValueError> {
     let computed = compute_style(sheet, node)?;
     let taffy_style = map_computed_style_to_taffy(&computed);

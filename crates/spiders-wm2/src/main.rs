@@ -1,4 +1,5 @@
 use smithay::reexports::{calloop::EventLoop, wayland_server::Display};
+use tracing_subscriber::{fmt::writer::BoxMakeWriter, EnvFilter};
 
 mod actions;
 mod app;
@@ -17,6 +18,8 @@ mod runtime_support;
 mod transactions;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    init_logging()?;
+
     let mut event_loop: EventLoop<runtime::SpidersWm2> = EventLoop::try_new()?;
     let display: Display<runtime::SpidersWm2> = Display::new()?;
 
@@ -28,34 +31,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     event_loop.run(None, &mut state, |_| {})?;
     Ok(())
-    // init_logging();
-    //
-    // let mut event_loop: EventLoop<SpidersWm2> = EventLoop::try_new()?;
-    // let display: Display<SpidersWm2> = Display::new()?;
-    //
-    // let mut state = SpidersWm2::new(&mut event_loop, display);
-    //
-    // crate::winit::init_winit(&mut event_loop, &mut state)?;
-    //
-    // // SAFETY: this process intentionally sets the child Wayland socket before spawning
-    // // optional test clients. This bootstrap binary is single-purpose and does not depend
-    // // on concurrent environment mutation correctness.
-    // unsafe {
-    //     std::env::set_var("WAYLAND_DISPLAY", &state.socket_name);
-    // }
-    //
-    // spawn_client();
-    //
-    // event_loop.run(None, &mut state, |_| {})?;
 }
 
-// fn init_logging() {
-//     if let Ok(env_filter) = tracing_subscriber::EnvFilter::try_from_default_env() {
-//         tracing_subscriber::fmt().with_env_filter(env_filter).init();
-//     } else {
-//         tracing_subscriber::fmt().init();
-//     }
-// }
+fn init_logging() -> Result<(), Box<dyn std::error::Error>> {
+    let log_path =
+        std::env::var("SPIDERS_WM2_LOG_PATH").unwrap_or_else(|_| "/tmp/spiders-wm2.log".into());
+    let writer = std::fs::File::create(&log_path)?;
+    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+        EnvFilter::new(
+            "info,spiders_wm2::transactions=trace,spiders_wm2::layout=trace,spiders_wm2::runtime_debug=trace",
+        )
+    });
+
+    tracing_subscriber::fmt()
+        .with_env_filter(env_filter)
+        .with_writer(BoxMakeWriter::new(writer))
+        .with_ansi(false)
+        .init();
+
+    tracing::info!(log_path, "wm2 logging initialized");
+    Ok(())
+}
 //
 // fn spawn_client() {
 //     let mut args = std::env::args().skip(1);

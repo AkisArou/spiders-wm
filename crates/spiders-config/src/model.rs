@@ -55,23 +55,6 @@ pub struct InputConfig {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct OutputConfig {
-    pub name: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub mode: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub scale: Option<f64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub transform: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub position: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub adaptive_sync: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub enabled: Option<bool>,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct LayoutDefinition {
     pub name: String,
     pub module: String,
@@ -123,8 +106,6 @@ pub struct Config {
     pub options: ConfigOptions,
     #[serde(default)]
     pub inputs: Vec<InputConfig>,
-    #[serde(default)]
-    pub outputs: Vec<OutputConfig>,
     #[serde(default)]
     pub layouts: Vec<LayoutDefinition>,
     #[serde(default)]
@@ -527,16 +508,12 @@ mod tests {
         })
         .unwrap();
 
-        assert!(
-            paths
-                .authored_config
-                .ends_with(".config/spiders-wm/config.ts")
-        );
-        assert!(
-            paths
-                .prepared_config
-                .ends_with(".cache/spiders-wm/config.js")
-        );
+        assert!(paths
+            .authored_config
+            .ends_with(".config/spiders-wm/config.ts"));
+        assert!(paths
+            .prepared_config
+            .ends_with(".cache/spiders-wm/config.js"));
 
         let _ = fs::remove_file(config_dir.join("config.ts"));
     }

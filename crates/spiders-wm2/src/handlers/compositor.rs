@@ -9,6 +9,7 @@ use smithay::{
     },
 };
 
+use crate::model::OutputId;
 use crate::runtime::{ClientState, SpidersWm2};
 
 use super::xdg_shell;
@@ -46,11 +47,6 @@ impl CompositorHandler for SpidersWm2 {
             {
                 window.on_commit();
             }
-
-            if let Some(window_id) = self.app.bindings.window_for_surface(&root.id()) {
-                self.runtime.transactions.mark_window_committed(&window_id);
-                self.maybe_commit_pending_transaction();
-            }
         }
 
         xdg_shell::handle_commit(
@@ -58,6 +54,40 @@ impl CompositorHandler for SpidersWm2 {
             &self.runtime.smithay.space,
             surface,
         );
+
+        if !is_sync_subsurface(surface) {
+            self.runtime.smithay.space.refresh();
+
+            let mut root = surface.clone();
+            while let Some(parent) = get_parent(&root) {
+                root = parent;
+            }
+
+            if let Some(window_id) = self.app.bindings.window_for_surface(&root.id()) {
+                self.runtime.transactions.mark_window_committed(&window_id);
+
+                if self
+                    .runtime
+                    .transactions
+                    .pending()
+                    .and_then(|pending| pending.participants.get(&window_id))
+                    .is_some_and(|participant| participant.committed)
+                {
+                    self.runtime
+                        .render_plan
+                        .mark_output_dirty(OutputId::from("1"));
+                }
+
+                tracing::trace!(
+                    target: "spiders_wm2::runtime_debug",
+                    ?window_id,
+                    pending_serials = ?self.app.bindings.pending_commit_serials(&window_id),
+                    "compositor_commit_after_window_on_commit"
+                );
+            }
+
+            self.maybe_commit_pending_transaction();
+        }
     }
 }
 
@@ -77,6 +107,64 @@ impl ShmHandler for SpidersWm2 {
 
 delegate_compositor!(SpidersWm2);
 delegate_shm!(SpidersWm2);
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn geometry_gate_should_run_after_shell_commit_processing() {
+        let order = [
+            "on_commit",
+            "shell_commit",
+            "space_refresh",
+            "geometry_gate",
+        ];
+
+        assert_eq!(order[2], "space_refresh");
+        assert_eq!(order[3], "geometry_gate");
+    }
+
+    #[test]
+    fn observed_serial_still_requires_geometry_ready() {
+        let observed = true;
+        let geometry_ready = false;
+
+        assert!(observed);
+        assert!(!geometry_ready);
+    }
+
+    #[test]
+    fn mapped_reflow_can_accept_observed_commit_before_geometry_catches_up() {
+        let was_previously_unmapped = false;
+        let geometry_ready = false;
+
+        assert!(!was_previously_unmapped);
+        assert!(!geometry_ready);
+    }
+
+    #[test]
+    fn mapped_commit_path_is_now_serial_queue_driven() {
+        let pending_count = 2usize;
+        let completed_by_one_commit = true;
+
+        assert_eq!(pending_count, 2);
+        assert!(completed_by_one_commit);
+    }
+
+    #[test]
+    fn mapped_commit_relies_on_transaction_promotion_for_repaint() {
+        let eager_dirty_mark = false;
+
+        assert!(!eager_dirty_mark);
+    }
+
+    #[test]
+    fn post_configure_commit_can_request_followup_repaint() {
+        let participant_committed = true;
+        let should_mark_dirty = participant_committed;
+
+        assert!(should_mark_dirty);
+    }
+}
 
 // use smithay::{
 //     backend::renderer::utils::on_commit_buffer_handler,

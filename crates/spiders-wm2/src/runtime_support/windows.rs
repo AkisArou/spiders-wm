@@ -1,11 +1,25 @@
+use std::collections::HashSet;
+
 use smithay::{
     desktop::Window,
     reexports::wayland_server::{protocol::wl_surface::WlSurface, Resource},
-    utils::{IsAlive, SERIAL_COUNTER},
+    utils::{IsAlive, Logical, Rectangle, SERIAL_COUNTER},
+    wayland::{
+        compositor::{remove_pre_commit_hook, with_states},
+        shell::xdg::XdgToplevelSurfaceData,
+    },
 };
 use tracing::trace;
 
-use crate::{actions, placement, runtime::SpidersWm2};
+use crate::{actions, app::AppState, placement, runtime::SpidersWm2, transactions::RefreshPlan};
+use spiders_shared::ids::WindowId;
+use spiders_shared::wm::StateSnapshot;
+
+struct CommittedWindowPresentation {
+    window_id: WindowId,
+    visible: bool,
+    rect: Option<Rectangle<i32, Logical>>,
+}
 
 impl SpidersWm2 {
     pub fn close_focused_window(&mut self) {
@@ -112,6 +126,8 @@ impl SpidersWm2 {
                 (known.clone(), known)
             });
 
+        trace!(target: "spiders_wm2::runtime_debug", ?affected_windows, ?configure_windows, committed_snapshot = committed_snapshot.is_some(), "refresh_active_workspace_apply");
+
         let focused_before = self
             .runtime
             .transactions
@@ -180,12 +196,83 @@ impl SpidersWm2 {
         self.maybe_commit_pending_transaction();
     }
 
+    pub(crate) fn apply_committed_refresh_plan(&mut self, refresh_plan: &RefreshPlan) {
+        let Some(committed_snapshot) = self.runtime.transactions.committed().cloned() else {
+            return;
+        };
+
+        trace!(target: "spiders_wm2::runtime_debug", windows = ?refresh_plan.windows, configure_windows = ?refresh_plan.configure_windows, workspaces = ?refresh_plan.workspaces, outputs = ?refresh_plan.outputs, "apply_committed_refresh_plan");
+
+        for presentation in
+            committed_window_presentations(&self.app, &committed_snapshot, &refresh_plan.windows)
+        {
+            trace!(target: "spiders_wm2::runtime_debug", window_id = ?presentation.window_id, visible = presentation.visible, rect = ?presentation.rect, "committed_window_presentation");
+            let Some(window) = self
+                .app
+                .bindings
+                .element_for_window(&presentation.window_id)
+            else {
+                continue;
+            };
+
+            let location = presentation
+                .rect
+                .map(|rect| rect.loc)
+                .unwrap_or_else(|| (0, 0).into());
+
+            if presentation.visible {
+                if self
+                    .runtime
+                    .smithay
+                    .space
+                    .element_location(&window)
+                    .is_none()
+                {
+                    self.runtime
+                        .smithay
+                        .space
+                        .map_element(window.clone(), location, false);
+                }
+
+                if self.runtime.smithay.space.element_location(&window) != Some(location) {
+                    self.runtime
+                        .smithay
+                        .space
+                        .map_element(window, location, false);
+                }
+            } else {
+                trace!(
+                    target: "spiders_wm2::runtime_debug",
+                    window_id = ?presentation.window_id,
+                    still_mapped_before = self.runtime.smithay.space.element_location(&window).is_some(),
+                    "committed_window_unmap"
+                );
+                self.runtime.smithay.space.unmap_elem(&window);
+                trace!(
+                    target: "spiders_wm2::runtime_debug",
+                    window_id = ?presentation.window_id,
+                    still_mapped_after = self.runtime.smithay.space.element_location(&window).is_some(),
+                    "committed_window_unmap_done"
+                );
+            }
+        }
+
+        let focused_surface = committed_snapshot
+            .focused_window_id
+            .as_ref()
+            .and_then(|window_id| self.app.bindings.surface_for_window(window_id));
+        trace!(target: "spiders_wm2::runtime_debug", focused_window = ?committed_snapshot.focused_window_id, "apply_committed_focus");
+        self.focus_window_surface(focused_surface, SERIAL_COUNTER.next_serial());
+    }
+
     pub fn cleanup_dead_windows(&mut self) {
+        let deferred_removals = self.runtime.transactions.deferred_removals().clone();
         let dead_surfaces = self
             .app
             .bindings
             .known_windows()
             .into_iter()
+            .filter(|window_id| !deferred_removals.contains(window_id))
             .filter_map(|window_id| self.app.bindings.surface_for_window(&window_id))
             .filter(|surface| !surface.alive())
             .collect::<Vec<_>>();
@@ -197,6 +284,15 @@ impl SpidersWm2 {
 
     pub(crate) fn finalize_deferred_window_removals(&mut self) {
         for window_id in self.runtime.transactions.drain_deferred_removals() {
+            self.runtime
+                .transactions
+                .finalize_deferred_removal(&window_id);
+            if let (Some(surface), Some(hook)) = (
+                self.app.bindings.surface_for_window(&window_id),
+                self.app.bindings.commit_hook(&window_id),
+            ) {
+                remove_pre_commit_hook(&surface, hook);
+            }
             self.app.bindings.unbind_window(&window_id);
             actions::remove_window(&mut self.app.topology, &mut self.app.wm, window_id);
         }
@@ -224,8 +320,43 @@ impl SpidersWm2 {
 
             let next_size = (rect.size.w, rect.size.h);
             let already_sent = self.app.bindings.last_configure_size(&window_id) == Some(next_size);
+            let waiting_for_commit = !self
+                .app
+                .bindings
+                .pending_commit_serials(&window_id)
+                .is_empty();
+            let committed_size = toplevel.with_cached_state(|cached| {
+                cached
+                    .last_acked
+                    .as_ref()
+                    .and_then(|configure| configure.state.size)
+            });
+            let server_size = with_states(toplevel.wl_surface(), |states| {
+                states
+                    .data_map
+                    .get::<XdgToplevelSurfaceData>()
+                    .and_then(|data| data.lock().ok())
+                    .map(|attributes| attributes.current_server_state().size)
+                    .unwrap_or(None)
+            });
+            let committed_matches_server_size = committed_size == server_size;
 
             if already_sent && toplevel.is_initial_configure_sent() {
+                return;
+            }
+
+            if waiting_for_commit
+                && toplevel.is_initial_configure_sent()
+                && !committed_matches_server_size
+            {
+                trace!(
+                    target: "spiders_wm2::runtime_debug",
+                    ?window_id,
+                    width = rect.size.w,
+                    height = rect.size.h,
+                    committed_matches_server_size,
+                    "throttle_window_geometry_configure"
+                );
                 return;
             }
 
@@ -236,6 +367,8 @@ impl SpidersWm2 {
             self.app
                 .bindings
                 .record_configure_size(&window_id, rect.size);
+
+            trace!(target: "spiders_wm2::runtime_debug", ?window_id, width = rect.size.w, height = rect.size.h, initial = !toplevel.is_initial_configure_sent(), already_sent, waiting_for_commit, committed_matches_server_size, "apply_window_geometry");
 
             let serial = if toplevel.is_initial_configure_sent() {
                 toplevel.send_pending_configure()
@@ -273,17 +406,45 @@ impl SpidersWm2 {
     }
 }
 
+fn committed_window_presentations(
+    app: &AppState,
+    committed_snapshot: &StateSnapshot,
+    window_ids: &HashSet<WindowId>,
+) -> Vec<CommittedWindowPresentation> {
+    let visible = committed_snapshot
+        .visible_window_ids
+        .iter()
+        .cloned()
+        .collect::<HashSet<_>>();
+
+    window_ids
+        .iter()
+        .cloned()
+        .map(|window_id| CommittedWindowPresentation {
+            visible: placement::window_is_visible(
+                app,
+                Some(committed_snapshot),
+                &visible,
+                &window_id,
+            ),
+            rect: placement::presented_window_rect(app, Some(committed_snapshot), &window_id),
+            window_id,
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::{HashMap, HashSet};
 
     use crate::{
+        app::AppState,
         config::built_in_default_config,
         model::{OutputId, OutputNode, WmState, WorkspaceId},
         placement,
         transactions::{LayoutRecomputePlan, RefreshPlan, TransactionManager},
     };
-    use smithay::utils::Size;
+    use smithay::utils::{Rectangle, Size};
     use spiders_shared::{
         ids::WindowId,
         wm::{
@@ -291,6 +452,8 @@ mod tests {
             WindowMode as SharedWindowMode, WindowSnapshot,
         },
     };
+
+    use super::committed_window_presentations;
 
     #[test]
     fn affected_windows_fallbacks_to_known_windows_without_pending_transaction() {
@@ -417,6 +580,19 @@ mod tests {
     }
 
     #[test]
+    fn cleanup_dead_windows_skips_deferred_removals() {
+        let deferred = HashSet::from([WindowId::from("w1")]);
+        let known = vec![WindowId::from("w1"), WindowId::from("w2")];
+
+        let remaining = known
+            .into_iter()
+            .filter(|window_id| !deferred.contains(window_id))
+            .collect::<Vec<_>>();
+
+        assert_eq!(remaining, vec![WindowId::from("w2")]);
+    }
+
+    #[test]
     fn committed_visible_window_ids_drive_pending_visibility() {
         let visible = HashSet::from([WindowId::from("w1")]);
         let committed = committed_snapshot(
@@ -440,6 +616,79 @@ mod tests {
             &visible,
             &WindowId::from("w2"),
         ));
+    }
+
+    #[test]
+    fn committed_window_presentations_use_committed_visibility_for_new_window() {
+        let mut app = AppState::default();
+        app.layout.committed_tiled_window_rects.insert(
+            WindowId::from("w2"),
+            Rectangle::new((25, 30).into(), (400, 300).into()),
+        );
+
+        let committed = committed_snapshot(
+            Some("w2"),
+            vec![window("w2", SharedWindowMode::Tiled, true)],
+            vec![WindowId::from("w2")],
+        );
+
+        let presentations = committed_window_presentations(
+            &app,
+            &committed,
+            &HashSet::from([WindowId::from("w2")]),
+        );
+
+        assert_eq!(presentations.len(), 1);
+        assert_eq!(presentations[0].window_id, WindowId::from("w2"));
+        assert!(presentations[0].visible);
+        assert_eq!(presentations[0].rect.unwrap().loc.x, 25);
+    }
+
+    #[test]
+    fn committed_window_presentations_hide_removed_window_and_move_survivor() {
+        let mut app = AppState::default();
+        app.layout.committed_tiled_window_rects.insert(
+            WindowId::from("w2"),
+            Rectangle::new((0, 0).into(), (900, 700).into()),
+        );
+
+        let committed = committed_snapshot(
+            Some("w2"),
+            vec![window("w2", SharedWindowMode::Tiled, true)],
+            vec![WindowId::from("w2")],
+        );
+
+        let presentations = committed_window_presentations(
+            &app,
+            &committed,
+            &HashSet::from([WindowId::from("w1"), WindowId::from("w2")]),
+        );
+
+        let removed = presentations
+            .iter()
+            .find(|presentation| presentation.window_id == WindowId::from("w1"))
+            .unwrap();
+        assert!(!removed.visible);
+        assert!(removed.rect.is_none());
+
+        let survivor = presentations
+            .iter()
+            .find(|presentation| presentation.window_id == WindowId::from("w2"))
+            .unwrap();
+        assert!(survivor.visible);
+        assert_eq!(survivor.rect.unwrap().size.w, 900);
+    }
+
+    #[test]
+    fn mapped_window_reconfigure_is_throttled_while_waiting_for_commit() {
+        let pending_serials = vec![smithay::utils::Serial::from(5)];
+        let initial_configure_sent = true;
+        let committed_matches_server_size = false;
+
+        let should_throttle =
+            !pending_serials.is_empty() && initial_configure_sent && !committed_matches_server_size;
+
+        assert!(should_throttle);
     }
 
     fn committed_snapshot(

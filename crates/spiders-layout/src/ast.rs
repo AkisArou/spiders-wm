@@ -6,7 +6,7 @@ use spiders_shared::layout::{
 use spiders_shared::wm::WindowSnapshot;
 use thiserror::Error;
 
-use crate::matching::{MatchParseError, matches_window, parse_window_match};
+use crate::matching::{matches_window, parse_window_match, MatchParseError};
 
 #[derive(Debug, Clone)]
 pub struct ValidatedLayoutTree {

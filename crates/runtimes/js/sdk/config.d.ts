@@ -49,25 +49,6 @@ export type InputMatch =
   | `type:${"keyboard" | "pointer" | "touchpad" | "touch"}`
   | string;
 
-export interface OutputConfig {
-  /** Output mode string in spiders-wm format: WIDTHxHEIGHT[@REFRESHHz]. */
-  mode?: string;
-  /** wlroots output scale. */
-  scale?: number;
-  /** wl_output transform name. */
-  transform?: "normal" | "90" | "180" | "270" | "flipped" | "flipped-90" | "flipped-180" | "flipped-270";
-  /** Output layout position in spiders-wm format: XxY or X,Y. */
-  position?: string;
-  /** wlroots adaptive sync toggle. */
-  adaptive_sync?: boolean;
-  enabled?: boolean;
-}
-
-/** Mapping of output name/description to wlroots-style output config. */
-export interface OutputsConfig {
-  [name: string]: OutputConfig | undefined;
-}
-
 export interface InputConfig {
   /** XKB rule names for keyboards. */
   xkb_layout?: string;
@@ -165,7 +146,6 @@ export interface SpiderWMConfig {
   workspaces?: string[];
   options?: OptionsConfig;
   layouts?: LayoutsConfig;
-  outputs?: OutputsConfig;
   inputs?: InputsConfig;
   rules?: RulesConfig;
   bindings?: BindingsConfig;

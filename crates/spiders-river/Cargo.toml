@@ -1,0 +1,24 @@
+[package]
+name = "spiders-river"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+bitflags = "2"
+serde.workspace = true
+serde_json.workspace = true
+spiders-config = { path = "../spiders-config" }
+spiders-ipc = { path = "../spiders-ipc" }
+spiders-layout = { path = "../spiders-layout" }
+spiders-runtime-js = { path = "../runtimes/js" }
+spiders-shared = { path = "../spiders-shared" }
+thiserror.workspace = true
+tracing = "0.1"
+tempfile = "3"
+wayland-backend = "0.3"
+wayland-client = "0.31"
+wayland-scanner = "0.31"
+xkbcommon = "0.8"

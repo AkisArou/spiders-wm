@@ -10,7 +10,7 @@ use crate::graph::{ModuleGraphBuilder, discover_project_apps};
 use crate::module_graph_runtime::evaluate_entry_export_to_json;
 use spiders_config::model::{
     Binding, Config, ConfigOptions, InputConfig, LayoutConfigError, LayoutDefinition,
-    LayoutSelectionConfig, OutputConfig, WindowRule,
+    LayoutSelectionConfig, WindowRule,
 };
 
 pub fn load_authored_config(path: impl AsRef<Path>) -> Result<Config, LayoutConfigError> {
@@ -632,7 +632,6 @@ fn decode_config_value(path: &Path, value: &Value) -> Result<Config, LayoutConfi
         workspaces: decode_workspaces(root.get("workspaces"), path)?,
         options: decode_options(root.get("options"), path)?,
         inputs: decode_inputs(root.get("inputs"), path)?,
-        outputs: decode_outputs(root.get("outputs"), path)?,
         layouts: Vec::new(),
         layout_selection: decode_layout_selection(root.get("layouts"), path)?,
         rules: decode_rules(root.get("rules"), path)?,
@@ -769,35 +768,6 @@ fn decode_inputs(
     }
     inputs.sort_by(|left, right| left.name.cmp(&right.name));
     Ok(inputs)
-}
-
-fn decode_outputs(
-    value: Option<&Value>,
-    path: &Path,
-) -> Result<Vec<OutputConfig>, LayoutConfigError> {
-    let Some(value) = value else {
-        return Ok(Vec::new());
-    };
-    let object = expect_object(path, value, "root.outputs")?;
-    let mut outputs = Vec::new();
-    for (name, entry) in object {
-        let config = expect_object(path, entry, &format!("root.outputs.{name}"))?;
-        outputs.push(OutputConfig {
-            name: name.clone(),
-            mode: decode_optional_string(config.get("mode"), path, "output.mode")?,
-            scale: decode_optional_f64(config.get("scale"), path, "output.scale")?,
-            transform: decode_optional_string(config.get("transform"), path, "output.transform")?,
-            position: decode_optional_string(config.get("position"), path, "output.position")?,
-            adaptive_sync: decode_optional_bool(
-                config.get("adaptive_sync"),
-                path,
-                "output.adaptive_sync",
-            )?,
-            enabled: decode_optional_bool(config.get("enabled"), path, "output.enabled")?,
-        });
-    }
-    outputs.sort_by(|left, right| left.name.cmp(&right.name));
-    Ok(outputs)
 }
 
 fn decode_layout_selection(

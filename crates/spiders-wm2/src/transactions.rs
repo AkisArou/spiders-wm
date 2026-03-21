@@ -9,6 +9,7 @@ use crate::{
 };
 use smithay::utils::Serial;
 use spiders_shared::wm::StateSnapshot;
+use tracing::trace;
 
 #[derive(Debug, Default)]
 pub struct TransactionManager {
@@ -41,6 +42,8 @@ pub struct TransactionParticipant {
     pub configure_serial: Option<Serial>,
     pub acked: bool,
     pub committed: bool,
+    pub needs_commit: bool,
+    pub observed_commit: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -274,6 +277,14 @@ impl TransactionManager {
         self.deferred_removals.insert(window_id);
     }
 
+    pub fn finalize_deferred_removal(&mut self, window_id: &WindowId) {
+        self.deferred_removals.remove(window_id);
+
+        if let Some(pending) = self.pending.as_mut() {
+            pending.participants.remove(window_id);
+        }
+    }
+
     pub fn pending_refresh_plan(&self, wm: &WmState) -> Option<RefreshPlan> {
         self.pending
             .as_ref()
@@ -319,6 +330,31 @@ impl TransactionManager {
         };
 
         participant.register_configure(serial);
+        trace!(target: "spiders_wm2::runtime_debug", transaction_id = pending.id, ?window_id, ?serial, status = ?participant.status(), acked = participant.acked, committed = participant.committed, "register_configure");
+    }
+
+    pub fn require_commit_for_window(&mut self, window_id: &WindowId) {
+        let Some(pending) = self.pending.as_mut() else {
+            return;
+        };
+
+        let Some(participant) = pending.participants.get_mut(window_id) else {
+            return;
+        };
+
+        participant.needs_commit = true;
+    }
+
+    pub fn mark_window_commit_observed(&mut self, window_id: &WindowId) {
+        let Some(pending) = self.pending.as_mut() else {
+            return;
+        };
+
+        let Some(participant) = pending.participants.get_mut(window_id) else {
+            return;
+        };
+
+        participant.observed_commit = true;
     }
 
     pub fn mark_configure_acked(&mut self, window_id: &WindowId, serial: Serial) {
@@ -331,6 +367,7 @@ impl TransactionManager {
         };
 
         participant.mark_configure_acked(serial);
+        trace!(target: "spiders_wm2::runtime_debug", transaction_id = pending.id, ?window_id, ?serial, status = ?participant.status(), acked = participant.acked, committed = participant.committed, "mark_configure_acked");
     }
 
     pub fn mark_window_committed(&mut self, window_id: &WindowId) {
@@ -343,6 +380,7 @@ impl TransactionManager {
         };
 
         participant.mark_committed();
+        trace!(target: "spiders_wm2::runtime_debug", transaction_id = pending.id, ?window_id, status = ?participant.status(), acked = participant.acked, committed = participant.committed, "mark_window_committed");
     }
 
     #[cfg(test)]
@@ -376,6 +414,8 @@ impl TransactionManager {
     pub fn commit_pending(&mut self, reason: TransactionCommitReason) {
         if let Some(pending) = self.pending.take() {
             let desired = pending.desired.clone();
+            let progress = pending.participant_progress();
+            trace!(target: "spiders_wm2::runtime_debug", transaction_id = pending.id, ?reason, ready = progress.ready, waiting_for_ack = progress.waiting_for_ack, waiting_for_commit = progress.waiting_for_commit, affected_windows = pending.affected_windows.len(), "commit_pending");
             self.record_history_entry(pending, reason, None);
             self.committed = Some(desired);
         }
@@ -441,7 +481,19 @@ impl PendingTransaction {
             coalescing_depth,
             timeout_extensions: 0,
             timeout_extensions_budget,
-            participants: participants_for_windows(&affected_windows),
+            participants: affected_windows
+                .iter()
+                .cloned()
+                .map(|window_id| {
+                    (
+                        window_id,
+                        TransactionParticipant {
+                            needs_commit: true,
+                            ..TransactionParticipant::default()
+                        },
+                    )
+                })
+                .collect(),
             started_at: Instant::now(),
             affected_windows,
             affected_workspaces: desired
@@ -558,6 +610,8 @@ impl PendingTransaction {
             committed,
             &desired,
         );
+        let participant_windows =
+            participant_windows_for_diff(&affected_windows, &dirty_scopes, committed, &desired);
 
         Self {
             id,
@@ -565,7 +619,7 @@ impl PendingTransaction {
             coalescing_depth,
             timeout_extensions: 0,
             timeout_extensions_budget,
-            participants: participants_for_windows(&affected_windows),
+            participants: participants_for_windows(committed, &desired, &participant_windows),
             desired,
             affected_windows,
             affected_workspaces,
@@ -635,9 +689,11 @@ impl PendingTransaction {
     }
 
     pub(crate) fn timeout_progress(&self) -> TimeoutProgress {
-        let progress = self.participant_progress();
-
-        if progress.ready > 0 {
+        if self
+            .participants
+            .values()
+            .any(|participant| participant.observed_commit)
+        {
             TimeoutProgress::Partial
         } else {
             TimeoutProgress::Stalled
@@ -650,9 +706,7 @@ impl PendingTransaction {
                 continue;
             };
 
-            if previous_participant.status() == TransactionParticipantStatus::Ready {
-                *participant = previous_participant.clone();
-            }
+            *participant = previous_participant.clone();
         }
     }
 
@@ -666,7 +720,6 @@ impl TransactionParticipant {
     fn register_configure(&mut self, serial: Serial) {
         self.configure_serial = Some(serial);
         self.acked = false;
-        self.committed = false;
     }
 
     fn mark_configure_acked(&mut self, serial: Serial) {
@@ -676,36 +729,197 @@ impl TransactionParticipant {
     }
 
     fn mark_committed(&mut self) {
-        if matches!(
-            self.status(),
-            TransactionParticipantStatus::WaitingForCommit
-        ) {
+        self.observed_commit = true;
+
+        if self.configure_serial.is_none()
+            || matches!(
+                self.status(),
+                TransactionParticipantStatus::WaitingForCommit
+            )
+        {
             self.committed = true;
+            self.needs_commit = false;
         }
     }
 
     fn is_ready(&self) -> bool {
-        self.configure_serial.is_none() || (self.acked && self.committed)
+        self.configure_serial.is_none() || (self.acked && (!self.needs_commit || self.committed))
     }
 
     pub(crate) fn status(&self) -> TransactionParticipantStatus {
-        match (self.configure_serial.is_some(), self.acked, self.committed) {
-            (false, _, _) => TransactionParticipantStatus::Idle,
-            (true, false, _) => TransactionParticipantStatus::WaitingForAck,
-            (true, true, false) => TransactionParticipantStatus::WaitingForCommit,
-            (true, true, true) => TransactionParticipantStatus::Ready,
+        match (
+            self.configure_serial.is_some(),
+            self.acked,
+            self.needs_commit,
+            self.committed,
+        ) {
+            (false, _, _, _) => TransactionParticipantStatus::Idle,
+            (true, false, _, _) => TransactionParticipantStatus::WaitingForAck,
+            (true, true, true, false) => TransactionParticipantStatus::WaitingForCommit,
+            (true, true, false, _) | (true, true, true, true) => {
+                TransactionParticipantStatus::Ready
+            }
         }
     }
 }
 
 fn participants_for_windows(
+    committed: &StateSnapshot,
+    desired: &StateSnapshot,
     affected_windows: &HashSet<WindowId>,
 ) -> std::collections::HashMap<WindowId, TransactionParticipant> {
     affected_windows
         .iter()
         .cloned()
-        .map(|window_id| (window_id, TransactionParticipant::default()))
+        .map(|window_id| {
+            let needs_commit = participant_requires_commit_for_diff(committed, desired, &window_id);
+            (
+                window_id,
+                TransactionParticipant {
+                    needs_commit,
+                    ..TransactionParticipant::default()
+                },
+            )
+        })
         .collect()
+}
+
+fn participant_requires_commit_for_diff(
+    committed: &StateSnapshot,
+    desired: &StateSnapshot,
+    window_id: &WindowId,
+) -> bool {
+    let committed_window = committed
+        .windows
+        .iter()
+        .find(|window| &window.id == window_id);
+    let desired_window = desired
+        .windows
+        .iter()
+        .find(|window| &window.id == window_id);
+
+    match (committed_window, desired_window) {
+        (None, Some(_)) => true,
+        (Some(_), None) => false,
+        (Some(committed_window), Some(desired_window)) => {
+            desired_window.mapped
+                && (committed_window.mapped != desired_window.mapped
+                    || committed_window.mode != desired_window.mode
+                    || committed_window.floating_rect() != desired_window.floating_rect()
+                    || committed_window.output_id != desired_window.output_id
+                    || committed_window.workspace_id != desired_window.workspace_id)
+        }
+        (None, None) => false,
+    }
+}
+
+fn participant_windows_for_diff(
+    affected_windows: &HashSet<WindowId>,
+    dirty_scopes: &HashSet<DirtyScope>,
+    committed: &StateSnapshot,
+    desired: &StateSnapshot,
+) -> HashSet<WindowId> {
+    let mut participants = affected_windows
+        .iter()
+        .filter(|window_id| {
+            window_requires_direct_configure(dirty_scopes, committed, desired, window_id)
+        })
+        .cloned()
+        .collect::<HashSet<_>>();
+
+    if dirty_scopes.contains(&DirtyScope::FullScene) {
+        participants.extend(desired.windows.iter().map(|window| window.id.clone()));
+        return participants;
+    }
+
+    for scope in dirty_scopes {
+        match scope {
+            DirtyScope::WindowLayout(window_id) => {
+                if desired
+                    .windows
+                    .iter()
+                    .any(|window| &window.id == window_id && window.mapped)
+                {
+                    participants.insert(window_id.clone());
+                }
+            }
+            DirtyScope::WorkspaceLayout(workspace_id)
+            | DirtyScope::LayoutSubtree { workspace_id } => {
+                participants.extend(
+                    desired
+                        .windows
+                        .iter()
+                        .filter(|window| window.mapped)
+                        .filter(|window| window.workspace_id.as_ref() == Some(workspace_id))
+                        .map(|window| window.id.clone()),
+                );
+            }
+            DirtyScope::OutputLayout(output_id) => {
+                participants.extend(
+                    desired
+                        .windows
+                        .iter()
+                        .filter(|window| window.mapped)
+                        .filter(|window| window.output_id.as_ref() == Some(output_id))
+                        .map(|window| window.id.clone()),
+                );
+            }
+            DirtyScope::WindowPresentation(_)
+            | DirtyScope::WorkspacePresentation(_)
+            | DirtyScope::OutputPresentation(_) => {}
+            DirtyScope::FullScene => unreachable!(),
+        }
+    }
+
+    participants
+}
+
+fn window_requires_direct_configure(
+    dirty_scopes: &HashSet<DirtyScope>,
+    committed: &StateSnapshot,
+    desired: &StateSnapshot,
+    window_id: &WindowId,
+) -> bool {
+    if committed
+        .windows
+        .iter()
+        .any(|window| &window.id == window_id)
+        && !desired.windows.iter().any(|window| &window.id == window_id)
+    {
+        return false;
+    }
+
+    let Some(window) = desired
+        .windows
+        .iter()
+        .find(|window| &window.id == window_id)
+    else {
+        return false;
+    };
+
+    if !window.mapped {
+        return false;
+    }
+
+    if dirty_scopes.contains(&DirtyScope::FullScene)
+        || dirty_scopes.contains(&DirtyScope::WindowLayout(window_id.clone()))
+    {
+        return true;
+    }
+
+    if let Some(workspace_id) = window.workspace_id.as_ref() {
+        if dirty_scopes.contains(&DirtyScope::WorkspaceLayout(workspace_id.clone())) {
+            return true;
+        }
+    }
+
+    if let Some(output_id) = window.output_id.as_ref() {
+        if dirty_scopes.contains(&DirtyScope::OutputLayout(output_id.clone())) {
+            return true;
+        }
+    }
+
+    false
 }
 
 fn transaction_timeout() -> Duration {
@@ -889,7 +1103,13 @@ fn refresh_plan_for_scopes(dirty_scopes: &HashSet<DirtyScope>, wm: &WmState) -> 
             }
             DirtyScope::WindowLayout(window_id) => {
                 plan.windows.insert(window_id.clone());
-                plan.configure_windows.insert(window_id.clone());
+                if wm
+                    .windows
+                    .get(window_id)
+                    .is_some_and(|window| window.mapped)
+                {
+                    plan.configure_windows.insert(window_id.clone());
+                }
             }
             DirtyScope::WorkspacePresentation(workspace_id) => {
                 plan.workspaces.insert(workspace_id.clone());
@@ -910,7 +1130,12 @@ fn refresh_plan_for_scopes(dirty_scopes: &HashSet<DirtyScope>, wm: &WmState) -> 
                 if let Some(workspace) = wm.workspaces.get(workspace_id) {
                     plan.windows.extend(workspace.windows.iter().cloned());
                     plan.configure_windows
-                        .extend(workspace.windows.iter().cloned());
+                        .extend(workspace.windows.iter().filter_map(|window_id| {
+                            wm.windows
+                                .get(window_id)
+                                .filter(|window| window.mapped)
+                                .map(|_| window_id.clone())
+                        }));
 
                     if let Some(output_id) = workspace.output.clone() {
                         plan.outputs.insert(output_id);
@@ -935,14 +1160,21 @@ fn refresh_plan_for_scopes(dirty_scopes: &HashSet<DirtyScope>, wm: &WmState) -> 
                         plan.layout.workspace_roots.insert(workspace.id.clone());
                         plan.windows.extend(workspace.windows.iter().cloned());
                         plan.configure_windows
-                            .extend(workspace.windows.iter().cloned());
+                            .extend(workspace.windows.iter().filter_map(|window_id| {
+                                wm.windows
+                                    .get(window_id)
+                                    .filter(|window| window.mapped)
+                                    .map(|_| window_id.clone())
+                            }));
                     }
                 }
 
                 for (window_id, window) in &wm.windows {
                     if window.output.as_ref() == Some(output_id) {
                         plan.windows.insert(window_id.clone());
-                        plan.configure_windows.insert(window_id.clone());
+                        if window.mapped {
+                            plan.configure_windows.insert(window_id.clone());
+                        }
                     }
                 }
             }
@@ -969,20 +1201,44 @@ impl SpidersWm2 {
             &self.app.topology.outputs,
             self.app.config_runtime.current(),
         );
+        trace!(target: "spiders_wm2::runtime_debug", focused_window = ?desired.focused_window_id, visible_windows = ?desired.visible_window_ids, window_count = desired.windows.len(), workspace = ?desired.current_workspace_id, "sync_desired_transaction");
         self.runtime.transactions.stage(desired);
     }
 
     pub fn maybe_commit_pending_transaction(&mut self) {
-        if let Some(reason) = self.runtime.transactions.pending_resolution(Instant::now()) {
+        let now = Instant::now();
+
+        if self.runtime.transactions.extend_partial_timeout(now) {
+            trace!(
+                target: "spiders_wm2::runtime_debug",
+                "maybe_commit_pending_transaction_extend_partial_timeout"
+            );
+            return;
+        }
+
+        if let Some(reason) = self.runtime.transactions.pending_resolution(now) {
             let needs_layout_commit = self
                 .runtime
                 .transactions
                 .pending_needs_layout_commit(&self.app.wm);
+            let committed_refresh_plan =
+                self.runtime.transactions.pending_refresh_plan(&self.app.wm);
+            trace!(target: "spiders_wm2::runtime_debug", ?reason, needs_layout_commit, has_refresh_plan = committed_refresh_plan.is_some(), render_dirty = self.runtime.render_plan.is_dirty(), "maybe_commit_pending_transaction_ready");
             self.runtime.transactions.commit_pending(reason);
             if needs_layout_commit {
                 self.app.layout.commit_desired();
             }
-            self.runtime.render_plan.promote_staged_if_needed();
+            if let Some(plan) = committed_refresh_plan.as_ref() {
+                self.apply_committed_refresh_plan(plan);
+                self.runtime
+                    .render_plan
+                    .commit_refresh_plan(plan, &self.app.wm);
+            }
+            self.runtime.smithay.space.refresh();
+            self.runtime.smithay.popups.cleanup();
+            if committed_refresh_plan.is_none() {
+                self.runtime.render_plan.promote_staged_if_needed();
+            }
             self.finalize_deferred_window_removals();
         }
     }
@@ -1288,6 +1544,7 @@ mod tests {
         assert!(plan.configure_windows.contains(&WindowId::from("w2")));
 
         let serial = SERIAL_COUNTER.next_serial();
+        transactions.require_commit_for_window(&WindowId::from("w2"));
         transactions.register_configure(&WindowId::from("w2"), serial);
         assert!(!transactions.is_pending_ready());
 
@@ -1296,6 +1553,118 @@ mod tests {
 
         transactions.mark_window_committed(&WindowId::from("w2"));
         assert!(transactions.is_pending_ready());
+    }
+
+    #[test]
+    fn reflowed_existing_window_is_ready_after_ack_without_extra_commit() {
+        let committed = snapshot(
+            Some("w1"),
+            &["w1"],
+            vec![workspace("ws-1", true, true)],
+            vec![window("w1", "ws-1", true, WindowMode::Tiled)],
+        );
+        let desired = snapshot(
+            Some("w2"),
+            &["w1", "w2"],
+            vec![workspace("ws-1", true, true)],
+            vec![
+                window("w1", "ws-1", false, WindowMode::Tiled),
+                window("w2", "ws-1", true, WindowMode::Tiled),
+            ],
+        );
+
+        let mut transactions = TransactionManager::default();
+        transactions.committed = Some(committed);
+        transactions.stage(desired);
+
+        let serial_1 = SERIAL_COUNTER.next_serial();
+        let serial_2 = SERIAL_COUNTER.next_serial();
+        transactions.register_configure(&WindowId::from("w1"), serial_1);
+        transactions.register_configure(&WindowId::from("w2"), serial_2);
+
+        transactions.mark_configure_acked(&WindowId::from("w1"), serial_1);
+        assert!(!transactions.is_pending_ready());
+
+        transactions.mark_configure_acked(&WindowId::from("w2"), serial_2);
+        assert!(!transactions.is_pending_ready());
+
+        let participant = transactions
+            .pending()
+            .unwrap()
+            .participants
+            .get(&WindowId::from("w1"))
+            .unwrap();
+        assert_eq!(participant.status(), TransactionParticipantStatus::Ready);
+        assert!(!participant.needs_commit);
+
+        transactions.mark_window_committed(&WindowId::from("w2"));
+        assert!(transactions.is_pending_ready());
+
+        let participant = transactions
+            .pending()
+            .unwrap()
+            .participants
+            .get(&WindowId::from("w1"))
+            .unwrap();
+        assert_eq!(participant.status(), TransactionParticipantStatus::Ready);
+        assert!(!participant.needs_commit);
+    }
+
+    #[test]
+    fn removed_window_does_not_require_configure_participation() {
+        let committed = snapshot(
+            Some("w2"),
+            &["w1", "w2"],
+            vec![workspace("ws-1", true, true)],
+            vec![
+                window("w1", "ws-1", false, WindowMode::Tiled),
+                window("w2", "ws-1", true, WindowMode::Tiled),
+            ],
+        );
+        let desired = snapshot(
+            Some("w1"),
+            &["w1"],
+            vec![workspace("ws-1", true, true)],
+            vec![window("w1", "ws-1", true, WindowMode::Tiled)],
+        );
+
+        let pending = PendingTransaction::from_diff(1, &committed, desired, 1, 0, 1);
+
+        assert!(pending.participants.contains_key(&WindowId::from("w1")));
+        assert!(!pending.participants.contains_key(&WindowId::from("w2")));
+    }
+
+    #[test]
+    fn unmapped_window_stays_affected_but_does_not_require_configure() {
+        let committed = snapshot(
+            Some("w2"),
+            &["w1", "w2"],
+            vec![workspace("ws-1", true, true)],
+            vec![
+                window("w1", "ws-1", false, WindowMode::Tiled),
+                window("w2", "ws-1", true, WindowMode::Tiled),
+            ],
+        );
+        let mut desired = snapshot(
+            Some("w1"),
+            &["w1"],
+            vec![workspace("ws-1", true, true)],
+            vec![
+                window("w1", "ws-1", true, WindowMode::Tiled),
+                window("w2", "ws-1", false, WindowMode::Tiled),
+            ],
+        );
+        desired.windows[1].mapped = false;
+
+        let pending = PendingTransaction::from_diff(1, &committed, desired, 1, 0, 1);
+        let mut wm = wm_for_refresh_plan();
+        wm.windows.get_mut(&WindowId::from("w2")).unwrap().mapped = false;
+        let plan = pending.refresh_plan(&wm);
+
+        assert!(pending.affected_windows.contains(&WindowId::from("w2")));
+        assert!(!pending.participants.contains_key(&WindowId::from("w2")));
+        assert!(plan.windows.contains(&WindowId::from("w2")));
+        assert!(!plan.configure_windows.contains(&WindowId::from("w2")));
     }
 
     #[test]
@@ -1400,6 +1769,74 @@ mod tests {
     }
 
     #[test]
+    fn finalizing_deferred_removal_drops_pending_participant() {
+        let desired = snapshot(
+            Some("w1"),
+            &["w1"],
+            vec![workspace("ws-1", true, true)],
+            vec![window("w1", "ws-1", true, WindowMode::Tiled)],
+        );
+        let mut transactions = TransactionManager::default();
+
+        transactions.stage(desired);
+        let serial = SERIAL_COUNTER.next_serial();
+        transactions.register_configure(&WindowId::from("w1"), serial);
+        assert!(!transactions.is_pending_ready());
+
+        transactions.defer_window_removal(WindowId::from("w1"));
+        transactions.finalize_deferred_removal(&WindowId::from("w1"));
+
+        assert!(!transactions
+            .deferred_removals()
+            .contains(&WindowId::from("w1")));
+        assert!(!transactions
+            .pending()
+            .unwrap()
+            .participants
+            .contains_key(&WindowId::from("w1")));
+        assert!(transactions.is_pending_ready());
+    }
+
+    #[test]
+    fn finalizing_deferred_removal_preserves_other_pending_participants() {
+        let desired = snapshot(
+            Some("w1"),
+            &["w1", "w2"],
+            vec![workspace("ws-1", true, true)],
+            vec![
+                window("w1", "ws-1", true, WindowMode::Tiled),
+                window("w2", "ws-1", false, WindowMode::Tiled),
+            ],
+        );
+        let mut transactions = TransactionManager::default();
+
+        transactions.stage(desired);
+        let serial_1 = SERIAL_COUNTER.next_serial();
+        let serial_2 = SERIAL_COUNTER.next_serial();
+        transactions.require_commit_for_window(&WindowId::from("w1"));
+        transactions.require_commit_for_window(&WindowId::from("w2"));
+        transactions.register_configure(&WindowId::from("w1"), serial_1);
+        transactions.register_configure(&WindowId::from("w2"), serial_2);
+        transactions.mark_configure_acked(&WindowId::from("w1"), serial_1);
+        transactions.mark_window_committed(&WindowId::from("w1"));
+
+        transactions.defer_window_removal(WindowId::from("w1"));
+        transactions.finalize_deferred_removal(&WindowId::from("w1"));
+
+        assert!(!transactions.is_pending_ready());
+        let participant = transactions
+            .pending()
+            .unwrap()
+            .participants
+            .get(&WindowId::from("w2"))
+            .unwrap();
+        assert_eq!(
+            participant.status(),
+            TransactionParticipantStatus::WaitingForAck
+        );
+    }
+
+    #[test]
     fn transaction_reconfigure_resets_participant_progress() {
         let desired = snapshot(
             Some("w1"),
@@ -1430,7 +1867,55 @@ mod tests {
             .unwrap();
         assert_eq!(participant.configure_serial, Some(second_serial));
         assert!(!participant.acked);
-        assert!(!participant.committed);
+        assert!(participant.committed);
+    }
+
+    #[test]
+    fn transaction_ready_when_commit_happens_before_matching_ack() {
+        let desired = snapshot(
+            Some("w1"),
+            &["w1"],
+            vec![workspace("ws-1", true, true)],
+            vec![window("w1", "ws-1", true, WindowMode::Tiled)],
+        );
+        let mut transactions = TransactionManager::default();
+
+        transactions.stage(desired);
+
+        transactions.mark_window_committed(&WindowId::from("w1"));
+        let serial = SERIAL_COUNTER.next_serial();
+        transactions.register_configure(&WindowId::from("w1"), serial);
+
+        assert!(!transactions.is_pending_ready());
+
+        transactions.mark_configure_acked(&WindowId::from("w1"), serial);
+
+        assert!(transactions.is_pending_ready());
+    }
+
+    #[test]
+    fn transaction_waits_for_commit_when_ack_arrives_before_renderable_commit() {
+        let desired = snapshot(
+            Some("w2"),
+            &["w1", "w2"],
+            vec![workspace("ws-1", true, true)],
+            vec![
+                window("w1", "ws-1", true, WindowMode::Tiled),
+                window("w2", "ws-1", false, WindowMode::Tiled),
+            ],
+        );
+        let mut transactions = TransactionManager::default();
+
+        transactions.stage(desired);
+
+        let serial = SERIAL_COUNTER.next_serial();
+        transactions.register_configure(&WindowId::from("w2"), serial);
+        transactions.mark_configure_acked(&WindowId::from("w2"), serial);
+
+        assert!(!transactions.is_pending_ready());
+
+        transactions.mark_window_committed(&WindowId::from("w2"));
+        assert!(transactions.is_pending_ready());
     }
 
     #[test]
@@ -1480,6 +1965,8 @@ mod tests {
         transactions.stage(desired);
         let serial_1 = SERIAL_COUNTER.next_serial();
         let serial_2 = SERIAL_COUNTER.next_serial();
+        transactions.require_commit_for_window(&WindowId::from("w1"));
+        transactions.require_commit_for_window(&WindowId::from("w2"));
         transactions.register_configure(&WindowId::from("w1"), serial_1);
         transactions.register_configure(&WindowId::from("w2"), serial_2);
         transactions.mark_configure_acked(&WindowId::from("w1"), serial_1);
@@ -1560,6 +2047,88 @@ mod tests {
 
         assert!(transactions.extend_partial_timeout(now));
         assert_eq!(transactions.pending().unwrap().timeout_extensions, 1);
+        assert_eq!(transactions.pending_resolution(now), None);
+    }
+
+    #[test]
+    fn partial_timeout_extension_still_requires_ack_or_commit_progress() {
+        let desired = snapshot(
+            Some("w1"),
+            &["w1"],
+            vec![workspace("ws-1", true, true)],
+            vec![window("w1", "ws-1", true, WindowMode::Tiled)],
+        );
+        let mut transactions = TransactionManager::default();
+
+        transactions.stage(desired);
+        let serial = SERIAL_COUNTER.next_serial();
+        transactions.register_configure(&WindowId::from("w1"), serial);
+
+        let now = Instant::now();
+        if let Some(pending) = transactions.pending_mut() {
+            pending.deadline = now - Duration::from_millis(1);
+        }
+
+        assert!(!transactions.extend_partial_timeout(now));
+        assert_eq!(
+            transactions.pending_resolution(now),
+            Some(TransactionCommitReason::TimedOut)
+        );
+    }
+
+    #[test]
+    fn partial_timeout_extension_applies_after_observed_commit_without_ready_geometry() {
+        let desired = snapshot(
+            Some("w1"),
+            &["w1"],
+            vec![workspace("ws-1", true, true)],
+            vec![window("w1", "ws-1", true, WindowMode::Tiled)],
+        );
+        let mut transactions = TransactionManager::default();
+
+        transactions.stage(desired);
+        let serial = SERIAL_COUNTER.next_serial();
+        transactions.register_configure(&WindowId::from("w1"), serial);
+        transactions.mark_configure_acked(&WindowId::from("w1"), serial);
+        if let Some(participant) = transactions
+            .pending_mut()
+            .and_then(|pending| pending.participants.get_mut(&WindowId::from("w1")))
+        {
+            participant.observed_commit = true;
+        }
+
+        let now = Instant::now();
+        if let Some(pending) = transactions.pending_mut() {
+            pending.deadline = now - Duration::from_millis(1);
+        }
+
+        assert!(transactions.extend_partial_timeout(now));
+        assert_eq!(transactions.pending_resolution(now), None);
+    }
+
+    #[test]
+    fn deferred_geometry_observation_counts_as_partial_timeout_progress() {
+        let desired = snapshot(
+            Some("w1"),
+            &["w1"],
+            vec![workspace("ws-1", true, true)],
+            vec![window("w1", "ws-1", true, WindowMode::Tiled)],
+        );
+        let mut transactions = TransactionManager::default();
+
+        transactions.stage(desired);
+        let serial = SERIAL_COUNTER.next_serial();
+        transactions.require_commit_for_window(&WindowId::from("w1"));
+        transactions.register_configure(&WindowId::from("w1"), serial);
+        transactions.mark_configure_acked(&WindowId::from("w1"), serial);
+        transactions.mark_window_commit_observed(&WindowId::from("w1"));
+
+        let now = Instant::now();
+        if let Some(pending) = transactions.pending_mut() {
+            pending.deadline = now - Duration::from_millis(1);
+        }
+
+        assert!(transactions.extend_partial_timeout(now));
         assert_eq!(transactions.pending_resolution(now), None);
     }
 
@@ -1911,20 +2480,20 @@ mod tests {
         );
         let desired = snapshot(
             Some("w1"),
-            &["w1", "w2"],
+            &["w1"],
             vec![workspace("ws-1", true, true)],
-            vec![
-                window("w1", "ws-1", true, WindowMode::Tiled),
-                window("w2", "ws-1", false, WindowMode::Tiled),
-            ],
+            vec![window("w1", "ws-1", true, WindowMode::Tiled)],
         );
         let replacement = snapshot(
             Some("w1"),
             &["w1", "w3"],
-            vec![workspace("ws-1", true, true)],
+            vec![
+                workspace("ws-1", true, true),
+                workspace("ws-2", false, false),
+            ],
             vec![
                 window("w1", "ws-1", true, WindowMode::Tiled),
-                window("w3", "ws-1", false, WindowMode::Tiled),
+                window("w3", "ws-2", false, WindowMode::Tiled),
             ],
         );
         let mut transactions = TransactionManager::default();
@@ -1932,13 +2501,13 @@ mod tests {
 
         transactions.stage(desired);
         let serial_1 = SERIAL_COUNTER.next_serial();
-        let serial_2 = SERIAL_COUNTER.next_serial();
+        transactions.require_commit_for_window(&WindowId::from("w1"));
         transactions.register_configure(&WindowId::from("w1"), serial_1);
-        transactions.register_configure(&WindowId::from("w2"), serial_2);
         transactions.mark_configure_acked(&WindowId::from("w1"), serial_1);
         transactions.mark_window_committed(&WindowId::from("w1"));
 
         transactions.stage(replacement);
+        transactions.require_commit_for_window(&WindowId::from("w2"));
 
         let participant = transactions
             .pending()
@@ -1958,7 +2527,131 @@ mod tests {
     }
 
     #[test]
-    fn superseded_chain_does_not_preserve_incomplete_participant_progress() {
+    fn superseded_chain_preserves_participant_progress_across_repeated_output_resize() {
+        let mut committed = snapshot(
+            Some("w1"),
+            &["w1", "w2"],
+            vec![workspace("ws-1", true, true)],
+            vec![
+                window("w1", "ws-1", true, WindowMode::Tiled),
+                window("w2", "ws-1", false, WindowMode::Tiled),
+            ],
+        );
+        committed.windows[0].output_id = Some(OutputId::from("out-1"));
+        committed.windows[1].output_id = Some(OutputId::from("out-1"));
+        let mut desired = committed.clone();
+        desired.outputs[0].logical_width = 1440;
+        let mut replacement = desired.clone();
+        replacement.outputs[0].logical_width = 1600;
+
+        let mut transactions = TransactionManager::default();
+        transactions.committed = Some(committed);
+
+        transactions.stage(desired);
+        let serial_1 = SERIAL_COUNTER.next_serial();
+        let serial_2 = SERIAL_COUNTER.next_serial();
+        transactions.require_commit_for_window(&WindowId::from("w1"));
+        transactions.require_commit_for_window(&WindowId::from("w2"));
+        transactions.register_configure(&WindowId::from("w1"), serial_1);
+        transactions.register_configure(&WindowId::from("w2"), serial_2);
+        transactions.mark_configure_acked(&WindowId::from("w1"), serial_1);
+        transactions.mark_window_committed(&WindowId::from("w1"));
+        transactions.mark_configure_acked(&WindowId::from("w2"), serial_2);
+
+        transactions.stage(replacement);
+
+        let participant = transactions
+            .pending()
+            .unwrap()
+            .participants
+            .get(&WindowId::from("w1"))
+            .unwrap();
+        assert_eq!(participant.status(), TransactionParticipantStatus::Ready);
+
+        let next_serial = SERIAL_COUNTER.next_serial();
+        transactions.register_configure(&WindowId::from("w1"), next_serial);
+
+        let participant = transactions
+            .pending()
+            .unwrap()
+            .participants
+            .get(&WindowId::from("w1"))
+            .unwrap();
+        assert_eq!(
+            participant.status(),
+            TransactionParticipantStatus::WaitingForAck
+        );
+        assert_eq!(participant.configure_serial, Some(next_serial));
+    }
+
+    #[test]
+    fn superseded_chain_preserves_participant_progress_across_repeated_workspace_layout_change() {
+        let committed = snapshot(
+            Some("w1"),
+            &["w1", "w2"],
+            vec![workspace("ws-1", true, true)],
+            vec![
+                window("w1", "ws-1", true, WindowMode::Tiled),
+                window("w2", "ws-1", false, WindowMode::Tiled),
+            ],
+        );
+        let mut desired = committed.clone();
+        desired.workspaces[0].effective_layout = Some(spiders_shared::wm::LayoutRef {
+            name: "stack".into(),
+        });
+        let mut replacement = desired.clone();
+        replacement.workspaces[0].effective_layout = Some(spiders_shared::wm::LayoutRef {
+            name: "columns".into(),
+        });
+
+        let mut transactions = TransactionManager::default();
+        transactions.committed = Some(committed);
+
+        transactions.stage(desired);
+        let serial_1 = SERIAL_COUNTER.next_serial();
+        let serial_2 = SERIAL_COUNTER.next_serial();
+        transactions.register_configure(&WindowId::from("w1"), serial_1);
+        transactions.register_configure(&WindowId::from("w2"), serial_2);
+        transactions.mark_configure_acked(&WindowId::from("w1"), serial_1);
+        transactions.mark_window_committed(&WindowId::from("w1"));
+        transactions.mark_configure_acked(&WindowId::from("w2"), serial_2);
+
+        transactions.stage(replacement);
+
+        let participant = transactions
+            .pending()
+            .unwrap()
+            .participants
+            .get(&WindowId::from("w2"))
+            .unwrap();
+        assert_eq!(participant.status(), TransactionParticipantStatus::Ready);
+
+        let participant = transactions
+            .pending()
+            .unwrap()
+            .participants
+            .get(&WindowId::from("w1"))
+            .unwrap();
+        assert_eq!(participant.status(), TransactionParticipantStatus::Ready);
+
+        let next_serial = SERIAL_COUNTER.next_serial();
+        transactions.register_configure(&WindowId::from("w1"), next_serial);
+
+        let participant = transactions
+            .pending()
+            .unwrap()
+            .participants
+            .get(&WindowId::from("w1"))
+            .unwrap();
+        assert_eq!(
+            participant.status(),
+            TransactionParticipantStatus::WaitingForAck
+        );
+        assert_eq!(participant.configure_serial, Some(next_serial));
+    }
+
+    #[test]
+    fn superseded_chain_preserves_incomplete_participant_progress_for_same_window() {
         let committed = snapshot(
             Some("w0"),
             &["w0"],
@@ -1993,7 +2686,10 @@ mod tests {
             .participants
             .get(&WindowId::from("w1"))
             .unwrap();
-        assert_eq!(participant.status(), TransactionParticipantStatus::Idle);
+        assert_eq!(
+            participant.status(),
+            TransactionParticipantStatus::WaitingForCommit
+        );
     }
 
     #[test]
@@ -2406,6 +3102,50 @@ mod tests {
         assert!(pending
             .dirty_scopes
             .contains(&DirtyScope::WindowLayout(WindowId::from("w1"))));
+    }
+
+    #[test]
+    fn diff_tracks_workspace_layout_participants_for_all_workspace_windows() {
+        let committed = snapshot(
+            Some("w1"),
+            &["w1", "w2"],
+            vec![workspace("ws-1", true, true)],
+            vec![
+                window("w1", "ws-1", true, WindowMode::Tiled),
+                window("w2", "ws-1", false, WindowMode::Tiled),
+            ],
+        );
+        let mut desired = committed.clone();
+        desired.workspaces[0].effective_layout = Some(spiders_shared::wm::LayoutRef {
+            name: "stack".into(),
+        });
+
+        let pending = PendingTransaction::from_diff(1, &committed, desired, 1, 0, 1);
+
+        assert!(pending.participants.contains_key(&WindowId::from("w1")));
+        assert!(pending.participants.contains_key(&WindowId::from("w2")));
+    }
+
+    #[test]
+    fn diff_tracks_output_layout_participants_for_all_output_windows() {
+        let committed = snapshot(
+            Some("w1"),
+            &["w1", "w2"],
+            vec![workspace("ws-1", true, true)],
+            vec![
+                window("w1", "ws-1", true, WindowMode::Tiled),
+                window("w2", "ws-1", false, WindowMode::Tiled),
+            ],
+        );
+        let mut desired = committed.clone();
+        desired.windows[0].output_id = Some(OutputId::from("out-1"));
+        desired.windows[1].output_id = Some(OutputId::from("out-1"));
+        desired.outputs[0].logical_width = 1440;
+
+        let pending = PendingTransaction::from_diff(1, &committed, desired, 1, 0, 1);
+
+        assert!(pending.participants.contains_key(&WindowId::from("w1")));
+        assert!(pending.participants.contains_key(&WindowId::from("w2")));
     }
 
     #[test]

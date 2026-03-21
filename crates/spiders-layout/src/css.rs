@@ -1,17 +1,28 @@
-mod domain;
+mod apply;
+mod compile;
+mod compiled;
+mod grid;
+mod parse_values;
 mod syntax;
 mod taffy;
+mod values;
 
-pub use domain::*;
-pub use syntax::{CssParseError, parse_stylesheet};
-pub use taffy::{
-    CompiledDeclaration, CssValueError, NodeComputedStyle, StyledLayoutTree, compile_declaration,
-    compute_style, map_computed_style_to_taffy, matching_rules, selector_matches,
+pub use compile::{
+    compile_declaration, compile_declaration_from_value, CompiledDeclaration, CssValueError,
 };
+pub use compiled::*;
+pub use parse_values::ParsedDeclaration;
+pub use syntax::{parse_stylesheet, CssParseError};
+pub use taffy::{
+    compute_style, map_computed_style_to_taffy, matching_rules, selector_matches,
+    NodeComputedStyle, StyledLayoutTree,
+};
+pub use values::*;
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::stylo_adapter::parse_selector_list;
     use spiders_shared::ids::WindowId;
     use spiders_shared::layout::{LayoutNodeMeta, ResolvedLayoutNode};
 
@@ -22,7 +33,7 @@ mod tests {
         }
     }
 
-    fn only_declaration(source: &str) -> Declaration {
+    fn only_declaration(source: &str) -> CompiledDeclaration {
         parse_stylesheet(source)
             .unwrap()
             .rules
@@ -41,48 +52,23 @@ mod tests {
             parse_stylesheet("workspace, .stack { display: flex; flex-direction: row; gap: 8px; }")
                 .unwrap();
 
-        assert_eq!(
-            sheet,
-            StyleSheet {
-                rules: vec![StyleRule {
-                    selectors: vec![
-                        Selector::Type(NodeSelector::Workspace),
-                        Selector::Class("stack".into()),
-                    ],
-                    declarations: {
-                        let mut sheet = parse_stylesheet(
-                            "window { display: flex; flex-direction: row; gap: 8px; }",
-                        )
-                        .unwrap();
-                        sheet.rules.remove(0).declarations
-                    },
-                }],
-            }
-        );
+        assert_eq!(sheet.rules.len(), 1);
+        assert_eq!(sheet.rules[0].selectors.slice().len(), 2);
+        assert_eq!(sheet.rules[0].declarations.len(), 4);
     }
 
     #[test]
     fn parses_id_selector() {
         let sheet = parse_stylesheet("#main { width: 50%; }").unwrap();
 
-        assert_eq!(sheet.rules[0].selectors, vec![Selector::Id("main".into())]);
+        assert_eq!(sheet.rules[0].selectors.slice().len(), 1);
     }
 
     #[test]
     fn parses_attribute_selector() {
-        let selector = parse_stylesheet("window[app_id=\"foot\"] { width: 100%; }")
-            .unwrap()
-            .rules[0]
-            .selectors[0]
-            .clone();
+        let sheet = parse_stylesheet("window[app_id=\"foot\"] { width: 100%; }").unwrap();
 
-        assert_eq!(
-            selector,
-            Selector::Attribute(AttributeSelector {
-                name: "app_id".into(),
-                value: "foot".into(),
-            })
-        );
+        assert_eq!(sheet.rules[0].selectors.slice().len(), 1);
     }
 
     #[test]
@@ -131,23 +117,29 @@ mod tests {
         });
 
         assert!(selector_matches(
-            &Selector::Type(NodeSelector::Window),
+            &parse_selector_list("window").unwrap(),
             &node
         ));
-        assert!(selector_matches(&Selector::Id("main".into()), &node));
-        assert!(selector_matches(&Selector::Class("stack".into()), &node));
         assert!(selector_matches(
-            &Selector::Attribute(AttributeSelector {
-                name: "app_id".into(),
-                value: "foot".into(),
-            }),
-            &node,
+            &parse_selector_list("#main").unwrap(),
+            &node
+        ));
+        assert!(selector_matches(
+            &parse_selector_list(".stack").unwrap(),
+            &node
+        ));
+        assert!(selector_matches(
+            &parse_selector_list("[app_id='foot']").unwrap(),
+            &node
         ));
         assert!(!selector_matches(
-            &Selector::Type(NodeSelector::Group),
+            &parse_selector_list("group").unwrap(),
             &node
         ));
-        assert!(!selector_matches(&Selector::Class("missing".into()), &node));
+        assert!(!selector_matches(
+            &parse_selector_list(".missing").unwrap(),
+            &node
+        ));
     }
 
     #[test]
@@ -165,21 +157,25 @@ mod tests {
         let matches = matching_rules(&sheet, &node);
 
         assert_eq!(matches.len(), 2);
-        assert_eq!(matches[0].rule_index, 1);
-        assert_eq!(matches[1].rule_index, 2);
-        assert_eq!(matches[0].rule.declarations[0].property, "width");
-        assert_eq!(matches[1].rule.declarations[0].property, "height");
+        assert!(matches!(
+            matches[0].declarations[0],
+            CompiledDeclaration::Width(_)
+        ));
+        assert!(matches!(
+            matches[1].declarations[0],
+            CompiledDeclaration::Height(_)
+        ));
     }
 
     #[test]
     fn compiles_typed_declaration_values() {
-        let declaration = only_declaration("window { padding: 8px 16px; }");
-
-        let compiled = compile_declaration(&declaration).unwrap();
+        let sheet = parse_stylesheet("window { padding: 8px 16px; }").unwrap();
+        let node = runtime_window_with_meta(LayoutNodeMeta::default());
+        let style = compute_style(&sheet, &node).unwrap();
 
         assert_eq!(
-            compiled,
-            CompiledDeclaration::Padding(BoxEdges {
+            style.padding,
+            Some(BoxEdges {
                 top: LengthPercentage::Px(8.0),
                 right: LengthPercentage::Px(16.0),
                 bottom: LengthPercentage::Px(8.0),
@@ -297,29 +293,23 @@ mod tests {
 
     #[test]
     fn invalid_supported_property_value_fails_during_compilation() {
-        let declaration = only_declaration("window { display: inline; }");
-
-        let error = compile_declaration(&declaration).unwrap_err();
+        let error = parse_stylesheet("window { display: inline; }").unwrap_err();
 
         assert_eq!(
             error,
-            CssValueError::UnsupportedValue {
+            CssParseError::CssValue(CssValueError::UnsupportedValue {
                 property: "display".into(),
                 value: "inline".into(),
-            }
+            })
         );
     }
 
     #[test]
     fn compiles_grid_track_and_placement_values() {
-        let tracks = compile_declaration(&only_declaration(
+        let tracks = only_declaration(
             "window { grid-template-columns: [left] 1fr repeat(2, [mid] 500px) minmax(100px, 2fr) [right]; }",
-        ))
-        .unwrap();
-        let placement = compile_declaration(&only_declaration(
-            "window { grid-column: left / span 2 right; }",
-        ))
-        .unwrap();
+        );
+        let placement = only_declaration("window { grid-column: left / span 2 right; }");
 
         assert_eq!(
             tracks,
@@ -352,10 +342,7 @@ mod tests {
 
     #[test]
     fn compiles_grid_template_areas() {
-        let areas = compile_declaration(&only_declaration(
-            "window { grid-template-areas: \"nav nav\" \"main side\"; }",
-        ))
-        .unwrap();
+        let areas = only_declaration("window { grid-template-areas: \"nav nav\" \"main side\"; }");
 
         assert_eq!(
             areas,

@@ -6,6 +6,7 @@ members = [
   "crates/spiders-effects",
   "crates/spiders-ipc",
   "crates/spiders-layout",
+  "crates/spiders-river",
   "crates/runtimes/js",
   "crates/spiders-wm",
   "crates/spiders-wm2",

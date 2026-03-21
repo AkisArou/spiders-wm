@@ -35,6 +35,19 @@ impl RenderPlan {
         self.staged_outputs = outputs;
     }
 
+    pub fn commit_refresh_plan(&mut self, refresh_plan: &RefreshPlan, wm: &WmState) {
+        let (full_scene, outputs) = collect_dirty_outputs(refresh_plan, wm);
+
+        if full_scene {
+            self.mark_full_scene();
+        }
+
+        self.dirty_outputs.extend(outputs);
+        self.staged_full_scene = false;
+        self.staged_outputs.clear();
+        self.staged_presentation_only = false;
+    }
+
     pub fn promote_staged(&mut self) {
         if !self.has_staged_updates() {
             self.staged_presentation_only = false;
@@ -392,5 +405,34 @@ mod tests {
         assert!(render_plan.promote_staged_if_needed());
         assert!(render_plan.is_dirty());
         assert!(render_plan.should_render_output(&OutputId::from("out-1")));
+    }
+
+    #[test]
+    fn commit_refresh_plan_marks_outputs_even_if_staged_state_was_lost() {
+        let mut wm = WmState::default();
+        wm.windows.insert(
+            WindowId::from("w1"),
+            ManagedWindowState::tiled(
+                WindowId::from("w1"),
+                WorkspaceId::from("ws-1"),
+                Some(OutputId::from("out-1")),
+            ),
+        );
+
+        let refresh_plan = RefreshPlan {
+            transaction_id: Some(9),
+            windows: HashSet::from([WindowId::from("w1")]),
+            configure_windows: HashSet::from([WindowId::from("w1")]),
+            workspaces: HashSet::new(),
+            outputs: HashSet::new(),
+            layout: LayoutRecomputePlan::default(),
+        };
+
+        let mut render_plan = RenderPlan::default();
+        render_plan.commit_refresh_plan(&refresh_plan, &wm);
+
+        assert!(render_plan.is_dirty());
+        assert!(render_plan.should_render_output(&OutputId::from("out-1")));
+        assert!(!render_plan.has_staged_updates());
     }
 }

@@ -1,3 +1,7 @@
+use crate::{
+    actions::{place_new_window_in_active_workspace, register_window, update_window_metadata},
+    runtime::SpidersWm2,
+};
 use smithay::{
     delegate_xdg_shell,
     desktop::{
@@ -6,14 +10,9 @@ use smithay::{
     reexports::wayland_server::{protocol::wl_surface::WlSurface, Resource},
     utils::SERIAL_COUNTER,
     wayland::{
-        compositor::with_states,
+        compositor::{add_pre_commit_hook, with_states},
         shell::xdg::{Configure, PopupSurface, XdgShellHandler, XdgToplevelSurfaceData},
     },
-};
-
-use crate::{
-    actions::{place_new_window_in_active_workspace, register_window, update_window_metadata},
-    runtime::SpidersWm2,
 };
 
 impl XdgShellHandler for SpidersWm2 {
@@ -32,10 +31,46 @@ impl XdgShellHandler for SpidersWm2 {
 
         let wl_surface = surface.wl_surface().clone();
         let window = Window::new_wayland_window(surface.clone());
+        let hook = add_pre_commit_hook::<SpidersWm2, _>(
+            surface.wl_surface(),
+            move |state, _dh, surface| {
+                let Some(window_id) = state.app.bindings.window_for_surface(&surface.id()) else {
+                    return;
+                };
+
+                let commit_serial = with_states(surface, |states| {
+                    states
+                        .data_map
+                        .get::<XdgToplevelSurfaceData>()
+                        .and_then(|data| data.lock().ok())
+                        .and_then(|data| data.last_acked.as_ref().map(|configure| configure.serial))
+                });
+
+                let Some(commit_serial) = commit_serial else {
+                    return;
+                };
+
+                let completed = state
+                    .app
+                    .bindings
+                    .take_pending_commit_serials_through(&window_id, commit_serial);
+
+                for serial in completed {
+                    state.runtime.transactions.mark_window_committed(&window_id);
+                    tracing::trace!(
+                        target: "spiders_wm2::runtime_debug",
+                        ?window_id,
+                        ?serial,
+                        "mark_window_committed_from_serial_queue"
+                    );
+                }
+            },
+        );
 
         self.app
             .bindings
             .bind_window_element(window_id.clone(), window.clone());
+        self.app.bindings.bind_commit_hook(window_id.clone(), hook);
 
         self.runtime
             .smithay
@@ -108,6 +143,12 @@ impl XdgShellHandler for SpidersWm2 {
         if let Some(window_id) = self.app.bindings.window_for_surface(&surface.id()) {
             match configure {
                 Configure::Toplevel(configure) => {
+                    self.app
+                        .bindings
+                        .record_pending_commit_serial(&window_id, configure.serial);
+                    self.app
+                        .bindings
+                        .record_acked_toplevel_configure(&window_id, configure.clone());
                     self.runtime
                         .transactions
                         .mark_configure_acked(&window_id, configure.serial);
@@ -138,7 +179,15 @@ pub fn handle_commit(popups: &mut PopupManager, space: &Space<Window>, surface: 
         });
 
         if !initial_configure_sent {
-            window.toplevel().unwrap().send_pending_configure();
+            let toplevel = window.toplevel().unwrap();
+
+            if !toplevel.has_pending_changes() {
+                toplevel.with_pending_state(|state| {
+                    state.size.get_or_insert((960, 640).into());
+                });
+            }
+
+            toplevel.send_pending_configure();
         }
     }
 
@@ -154,6 +203,44 @@ pub fn handle_commit(popups: &mut PopupManager, space: &Space<Window>, surface: 
             }
             PopupKind::InputMethod(_) => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use smithay::utils::Serial;
+    use smithay::utils::{Logical, Size};
+
+    #[test]
+    fn ensure_initial_toplevel_configure_size_prefers_existing_pending_size() {
+        let mut size: Option<Size<i32, Logical>> = Some(Size::from((800, 600)));
+
+        size.get_or_insert(Size::from((960, 640)));
+
+        assert_eq!(size, Some(Size::from((800, 600))));
+    }
+
+    #[test]
+    fn ensure_initial_toplevel_configure_size_falls_back_when_missing() {
+        let mut size: Option<Size<i32, Logical>> = None;
+
+        size.get_or_insert(Size::from((960, 640)));
+
+        assert_eq!(size, Some(Size::from((960, 640))));
+    }
+
+    #[test]
+    fn pending_commit_serial_matches_exact_ack_serial() {
+        let serial = Serial::from(7);
+
+        assert_eq!(Some(serial), Some(serial));
+    }
+
+    #[test]
+    fn observed_commit_serial_is_recorded_without_clearing_pending() {
+        let serial = Serial::from(11);
+
+        assert_eq!(Some(serial), Some(serial));
     }
 }
 

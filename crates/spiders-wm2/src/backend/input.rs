@@ -10,6 +10,7 @@ use smithay::{
     reexports::wayland_server::Resource,
     utils::SERIAL_COUNTER,
 };
+use tracing::{trace, warn};
 
 use crate::{actions, command::RuntimeCommand, model::WorkspaceId, runtime::SpidersWm2};
 
@@ -17,6 +18,7 @@ const BTN_LEFT: u32 = 0x110;
 const BTN_RIGHT: u32 = 0x111;
 
 enum KeyboardAction {
+    SpawnTerminal,
     SwitchWorkspace(WorkspaceId),
     MoveFocusedWindowToWorkspace(WorkspaceId),
     FocusNextWindow,
@@ -29,12 +31,32 @@ enum KeyboardAction {
     ReloadConfig,
 }
 
+fn keyboard_action_name(action: &KeyboardAction) -> &'static str {
+    match action {
+        KeyboardAction::SpawnTerminal => "SpawnTerminal",
+        KeyboardAction::SwitchWorkspace(_) => "SwitchWorkspace",
+        KeyboardAction::MoveFocusedWindowToWorkspace(_) => "MoveFocusedWindowToWorkspace",
+        KeyboardAction::FocusNextWindow => "FocusNextWindow",
+        KeyboardAction::FocusPreviousWindow => "FocusPreviousWindow",
+        KeyboardAction::SwapFocusedWindowWithNext => "SwapFocusedWindowWithNext",
+        KeyboardAction::SwapFocusedWindowWithPrevious => "SwapFocusedWindowWithPrevious",
+        KeyboardAction::ToggleFloatingFocusedWindow => "ToggleFloatingFocusedWindow",
+        KeyboardAction::ToggleFullscreenFocusedWindow => "ToggleFullscreenFocusedWindow",
+        KeyboardAction::CloseFocusedWindow => "CloseFocusedWindow",
+        KeyboardAction::ReloadConfig => "ReloadConfig",
+    }
+}
+
 fn keyboard_action_for_keysym(
     modifiers: &ModifiersState,
     keysym: Keysym,
 ) -> Option<KeyboardAction> {
     if !modifiers.alt {
         return None;
+    }
+
+    if keysym == Keysym::from(xkb::KEY_Return) {
+        return Some(KeyboardAction::SpawnTerminal);
     }
 
     let workspace_action = if keysym == Keysym::from(xkb::KEY_1) {
@@ -102,7 +124,38 @@ fn keyboard_action_for_keysym(
     None
 }
 
+fn spawn_terminal_command() -> String {
+    std::env::var("SPIDERS_WM2_ALT_ENTER_COMMAND")
+        .ok()
+        .filter(|command| !command.trim().is_empty())
+        .unwrap_or_else(|| "foot".into())
+}
+
 impl SpidersWm2 {
+    fn spawn_shell_command(&self, command: &str) {
+        match std::process::Command::new("sh")
+            .arg("-lc")
+            .arg(command)
+            .env(
+                "WAYLAND_DISPLAY",
+                self.runtime.socket_name.to_string_lossy().to_string(),
+            )
+            .spawn()
+        {
+            Ok(child) => {
+                trace!(
+                    target: "spiders_wm2::runtime_debug",
+                    %command,
+                    pid = child.id(),
+                    "spawn_shell_command",
+                );
+            }
+            Err(error) => {
+                warn!(%command, %error, "failed to spawn command from wm2 binding");
+            }
+        }
+    }
+
     pub fn process_input_event<I: InputBackend>(&mut self, event: InputEvent<I>) {
         match event {
             InputEvent::Keyboard { event, .. } => {
@@ -136,7 +189,25 @@ impl SpidersWm2 {
                     );
 
                 if let Some(action) = action {
+                    trace!(
+                        target: "spiders_wm2::runtime_debug",
+                        key_code = ?event.key_code(),
+                        action = keyboard_action_name(&action),
+                        serial = ?serial,
+                        time,
+                        "keyboard_action",
+                    );
+
                     match action {
+                        KeyboardAction::SpawnTerminal => {
+                            let command = spawn_terminal_command();
+                            trace!(
+                                target: "spiders_wm2::runtime_debug",
+                                command = %command,
+                                "spawn_terminal_binding",
+                            );
+                            self.spawn_shell_command(&command);
+                        }
                         KeyboardAction::SwitchWorkspace(workspace_id) => {
                             self.switch_workspace(workspace_id);
                         }
@@ -313,5 +384,61 @@ impl SpidersWm2 {
             }
             _ => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{keyboard_action_name, spawn_terminal_command, KeyboardAction};
+    use crate::model::WorkspaceId;
+
+    fn with_alt_enter_command_env<R>(value: Option<&str>, run: impl FnOnce() -> R) -> R {
+        let previous = std::env::var("SPIDERS_WM2_ALT_ENTER_COMMAND").ok();
+
+        unsafe {
+            match value {
+                Some(value) => std::env::set_var("SPIDERS_WM2_ALT_ENTER_COMMAND", value),
+                None => std::env::remove_var("SPIDERS_WM2_ALT_ENTER_COMMAND"),
+            }
+        }
+
+        let result = run();
+
+        unsafe {
+            match previous {
+                Some(previous) => std::env::set_var("SPIDERS_WM2_ALT_ENTER_COMMAND", previous),
+                None => std::env::remove_var("SPIDERS_WM2_ALT_ENTER_COMMAND"),
+            }
+        }
+
+        result
+    }
+
+    #[test]
+    fn spawn_terminal_command_defaults_to_foot() {
+        with_alt_enter_command_env(None, || {
+            assert_eq!(spawn_terminal_command(), "foot");
+        });
+    }
+
+    #[test]
+    fn spawn_terminal_command_prefers_env_override() {
+        with_alt_enter_command_env(Some("my-terminal --flag"), || {
+            assert_eq!(spawn_terminal_command(), "my-terminal --flag");
+        });
+    }
+
+    #[test]
+    fn keyboard_action_name_reports_workspace_variants() {
+        assert_eq!(
+            keyboard_action_name(&KeyboardAction::SwitchWorkspace(WorkspaceId::from("1"))),
+            "SwitchWorkspace"
+        );
+        assert_eq!(
+            keyboard_action_name(&KeyboardAction::MoveFocusedWindowToWorkspace(
+                WorkspaceId::from("1")
+            )),
+            "MoveFocusedWindowToWorkspace"
+        );
     }
 }
