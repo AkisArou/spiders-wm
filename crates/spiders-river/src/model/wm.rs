@@ -359,8 +359,6 @@ impl WmState {
     }
 
     pub fn focus_window(&mut self, window_id: &WindowId) {
-        self.window_stack.retain(|id| id != window_id);
-        self.window_stack.push_back(window_id.clone());
         for window in self.windows.values_mut() {
             window.focused = &window.id == window_id;
         }

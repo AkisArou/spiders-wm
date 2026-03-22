@@ -137,7 +137,6 @@ impl RiverBackendState {
                 };
 
                 seat.proxy.focus_window(&window.proxy);
-                window.node.place_top();
                 self.runtime_state.focus_window(window_id);
                 self.runtime_state
                     .set_seat_focused_window(&seat.state_name, Some(window_id.clone()));
@@ -346,6 +345,7 @@ pub(super) fn parse_binding(binding: &Binding) -> Option<ParsedBinding> {
 
     if let Some(button) = parse_pointer_button(target) {
         return Some(ParsedBinding {
+            trigger: binding.trigger.clone(),
             kind: BindingTargetKind::Pointer,
             modifiers,
             key: None,
@@ -355,6 +355,7 @@ pub(super) fn parse_binding(binding: &Binding) -> Option<ParsedBinding> {
     }
 
     parse_keysym(target).map(|key| ParsedBinding {
+        trigger: binding.trigger.clone(),
         kind: BindingTargetKind::Key,
         modifiers,
         key: Some(key),
@@ -363,7 +364,38 @@ pub(super) fn parse_binding(binding: &Binding) -> Option<ParsedBinding> {
     })
 }
 
-fn milestone_bindings_with_mod_key(mod_key: &str) -> Vec<Binding> {
+fn workspace_assign_prefix(config: &Config, mod_key: &str) -> String {
+    for binding in &config.bindings {
+        let WmAction::AssignFocusedWindowToWorkspace { .. } = binding.action else {
+            continue;
+        };
+
+        let tokens = binding
+            .trigger
+            .split('+')
+            .map(str::trim)
+            .filter(|token| !token.is_empty())
+            .collect::<Vec<_>>();
+
+        if tokens.len() < 2 {
+            continue;
+        }
+
+        let Some(last) = tokens.last().copied() else {
+            continue;
+        };
+
+        if last.parse::<u8>().ok().is_some_and(|workspace| (1..=9).contains(&workspace)) {
+            return tokens[..tokens.len() - 1].join("+");
+        }
+    }
+
+    format!("{mod_key}+Shift")
+}
+
+fn milestone_bindings_with_mod_key(config: &Config, mod_key: &str) -> Vec<Binding> {
+    let assign_prefix = workspace_assign_prefix(config, mod_key);
+
     let mut bindings = vec![
         Binding {
             trigger: format!("{mod_key}+Enter"),
@@ -397,7 +429,7 @@ fn milestone_bindings_with_mod_key(mod_key: &str) -> Vec<Binding> {
     }));
 
     bindings.extend((1..=9).map(|workspace| Binding {
-        trigger: format!("{mod_key}+Shift+{workspace}"),
+        trigger: format!("{assign_prefix}+{workspace}"),
         action: WmAction::AssignFocusedWindowToWorkspace { workspace },
     }));
 
@@ -431,19 +463,40 @@ fn milestone_bindings_with_mod_key(mod_key: &str) -> Vec<Binding> {
     bindings
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct BindingSignature {
+    kind: BindingTargetKind,
+    modifiers: river_seat_v1::Modifiers,
+    key: Option<u32>,
+    button: Option<u32>,
+}
+
 pub(super) fn effective_bindings(config: &Config) -> Vec<Binding> {
     let mut bindings = config.bindings.clone();
     let mod_key = config.options.mod_key.as_deref().unwrap_or("Alt");
-    let existing_triggers = bindings
+    let mut existing_signatures = bindings
         .iter()
-        .map(|binding| binding.trigger.to_ascii_lowercase())
-        .collect::<Vec<_>>();
+        .filter_map(parse_binding)
+        .map(|binding| BindingSignature {
+            kind: binding.kind,
+            modifiers: binding.modifiers,
+            key: binding.key,
+            button: binding.button,
+        })
+        .collect::<std::collections::HashSet<_>>();
 
-    for binding in milestone_bindings_with_mod_key(mod_key) {
-        if existing_triggers
-            .iter()
-            .any(|trigger| trigger == &binding.trigger.to_ascii_lowercase())
-        {
+    for binding in milestone_bindings_with_mod_key(config, mod_key) {
+        let Some(parsed) = parse_binding(&binding) else {
+            continue;
+        };
+        let signature = BindingSignature {
+            kind: parsed.kind,
+            modifiers: parsed.modifiers,
+            key: parsed.key,
+            button: parsed.button,
+        };
+
+        if !existing_signatures.insert(signature) {
             continue;
         }
 

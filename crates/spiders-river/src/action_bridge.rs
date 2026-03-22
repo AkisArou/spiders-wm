@@ -76,11 +76,11 @@ pub fn bridge_action(action: &WmAction) -> RiverCommand {
                 rect: *rect,
             }
         }
-        WmAction::ViewWorkspace { .. } => RiverCommand::Unsupported {
-            action: "view-workspace",
+        WmAction::ViewWorkspace { workspace } => RiverCommand::ActivateWorkspace {
+            workspace_id: workspace.to_string().into(),
         },
-        WmAction::ToggleViewWorkspace { .. } => RiverCommand::Unsupported {
-            action: "toggle-view-workspace",
+        WmAction::ToggleViewWorkspace { workspace } => RiverCommand::ActivateWorkspace {
+            workspace_id: workspace.to_string().into(),
         },
         WmAction::AssignWorkspace { output_id, .. } => RiverCommand::FocusOutput {
             output_id: output_id.clone(),
@@ -105,8 +105,8 @@ pub fn bridge_action(action: &WmAction) -> RiverCommand {
         WmAction::ToggleAssignFocusedWindowToWorkspace { .. } => RiverCommand::Unsupported {
             action: "toggle-assign-focused-window-to-workspace",
         },
-        WmAction::SwapDirection { .. } => RiverCommand::Unsupported {
-            action: "swap-direction",
+        WmAction::SwapDirection { direction } => RiverCommand::MoveDirection {
+            direction: *direction,
         },
         WmAction::ResizeDirection { .. } => RiverCommand::Unsupported {
             action: "resize-direction",
@@ -132,6 +132,28 @@ mod tests {
             }),
             RiverCommand::Spawn {
                 command: "foot".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn view_workspace_bridges_to_activate_workspace() {
+        assert_eq!(
+            bridge_action(&WmAction::ViewWorkspace { workspace: 3 }),
+            RiverCommand::ActivateWorkspace {
+                workspace_id: "3".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn swap_direction_bridges_to_move_direction() {
+        assert_eq!(
+            bridge_action(&WmAction::SwapDirection {
+                direction: FocusDirection::Left,
+            }),
+            RiverCommand::MoveDirection {
+                direction: FocusDirection::Left,
             }
         );
     }

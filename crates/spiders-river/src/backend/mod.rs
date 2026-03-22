@@ -14,7 +14,7 @@ use spiders_runtime_js::{build_authoring_layout_service, DefaultLayoutRuntime};
 use wayland_backend::client::ObjectId;
 use wayland_client::protocol::{wl_output, wl_registry, wl_seat};
 use wayland_client::{Connection, Dispatch, EventQueue, Proxy, QueueHandle};
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 use xkbcommon::xkb;
 
 use crate::actions::{
@@ -690,6 +690,14 @@ impl RiverBackendState {
                 match binding.kind {
                     BindingTargetKind::Key => {
                         if let Some(keysym) = binding.key {
+                            debug!(
+                                seat = %seat.state_name,
+                                trigger = %binding.trigger,
+                                keysym,
+                                modifiers = ?binding.modifiers,
+                                action = ?binding.action,
+                                "registering key binding"
+                            );
                             let proxy = xkb_bindings.get_xkb_binding(
                                 &seat.proxy,
                                 keysym,
@@ -702,6 +710,7 @@ impl RiverBackendState {
                                 proxy.id(),
                                 XkbBindingRecord {
                                     proxy,
+                                    trigger: binding.trigger.clone(),
                                     action: binding.action.clone(),
                                 },
                             );
@@ -709,6 +718,14 @@ impl RiverBackendState {
                     }
                     BindingTargetKind::Pointer => {
                         if let Some(button) = binding.button {
+                            debug!(
+                                seat = %seat.state_name,
+                                trigger = %binding.trigger,
+                                button,
+                                modifiers = ?binding.modifiers,
+                                action = ?binding.action,
+                                "registering pointer binding"
+                            );
                             let proxy = seat.proxy.get_pointer_binding(
                                 button,
                                 binding.modifiers,
@@ -720,6 +737,7 @@ impl RiverBackendState {
                                 proxy.id(),
                                 PointerBindingRecord {
                                     proxy,
+                                    trigger: binding.trigger.clone(),
                                     action: binding.action.clone(),
                                 },
                             );
@@ -849,7 +867,7 @@ impl RiverBackendState {
                 self.runtime_state.focus_output(&output_id);
             }
             CommandPlan::FocusWindow { stack, focus } => {
-                self.runtime_state.move_window_to_top(&stack.window_id);
+                let _ = stack;
                 self.apply_focus_plan(seat_id, &focus);
             }
             CommandPlan::CloseFocusedWindow => {
@@ -858,7 +876,7 @@ impl RiverBackendState {
                 }
             }
             CommandPlan::FocusDirection { stack, focus } => {
-                self.runtime_state.move_window_to_top(&stack.window_id);
+                let _ = stack;
                 self.apply_focus_plan(seat_id, &focus);
             }
             CommandPlan::Noop => {}
@@ -892,7 +910,9 @@ impl RiverBackendState {
                 }
             }
 
-            self.focus_top_window_for_seat(&seat_id);
+            if self.seat_focused_state_window_id(&seat_id).is_none() {
+                self.focus_top_window_for_seat(&seat_id);
+            }
 
             let commands = self
                 .transient
@@ -1051,6 +1071,27 @@ impl RiverBackendState {
         assert!(bindings.iter().any(|binding| binding.trigger == "Super+Shift+1"));
         assert!(bindings.iter().any(|binding| binding.trigger == "Super+Shift+h"));
         assert!(!bindings.iter().any(|binding| binding.trigger == "Alt+Enter"));
+    }
+
+    #[test]
+    fn milestone_workspace_assign_bindings_follow_user_modifier_prefix() {
+        let config = Config {
+            options: ConfigOptions {
+                mod_key: Some("Alt".into()),
+                ..ConfigOptions::default()
+            },
+            bindings: vec![Binding {
+                trigger: "Alt+Ctrl+1".into(),
+                action: WmAction::AssignFocusedWindowToWorkspace { workspace: 1 },
+            }],
+            ..Config::default()
+        };
+
+        let bindings = effective_bindings(&config);
+
+        assert!(bindings.iter().any(|binding| binding.trigger == "Alt+Ctrl+1"));
+        assert!(bindings.iter().any(|binding| binding.trigger == "Alt+Ctrl+9"));
+        assert!(!bindings.iter().any(|binding| binding.trigger == "Alt+Shift+9"));
     }
 
     #[test]

@@ -39,12 +39,14 @@ pub struct WindowRecord {
 #[derive(Debug, Clone)]
 pub struct XkbBindingRecord {
     pub proxy: river_xkb_binding_v1::RiverXkbBindingV1,
+    pub trigger: String,
     pub action: WmAction,
 }
 
 #[derive(Debug, Clone)]
 pub struct PointerBindingRecord {
     pub proxy: river_pointer_binding_v1::RiverPointerBindingV1,
+    pub trigger: String,
     pub action: WmAction,
 }
 
@@ -94,7 +96,7 @@ pub struct LibinputDeviceRecord {
     pub input_device_id: Option<ObjectId>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BindingTargetKind {
     Key,
     Pointer,
@@ -102,6 +104,7 @@ pub enum BindingTargetKind {
 
 #[derive(Debug, Clone)]
 pub struct ParsedBinding {
+    pub trigger: String,
     pub kind: BindingTargetKind,
     pub modifiers: river_seat_v1::Modifiers,
     pub key: Option<u32>,

@@ -457,10 +457,21 @@ impl Dispatch<river_xkb_binding_v1::RiverXkbBindingV1, ObjectId> for RiverBacken
         };
 
         let action = binding.action.clone();
+        let trigger = binding.trigger.clone();
 
         match event {
             river_xkb_binding_v1::Event::Pressed => {
-                state.queue_seat_command(seat_id, bridge_action(&action));
+                let command = bridge_action(&action);
+                tracing::debug!(
+                    trigger = %trigger,
+                    action = ?action,
+                    command = ?command,
+                    "received keybinding press"
+                );
+                if let RiverCommand::Unsupported { action } = &command {
+                    tracing::warn!(action = *action, "received keybinding for unsupported action");
+                }
+                state.queue_seat_command(seat_id, command);
             }
             river_xkb_binding_v1::Event::Released | river_xkb_binding_v1::Event::StopRepeat => {}
         }
@@ -484,10 +495,21 @@ impl Dispatch<river_pointer_binding_v1::RiverPointerBindingV1, ObjectId> for Riv
         };
 
         let action = binding.action.clone();
+        let trigger = binding.trigger.clone();
 
         match event {
             river_pointer_binding_v1::Event::Pressed => {
-                state.queue_seat_command(seat_id, bridge_action(&action));
+                let command = bridge_action(&action);
+                tracing::debug!(
+                    trigger = %trigger,
+                    action = ?action,
+                    command = ?command,
+                    "received pointer binding press"
+                );
+                if let RiverCommand::Unsupported { action } = &command {
+                    tracing::warn!(action = *action, "received pointer binding for unsupported action");
+                }
+                state.queue_seat_command(seat_id, command);
             }
             river_pointer_binding_v1::Event::Released => {}
         }
