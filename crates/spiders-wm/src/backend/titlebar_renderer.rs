@@ -29,6 +29,30 @@ const BOLD_FONT_PATHS: &[&str] = &[
     "/usr/share/fonts/liberation/LiberationSans-Bold.ttf",
 ];
 
+const SERIF_REGULAR_FONT_PATHS: &[&str] = &[
+    "/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf",
+    "/usr/share/fonts/TTF/DejaVuSerif.ttf",
+    "/usr/share/fonts/truetype/liberation2/LiberationSerif-Regular.ttf",
+];
+
+const SERIF_BOLD_FONT_PATHS: &[&str] = &[
+    "/usr/share/fonts/truetype/dejavu/DejaVuSerif-Bold.ttf",
+    "/usr/share/fonts/TTF/DejaVuSerif-Bold.ttf",
+    "/usr/share/fonts/truetype/liberation2/LiberationSerif-Bold.ttf",
+];
+
+const MONO_REGULAR_FONT_PATHS: &[&str] = &[
+    "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
+    "/usr/share/fonts/TTF/DejaVuSansMono.ttf",
+    "/usr/share/fonts/truetype/liberation2/LiberationMono-Regular.ttf",
+];
+
+const MONO_BOLD_FONT_PATHS: &[&str] = &[
+    "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf",
+    "/usr/share/fonts/TTF/DejaVuSansMono-Bold.ttf",
+    "/usr/share/fonts/truetype/liberation2/LiberationMono-Bold.ttf",
+];
+
 static TITLEBAR_FONTS: OnceLock<Option<TitlebarFonts>> = OnceLock::new();
 static TITLEBAR_FONT_CACHE: OnceLock<Mutex<std::collections::HashMap<String, Option<FontArc>>>> =
     OnceLock::new();
@@ -43,6 +67,7 @@ pub(super) fn render_titlebar_pixels(
     }
 
     let mut pixmap = Pixmap::new(width as u32, plan.height as u32)?;
+    draw_box_shadow(&mut pixmap, width, plan);
     draw_background(&mut pixmap, width, plan);
     draw_bottom_border(&mut pixmap, width, plan);
     draw_title_text(&mut pixmap, width, plan, override_font);
@@ -104,7 +129,7 @@ fn draw_title_text(
         return;
     }
 
-    let Some(fonts) = titlebar_fonts(override_font) else {
+    let Some(fonts) = titlebar_fonts(plan.font_family.as_deref(), override_font) else {
         return;
     };
 
@@ -218,7 +243,10 @@ fn layout_glyphs(
         .collect()
 }
 
-fn titlebar_fonts(override_font: Option<&TitlebarFontConfig>) -> Option<TitlebarFonts> {
+fn titlebar_fonts(
+    font_family: Option<&str>,
+    override_font: Option<&TitlebarFontConfig>,
+) -> Option<TitlebarFonts> {
     if let Some(override_font) = override_font {
         let defaults = TITLEBAR_FONTS.get_or_init(default_titlebar_fonts);
         let regular = override_font
@@ -234,7 +262,370 @@ fn titlebar_fonts(override_font: Option<&TitlebarFontConfig>) -> Option<Titlebar
         return Some(TitlebarFonts { regular, bold });
     }
 
+    if let Some(fonts) = font_family.and_then(resolve_fonts_for_family) {
+        return Some(fonts);
+    }
+
     TITLEBAR_FONTS.get_or_init(default_titlebar_fonts).as_ref().cloned()
+}
+
+fn resolve_fonts_for_family(font_family: &str) -> Option<TitlebarFonts> {
+    for family in parse_font_family_list(font_family) {
+        let normalized = normalize_font_family_name(&family);
+        let fonts = match normalized.as_str() {
+            "serif" | "dejavu serif" | "liberation serif" => Some((
+                SERIF_REGULAR_FONT_PATHS,
+                SERIF_BOLD_FONT_PATHS,
+            )),
+            "monospace" | "dejavu sans mono" | "liberation mono" => Some((
+                MONO_REGULAR_FONT_PATHS,
+                MONO_BOLD_FONT_PATHS,
+            )),
+            "sans-serif" | "dejavu sans" | "liberation sans" | "system-ui" => Some((
+                REGULAR_FONT_PATHS,
+                BOLD_FONT_PATHS,
+            )),
+            _ => None,
+        };
+
+        if let Some((regular_paths, bold_paths)) = fonts {
+            let regular = load_font_from_paths(regular_paths)?;
+            let bold = load_font_from_paths(bold_paths);
+            return Some(TitlebarFonts { regular, bold });
+        }
+    }
+
+    None
+}
+
+fn parse_font_family_list(font_family: &str) -> Vec<String> {
+    let mut families = Vec::new();
+    let mut current = String::new();
+    let mut quote: Option<char> = None;
+
+    for character in font_family.chars() {
+        match character {
+            '\'' | '"' => {
+                if quote == Some(character) {
+                    quote = None;
+                } else if quote.is_none() {
+                    quote = Some(character);
+                }
+                current.push(character);
+            }
+            ',' if quote.is_none() => {
+                let family = current.trim();
+                if !family.is_empty() {
+                    families.push(family.to_string());
+                }
+                current.clear();
+            }
+            _ => current.push(character),
+        }
+    }
+
+    let family = current.trim();
+    if !family.is_empty() {
+        families.push(family.to_string());
+    }
+
+    families
+}
+
+fn normalize_font_family_name(family: &str) -> String {
+    family
+        .trim()
+        .trim_matches('"')
+        .trim_matches('\'')
+        .to_ascii_lowercase()
+}
+
+fn draw_box_shadow(pixmap: &mut Pixmap, width: i32, plan: &TitlebarPlan) {
+    let Some(shadow) = plan.box_shadow.as_deref().and_then(parse_box_shadow) else {
+        return;
+    };
+    if shadow.blur_radius <= 0 && shadow.spread_radius <= 0 {
+        return;
+    }
+
+    let steps = shadow.blur_radius.max(1).min(16);
+    let outer_left = shadow.offset_x - shadow.spread_radius;
+    let outer_top = shadow.offset_y - shadow.spread_radius;
+    let outer_width = width + shadow.spread_radius * 2;
+    let outer_height = plan.height + shadow.spread_radius * 2;
+    let inner_left = shadow.offset_x;
+    let inner_top = shadow.offset_y;
+
+    for step in (0..steps).rev() {
+        let inset = step;
+        let alpha_scale = (steps - step) as f32 / steps as f32;
+        let top = outer_top + inset;
+        let left = outer_left + inset;
+        let right = left + outer_width - inset * 2;
+        let bottom = top + outer_height - inset * 2;
+
+        if right <= left || bottom <= top {
+            continue;
+        }
+
+        let alpha = (f32::from(shadow.color.alpha) * 0.22 * alpha_scale).round() as u8;
+        if alpha == 0 {
+            continue;
+        }
+
+        let color = Color::from_rgba8(shadow.color.red, shadow.color.green, shadow.color.blue, alpha);
+        fill_shadow_band(pixmap, left, top, right - left, (inner_top - top).max(0), color);
+        fill_shadow_band(
+            pixmap,
+            left,
+            (inner_top + plan.height).min(bottom),
+            right - left,
+            (bottom - (inner_top + plan.height)).max(0),
+            color,
+        );
+        fill_shadow_band(
+            pixmap,
+            left,
+            inner_top.max(top),
+            (inner_left - left).max(0),
+            (plan.height).min(bottom - inner_top.max(top)),
+            color,
+        );
+        fill_shadow_band(
+            pixmap,
+            (inner_left + width).min(right),
+            inner_top.max(top),
+            (right - (inner_left + width)).max(0),
+            (plan.height).min(bottom - inner_top.max(top)),
+            color,
+        );
+    }
+}
+
+fn fill_shadow_band(
+    pixmap: &mut Pixmap,
+    x: i32,
+    y: i32,
+    width: i32,
+    height: i32,
+    color: Color,
+) {
+    if width <= 0 || height <= 0 {
+        return;
+    }
+
+    let Some(rect) = Rect::from_xywh(x as f32, y as f32, width as f32, height as f32) else {
+        return;
+    };
+
+    let mut paint = Paint::default();
+    paint.set_color(color);
+    pixmap.fill_rect(rect, &paint, Transform::identity(), None);
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ParsedBoxShadow {
+    offset_x: i32,
+    offset_y: i32,
+    blur_radius: i32,
+    spread_radius: i32,
+    color: spiders_scene::ColorValue,
+}
+
+fn parse_box_shadow(raw: &str) -> Option<ParsedBoxShadow> {
+    let tokens = split_shadow_tokens(split_first_shadow(raw).trim());
+    if tokens.iter().any(|token| token.eq_ignore_ascii_case("inset")) {
+        return None;
+    }
+
+    let mut lengths = Vec::new();
+    let mut color = None;
+    for token in tokens {
+        if let Some(parsed_color) = parse_shadow_color(&token) {
+            color = Some(parsed_color);
+            continue;
+        }
+        let length = parse_shadow_length(&token)?;
+        lengths.push(length);
+    }
+
+    let [offset_x, offset_y, rest @ ..] = lengths.as_slice() else {
+        return None;
+    };
+
+    Some(ParsedBoxShadow {
+        offset_x: *offset_x,
+        offset_y: *offset_y,
+        blur_radius: *rest.first().unwrap_or(&0),
+        spread_radius: *rest.get(1).unwrap_or(&0),
+        color: color.unwrap_or(spiders_scene::ColorValue {
+            red: 0,
+            green: 0,
+            blue: 0,
+            alpha: 96,
+        }),
+    })
+}
+
+fn split_first_shadow(raw: &str) -> &str {
+    let mut paren_depth = 0;
+    for (index, character) in raw.char_indices() {
+        match character {
+            '(' => paren_depth += 1,
+            ')' => paren_depth = (paren_depth - 1).max(0),
+            ',' if paren_depth == 0 => return &raw[..index],
+            _ => {}
+        }
+    }
+
+    raw
+}
+
+fn split_shadow_tokens(raw: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    let mut paren_depth = 0;
+
+    for character in raw.chars() {
+        match character {
+            '(' => {
+                paren_depth += 1;
+                current.push(character);
+            }
+            ')' => {
+                paren_depth = (paren_depth - 1).max(0);
+                current.push(character);
+            }
+            c if c.is_whitespace() && paren_depth == 0 => {
+                let token = current.trim();
+                if !token.is_empty() {
+                    tokens.push(token.to_string());
+                }
+                current.clear();
+            }
+            _ => current.push(character),
+        }
+    }
+
+    let token = current.trim();
+    if !token.is_empty() {
+        tokens.push(token.to_string());
+    }
+
+    tokens
+}
+
+fn parse_shadow_length(token: &str) -> Option<i32> {
+    match token {
+        "0" | "0.0" => Some(0),
+        _ => token
+            .strip_suffix("px")
+            .and_then(|value| value.parse::<f32>().ok())
+            .map(|value| value.round() as i32),
+    }
+}
+
+fn parse_shadow_color(token: &str) -> Option<spiders_scene::ColorValue> {
+    let token = token.trim();
+    if token.starts_with('#') {
+        return parse_hex_color(token);
+    }
+    if token.starts_with("rgba(") && token.ends_with(')') {
+        return parse_rgba_color(token);
+    }
+    if token.starts_with("rgb(") && token.ends_with(')') {
+        return parse_rgb_color(token);
+    }
+    None
+}
+
+fn parse_hex_color(token: &str) -> Option<spiders_scene::ColorValue> {
+    let hex = token.strip_prefix('#')?;
+    match hex.len() {
+        6 => Some(spiders_scene::ColorValue {
+            red: u8::from_str_radix(&hex[0..2], 16).ok()?,
+            green: u8::from_str_radix(&hex[2..4], 16).ok()?,
+            blue: u8::from_str_radix(&hex[4..6], 16).ok()?,
+            alpha: 255,
+        }),
+        8 => Some(spiders_scene::ColorValue {
+            red: u8::from_str_radix(&hex[0..2], 16).ok()?,
+            green: u8::from_str_radix(&hex[2..4], 16).ok()?,
+            blue: u8::from_str_radix(&hex[4..6], 16).ok()?,
+            alpha: u8::from_str_radix(&hex[6..8], 16).ok()?,
+        }),
+        _ => None,
+    }
+}
+
+fn parse_rgb_color(token: &str) -> Option<spiders_scene::ColorValue> {
+    let inner = token.strip_prefix("rgb(")?.strip_suffix(')')?;
+    let values = inner
+        .split(',')
+        .map(|part| part.trim().parse::<u8>().ok())
+        .collect::<Option<Vec<_>>>()?;
+    let [red, green, blue] = values.as_slice() else {
+        return None;
+    };
+    Some(spiders_scene::ColorValue {
+        red: *red,
+        green: *green,
+        blue: *blue,
+        alpha: 255,
+    })
+}
+
+fn parse_rgba_color(token: &str) -> Option<spiders_scene::ColorValue> {
+    let inner = token.strip_prefix("rgba(")?.strip_suffix(')')?;
+    let values = inner.split(',').map(|part| part.trim()).collect::<Vec<_>>();
+    let [red, green, blue, alpha] = values.as_slice() else {
+        return None;
+    };
+    let alpha = alpha.parse::<f32>().ok()?.clamp(0.0, 1.0);
+    Some(spiders_scene::ColorValue {
+        red: red.parse::<u8>().ok()?,
+        green: green.parse::<u8>().ok()?,
+        blue: blue.parse::<u8>().ok()?,
+        alpha: (alpha * 255.0).round() as u8,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_font_family_lists() {
+        assert_eq!(
+            parse_font_family_list("'DejaVu Sans', sans-serif, monospace"),
+            vec!["'DejaVu Sans'", "sans-serif", "monospace"]
+        );
+        assert_eq!(normalize_font_family_name(" 'DejaVu Sans' "), "dejavu sans");
+    }
+
+    #[test]
+    fn parses_supported_box_shadow_values() {
+        assert_eq!(
+            parse_box_shadow("0 3px 8px rgba(0, 0, 0, 0.35)"),
+            Some(ParsedBoxShadow {
+                offset_x: 0,
+                offset_y: 3,
+                blur_radius: 8,
+                spread_radius: 0,
+                color: spiders_scene::ColorValue {
+                    red: 0,
+                    green: 0,
+                    blue: 0,
+                    alpha: 89,
+                },
+            })
+        );
+        assert!(parse_box_shadow("inset 0 2px 4px #000000").is_none());
+        assert_eq!(
+            split_first_shadow("0 3px 8px rgba(0, 0, 0, 0.35), 0 1px 2px #000000"),
+            "0 3px 8px rgba(0, 0, 0, 0.35)"
+        );
+    }
 }
 
 fn load_font_from_paths(paths: &[&str]) -> Option<FontArc> {

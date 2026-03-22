@@ -256,7 +256,7 @@ mod tests {
     #[test]
     fn computes_titlebar_pseudo_styles_separately_from_window_styles() {
         let sheet = parse_stylesheet(
-            "window { height: 100%; } window::titlebar { height: 28px; background: rgba(12, 24, 48, 0.5); color: #ddeeff; padding: 4px 10px; text-align: center; text-transform: uppercase; font-size: 15px; font-weight: bold; letter-spacing: 2px; border-bottom-width: 2px; border-bottom-style: solid; border-color: #102030; border-bottom-color: #aabbcc; }",
+            "window { height: 100%; } window::titlebar { height: 28px; background: rgba(12, 24, 48, 0.5); color: #ddeeff; padding: 4px 10px; text-align: center; text-transform: uppercase; font-family: 'DejaVu Sans', sans-serif; font-size: 15px; font-weight: bold; letter-spacing: 2px; box-shadow: 0 3px 8px rgba(0, 0, 0, 0.35); border-bottom-width: 2px; border-bottom-style: solid; border-color: #102030; border-bottom-color: #aabbcc; }",
         )
         .unwrap();
         let node = runtime_window_with_meta(LayoutNodeMeta::default());
@@ -303,9 +303,17 @@ mod tests {
             titlebar_style.text_transform,
             Some(TextTransformValue::Uppercase)
         );
+        assert_eq!(
+            titlebar_style.font_family,
+            Some("\"DejaVu Sans\", sans-serif".into())
+        );
         assert_eq!(titlebar_style.font_size, Some(LengthPercentage::Px(15.0)));
         assert_eq!(titlebar_style.font_weight, Some(FontWeightValue::Bold));
         assert_eq!(titlebar_style.letter_spacing, Some(2.0));
+        assert_eq!(
+            titlebar_style.box_shadow,
+            Some("rgba(0, 0, 0, 0.35) 0px 3px 8px".into())
+        );
         assert_eq!(
             titlebar_style.border,
             Some(BoxEdges {
@@ -401,7 +409,7 @@ mod tests {
     #[test]
     fn supports_text_align_and_text_transform_properties() {
         let sheet = parse_stylesheet(
-            "window::titlebar { text-align: end; text-transform: capitalize; font-size: 85%; font-weight: 700; letter-spacing: normal; }",
+            "window::titlebar { text-align: end; text-transform: capitalize; font-family: serif; font-size: 85%; font-weight: 700; letter-spacing: normal; }",
         )
         .unwrap();
         let node = runtime_window_with_meta(LayoutNodeMeta::default());
@@ -411,6 +419,7 @@ mod tests {
 
         assert_eq!(style.text_align, Some(TextAlignValue::End));
         assert_eq!(style.text_transform, Some(TextTransformValue::Capitalize));
+        assert_eq!(style.font_family, Some("serif".into()));
         assert_eq!(style.font_size, Some(LengthPercentage::Percent(85.0)));
         assert_eq!(style.font_weight, Some(FontWeightValue::Bold));
         assert_eq!(style.letter_spacing, Some(0.0));

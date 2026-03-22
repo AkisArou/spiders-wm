@@ -39,6 +39,7 @@ impl ApplyCompiledDeclaration for ComputedStyle {
             CompiledDeclaration::Transform(value) => self.transform = Some(value),
             CompiledDeclaration::TextAlign(value) => self.text_align = Some(value),
             CompiledDeclaration::TextTransform(value) => self.text_transform = Some(value),
+            CompiledDeclaration::FontFamily(value) => self.font_family = Some(value),
             CompiledDeclaration::FontSize(value) => self.font_size = Some(value),
             CompiledDeclaration::FontWeight(value) => self.font_weight = Some(value),
             CompiledDeclaration::LetterSpacing(value) => self.letter_spacing = Some(value),

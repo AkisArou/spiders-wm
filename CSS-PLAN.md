@@ -69,9 +69,11 @@ Status: in progress
   - `opacity`
   - `text-align`
   - `text-transform`
+  - `font-family` partial
   - `font-size`
   - `font-weight`
   - `letter-spacing`
+  - `box-shadow` partial
   - `border-radius` (top corners only)
 - `border-color` and `border-bottom-color` drive the rendered titlebar bottom border.
 - Keep `appearance: none` as the "no titlebar" contract once compositor titlebars exist.

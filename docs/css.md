@@ -141,15 +141,15 @@ Supported now:
 - `opacity`
 - `text-align`
 - `text-transform`
+- `font-family` best-effort from common system family mappings
 - `font-size` with `px` and `%`
 - `font-weight` with `normal`, `bold`, `400`, and `700`
 - `letter-spacing` with `px` values and `normal`
+- `box-shadow` best-effort, clipped to the compositor titlebar surface
 - `border-radius` best-effort for rounded top corners on compositor titlebars
 
 Still TODO:
 
-- `font-family` `(TODO)`
-- `box-shadow` `(TODO)`
 - `border-radius` `(TODO)`
 
 Planned semantics:
@@ -162,9 +162,11 @@ Planned semantics:
 - compositor titlebars now draw a single-line text label from the window title, falling back to `app_id`, and `padding`, `color`, and `opacity` affect that rendered label.
 - `text-align` supports `left`, `right`, `center`, `start`, and `end` for compositor titlebar labels.
 - `text-transform` supports `none`, `uppercase`, `lowercase`, and `capitalize` for compositor titlebar labels.
+- `font-family` currently resolves a small set of common family names and generics such as `sans-serif`, `serif`, and `monospace`; `options.titlebar_font` still takes precedence when configured.
 - `font-size` supports `px` and `%` values for compositor titlebar labels.
 - `font-weight` supports `normal`, `bold`, `400`, and `700` via regular and bold font selection when both are available.
 - `letter-spacing` supports `normal` and `px` values for compositor titlebar labels.
+- `box-shadow` currently renders a first-pass shadow approximation for the first declared shadow only, clipped to the compositor titlebar surface.
 - `border-radius` currently rounds the top corners of compositor titlebars only; it does not clip client window content.
 - `appearance: none` is currently implemented as a best-effort `use_ssd()` request for SSD-capable clients while omitting compositor titlebar surfaces.
 - clients that only support CSD can still show their own client-drawn decorations; river does not provide a stronger override for those windows.

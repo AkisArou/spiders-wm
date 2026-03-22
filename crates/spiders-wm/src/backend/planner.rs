@@ -195,6 +195,13 @@ fn titlebar_text_align(style: Option<&ComputedStyle>) -> TextAlignValue {
         .unwrap_or(TextAlignValue::Left)
 }
 
+fn titlebar_font_family(style: Option<&ComputedStyle>) -> Option<String> {
+    style
+        .and_then(|style| style.font_family.as_ref())
+        .map(|family| family.trim().to_string())
+        .filter(|family| !family.is_empty())
+}
+
 fn titlebar_font_weight(style: Option<&ComputedStyle>) -> FontWeightValue {
     style
         .and_then(|style| style.font_weight)
@@ -216,6 +223,13 @@ fn titlebar_letter_spacing(style: Option<&ComputedStyle>) -> i32 {
         .and_then(|style| style.letter_spacing)
         .unwrap_or(0.0)
         .round() as i32
+}
+
+fn titlebar_box_shadow(style: Option<&ComputedStyle>) -> Option<String> {
+    style
+        .and_then(|style| style.box_shadow.as_ref())
+        .map(|shadow| shadow.trim().to_string())
+        .filter(|shadow| !shadow.is_empty())
 }
 
 fn style_opacity(style: Option<&ComputedStyle>) -> f32 {
@@ -647,9 +661,11 @@ impl RiverBackendState {
                 let background = apply_opacity(titlebar_background(titlebar_style, focused), opacity);
                 let text_color = apply_opacity(titlebar_text_color(titlebar_style, focused), opacity);
                 let text_align = titlebar_text_align(titlebar_style);
+                let font_family = titlebar_font_family(titlebar_style);
                 let font_size = titlebar_font_size(titlebar_style);
                 let font_weight = titlebar_font_weight(titlebar_style);
                 let letter_spacing = titlebar_letter_spacing(titlebar_style);
+                let box_shadow = titlebar_box_shadow(titlebar_style);
                 let border_bottom_color = apply_opacity(
                     titlebar_bottom_border_color(titlebar_style, background),
                     opacity,
@@ -668,9 +684,11 @@ impl RiverBackendState {
                     title,
                     text_color,
                     text_align,
+                    font_family,
                     font_size,
                     font_weight,
                     letter_spacing,
+                    box_shadow,
                     padding_top,
                     padding_right,
                     padding_bottom,
@@ -1357,6 +1375,24 @@ mod tests {
                 ..ComputedStyle::default()
             })),
             TextAlignValue::End
+        );
+    }
+
+    #[test]
+    fn titlebar_family_and_shadow_helpers_preserve_raw_values() {
+        let style = ComputedStyle {
+            font_family: Some(" 'DejaVu Sans', sans-serif ".into()),
+            box_shadow: Some(" 0 4px 10px rgba(0, 0, 0, 0.3) ".into()),
+            ..ComputedStyle::default()
+        };
+
+        assert_eq!(
+            titlebar_font_family(Some(&style)),
+            Some("'DejaVu Sans', sans-serif".into())
+        );
+        assert_eq!(
+            titlebar_box_shadow(Some(&style)),
+            Some("0 4px 10px rgba(0, 0, 0, 0.3)".into())
         );
     }
 

@@ -45,6 +45,7 @@ pub enum CompiledDeclaration {
     Transform(String),
     TextAlign(TextAlignValue),
     TextTransform(TextTransformValue),
+    FontFamily(String),
     FontSize(LengthPercentage),
     FontWeight(FontWeightValue),
     LetterSpacing(f32),
@@ -181,6 +182,9 @@ pub fn compile_declaration_from_value(
         "text-transform" => Ok(CompiledDeclaration::TextTransform(
             parse_text_transform_direct(property, value)?,
         )),
+        "font-family" => Ok(CompiledDeclaration::FontFamily(parse_raw_text_direct(
+            property, value,
+        )?)),
         "font-size" => Ok(CompiledDeclaration::FontSize(parse_length_percentage_word(
             property,
             value.text.trim(),

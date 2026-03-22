@@ -51,6 +51,7 @@ pub(super) const SUPPORTED_PROPERTIES: &[&str] = &[
     "transform",
     "text-align",
     "text-transform",
+    "font-family",
     "font-size",
     "font-weight",
     "letter-spacing",

@@ -241,6 +241,7 @@ pub struct ComputedStyle {
     pub transform: Option<String>,
     pub text_align: Option<TextAlignValue>,
     pub text_transform: Option<TextTransformValue>,
+    pub font_family: Option<String>,
     pub font_size: Option<LengthPercentage>,
     pub font_weight: Option<FontWeightValue>,
     pub letter_spacing: Option<f32>,

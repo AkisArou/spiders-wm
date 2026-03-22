@@ -52,9 +52,11 @@ impl RiverBackendState {
             title: entry.title.clone(),
             text_color: entry.text_color,
             text_align: entry.text_align,
+            font_family: entry.font_family.clone(),
             font_size: entry.font_size,
             font_weight: entry.font_weight,
             letter_spacing: entry.letter_spacing,
+            box_shadow: entry.box_shadow.clone(),
             padding_top: entry.padding_top,
             padding_right: entry.padding_right,
             padding_bottom: entry.padding_bottom,
@@ -196,9 +198,11 @@ impl RiverBackendState {
                         || buffer.title != entry.title
                         || buffer.text_color != entry.text_color
                         || buffer.text_align != entry.text_align
+                        || buffer.font_family != entry.font_family
                         || buffer.font_size != entry.font_size
                         || buffer.font_weight != entry.font_weight
                         || buffer.letter_spacing != entry.letter_spacing
+                        || buffer.box_shadow != entry.box_shadow
                         || buffer.padding_top != entry.padding_top
                         || buffer.padding_right != entry.padding_right
                         || buffer.padding_bottom != entry.padding_bottom
