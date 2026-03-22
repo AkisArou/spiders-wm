@@ -51,7 +51,7 @@ fn resolve_filter(process_name: &str, wayland_debug: bool) -> EnvFilter {
         "spiders_config=info".to_string(),
         "spiders_ipc=info".to_string(),
         "spiders_runtime_js=info".to_string(),
-        "spiders_river=info".to_string(),
+        "spiders_wm=info".to_string(),
         "spiders_scene=info".to_string(),
     ];
 

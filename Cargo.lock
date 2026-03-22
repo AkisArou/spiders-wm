@@ -1948,30 +1948,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "spiders-river"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "bitflags",
- "serde",
- "serde_json",
- "spiders-config",
- "spiders-ipc",
- "spiders-logging",
- "spiders-runtime-js",
- "spiders-scene",
- "spiders-shared",
- "spiders-tree",
- "tempfile",
- "thiserror",
- "tracing",
- "wayland-backend",
- "wayland-client",
- "wayland-scanner",
- "xkbcommon",
-]
-
-[[package]]
 name = "spiders-runtime-js"
 version = "0.1.0"
 dependencies = [
@@ -2021,6 +1997,30 @@ name = "spiders-tree"
 version = "0.1.0"
 dependencies = [
  "serde",
+]
+
+[[package]]
+name = "spiders-wm"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bitflags",
+ "serde",
+ "serde_json",
+ "spiders-config",
+ "spiders-ipc",
+ "spiders-logging",
+ "spiders-runtime-js",
+ "spiders-scene",
+ "spiders-shared",
+ "spiders-tree",
+ "tempfile",
+ "thiserror",
+ "tracing",
+ "wayland-backend",
+ "wayland-client",
+ "wayland-scanner",
+ "xkbcommon",
 ]
 
 [[package]]

@@ -23,7 +23,7 @@ The following are fixed for this refactor:
 - each layout directory contains `index.tsx` and `index.css`
 - stylesheets must be parsed once and reused, not reparsed on every layout
   request
-- `spiders-river` and other runtime crates should ask `spiders-scene` for a
+- `spiders-wm` and other runtime crates should ask `spiders-scene` for a
   scene result, not parse or combine CSS themselves
 - no compatibility layer should preserve the old string-based request model once
   the refactor lands
@@ -91,9 +91,9 @@ state and `keyframe` timelines.
 - scene request and scene response data structures
 - prepared runtime artifact contracts
 
-### `spiders-river`
+### `spiders-wm`
 
-`spiders-river` should consume scene results from `spiders-scene` and translate
+`spiders-wm` should consume scene results from `spiders-scene` and translate
 them into river protocol actions.
 
 It should own protocol application for:
@@ -103,7 +103,7 @@ It should own protocol application for:
 - CSD versus SSD policy
 - titlebar/decor interaction with river protocol objects
 
-`spiders-river` should not parse CSS or decide style semantics on its own.
+`spiders-wm` should not parse CSS or decide style semantics on its own.
 
 ## User-Facing Filesystem Model
 
@@ -208,7 +208,7 @@ evaluation, not around preserving the old request fields.
 
 ## Scene Evaluation Contract
 
-`spiders-river` should be able to ask `spiders-scene`:
+`spiders-wm` should be able to ask `spiders-scene`:
 
 - given the selected layout artifact
 - given the current workspace/output/window snapshots
@@ -256,7 +256,7 @@ Examples:
 - desired decoration mode
 - desired titlebar policy
 
-`spiders-river` should translate those intents into river protocol actions using
+`spiders-wm` should translate those intents into river protocol actions using
 the available protocol objects, including window-management and decoration
 protocol support.
 
@@ -337,7 +337,7 @@ Exit condition:
 
 ### Phase 5: Replace runtime callers
 
-- update `spiders-wm2` and later `spiders-river` to ask `spiders-scene` for a
+- update `spiders-wm2` and later `spiders-wm` to ask `spiders-scene` for a
   scene result
 - remove all use of old layout-only request flow
 - stop passing stylesheet strings through runtime calls
@@ -375,7 +375,7 @@ The following files are expected to change substantially:
 ## Guardrails
 
 - do not preserve the old string stylesheet request API as a temporary bridge
-- do not make `spiders-river` parse CSS or own style semantics
+- do not make `spiders-wm` parse CSS or own style semantics
 - do not keep a separate user-facing `effects.css`
 - do not reparse stylesheets on every workspace switch or layout request
 - do not let compositor protocol details leak into the shared scene data model
@@ -389,7 +389,7 @@ At the end of this refactor:
 - config preparation discovers and prepares scene assets
 - `spiders-scene` parses stylesheets once and caches compiled forms
 - runtime callers ask `spiders-scene` for scene nodes with geometry and style
-- `spiders-river` applies those results through river protocols
+- `spiders-wm` applies those results through river protocols
 - the workspace no longer uses the term `effects.css`
 - the workspace no longer depends on the old `spiders-layout` versus
   `spiders-effects` split

@@ -57,7 +57,7 @@ export default {
 
 ## Repository Layout
 
-- `crates/spiders-river` - river-focused compositor/runtime integration
+- `crates/spiders-wm` - river-focused compositor/runtime integration
 - `crates/spiders-config` - config loading and prepared config handling
 - `crates/spiders-scene` - scene validation, styling, and geometry pipeline
 - `crates/spiders-ipc` - IPC protocol, transport, and server helpers

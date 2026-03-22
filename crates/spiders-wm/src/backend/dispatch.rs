@@ -704,7 +704,7 @@ impl Dispatch<river_xkb_keymap_v1::RiverXkbKeymapV1, ()> for RiverBackendState {
                     return;
                 };
                 if let Some(context) = state.transient.pending_xkb_keymap_context.remove(&proxy.id()) {
-                    info!(target: "spiders_river::input", "applied xkb keymap: {context}");
+                    info!(target: "spiders_wm::input", "applied xkb keymap: {context}");
                 }
                 for keyboard in state.registry.xkb_keyboards.values() {
                     if keyboard.input_device_id.as_ref() == Some(&input_device_id) {
@@ -721,7 +721,7 @@ impl Dispatch<river_xkb_keymap_v1::RiverXkbKeymapV1, ()> for RiverBackendState {
                     .pending_xkb_keymap_context
                     .remove(&proxy.id())
                     .unwrap_or_else(|| "unknown xkb keymap request".into());
-                warn!(target: "spiders_river::input", "failed to create xkb keymap: {context}: {error_msg}");
+                warn!(target: "spiders_wm::input", "failed to create xkb keymap: {context}: {error_msg}");
                 state.transient.xkb_keymap_proxies.remove(&proxy.id());
                 proxy.destroy();
             }
@@ -772,13 +772,13 @@ impl Dispatch<river_libinput_result_v1::RiverLibinputResultV1, ()> for RiverBack
 
         match event {
             river_libinput_result_v1::Event::Success => {
-                info!(target: "spiders_river::input", "applied input config: {context}");
+                info!(target: "spiders_wm::input", "applied input config: {context}");
             }
             river_libinput_result_v1::Event::Unsupported => {
-                warn!(target: "spiders_river::input", "unsupported input config: {context}");
+                warn!(target: "spiders_wm::input", "unsupported input config: {context}");
             }
             river_libinput_result_v1::Event::Invalid => {
-                warn!(target: "spiders_river::input", "invalid input config: {context}");
+                warn!(target: "spiders_wm::input", "invalid input config: {context}");
             }
         }
     }

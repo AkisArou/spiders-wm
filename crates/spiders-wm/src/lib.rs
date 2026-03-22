@@ -14,14 +14,14 @@ use spiders_runtime_js::{build_authoring_layout_service, DefaultLayoutRuntime};
 use crate::model::WmState;
 
 #[derive(Debug)]
-pub struct SpidersRiver {
+pub struct SpidersWm {
     paths: ConfigPaths,
     layout_service: AuthoringLayoutService<DefaultLayoutRuntime>,
     config: Config,
     state: WmState,
 }
 
-impl SpidersRiver {
+impl SpidersWm {
     pub fn discover(options: ConfigDiscoveryOptions) -> Result<Self> {
         let paths = ConfigPaths::discover(options)?;
         Self::from_paths(paths)
@@ -85,7 +85,7 @@ mod tests {
     #[test]
     fn config_paths_are_exposed() {
         let paths = ConfigPaths::new("/tmp/config.ts", "/tmp/config.js");
-        let runtime = SpidersRiver {
+        let runtime = SpidersWm {
             paths: paths.clone(),
             layout_service: build_authoring_layout_service(&paths),
             config: Config::default(),

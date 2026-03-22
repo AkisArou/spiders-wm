@@ -1,11 +1,11 @@
 use anyhow::Result;
 use spiders_config::model::ConfigDiscoveryOptions;
-use spiders_river::SpidersRiver;
+use spiders_wm::SpidersWm;
 
 fn main() -> Result<()> {
-    spiders_logging::init("spiders_river");
+    spiders_logging::init("spiders_wm");
 
-    let runtime = SpidersRiver::discover(ConfigDiscoveryOptions::from_env())?;
+    let runtime = SpidersWm::discover(ConfigDiscoveryOptions::from_env())?;
     let mut connection = runtime.connect()?;
 
     while connection.is_running() {

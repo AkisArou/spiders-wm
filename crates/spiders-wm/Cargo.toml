@@ -1,5 +1,5 @@
 [package]
-name = "spiders-river"
+name = "spiders-wm"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
