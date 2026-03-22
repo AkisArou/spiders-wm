@@ -155,6 +155,19 @@ pub struct ConfigDiscoveryOptions {
     pub authored_config_override: Option<PathBuf>,
 }
 
+impl ConfigDiscoveryOptions {
+    pub fn from_env() -> Self {
+        Self {
+            home_dir: std::env::var_os("SPIDERS_WM_HOME").map(PathBuf::from),
+            config_dir_override: std::env::var_os("SPIDERS_WM_CONFIG_DIR")
+                .map(PathBuf::from),
+            cache_dir_override: std::env::var_os("SPIDERS_WM_CACHE_DIR").map(PathBuf::from),
+            authored_config_override: std::env::var_os("SPIDERS_WM_AUTHORED_CONFIG")
+                .map(PathBuf::from),
+        }
+    }
+}
+
 impl ConfigPaths {
     pub fn new(authored_config: impl Into<PathBuf>, prepared_config: impl Into<PathBuf>) -> Self {
         Self {

@@ -3,6 +3,7 @@ pub use crate::layout_calc::{LaidOutNode, LaidOutTree};
 use crate::scene::{SceneRequest, SceneResponse};
 use spiders_tree::ResolvedLayoutNode;
 use std::collections::HashMap;
+use tracing::debug;
 
 #[derive(Debug, Clone)]
 struct CachedStylesheet {
@@ -21,6 +22,7 @@ impl SceneCache {
     }
 
     pub fn clear(&mut self) {
+        debug!(cached_stylesheets = self.stylesheets.len(), "clearing scene cache");
         self.stylesheets.clear();
     }
 
@@ -32,8 +34,12 @@ impl SceneCache {
         let layout_name = layout_name.into();
 
         match self.stylesheets.get(&layout_name) {
-            Some(cached) if cached.source == stylesheet_source => Ok(()),
+            Some(cached) if cached.source == stylesheet_source => {
+                debug!(layout = %layout_name, "scene cache hit; stylesheet unchanged");
+                Ok(())
+            }
             _ => {
+                debug!(layout = %layout_name, bytes = stylesheet_source.len(), "compiling stylesheet for scene cache");
                 let sheet = compile_stylesheet(stylesheet_source)?;
                 self.stylesheets.insert(
                     layout_name,
@@ -52,6 +58,7 @@ impl SceneCache {
         request: &SceneRequest,
     ) -> Result<SceneResponse, LayoutPipelineError> {
         let layout_name = request.layout_name.as_deref().unwrap_or("__default__");
+        debug!(layout = layout_name, width = request.space.width, height = request.space.height, "computing layout from scene request");
         let stylesheet_source = request.stylesheets.combined_source();
         self.precompile_layout(layout_name, &stylesheet_source)?;
 

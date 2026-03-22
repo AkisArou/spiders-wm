@@ -1,5 +1,6 @@
 use spiders_shared::runtime::prepared_layout::{PreparedLayout, PreparedStylesheet, PreparedStylesheets, SelectedLayout};
 use spiders_shared::runtime::runtime_error::RuntimeError;
+use tracing::{debug, warn};
 
 use spiders_config::model::{Config, LayoutConfigError, LayoutDefinition};
 
@@ -203,7 +204,7 @@ pub fn loaded_layout_definition(
         selected: SelectedLayout {
             name: layout.name.clone(),
             directory: layout.directory.clone(),
-            module,
+            module: module.clone(),
         },
         runtime_payload: layout
             .runtime_cache_payload
@@ -213,16 +214,87 @@ pub fn loaded_layout_definition(
             layout: layout
                 .stylesheet_path
                 .as_ref()
-                .map(|path| load_stylesheet_asset(path)),
+                .map(|path| load_stylesheet_asset(layout, &module, path)),
         },
     }
 }
 
-fn load_stylesheet_asset(path: &str) -> PreparedStylesheet {
+fn load_stylesheet_asset(
+    layout: &LayoutDefinition,
+    module_path: &str,
+    path: &str,
+) -> PreparedStylesheet {
+    let source = load_stylesheet_asset_source(layout, module_path, path).unwrap_or_else(|| {
+        warn!(
+            layout = %layout.name,
+            stylesheet_path = %path,
+            layout_directory = %layout.directory,
+            module = %module_path,
+            "failed to load layout stylesheet from any candidate path"
+        );
+        String::new()
+    });
+
+    if source.trim().is_empty() {
+        warn!(
+            layout = %layout.name,
+            stylesheet_path = %path,
+            module = %module_path,
+            "loaded layout stylesheet is empty"
+        );
+    } else {
+        debug!(
+            layout = %layout.name,
+            stylesheet_path = %path,
+            module = %module_path,
+            bytes = source.len(),
+            "loaded layout stylesheet source"
+        );
+    }
+
     PreparedStylesheet {
         path: path.into(),
-        source: std::fs::read_to_string(path).unwrap_or_default(),
+        source,
     }
+}
+
+fn load_stylesheet_asset_source(
+    layout: &LayoutDefinition,
+    module_path: &str,
+    path: &str,
+) -> Option<String> {
+    let path_obj = std::path::Path::new(path);
+    let mut candidates = Vec::new();
+
+    candidates.push(path_obj.to_path_buf());
+
+    if path_obj.is_relative() {
+        let module_path_obj = std::path::Path::new(module_path);
+        if let Some(module_dir) = module_path_obj.parent() {
+            candidates.push(module_dir.join(path_obj));
+            if let Some(file_name) = path_obj.file_name() {
+                candidates.push(module_dir.join(file_name));
+            }
+        }
+
+        let layout_dir = std::path::Path::new(&layout.directory);
+        candidates.push(layout_dir.join(path_obj));
+        if let Some(file_name) = path_obj.file_name() {
+            candidates.push(layout_dir.join(file_name));
+        }
+    }
+
+    candidates.sort();
+    candidates.dedup();
+
+    for candidate in candidates {
+        if let Ok(source) = std::fs::read_to_string(&candidate) {
+            debug!(candidate = %candidate.display(), "resolved stylesheet candidate path");
+            return Some(source);
+        }
+    }
+
+    None
 }
 
 fn single_module_graph(

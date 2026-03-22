@@ -17,3 +17,4 @@ taffy = "0.9.2"
 thiserror.workspace = true
 url = "2.5"
 serde.workspace = true
+tracing.workspace = true

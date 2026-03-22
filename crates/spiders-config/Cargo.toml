@@ -13,6 +13,7 @@ spiders-scene = { path = "../spiders-scene" }
 spiders-shared = { path = "../spiders-shared" }
 spiders-tree = { path = "../spiders-tree" }
 thiserror.workspace = true
+tracing.workspace = true
 
 [dev-dependencies]
 tempfile = "3"

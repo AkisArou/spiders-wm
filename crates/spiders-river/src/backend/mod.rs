@@ -170,7 +170,10 @@ impl RiverBackendState {
 
             let prepared = match self.layout_service.prepare_for_workspace(&self.config, &workspace) {
                 Ok(Some(prepared)) => prepared,
-                Ok(None) => continue,
+                Ok(None) => {
+                    warn!(layout = %layout.name, "layout preparation returned no artifact during scene cache prewarm");
+                    continue;
+                }
                 Err(error) => {
                     warn!(layout = %layout.name, %error, "failed to prepare layout for scene cache prewarm");
                     continue;
@@ -179,6 +182,7 @@ impl RiverBackendState {
 
             let source = prepared.stylesheets.combined_source();
             if source.trim().is_empty() {
+                warn!(layout = %layout.name, "prepared stylesheet source was empty during scene cache prewarm");
                 continue;
             }
 

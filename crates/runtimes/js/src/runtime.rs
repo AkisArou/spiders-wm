@@ -10,6 +10,7 @@ use spiders_shared::runtime::prepared_layout::{PreparedLayout, SelectedLayout};
 use spiders_shared::runtime::runtime_contract::{AuthoringLayoutRuntime, LayoutModuleContract, PreparedLayoutRuntime};
 use spiders_shared::runtime::runtime_error::RuntimeError;
 use spiders_tree::{SlotTake, SourceLayoutNode};
+use tracing::{debug, warn};
 
 use crate::loader::{InlineLayoutSourceLoader, JsLayoutSourceLoader};
 use crate::module_graph::{JavaScriptModule, JavaScriptModuleGraph};
@@ -279,7 +280,17 @@ impl<L: JsLayoutSourceLoader> QuickJsPreparedLayoutRuntime<L> {
         config: &Config,
         workspace: &spiders_shared::snapshot::WorkspaceSnapshot,
     ) -> Result<Option<PreparedLayout>, RuntimeError> {
-        self.loader.load_runtime_source(config, workspace)
+        debug!(workspace_id = %workspace.id, workspace_name = %workspace.name, "loading runtime source for layout preparation");
+        let result = self.loader.load_runtime_source(config, workspace);
+        if let Err(error) = &result {
+            warn!(
+                %error,
+                workspace_id = %workspace.id,
+                workspace_name = %workspace.name,
+                "failed to load runtime source for workspace"
+            );
+        }
+        result
     }
 }
 
@@ -362,13 +373,19 @@ impl<L: JsLayoutSourceLoader> PreparedLayoutRuntime for QuickJsPreparedLayoutRun
         loaded_layout: &PreparedLayout,
         context: &LayoutEvaluationContext,
     ) -> Result<SourceLayoutNode, RuntimeError> {
+        debug!(layout = %loaded_layout.selected.name, module = %loaded_layout.selected.module, "evaluating prepared layout module graph");
         let runtime_graph = decode_runtime_graph_payload(&loaded_layout.runtime_payload)?;
-        self.evaluate_module_graph(
+        let result = self.evaluate_module_graph(
             &loaded_layout.selected,
             context,
             &runtime_graph,
-        )
-        .map_err(|error| RuntimeError::Other {
+        );
+
+        if let Err(error) = &result {
+            warn!(layout = %loaded_layout.selected.name, module = %loaded_layout.selected.module, %error, "layout evaluation failed");
+        }
+
+        result.map_err(|error| RuntimeError::Other {
             message: error.to_string(),
         })
     }
@@ -380,13 +397,23 @@ impl<L: JsLayoutSourceLoader> PreparedLayoutRuntime for QuickJsPreparedLayoutRun
 
 impl<L: JsLayoutSourceLoader> AuthoringLayoutRuntime for QuickJsPreparedLayoutRuntime<L> {
     fn load_authored_config(&self, path: &std::path::Path) -> Result<Self::Config, RuntimeError> {
-        crate::authored::load_authored_config(path).map_err(|error| RuntimeError::Config {
+        debug!(path = %path.display(), "loading authored config");
+        let result = crate::authored::load_authored_config(path);
+        if let Err(error) = &result {
+            warn!(path = %path.display(), %error, "failed loading authored config");
+        }
+        result.map_err(|error| RuntimeError::Config {
             message: error.to_string(),
         })
     }
 
     fn load_prepared_config(&self, path: &std::path::Path) -> Result<Self::Config, RuntimeError> {
-        crate::authored::load_prepared_config(path).map_err(|error| RuntimeError::Config {
+        debug!(path = %path.display(), "loading prepared config");
+        let result = crate::authored::load_prepared_config(path);
+        if let Err(error) = &result {
+            warn!(path = %path.display(), %error, "failed loading prepared config");
+        }
+        result.map_err(|error| RuntimeError::Config {
             message: error.to_string(),
         })
     }
@@ -396,6 +423,7 @@ impl<L: JsLayoutSourceLoader> AuthoringLayoutRuntime for QuickJsPreparedLayoutRu
         authored: &std::path::Path,
         runtime: &std::path::Path,
     ) -> Result<spiders_shared::runtime::runtime_error::RuntimeRefreshSummary, RuntimeError> {
+        debug!(authored = %authored.display(), runtime = %runtime.display(), "refreshing prepared config");
         crate::authored::refresh_prepared_config(authored, runtime)
             .map(runtime_refresh_summary)
             .map_err(|error| RuntimeError::Config {
@@ -408,6 +436,7 @@ impl<L: JsLayoutSourceLoader> AuthoringLayoutRuntime for QuickJsPreparedLayoutRu
         authored: &std::path::Path,
         runtime: &std::path::Path,
     ) -> Result<spiders_shared::runtime::runtime_error::RuntimeRefreshSummary, RuntimeError> {
+        debug!(authored = %authored.display(), runtime = %runtime.display(), "rebuilding prepared config");
         crate::authored::rebuild_prepared_config(authored, runtime)
             .map(runtime_refresh_summary)
             .map_err(|error| RuntimeError::Config {

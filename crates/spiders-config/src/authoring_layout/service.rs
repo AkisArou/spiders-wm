@@ -7,6 +7,7 @@ use spiders_shared::runtime::runtime_error::RuntimeError;
 use spiders_shared::snapshot::{StateSnapshot, WorkspaceSnapshot};
 use spiders_shared::types::LayoutRef;
 use spiders_tree::{SourceLayoutNode, WorkspaceId};
+use tracing::{debug, info, warn};
 
 use super::config_paths;
 use super::prepared_cache;
@@ -64,6 +65,7 @@ where
     }
 
     pub fn load_config(&self, paths: &ConfigPaths) -> Result<Config, AuthoringLayoutServiceError> {
+        debug!(authored_config = %paths.authored_config.display(), prepared_config = %paths.prepared_config.display(), "loading config");
         Ok(self.load_config_with_cache_update(paths)?.0)
     }
 
@@ -93,8 +95,10 @@ where
     }
 
     pub fn reload_config(&mut self) -> Result<Config, AuthoringLayoutServiceError> {
+        debug!("reloading config and clearing prepared layout cache");
         let config = prepared_cache::reload_config(&self.runtime, self.paths.as_ref())?;
         self.cache.clear();
+        info!(layout_count = config.layouts.len(), workspace_count = config.workspaces.len(), "reloaded config");
         Ok(config)
     }
 
@@ -102,12 +106,14 @@ where
         &self,
         config: &Config,
     ) -> Result<Vec<String>, AuthoringLayoutServiceError> {
+        debug!(layout_count = config.layouts.len(), "validating layout modules");
         let mut errors = Vec::new();
 
         for layout in &config.layouts {
             let workspace = validation_workspace(&layout.name);
 
             if let Err(error) = self.runtime.prepare_layout(config, &workspace) {
+                warn!(layout = %layout.name, %error, "layout validation failed");
                 errors.push(format!("{}: {error}", layout.name));
             }
         }
@@ -120,12 +126,15 @@ where
         config: &Config,
         workspace: &WorkspaceSnapshot,
     ) -> Result<Option<&PreparedLayout>, AuthoringLayoutServiceError> {
+        debug!(workspace_id = %workspace.id, workspace_name = %workspace.name, "preparing layout for workspace");
         let Some(loaded) = self.runtime.prepare_layout(config, workspace)? else {
+            debug!(workspace_id = %workspace.id, workspace_name = %workspace.name, "no selected layout for workspace");
             return Ok(None);
         };
 
         let key = loaded.selected.name.clone();
         self.cache.insert(key.clone(), loaded);
+        debug!(workspace_id = %workspace.id, workspace_name = %workspace.name, layout = %key, "prepared layout cached");
         Ok(self.cache.get(&key))
     }
 
@@ -135,11 +144,14 @@ where
         state: &StateSnapshot,
         workspace: &WorkspaceSnapshot,
     ) -> Result<Option<PreparedLayoutEvaluation>, AuthoringLayoutServiceError> {
+        debug!(workspace_id = %workspace.id, workspace_name = %workspace.name, window_count = state.windows.len(), "evaluating prepared layout for workspace");
         let Some(loaded) = self.prepare_for_workspace(config, workspace)?.cloned() else {
             return Ok(None);
         };
         let context = self.runtime.build_context(state, workspace, Some(&loaded));
         let layout = self.runtime.evaluate_layout(&loaded, &context)?;
+
+        debug!(workspace_id = %workspace.id, workspace_name = %workspace.name, layout = %loaded.selected.name, "evaluated prepared layout");
 
         Ok(Some(PreparedLayoutEvaluation {
             artifact: loaded,

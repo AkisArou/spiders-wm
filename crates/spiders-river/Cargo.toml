@@ -12,6 +12,7 @@ serde.workspace = true
 serde_json.workspace = true
 spiders-config = { path = "../spiders-config" }
 spiders-ipc = { path = "../spiders-ipc" }
+spiders-logging = { path = "../spiders-logging" }
 spiders-scene = { path = "../spiders-scene" }
 spiders-runtime-js = { path = "../runtimes/js" }
 spiders-shared = { path = "../spiders-shared" }

@@ -1,4 +1,5 @@
 use spiders_shared::api::{CompositorEvent, QueryRequest, QueryResponse, WmAction};
+use tracing::debug;
 
 use crate::protocol::{
     IpcClientMessage, IpcEnvelope, IpcRequest, IpcResponse, IpcServerMessage, IpcSubscriptionTopic,
@@ -45,6 +46,7 @@ impl IpcSession {
             IpcClientMessage::Subscribe { topics } => {
                 self.subscription_topics =
                     normalize_topics(self.subscription_topics.iter().copied().chain(topics));
+                debug!(topics = ?self.subscription_topics, "ipc subscription topics updated");
 
                 IpcSessionHandleResult::Response(IpcEnvelope {
                     request_id: request.request_id,
@@ -53,6 +55,7 @@ impl IpcSession {
             }
             IpcClientMessage::Unsubscribe { topics } => {
                 self.subscription_topics = unsubscribe_topics(&self.subscription_topics, &topics);
+                debug!(topics = ?self.subscription_topics, "ipc subscription topics updated after unsubscribe");
 
                 IpcSessionHandleResult::Response(IpcEnvelope {
                     request_id: request.request_id,
@@ -95,6 +98,7 @@ impl IpcSession {
 
     pub fn event_response(&self, event: CompositorEvent) -> Option<IpcResponse> {
         if subscription_matches_event(&self.subscription_topics, &event) {
+            debug!(topics = ?self.subscription_topics, "ipc event matched current subscription topics");
             Some(IpcEnvelope::new(IpcServerMessage::event(event)))
         } else {
             None

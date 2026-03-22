@@ -6,6 +6,7 @@ use report::{
     BuildConfigReport, DiscoveryReport, ErrorReport, IpcActionReport, IpcMonitorReport,
     IpcQueryReport, IpcSmokeReport, OutputMode, SuccessCheckReport, emit,
 };
+use tracing::info;
 
 #[derive(Debug, Clone)]
 struct CliContext {
@@ -15,15 +16,7 @@ struct CliContext {
 impl CliContext {
     fn new() -> Self {
         Self {
-            options: spiders_config::model::ConfigDiscoveryOptions {
-                home_dir: std::env::var_os("SPIDERS_WM_HOME").map(std::path::PathBuf::from),
-                config_dir_override: std::env::var_os("SPIDERS_WM_CONFIG_DIR")
-                    .map(std::path::PathBuf::from),
-                cache_dir_override: std::env::var_os("SPIDERS_WM_CACHE_DIR")
-                    .map(std::path::PathBuf::from),
-                authored_config_override: std::env::var_os("SPIDERS_WM_AUTHORED_CONFIG")
-                    .map(std::path::PathBuf::from),
-            },
+            options: spiders_config::model::ConfigDiscoveryOptions::from_env(),
         }
     }
 
@@ -33,6 +26,8 @@ impl CliContext {
 }
 
 fn main() -> std::process::ExitCode {
+    spiders_logging::init("spiders_cli");
+
     let args: Vec<String> = std::env::args().collect();
     let check_config = args.iter().any(|arg| arg == "check-config");
     let build_config = args.iter().any(|arg| arg == "build-config");
@@ -53,6 +48,27 @@ fn main() -> std::process::ExitCode {
     let topic_names = arg_values(&args, "--topic");
 
     let cli = CliContext::new();
+
+    let command = if ipc_smoke {
+        "ipc-smoke"
+    } else if ipc_query {
+        "ipc-query"
+    } else if ipc_action {
+        "ipc-action"
+    } else if ipc_monitor {
+        "ipc-monitor"
+    } else if build_config {
+        "build-config"
+    } else if check_config {
+        "check-config"
+    } else {
+        "discovery"
+    };
+    let output_mode_name = match output_mode {
+        OutputMode::Json => "json",
+        OutputMode::Text => "text",
+    };
+    info!(command, output_mode = output_mode_name, "executing spiders-cli command");
 
     if ipc_smoke {
         ipc_smoke_command(output_mode)

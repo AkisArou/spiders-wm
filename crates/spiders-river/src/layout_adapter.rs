@@ -1,17 +1,53 @@
+use std::collections::HashSet;
+use std::sync::{Mutex, OnceLock};
+
 use spiders_config::authoring_layout::AuthoringLayoutService;
 use spiders_config::model::Config;
 use spiders_scene::ast::ValidatedLayoutTree;
 use spiders_scene::{LayoutSnapshotNode, SceneRequest};
 use spiders_scene::pipeline::SceneCache;
-use spiders_tree::{LayoutNodeMeta, RemainingTake, ResolvedLayoutNode, SlotTake, SourceLayoutNode, WindowId};
+use spiders_tree::{LayoutNodeMeta, RemainingTake, ResolvedLayoutNode, SlotTake, SourceLayoutNode, WindowId, WorkspaceId};
 use spiders_shared::runtime::prepared_layout::PreparedStylesheet;
 use spiders_shared::snapshot::WindowSnapshot;
 use spiders_shared::types::LayoutRef;
 use spiders_runtime_js::DefaultLayoutRuntime;
+use tracing::{debug, warn};
 
 use crate::model::WmState;
 
 const FALLBACK_HORIZONTAL_STYLESHEET: &str = "workspace { display: flex; flex-direction: row; width: 100%; height: 100%; } group { display: flex; flex-direction: row; width: 100%; height: 100%; } window { flex-grow: 1; flex-basis: 0; height: 100%; }";
+
+static FALLBACK_LAYOUT_WARN_KEYS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+
+fn log_fallback_layout_stylesheet(
+    workspace_id: &WorkspaceId,
+    workspace_name: &str,
+    selected_layout: Option<&str>,
+) {
+    let selected_layout = selected_layout.unwrap_or("<none>");
+    let key = format!("{}::{selected_layout}", workspace_id);
+    let warned_once = FALLBACK_LAYOUT_WARN_KEYS
+        .get_or_init(|| Mutex::new(HashSet::new()))
+        .lock()
+        .ok()
+        .is_some_and(|mut seen| !seen.insert(key));
+
+    if warned_once {
+        debug!(
+            %workspace_id,
+            workspace_name = %workspace_name,
+            selected_layout,
+            "layout stylesheet missing or empty; using fallback stylesheet (repeat)"
+        );
+    } else {
+        warn!(
+            %workspace_id,
+            workspace_name = %workspace_name,
+            selected_layout,
+            "layout stylesheet missing or empty; applying fallback stylesheet"
+        );
+    }
+}
 
 fn selected_layout_name(config: &Config, state: &spiders_shared::snapshot::StateSnapshot) -> Option<String> {
     let workspace = state.current_workspace()?;
@@ -60,10 +96,20 @@ fn default_source_layout_tree() -> SourceLayoutNode {
 }
 
 fn visible_window_snapshots(state: &spiders_shared::snapshot::StateSnapshot, window_ids: &[WindowId]) -> Vec<WindowSnapshot> {
-    window_ids
+    let windows: Vec<WindowSnapshot> = window_ids
         .iter()
         .filter_map(|window_id| state.windows.iter().find(|window| &window.id == window_id).cloned())
-        .collect()
+        .collect();
+
+    if windows.len() != window_ids.len() {
+        warn!(
+            requested_window_count = window_ids.len(),
+            found_window_count = windows.len(),
+            "some window ids were missing from state snapshot during layout resolve"
+        );
+    }
+
+    windows
 }
 
 fn resolved_layout_root(
@@ -73,11 +119,29 @@ fn resolved_layout_root(
 ) -> ResolvedLayoutNode {
     let windows = visible_window_snapshots(state, window_ids);
 
-    ValidatedLayoutTree::new(source_tree)
-        .ok()
-        .and_then(|tree| tree.resolve(&windows).ok())
-        .map(|resolved| resolved.root)
-        .unwrap_or_else(|| ResolvedLayoutNode::Workspace {
+    let resolved = match ValidatedLayoutTree::new(source_tree) {
+        Ok(tree) => match tree.resolve(&windows) {
+            Ok(resolved) => Some(resolved.root),
+            Err(error) => {
+                warn!(
+                    %error,
+                    window_count = windows.len(),
+                    "layout tree resolve failed; falling back to flat workspace layout"
+                );
+                None
+            }
+        },
+        Err(error) => {
+            warn!(
+                %error,
+                window_count = windows.len(),
+                "layout tree validation failed; falling back to flat workspace layout"
+            );
+            None
+        }
+    };
+
+    resolved.unwrap_or_else(|| ResolvedLayoutNode::Workspace {
             meta: LayoutNodeMeta {
                 class: vec!["river-workspace".into()],
                 ..LayoutNodeMeta::default()
@@ -104,43 +168,116 @@ pub fn compute_layout_snapshot(
 ) -> Option<LayoutSnapshotNode> {
     let mut snapshot = state.as_state_snapshot();
     let selected_layout = selected_layout_name(config, &snapshot);
+    let current_workspace_id = snapshot.current_workspace_id.clone();
 
     if let Some(current_workspace) = snapshot
         .workspaces
         .iter_mut()
         .find(|workspace| Some(&workspace.id) == snapshot.current_workspace_id.as_ref())
     {
-        current_workspace.effective_layout = selected_layout.map(|name| LayoutRef { name });
+        current_workspace.effective_layout = selected_layout.clone().map(|name| LayoutRef { name });
     }
 
-    let evaluation = snapshot
-        .current_workspace()
-        .and_then(|workspace| {
-            layout_service
-                .evaluate_prepared_for_workspace(config, &snapshot, workspace)
-                .ok()
-                .flatten()
-        });
+    let Some(workspace) = snapshot.current_workspace() else {
+        warn!(
+            ?current_workspace_id,
+            "state snapshot has no current workspace; skipping layout snapshot computation"
+        );
+        return None;
+    };
+
+    let workspace_id = workspace.id.clone();
+    let workspace_name = workspace.name.clone();
+
+    let evaluation = match layout_service.evaluate_prepared_for_workspace(config, &snapshot, workspace) {
+        Ok(evaluation) => evaluation,
+        Err(error) => {
+            warn!(
+                %error,
+                %workspace_id,
+                workspace_name = %workspace_name,
+                "failed to evaluate prepared layout for workspace"
+            );
+            None
+        }
+    };
+
+    if evaluation.is_none() {
+        warn!(
+            %workspace_id,
+            workspace_name = %workspace_name,
+            selected_layout = selected_layout.as_deref().unwrap_or("<none>"),
+            "no prepared layout evaluation available; using default source layout tree"
+        );
+    }
 
     let source_tree = evaluation
         .as_ref()
         .map(|evaluation| evaluation.layout.clone())
         .unwrap_or_else(default_source_layout_tree);
 
-    let mut request: SceneRequest = config
-        .build_scene_request_from_state(
-            &snapshot,
-            resolved_layout_root(source_tree, &snapshot, window_ids),
-            &evaluation.as_ref()?.artifact,
-        )
-        .ok()??;
+    let Some(evaluation) = evaluation.as_ref() else {
+        return None;
+    };
+
+    let request_result = config.build_scene_request_from_state(
+        &snapshot,
+        resolved_layout_root(source_tree, &snapshot, window_ids),
+        &evaluation.artifact,
+    );
+
+    let mut request: SceneRequest = match request_result {
+        Ok(Some(request)) => request,
+        Ok(None) => {
+            warn!(
+                %workspace_id,
+                workspace_name = %workspace_name,
+                "scene request not produced for current workspace"
+            );
+            return None;
+        }
+        Err(error) => {
+            warn!(
+                %error,
+                %workspace_id,
+                workspace_name = %workspace_name,
+                "failed building scene request from state"
+            );
+            return None;
+        }
+    };
 
     let layout_stylesheet_missing = request
         .stylesheets
         .layout
         .as_ref()
         .is_none_or(|sheet| sheet.source.trim().is_empty());
+
+    debug!(
+        %workspace_id,
+        workspace_name = %workspace_name,
+        selected_layout = selected_layout.as_deref().unwrap_or("<none>"),
+        stylesheet_path = request
+            .stylesheets
+            .layout
+            .as_ref()
+            .map(|sheet| sheet.path.as_str())
+            .unwrap_or("<none>"),
+        stylesheet_bytes = request
+            .stylesheets
+            .layout
+            .as_ref()
+            .map(|sheet| sheet.source.len())
+            .unwrap_or(0),
+        "layout stylesheet before fallback"
+    );
+
     if layout_stylesheet_missing {
+        log_fallback_layout_stylesheet(
+            &workspace_id,
+            &workspace_name,
+            selected_layout.as_deref(),
+        );
         request.stylesheets.layout = Some(PreparedStylesheet {
             path: "fallback://river-layout.css".into(),
             source: FALLBACK_HORIZONTAL_STYLESHEET.into(),
@@ -149,8 +286,25 @@ pub fn compute_layout_snapshot(
 
     scene_cache
         .compute_layout_from_request(&request)
+        .map(|response| {
+            debug!(
+                %workspace_id,
+                workspace_name = %workspace_name,
+                window_count = window_ids.len(),
+                "computed layout snapshot"
+            );
+            response.root
+        })
+        .map_err(|error| {
+            warn!(
+                %error,
+                %workspace_id,
+                workspace_name = %workspace_name,
+                "scene cache failed computing layout from request"
+            );
+            error
+        })
         .ok()
-        .map(|response| response.root)
 }
 
 #[cfg(test)]

@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::os::unix::net::UnixStream;
 
 use spiders_shared::api::{CompositorEvent, QueryRequest, QueryResponse, WmAction};
+use tracing::{debug, warn};
 
 use crate::{
     IpcRequest, IpcResponse, IpcSession, IpcSessionHandleResult, IpcTransportError, recv_request,
@@ -64,11 +65,18 @@ impl IpcServerState {
         let client_id = self.next_client_id;
         self.next_client_id += 1;
         self.sessions.insert(client_id, IpcSession::new());
+        debug!(client_id, client_count = self.sessions.len(), "ipc client connected");
         client_id
     }
 
     pub fn remove_client(&mut self, client_id: IpcClientId) -> Option<IpcSession> {
-        self.sessions.remove(&client_id)
+        let removed = self.sessions.remove(&client_id);
+        if removed.is_some() {
+            debug!(client_id, client_count = self.sessions.len(), "ipc client disconnected");
+        } else {
+            warn!(client_id, "attempted to remove unknown ipc client");
+        }
+        removed
     }
 
     pub fn client_count(&self) -> usize {
@@ -80,6 +88,14 @@ impl IpcServerState {
         client_id: IpcClientId,
         request: IpcRequest,
     ) -> Result<IpcServerHandleResult, UnknownClientError> {
+        let request_type = match &request.message {
+            crate::protocol::IpcClientMessage::Query(_) => "query",
+            crate::protocol::IpcClientMessage::Action(_) => "action",
+            crate::protocol::IpcClientMessage::Subscribe { .. } => "subscribe",
+            crate::protocol::IpcClientMessage::Unsubscribe { .. } => "unsubscribe",
+        };
+        debug!(client_id, request_id = request.request_id.as_deref().unwrap_or("<none>"), request_type, "handling ipc request");
+
         let session = self
             .sessions
             .get_mut(&client_id)
@@ -141,14 +157,22 @@ impl IpcServerState {
     }
 
     pub fn broadcast_event(&self, event: CompositorEvent) -> Vec<(IpcClientId, IpcResponse)> {
-        self.sessions
+        let responses: Vec<(IpcClientId, IpcResponse)> = self.sessions
             .iter()
             .filter_map(|(client_id, session)| {
                 session
                     .event_response(event.clone())
                     .map(|response| (*client_id, response))
             })
-            .collect()
+            .collect();
+
+        debug!(
+            client_count = self.sessions.len(),
+            recipients = responses.len(),
+            "broadcasted compositor event to ipc subscribers"
+        );
+
+        responses
     }
 
     pub fn serve_stream<F, E>(

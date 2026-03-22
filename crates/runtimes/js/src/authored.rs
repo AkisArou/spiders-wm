@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use oxc::span::SourceType;
 use serde_json::Value;
 use spiders_shared::api::{FocusDirection, WmAction};
+use tracing::debug;
 
 use crate::compile::{AppBuildPlan, compile_app, compiled_app_to_module_graph};
 use crate::graph::{ModuleGraphBuilder, discover_project_apps};
@@ -18,10 +19,12 @@ use spiders_config::model::{
 };
 
 pub fn load_authored_config(path: impl AsRef<Path>) -> Result<Config, LayoutConfigError> {
+    debug!(path = %path.as_ref().display(), "loading authored project config");
     load_project_config(path.as_ref())
 }
 
 pub fn load_prepared_config(path: impl AsRef<Path>) -> Result<Config, LayoutConfigError> {
+    debug!(path = %path.as_ref().display(), "loading prepared project config");
     load_project_config(path.as_ref())
 }
 
@@ -93,6 +96,17 @@ fn load_project_config(path: &Path) -> Result<Config, LayoutConfigError> {
                 .map(|path| path.to_string_lossy().into_owned()),
             runtime_cache_payload: Some(encode_runtime_graph_payload(&runtime_graph)),
         });
+
+        debug!(
+            layout = %app.name,
+            entry = %app.entry_path.display(),
+            stylesheet_path = app
+                .stylesheet_path
+                .as_ref()
+                .map(|path| path.display().to_string())
+                .unwrap_or_else(|| "<none>".into()),
+            "discovered layout app during config load"
+        );
     }
 
     validate_layout_selection(path, &config.layout_selection, &layout_defs)?;

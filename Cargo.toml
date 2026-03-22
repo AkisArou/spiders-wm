@@ -4,6 +4,7 @@ members = [
   "crates/spiders-cli",
     "crates/spiders-config",
   "crates/spiders-ipc",
+  "crates/spiders-logging",
   "crates/spiders-river",
   "crates/spiders-scene",
   "crates/spiders-tree",
@@ -22,3 +23,6 @@ anyhow = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
+tracing = "0.1"
+tracing-log = "0.2"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "ansi"] }

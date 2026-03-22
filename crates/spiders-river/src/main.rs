@@ -3,7 +3,9 @@ use spiders_config::model::ConfigDiscoveryOptions;
 use spiders_river::SpidersRiver;
 
 fn main() -> Result<()> {
-    let runtime = SpidersRiver::discover(ConfigDiscoveryOptions::default())?;
+    spiders_logging::init("spiders_river");
+
+    let runtime = SpidersRiver::discover(ConfigDiscoveryOptions::from_env())?;
     let mut connection = runtime.connect()?;
 
     while connection.is_running() {
