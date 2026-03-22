@@ -3,10 +3,11 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use spiders_shared::api::WmAction;
-use spiders_shared::runtime::{PreparedLayout, SelectedLayout};
-use spiders_shared::wm::{
-    LayoutRef, OutputSnapshot, StateSnapshot, WorkspaceSnapshot,
+use spiders_shared::runtime::prepared_layout::{PreparedLayout, SelectedLayout};
+use spiders_shared::snapshot::{
+    OutputSnapshot, StateSnapshot, WorkspaceSnapshot,
 };
+use spiders_shared::types::LayoutRef;
 use spiders_scene::SceneRequest;
 use spiders_tree::{LayoutSpace, ResolvedLayoutNode};
 use thiserror::Error;
@@ -313,8 +314,9 @@ impl From<&LayoutDefinition> for LayoutRef {
 mod tests {
     use super::*;
     use spiders_tree::{OutputId, WorkspaceId};
-    use spiders_shared::runtime::{PreparedLayout, PreparedStylesheets};
-    use spiders_shared::wm::OutputTransform;
+    use spiders_shared::runtime::prepared_layout::{PreparedLayout, PreparedStylesheets};
+    use spiders_shared::snapshot::OutputSnapshot;
+    use spiders_shared::types::{LayoutRef, OutputTransform};
     use std::fs;
 
     fn workspace(layout_name: &str) -> WorkspaceSnapshot {

@@ -474,7 +474,7 @@ fn build_config_command(cli: &CliContext, output_mode: OutputMode) -> std::proce
 }
 
 fn describe_prepared_config_update(
-    update: Option<spiders_shared::runtime::RuntimeRefreshSummary>,
+    update: Option<spiders_shared::runtime::runtime_error::RuntimeRefreshSummary>,
 ) -> String {
     match update {
         Some(update) if update.is_noop() => "noop".into(),
@@ -486,12 +486,13 @@ fn describe_prepared_config_update(
     }
 }
 
-fn synthetic_bootstrap_state() -> spiders_shared::wm::StateSnapshot {
+fn synthetic_bootstrap_state() -> spiders_shared::snapshot::StateSnapshot {
     use spiders_tree::{OutputId, WindowId, WorkspaceId};
-    use spiders_shared::wm::{
-        LayoutRef, OutputSnapshot, OutputTransform, ShellKind, StateSnapshot, WindowSnapshot,
+    use spiders_shared::snapshot::{
+        OutputSnapshot, StateSnapshot, WindowSnapshot,
         WorkspaceSnapshot,
     };
+    use spiders_shared::types::{LayoutRef, OutputTransform, ShellKind};
 
     StateSnapshot {
         focused_window_id: Some(WindowId::from("bootstrap-window")),
@@ -530,7 +531,7 @@ fn synthetic_bootstrap_state() -> spiders_shared::wm::StateSnapshot {
             role: None,
             window_type: None,
             mapped: true,
-            mode: spiders_shared::wm::WindowMode::Tiled,
+            mode: spiders_shared::types::WindowMode::Tiled,
             focused: true,
             urgent: false,
             output_id: Some(OutputId::from("bootstrap-output")),

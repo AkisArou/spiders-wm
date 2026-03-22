@@ -1,4 +1,5 @@
 use super::*;
+use spiders_shared::types::WindowMode;
 use spiders_tree::LayoutRect;
 use crate::actions::{
     active_tiled_window_ids, compute_horizontal_tiled_edges, compute_pointer_render_positions,
@@ -160,7 +161,7 @@ impl RiverBackendState {
                 let window = self.runtime_state.windows.get(&window_id)?;
                 let mode = configured_mode_for_window(&self.config, window)?;
                 let (x, y, width, height) = match &mode {
-                    spiders_shared::wm::WindowMode::Floating { rect } => {
+                    WindowMode::Floating { rect } => {
                         let rect = rect.unwrap_or(LayoutRect {
                             x: origin_x as f32 + (total_width as f32 * 0.1),
                             y: origin_y as f32 + (total_height as f32 * 0.1),
@@ -174,10 +175,10 @@ impl RiverBackendState {
                             rect.height.round() as i32,
                         )
                     }
-                    spiders_shared::wm::WindowMode::Fullscreen => {
+                    WindowMode::Fullscreen => {
                         (origin_x, origin_y, total_width.max(1), total_height.max(1))
                     }
-                    spiders_shared::wm::WindowMode::Tiled => return None,
+                    WindowMode::Tiled => return None,
                 };
 
                 Some(WindowModePlan {
@@ -201,11 +202,11 @@ impl RiverBackendState {
         let (origin_x, origin_y, total_width, total_height) = self.current_output_geometry();
 
         let mode = match &window.mode {
-            spiders_shared::wm::WindowMode::Floating { .. } => {
-                spiders_shared::wm::WindowMode::Tiled
+            WindowMode::Floating { .. } => {
+                WindowMode::Tiled
             }
-            spiders_shared::wm::WindowMode::Tiled | spiders_shared::wm::WindowMode::Fullscreen => {
-                spiders_shared::wm::WindowMode::Floating {
+            WindowMode::Tiled | WindowMode::Fullscreen => {
+                WindowMode::Floating {
                     rect: Some(window.last_floating_rect.unwrap_or(
                         LayoutRect {
                             x: origin_x as f32 + (total_width as f32 * 0.1),
@@ -219,13 +220,13 @@ impl RiverBackendState {
         };
 
         let (x, y, width, height) = match &mode {
-            spiders_shared::wm::WindowMode::Tiled => (
+            WindowMode::Tiled => (
                 window.x,
                 window.y,
                 window.width.max(1),
                 window.height.max(1),
             ),
-            spiders_shared::wm::WindowMode::Floating { rect } => {
+            WindowMode::Floating { rect } => {
                 let rect = rect.unwrap();
                 (
                     rect.x.round() as i32,
@@ -234,7 +235,7 @@ impl RiverBackendState {
                     rect.height.round() as i32,
                 )
             }
-            spiders_shared::wm::WindowMode::Fullscreen => {
+            WindowMode::Fullscreen => {
                 (origin_x, origin_y, total_width.max(1), total_height.max(1))
             }
         };
@@ -258,30 +259,30 @@ impl RiverBackendState {
         let (origin_x, origin_y, total_width, total_height) = self.current_output_geometry();
 
         let mode = match &window.mode {
-            spiders_shared::wm::WindowMode::Fullscreen => {
+            WindowMode::Fullscreen => {
                 if let Some(rect) = window.last_floating_rect {
-                    spiders_shared::wm::WindowMode::Floating { rect: Some(rect) }
+                    WindowMode::Floating { rect: Some(rect) }
                 } else {
-                    spiders_shared::wm::WindowMode::Tiled
+                    WindowMode::Tiled
                 }
             }
-            spiders_shared::wm::WindowMode::Tiled
-            | spiders_shared::wm::WindowMode::Floating { .. } => {
-                spiders_shared::wm::WindowMode::Fullscreen
+            WindowMode::Tiled
+            | WindowMode::Floating { .. } => {
+                WindowMode::Fullscreen
             }
         };
 
         let (x, y, width, height) = match &mode {
-            spiders_shared::wm::WindowMode::Fullscreen => {
+            WindowMode::Fullscreen => {
                 (origin_x, origin_y, total_width.max(1), total_height.max(1))
             }
-            spiders_shared::wm::WindowMode::Tiled => (
+            WindowMode::Tiled => (
                 window.x,
                 window.y,
                 window.width.max(1),
                 window.height.max(1),
             ),
-            spiders_shared::wm::WindowMode::Floating { rect } => {
+            WindowMode::Floating { rect } => {
                 let rect = rect.as_ref()?;
                 (
                     rect.x.round() as i32,

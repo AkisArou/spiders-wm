@@ -182,7 +182,7 @@ pub fn subscription_matches_event(
 #[cfg(test)]
 mod tests {
     use spiders_tree::{OutputId, WindowId};
-    use spiders_shared::wm::OutputSnapshot;
+    use spiders_shared::snapshot::OutputSnapshot;
 
     use super::*;
 
@@ -240,9 +240,9 @@ mod tests {
     #[test]
     fn server_event_round_trips_with_topics() {
         let response = IpcEnvelope::new(IpcServerMessage::event(CompositorEvent::WindowCreated {
-            window: spiders_shared::wm::WindowSnapshot {
+            window: spiders_shared::snapshot::WindowSnapshot {
                 id: WindowId::from("w1"),
-                shell: spiders_shared::wm::ShellKind::XdgToplevel,
+                shell: spiders_shared::types::ShellKind::XdgToplevel,
                 title: Some("Terminal".into()),
                 app_id: Some("foot".into()),
                 class: None,
@@ -250,7 +250,7 @@ mod tests {
                 role: None,
                 window_type: None,
                 mapped: true,
-                mode: spiders_shared::wm::WindowMode::Tiled,
+                mode: spiders_shared::types::WindowMode::Tiled,
                 focused: true,
                 urgent: false,
                 workspace_id: None,
@@ -323,7 +323,7 @@ mod tests {
                 logical_width: 1920,
                 logical_height: 1080,
                 scale: 1,
-                transform: spiders_shared::wm::OutputTransform::Normal,
+                transform: spiders_shared::types::OutputTransform::Normal,
                 enabled: true,
                 current_workspace_id: None,
             }),

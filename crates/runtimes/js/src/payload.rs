@@ -1,4 +1,4 @@
-use spiders_shared::runtime::RuntimeError;
+use spiders_shared::runtime::runtime_error::RuntimeError;
 
 use crate::module_graph::JavaScriptModuleGraph;
 

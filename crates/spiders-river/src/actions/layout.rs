@@ -1,5 +1,5 @@
 use spiders_tree::WindowId;
-use spiders_shared::wm::WindowMode;
+use spiders_shared::types::WindowMode;
 
 use crate::model::{SeatPointerOpState, WmState};
 

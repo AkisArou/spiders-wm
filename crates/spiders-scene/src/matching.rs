@@ -1,5 +1,6 @@
 use spiders_tree::{MatchClause, MatchKey, WindowMatch};
-use spiders_shared::wm::{ShellKind, WindowSnapshot};
+use spiders_shared::snapshot::WindowSnapshot;
+use spiders_shared::types::ShellKind;
 use thiserror::Error;
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -156,7 +157,7 @@ mod tests {
             role: Some("browser".into()),
             window_type: Some("normal".into()),
             mapped: true,
-            mode: spiders_shared::wm::WindowMode::Tiled,
+            mode: spiders_shared::types::WindowMode::Tiled,
             focused: false,
             urgent: false,
             output_id: Some(OutputId::from("HDMI-A-1")),

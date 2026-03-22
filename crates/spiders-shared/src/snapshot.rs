@@ -1,70 +1,12 @@
 use serde::{Deserialize, Serialize};
 
-use spiders_tree::{LayoutRect, LayoutSpace, OutputId, WindowId, WorkspaceId};
-use crate::runtime::{
+use spiders_tree::{LayoutSpace, OutputId, WindowId, WorkspaceId};
+use crate::runtime::layout_context::{
     LayoutEvaluationContext, LayoutMonitorContext, LayoutStateContext, LayoutWindowContext,
-    LayoutWorkspaceContext, SelectedLayout,
+    LayoutWorkspaceContext,
 };
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum ShellKind {
-    XdgToplevel,
-    X11,
-    Unknown,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum OutputTransform {
-    Normal,
-    Rotate90,
-    Rotate180,
-    Rotate270,
-    Flipped,
-    Flipped90,
-    Flipped180,
-    Flipped270,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct LayoutRef {
-    pub name: String,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "kebab-case")]
-pub enum WindowMode {
-    Tiled,
-    Floating {
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        rect: Option<LayoutRect>,
-    },
-    Fullscreen,
-}
-
-impl Default for WindowMode {
-    fn default() -> Self {
-        Self::Tiled
-    }
-}
-
-impl WindowMode {
-    pub fn is_floating(self) -> bool {
-        matches!(self, Self::Floating { .. })
-    }
-
-    pub fn is_fullscreen(self) -> bool {
-        matches!(self, Self::Fullscreen)
-    }
-
-    pub fn floating_rect(self) -> Option<LayoutRect> {
-        match self {
-            Self::Floating { rect } => rect,
-            Self::Tiled | Self::Fullscreen => None,
-        }
-    }
-}
+use crate::runtime::prepared_layout::SelectedLayout;
+use crate::types::{LayoutRef, OutputTransform, ShellKind, WindowMode};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WindowSnapshot {
@@ -87,34 +29,6 @@ pub struct WindowSnapshot {
 }
 
 impl WindowSnapshot {
-    pub fn set_mode(&mut self, mode: WindowMode) {
-        self.mode = mode;
-    }
-
-    pub fn is_floating(&self) -> bool {
-        self.mode.is_floating()
-    }
-
-    pub fn is_fullscreen(&self) -> bool {
-        self.mode.is_fullscreen()
-    }
-
-    pub fn floating_rect(&self) -> Option<LayoutRect> {
-        self.mode.floating_rect()
-    }
-
-    pub fn set_floating_rect(&mut self, rect: Option<LayoutRect>) {
-        match rect {
-            Some(rect) => {
-                self.mode = WindowMode::Floating { rect: Some(rect) };
-            }
-            None => {
-                if self.is_floating() {
-                    self.mode = WindowMode::Tiled;
-                }
-            }
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -171,17 +85,11 @@ impl StateSnapshot {
             .and_then(|output_id| self.outputs.iter().find(|output| &output.id == output_id))
     }
 
-    pub fn workspace_by_id(&self, workspace_id: &WorkspaceId) -> Option<&WorkspaceSnapshot> {
-        self.workspaces
-            .iter()
-            .find(|workspace| &workspace.id == workspace_id)
-    }
-
     pub fn output_by_id(&self, output_id: &OutputId) -> Option<&OutputSnapshot> {
         self.outputs.iter().find(|output| &output.id == output_id)
     }
 
-    pub fn windows_for_workspace(&self, workspace: &WorkspaceSnapshot) -> Vec<WindowSnapshot> {
+    fn windows_for_workspace(&self, workspace: &WorkspaceSnapshot) -> Vec<WindowSnapshot> {
         self.windows
             .iter()
             .filter(|window| {
@@ -199,7 +107,7 @@ impl StateSnapshot {
             .collect()
     }
 
-    pub fn layout_space_for_workspace(&self, workspace: &WorkspaceSnapshot) -> LayoutSpace {
+    fn layout_space_for_workspace(&self, workspace: &WorkspaceSnapshot) -> LayoutSpace {
         let output = workspace
             .output_id
             .as_ref()
@@ -264,8 +172,8 @@ impl StateSnapshot {
                         ShellKind::Unknown => "unknown".into(),
                     }),
                     window_type: window.window_type.clone(),
-                    floating: window.is_floating(),
-                    fullscreen: window.is_fullscreen(),
+                    floating: window.mode.is_floating(),
+                    fullscreen: window.mode.is_fullscreen(),
                     focused: window.focused,
                 })
                 .collect(),

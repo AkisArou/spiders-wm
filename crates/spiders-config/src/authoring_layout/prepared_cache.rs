@@ -1,4 +1,5 @@
-use spiders_shared::runtime::{AuthoringLayoutRuntime, RuntimeRefreshSummary};
+use spiders_shared::runtime::runtime_contract::AuthoringLayoutRuntime;
+use spiders_shared::runtime::runtime_error::{RuntimeError, RuntimeRefreshSummary};
 
 use crate::authoring_layout::AuthoringLayoutServiceError;
 use crate::model::{Config, ConfigPaths};
@@ -49,7 +50,7 @@ where
     R: AuthoringLayoutRuntime<Config = Config>,
 {
     let Some(paths) = paths else {
-        return Err(spiders_shared::runtime::RuntimeError::Other {
+        return Err(RuntimeError::Other {
             message: "prepared config reload requires configured paths".into(),
         }
         .into());

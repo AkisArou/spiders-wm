@@ -4,15 +4,16 @@ use spiders_scene::ast::ValidatedLayoutTree;
 use spiders_scene::{LayoutSnapshotNode, SceneRequest};
 use spiders_scene::pipeline::SceneCache;
 use spiders_tree::{LayoutNodeMeta, RemainingTake, ResolvedLayoutNode, SlotTake, SourceLayoutNode, WindowId};
-use spiders_shared::runtime::PreparedStylesheet;
-use spiders_shared::wm::{LayoutRef, WindowSnapshot};
+use spiders_shared::runtime::prepared_layout::PreparedStylesheet;
+use spiders_shared::snapshot::WindowSnapshot;
+use spiders_shared::types::LayoutRef;
 use spiders_runtime_js::DefaultLayoutRuntime;
 
 use crate::model::WmState;
 
 const FALLBACK_HORIZONTAL_STYLESHEET: &str = "workspace { display: flex; flex-direction: row; width: 100%; height: 100%; } group { display: flex; flex-direction: row; width: 100%; height: 100%; } window { flex-grow: 1; flex-basis: 0; height: 100%; }";
 
-fn selected_layout_name(config: &Config, state: &spiders_shared::wm::StateSnapshot) -> Option<String> {
+fn selected_layout_name(config: &Config, state: &spiders_shared::snapshot::StateSnapshot) -> Option<String> {
     let workspace = state.current_workspace()?;
 
     if let Some(output_id) = workspace.output_id.as_ref()
@@ -58,7 +59,7 @@ fn default_source_layout_tree() -> SourceLayoutNode {
     }
 }
 
-fn visible_window_snapshots(state: &spiders_shared::wm::StateSnapshot, window_ids: &[WindowId]) -> Vec<WindowSnapshot> {
+fn visible_window_snapshots(state: &spiders_shared::snapshot::StateSnapshot, window_ids: &[WindowId]) -> Vec<WindowSnapshot> {
     window_ids
         .iter()
         .filter_map(|window_id| state.windows.iter().find(|window| &window.id == window_id).cloned())
@@ -67,7 +68,7 @@ fn visible_window_snapshots(state: &spiders_shared::wm::StateSnapshot, window_id
 
 fn resolved_layout_root(
     source_tree: SourceLayoutNode,
-    state: &spiders_shared::wm::StateSnapshot,
+    state: &spiders_shared::snapshot::StateSnapshot,
     window_ids: &[WindowId],
 ) -> ResolvedLayoutNode {
     let windows = visible_window_snapshots(state, window_ids);
@@ -158,7 +159,7 @@ mod tests {
     use spiders_config::model::Config;
     use spiders_tree::{MatchClause, MatchKey, OutputId, WindowMatch};
 
-    fn fixture_state() -> spiders_shared::wm::StateSnapshot {
+    fn fixture_state() -> spiders_shared::snapshot::StateSnapshot {
         let config = Config {
             workspaces: vec!["1".into()],
             ..Config::default()

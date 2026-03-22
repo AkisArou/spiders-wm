@@ -1,7 +1,8 @@
 use serde::{Deserialize, Serialize};
 
 use spiders_tree::{LayoutRect, OutputId, WindowId, WorkspaceId};
-use crate::wm::{LayoutRef, OutputSnapshot, StateSnapshot, WindowSnapshot, WorkspaceSnapshot};
+use crate::snapshot::{OutputSnapshot, StateSnapshot, WindowSnapshot, WorkspaceSnapshot};
+use crate::types::LayoutRef;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]

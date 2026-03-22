@@ -1,12 +1,13 @@
 use std::fs;
 
-use spiders_shared::runtime::{
-    AuthoringLayoutRuntime, LayoutModuleContract, PreparedLayout, PreparedLayoutRuntime,
-    RuntimeError, RuntimeRefreshSummary, SelectedLayout,
+use spiders_shared::runtime::layout_context::LayoutEvaluationContext;
+use spiders_shared::runtime::prepared_layout::{PreparedLayout, SelectedLayout};
+use spiders_shared::runtime::runtime_contract::{AuthoringLayoutRuntime, LayoutModuleContract, PreparedLayoutRuntime};
+use spiders_shared::runtime::runtime_error::{RuntimeError, RuntimeRefreshSummary};
+use spiders_shared::snapshot::{
+    OutputSnapshot, StateSnapshot, WorkspaceSnapshot,
 };
-use spiders_shared::wm::{
-    LayoutRef, OutputSnapshot, OutputTransform, StateSnapshot, WorkspaceSnapshot,
-};
+use spiders_shared::types::{LayoutRef, OutputTransform};
 use spiders_tree::{OutputId, SourceLayoutNode, WorkspaceId};
 use tempfile::TempDir;
 
@@ -41,7 +42,7 @@ impl PreparedLayoutRuntime for StubRuntime {
         state: &StateSnapshot,
         workspace: &WorkspaceSnapshot,
         artifact: Option<&PreparedLayout>,
-    ) -> spiders_shared::runtime::LayoutEvaluationContext {
+    ) -> LayoutEvaluationContext {
         state.layout_context(
             workspace,
             artifact.map(|artifact| artifact.selected.clone()),
@@ -51,7 +52,7 @@ impl PreparedLayoutRuntime for StubRuntime {
     fn evaluate_layout(
         &self,
         _prepared_layout: &PreparedLayout,
-        _context: &spiders_shared::runtime::LayoutEvaluationContext,
+        _context: &LayoutEvaluationContext,
     ) -> Result<SourceLayoutNode, RuntimeError> {
         Ok(SourceLayoutNode::Workspace {
             meta: Default::default(),
@@ -128,7 +129,7 @@ impl PreparedLayoutRuntime for StubAuthoredRuntime {
         state: &StateSnapshot,
         workspace: &WorkspaceSnapshot,
         artifact: Option<&PreparedLayout>,
-    ) -> spiders_shared::runtime::LayoutEvaluationContext {
+    ) -> LayoutEvaluationContext {
         StubRuntime {
             loaded: None,
             error_message: None,
@@ -139,7 +140,7 @@ impl PreparedLayoutRuntime for StubAuthoredRuntime {
     fn evaluate_layout(
         &self,
         prepared_layout: &PreparedLayout,
-        context: &spiders_shared::runtime::LayoutEvaluationContext,
+        context: &LayoutEvaluationContext,
     ) -> Result<SourceLayoutNode, RuntimeError> {
         StubRuntime {
             loaded: None,

@@ -368,8 +368,8 @@ mod tests {
             output_id: Some(OutputId::from("out-1")),
             layout_name: Some("master-stack".into()),
             root: sample_tree(),
-            stylesheets: spiders_shared::runtime::PreparedStylesheets {
-                layout: Some(spiders_shared::runtime::PreparedStylesheet {
+            stylesheets: spiders_shared::runtime::prepared_layout::PreparedStylesheets {
+                layout: Some(spiders_shared::runtime::prepared_layout::PreparedStylesheet {
                     path: "layouts/master-stack/index.css".into(),
                     source:
                         "workspace { display: flex; width: 320px; height: 200px; } #main { width: 100px; }"
@@ -478,8 +478,8 @@ mod tests {
             output_id: Some(OutputId::from("out-1")),
             layout_name: Some("master-stack".into()),
             root: sample_tree(),
-            stylesheets: spiders_shared::runtime::PreparedStylesheets {
-                layout: Some(spiders_shared::runtime::PreparedStylesheet {
+            stylesheets: spiders_shared::runtime::prepared_layout::PreparedStylesheets {
+                layout: Some(spiders_shared::runtime::prepared_layout::PreparedStylesheet {
                     path: "layouts/master-stack/index.css".into(),
                     source: stylesheet.into(),
                 }),
@@ -505,8 +505,8 @@ mod tests {
             output_id: Some(OutputId::from("out-1")),
             layout_name: Some("master-stack".into()),
             root: sample_tree(),
-            stylesheets: spiders_shared::runtime::PreparedStylesheets {
-                layout: Some(spiders_shared::runtime::PreparedStylesheet {
+            stylesheets: spiders_shared::runtime::prepared_layout::PreparedStylesheets {
+                layout: Some(spiders_shared::runtime::prepared_layout::PreparedStylesheet {
                     path: "layouts/master-stack/index.css".into(),
                     source:
                         "workspace { display: flex; width: 320px; height: 200px; } #main { width: 100px; }"
@@ -520,8 +520,8 @@ mod tests {
         };
 
         let request_b = SceneRequest {
-            stylesheets: spiders_shared::runtime::PreparedStylesheets {
-                layout: Some(spiders_shared::runtime::PreparedStylesheet {
+            stylesheets: spiders_shared::runtime::prepared_layout::PreparedStylesheets {
+                layout: Some(spiders_shared::runtime::prepared_layout::PreparedStylesheet {
                     path: "layouts/master-stack/index.css".into(),
                     source:
                         "workspace { display: flex; width: 320px; height: 200px; } #main { width: 200px; }"

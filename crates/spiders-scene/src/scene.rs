@@ -1,5 +1,5 @@
 use spiders_tree::{LayoutNodeMeta, LayoutRect, LayoutSpace, OutputId, ResolvedLayoutNode, WindowId, WorkspaceId};
-use spiders_shared::runtime::PreparedStylesheets;
+use spiders_shared::runtime::prepared_layout::PreparedStylesheets;
 use crate::style::ComputedStyle;
 
 #[derive(Debug, Clone, PartialEq)]

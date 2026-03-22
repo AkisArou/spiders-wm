@@ -1,4 +1,5 @@
-use spiders_shared::wm::{ShellKind, WindowMode, WindowSnapshot};
+use spiders_shared::snapshot::WindowSnapshot;
+use spiders_shared::types::{ShellKind, WindowMode};
 use spiders_tree::WindowId;
 use spiders_tree::{LayoutNodeMeta, LayoutNodeType, MatchClause, MatchKey, RemainingTake};
 

@@ -93,7 +93,7 @@ impl RiverBackendState {
             };
 
             match &entry.mode {
-                spiders_shared::wm::WindowMode::Tiled => {
+                spiders_shared::types::WindowMode::Tiled => {
                     window.proxy.set_tiled(
                         river_window_v1::Edges::Top
                             | river_window_v1::Edges::Bottom
@@ -102,13 +102,13 @@ impl RiverBackendState {
                     );
                     window.proxy.inform_not_fullscreen();
                 }
-                spiders_shared::wm::WindowMode::Floating { .. } => {
+                spiders_shared::types::WindowMode::Floating { .. } => {
                     window.proxy.set_tiled(river_window_v1::Edges::None);
                     window.proxy.inform_not_fullscreen();
                     window.proxy.propose_dimensions(entry.width, entry.height);
                     window.node.set_position(entry.x, entry.y);
                 }
-                spiders_shared::wm::WindowMode::Fullscreen => {
+                spiders_shared::types::WindowMode::Fullscreen => {
                     window.proxy.set_tiled(river_window_v1::Edges::None);
                     window.proxy.inform_fullscreen();
                     window.proxy.propose_dimensions(entry.width, entry.height);

@@ -154,7 +154,7 @@ impl RiverBackendState {
         let base_workspace = snapshot.current_workspace().cloned();
 
         for layout in &self.config.layouts {
-            let workspace = base_workspace.clone().unwrap_or(spiders_shared::wm::WorkspaceSnapshot {
+            let workspace = base_workspace.clone().unwrap_or(spiders_shared::snapshot::WorkspaceSnapshot {
                 id: spiders_tree::WorkspaceId::from("warmup"),
                 name: "warmup".into(),
                 output_id: None,
@@ -164,7 +164,7 @@ impl RiverBackendState {
                 effective_layout: None,
             });
             let mut workspace = workspace;
-            workspace.effective_layout = Some(spiders_shared::wm::LayoutRef {
+            workspace.effective_layout = Some(spiders_shared::types::LayoutRef {
                 name: layout.name.clone(),
             });
 
@@ -1075,7 +1075,7 @@ impl RiverBackendState {
             is_new: false,
             closed: false,
             mapped: true,
-            mode: spiders_shared::wm::WindowMode::Tiled,
+            mode: spiders_shared::types::WindowMode::Tiled,
             focused: false,
             x: 0,
             y: 0,
@@ -1115,7 +1115,7 @@ impl RiverBackendState {
             is_new: false,
             closed: false,
             mapped: true,
-            mode: spiders_shared::wm::WindowMode::Tiled,
+            mode: spiders_shared::types::WindowMode::Tiled,
             focused: false,
             x: 0,
             y: 0,
@@ -1126,7 +1126,7 @@ impl RiverBackendState {
 
         let mode = configured_mode_for_window(&config, &window);
 
-        assert_eq!(mode, Some(spiders_shared::wm::WindowMode::Fullscreen));
+        assert_eq!(mode, Some(spiders_shared::types::WindowMode::Fullscreen));
     }
 
     #[test]
@@ -1135,7 +1135,7 @@ impl RiverBackendState {
         state.insert_window("win-1".into());
         state.set_window_mode(
             &"win-1".into(),
-            spiders_shared::wm::WindowMode::Floating {
+            spiders_shared::types::WindowMode::Floating {
                 rect: Some(LayoutRect {
                     x: 10.0,
                     y: 20.0,
@@ -1145,7 +1145,7 @@ impl RiverBackendState {
             },
         );
         state.set_window_geometry(&"win-1".into(), 10, 20, 300, 200);
-        state.set_window_mode(&"win-1".into(), spiders_shared::wm::WindowMode::Fullscreen);
+        state.set_window_mode(&"win-1".into(), spiders_shared::types::WindowMode::Fullscreen);
 
         let window = state.windows.get(&"win-1".into()).unwrap();
 

@@ -1,6 +1,5 @@
-use spiders_shared::runtime::{
-    PreparedLayout, PreparedStylesheet, PreparedStylesheets, RuntimeError, SelectedLayout,
-};
+use spiders_shared::runtime::prepared_layout::{PreparedLayout, PreparedStylesheet, PreparedStylesheets, SelectedLayout};
+use spiders_shared::runtime::runtime_error::RuntimeError;
 
 use spiders_config::model::{Config, LayoutConfigError, LayoutDefinition};
 
@@ -64,7 +63,7 @@ pub trait JsLayoutSourceLoader: std::fmt::Debug {
     fn load_runtime_source(
         &self,
         config: &Config,
-        workspace: &spiders_shared::wm::WorkspaceSnapshot,
+        workspace: &spiders_shared::snapshot::WorkspaceSnapshot,
     ) -> Result<Option<PreparedLayout>, RuntimeError>;
 }
 
@@ -109,7 +108,7 @@ impl JsLayoutSourceLoader for InlineLayoutSourceLoader {
     fn load_runtime_source(
         &self,
         config: &Config,
-        workspace: &spiders_shared::wm::WorkspaceSnapshot,
+        workspace: &spiders_shared::snapshot::WorkspaceSnapshot,
     ) -> Result<Option<PreparedLayout>, RuntimeError> {
         let Some(selected_layout) =
             config
@@ -163,7 +162,7 @@ impl JsLayoutSourceLoader for FsLayoutSourceLoader {
     fn load_runtime_source(
         &self,
         config: &Config,
-        workspace: &spiders_shared::wm::WorkspaceSnapshot,
+        workspace: &spiders_shared::snapshot::WorkspaceSnapshot,
     ) -> Result<Option<PreparedLayout>, RuntimeError> {
         let Some(layout) = config.selected_layout(workspace) else {
             return Ok(None);
@@ -181,7 +180,7 @@ impl JsLayoutSourceLoader for RuntimeProjectLayoutSourceLoader {
     fn load_runtime_source(
         &self,
         config: &Config,
-        workspace: &spiders_shared::wm::WorkspaceSnapshot,
+        workspace: &spiders_shared::snapshot::WorkspaceSnapshot,
     ) -> Result<Option<PreparedLayout>, RuntimeError> {
         let Some(layout) = config.selected_layout(workspace) else {
             return Ok(None);
@@ -258,7 +257,8 @@ mod tests {
     use std::path::PathBuf;
 
     use spiders_tree::{OutputId, WorkspaceId};
-    use spiders_shared::wm::{LayoutRef, WorkspaceSnapshot};
+    use spiders_shared::snapshot::WorkspaceSnapshot;
+    use spiders_shared::types::LayoutRef;
 
     use super::*;
     use crate::payload::decode_runtime_graph_payload;

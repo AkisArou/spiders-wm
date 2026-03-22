@@ -1,6 +1,7 @@
 use std::collections::BTreeSet;
 
-use spiders_shared::wm::{ShellKind, WindowSnapshot};
+use spiders_shared::snapshot::WindowSnapshot;
+use spiders_shared::types::ShellKind;
 use thiserror::Error;
 
 use crate::ast::validate::ValidatedLayoutTree;

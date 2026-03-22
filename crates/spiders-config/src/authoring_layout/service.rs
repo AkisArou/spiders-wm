@@ -1,9 +1,11 @@
 use std::collections::BTreeMap;
 
-use spiders_shared::runtime::{
-    AuthoringLayoutRuntime, LayoutEvaluationContext, PreparedLayout, RuntimeError,
-};
-use spiders_shared::wm::{LayoutRef, StateSnapshot, WorkspaceSnapshot};
+use spiders_shared::runtime::layout_context::LayoutEvaluationContext;
+use spiders_shared::runtime::prepared_layout::PreparedLayout;
+use spiders_shared::runtime::runtime_contract::AuthoringLayoutRuntime;
+use spiders_shared::runtime::runtime_error::RuntimeError;
+use spiders_shared::snapshot::{StateSnapshot, WorkspaceSnapshot};
+use spiders_shared::types::LayoutRef;
 use spiders_tree::{SourceLayoutNode, WorkspaceId};
 
 use super::config_paths;
@@ -69,7 +71,7 @@ where
         &self,
         paths: &ConfigPaths,
     ) -> Result<
-        (Config, Option<spiders_shared::runtime::RuntimeRefreshSummary>),
+        (Config, Option<spiders_shared::runtime::runtime_error::RuntimeRefreshSummary>),
         AuthoringLayoutServiceError,
     > {
         prepared_cache::load_config_with_cache_update(&self.runtime, paths)
@@ -86,7 +88,7 @@ where
         &self,
         paths: &ConfigPaths,
         _config: &Config,
-    ) -> Result<spiders_shared::runtime::RuntimeRefreshSummary, AuthoringLayoutServiceError> {
+    ) -> Result<spiders_shared::runtime::runtime_error::RuntimeRefreshSummary, AuthoringLayoutServiceError> {
         prepared_cache::write_prepared_config(&self.runtime, paths)
     }
 
