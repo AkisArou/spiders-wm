@@ -1,5 +1,5 @@
 use super::compile::{BoxSide, CompiledDeclaration};
-use super::values::*;
+use crate::style::*;
 
 pub(crate) trait ApplyCompiledDeclaration {
     fn apply(&mut self, declaration: CompiledDeclaration);
@@ -124,12 +124,7 @@ impl ApplyCompiledDeclaration for ComputedStyle {
     }
 }
 
-
-
-fn merge_grid_line(
-    target: &mut Option<Line<GridPlacementValue>>,
-    value: Line<GridPlacementValue>,
-) {
+fn merge_grid_line(target: &mut Option<Line<GridPlacementValue>>, value: Line<GridPlacementValue>) {
     match target {
         Some(existing) => {
             if !matches!(value.start, GridPlacementValue::Auto) {
@@ -142,7 +137,3 @@ fn merge_grid_line(
         None => *target = Some(value),
     }
 }
-
-
-
-

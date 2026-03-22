@@ -3,7 +3,7 @@ use thiserror::Error;
 use super::grid::*;
 use super::parse_values::*;
 
-use super::values::{
+use crate::style::{
     AlignmentValue, BoxEdges, BoxSizingValue, ContentAlignmentValue, Display, FlexDirectionValue,
     FlexWrapValue, GridAutoFlow, GridPlacementValue, GridTemplate, GridTemplateArea,
     GridTrackValue, LengthPercentage, Line, OverflowValue, PositionValue, Size2, SizeValue,
@@ -499,7 +499,7 @@ fn parse_axis_gap_direct(
             return Err(CssValueError::UnsupportedValue {
                 property: property.into(),
                 value: value.text.clone(),
-            })
+            });
         }
     };
 

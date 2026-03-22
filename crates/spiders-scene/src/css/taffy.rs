@@ -14,12 +14,11 @@ use taffy::style::{
     GridTemplateArea as TaffyGridTemplateArea,
     GridTemplateRepetition as TaffyGridTemplateRepetition,
     LengthPercentage as TaffyLengthPercentage, LengthPercentageAuto as TaffyLengthPercentageAuto,
-    Overflow as TaffyOverflow,
-    Style as TaffyStyle,
+    Overflow as TaffyOverflow, Style as TaffyStyle,
 };
 
+use crate::style::*;
 use spiders_tree::ResolvedLayoutNode;
-use super::values::*;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct NodeComputedStyle {
@@ -362,9 +361,7 @@ fn map_grid_template_component(
     }
 }
 
-fn map_grid_track_repeat(
-    repetition: &GridTrackRepeat,
-) -> TaffyGridTemplateRepetition<String> {
+fn map_grid_track_repeat(repetition: &GridTrackRepeat) -> TaffyGridTemplateRepetition<String> {
     TaffyGridTemplateRepetition {
         count: map_grid_repetition_count(repetition.count),
         tracks: repetition

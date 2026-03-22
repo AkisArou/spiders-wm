@@ -8,7 +8,8 @@ use cssparser::{
 use super::compile::*;
 use super::parse_values::*;
 use super::tokenizer::parse_component_values;
-use super::values::*;
+use crate::style::*;
+
 #[derive(Default)]
 pub(super) struct GridFallbackDeclarationParser;
 
@@ -24,8 +25,9 @@ impl<'i> DeclarationParser<'i> for GridFallbackDeclarationParser {
     ) -> Result<Self::Declaration, cssparser::ParseError<'i, Self::Error>> {
         let property = name.to_ascii_lowercase();
         if !super::parsing::SUPPORTED_PROPERTIES.contains(&property.as_str()) {
-            return Err(input
-            .new_custom_error(super::parsing::CssParseError::UnsupportedProperty { property }));
+            return Err(input.new_custom_error(
+                super::parsing::CssParseError::UnsupportedProperty { property },
+            ));
         }
 
         let value_start = input.state();
@@ -82,7 +84,7 @@ pub(super) fn parse_grid_fallback_declarations(
                         line: err.location.line,
                         column: err.location.column,
                     },
-                })
+                });
             }
         }
     }
@@ -363,13 +365,13 @@ pub(super) fn parse_grid_placement(
         [CssValueToken::Ident(span), CssValueToken::Ident(name)] if span == "span" => {
             Ok(GridPlacementValue::NamedSpan(name.clone(), 1))
         }
-        [CssValueToken::Ident(span), CssValueToken::Integer(number), CssValueToken::Ident(name)]
-            if span == "span" =>
-        {
-            u16::try_from(*number)
-                .map(|count| GridPlacementValue::NamedSpan(name.clone(), count))
-                .map_err(|_| invalid_value(property, text_for_value(value)))
-        }
+        [
+            CssValueToken::Ident(span),
+            CssValueToken::Integer(number),
+            CssValueToken::Ident(name),
+        ] if span == "span" => u16::try_from(*number)
+            .map(|count| GridPlacementValue::NamedSpan(name.clone(), count))
+            .map_err(|_| invalid_value(property, text_for_value(value))),
         [CssValueToken::Ident(span), CssValueToken::Number(number)]
             if span == "span" && number.fract() == 0.0 =>
         {
@@ -377,13 +379,13 @@ pub(super) fn parse_grid_placement(
                 .map(GridPlacementValue::Span)
                 .map_err(|_| invalid_value(property, text_for_value(value)))
         }
-        [CssValueToken::Ident(span), CssValueToken::Number(number), CssValueToken::Ident(name)]
-            if span == "span" && number.fract() == 0.0 =>
-        {
-            u16::try_from(*number as i64)
-                .map(|count| GridPlacementValue::NamedSpan(name.clone(), count))
-                .map_err(|_| invalid_value(property, text_for_value(value)))
-        }
+        [
+            CssValueToken::Ident(span),
+            CssValueToken::Number(number),
+            CssValueToken::Ident(name),
+        ] if span == "span" && number.fract() == 0.0 => u16::try_from(*number as i64)
+            .map(|count| GridPlacementValue::NamedSpan(name.clone(), count))
+            .map_err(|_| invalid_value(property, text_for_value(value))),
         [CssValueToken::Ident(name)] => Ok(GridPlacementValue::NamedLine(name.clone(), 1)),
         [CssValueToken::Ident(name), CssValueToken::Integer(index)] => i16::try_from(*index)
             .map(|line_index| GridPlacementValue::NamedLine(name.clone(), line_index))

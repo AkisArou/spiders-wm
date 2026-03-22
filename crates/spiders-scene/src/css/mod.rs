@@ -4,29 +4,24 @@ mod compiled;
 mod grid;
 mod parse_values;
 mod parsing;
-mod stylo_compile;
 pub(crate) mod stylo_adapter;
+mod stylo_compile;
 mod taffy;
 mod tokenizer;
-mod values;
 
-pub use compile::{
-    CssValueError,
-};
-pub use compiled::*;
+pub use crate::style::*;
 pub use crate::style_calc::compute_style;
-pub use parsing::{parse_stylesheet, CssParseError};
-pub use taffy::{
-    map_computed_style_to_taffy, NodeComputedStyle, StyledLayoutTree,
-};
-pub use values::*;
+pub use compile::CssValueError;
+pub use compiled::*;
+pub use parsing::{CssParseError, parse_stylesheet};
+pub use taffy::{NodeComputedStyle, StyledLayoutTree, map_computed_style_to_taffy};
 
 #[cfg(test)]
 mod tests {
+    use super::stylo_adapter::parse_selector_list;
     use super::*;
     use crate::css::compile::CompiledDeclaration;
     use crate::css_matching::{matching_rules, selector_matches};
-    use super::stylo_adapter::parse_selector_list;
     use spiders_tree::WindowId;
     use spiders_tree::{LayoutNodeMeta, ResolvedLayoutNode};
 
@@ -359,10 +354,9 @@ mod tests {
 
     #[test]
     fn merges_grid_line_side_declarations_into_single_line() {
-        let sheet = parse_stylesheet(
-            "window { grid-column-start: left; grid-column-end: span 2 right; }",
-        )
-        .unwrap();
+        let sheet =
+            parse_stylesheet("window { grid-column-start: left; grid-column-end: span 2 right; }")
+                .unwrap();
         let node = runtime_window_with_meta(LayoutNodeMeta::default());
         let style = compute_style(&sheet, &node).unwrap();
 

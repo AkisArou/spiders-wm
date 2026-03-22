@@ -5,16 +5,16 @@ use style::values::generics::grid::{
     TrackListValue as StyloTrackListValue, TrackRepeat as StyloTrackRepeat,
     TrackSize as StyloTrackSize,
 };
+use style::values::specified::GridLine as StyloGridLine;
 use style::values::specified::position::{
     GridAutoFlow as StyloGridAutoFlow, GridTemplateAreas as StyloGridTemplateAreas,
 };
-use style::values::specified::GridLine as StyloGridLine;
 use style::values::specified::{
     Integer as StyloInteger, LengthPercentage as StyloLengthPercentage,
 };
 use style_traits::values::ToCss;
 
-use super::compile::{compile_declaration, CompiledDeclaration};
+use super::compile::{CompiledDeclaration, compile_declaration};
 use super::parse_values::{CssValue, ParsedDeclaration};
 use super::parsing::CssParseError;
 use super::tokenizer::parse_value_tokens;
@@ -105,14 +105,14 @@ pub(super) fn compile_stylo_declaration(
 fn compile_grid_auto_flow(value: &StyloGridAutoFlow) -> Result<CompiledDeclaration, CssParseError> {
     let flow = if value.intersects(StyloGridAutoFlow::COLUMN) {
         if value.intersects(StyloGridAutoFlow::DENSE) {
-            super::values::GridAutoFlow::ColumnDense
+            crate::style::GridAutoFlow::ColumnDense
         } else {
-            super::values::GridAutoFlow::Column
+            crate::style::GridAutoFlow::Column
         }
     } else if value.intersects(StyloGridAutoFlow::DENSE) {
-        super::values::GridAutoFlow::RowDense
+        crate::style::GridAutoFlow::RowDense
     } else {
-        super::values::GridAutoFlow::Row
+        crate::style::GridAutoFlow::Row
     };
     Ok(CompiledDeclaration::GridAutoFlow(flow))
 }
@@ -122,18 +122,18 @@ fn compile_grid_line_side(
     value: &StyloGridLine,
 ) -> Result<CompiledDeclaration, CssParseError> {
     let placement = if value.is_auto() {
-        super::values::GridPlacementValue::Auto
+        crate::style::GridPlacementValue::Auto
     } else if value.is_span {
         if value.ident.0.is_empty() {
-            super::values::GridPlacementValue::Span(value.line_num.value().max(1) as u16)
+            crate::style::GridPlacementValue::Span(value.line_num.value().max(1) as u16)
         } else {
-            super::values::GridPlacementValue::NamedSpan(
+            crate::style::GridPlacementValue::NamedSpan(
                 value.ident.to_css_string(),
                 value.line_num.value().max(1) as u16,
             )
         }
     } else if !value.ident.0.is_empty() {
-        super::values::GridPlacementValue::NamedLine(
+        crate::style::GridPlacementValue::NamedLine(
             value.ident.to_css_string(),
             if value.line_num.value() == 0 {
                 1
@@ -142,16 +142,16 @@ fn compile_grid_line_side(
             },
         )
     } else {
-        super::values::GridPlacementValue::Line(value.line_num.value() as i16)
+        crate::style::GridPlacementValue::Line(value.line_num.value() as i16)
     };
 
     let line = match property {
-        "grid-row-start" | "grid-column-start" => super::values::Line {
+        "grid-row-start" | "grid-column-start" => crate::style::Line {
             start: placement,
-            end: super::values::GridPlacementValue::Auto,
+            end: crate::style::GridPlacementValue::Auto,
         },
-        "grid-row-end" | "grid-column-end" => super::values::Line {
-            start: super::values::GridPlacementValue::Auto,
+        "grid-row-end" | "grid-column-end" => crate::style::Line {
+            start: crate::style::GridPlacementValue::Auto,
             end: placement,
         },
         _ => return Err(CssParseError::InvalidSyntax { line: 1, column: 1 }),
@@ -173,7 +173,7 @@ fn compile_grid_template_areas(
             .0
             .areas
             .iter()
-            .map(|area| super::values::GridTemplateArea {
+            .map(|area| crate::style::GridTemplateArea {
                 name: area.name.to_css_string(),
                 row_start: u16::try_from(area.rows.start).unwrap_or(u16::MAX),
                 row_end: u16::try_from(area.rows.end).unwrap_or(u16::MAX),
@@ -221,16 +221,16 @@ fn compile_grid_auto_tracks(
 
 fn compile_grid_track_list(
     value: &StyloTrackList<StyloLengthPercentage, StyloInteger>,
-) -> Result<super::values::GridTemplate, CssParseError> {
+) -> Result<crate::style::GridTemplate, CssParseError> {
     let components = value
         .values
         .iter()
         .map(|item| match item {
             StyloTrackListValue::TrackSize(size) => {
-                compile_grid_track_size(size).map(super::values::GridTemplateComponent::Single)
+                compile_grid_track_size(size).map(crate::style::GridTemplateComponent::Single)
             }
             StyloTrackListValue::TrackRepeat(repeat) => {
-                compile_grid_track_repeat(repeat).map(super::values::GridTemplateComponent::Repeat)
+                compile_grid_track_repeat(repeat).map(crate::style::GridTemplateComponent::Repeat)
             }
         })
         .collect::<Result<Vec<_>, _>>()?;
@@ -241,7 +241,7 @@ fn compile_grid_track_list(
         .map(|names| names.iter().map(|name| name.to_css_string()).collect())
         .collect();
 
-    Ok(super::values::GridTemplate {
+    Ok(crate::style::GridTemplate {
         components,
         line_names,
     })
@@ -249,13 +249,13 @@ fn compile_grid_track_list(
 
 fn compile_grid_track_repeat(
     value: &StyloTrackRepeat<StyloLengthPercentage, StyloInteger>,
-) -> Result<super::values::GridTrackRepeat, CssParseError> {
+) -> Result<crate::style::GridTrackRepeat, CssParseError> {
     let count = match value.count {
         StyloRepeatCount::Number(number) => {
-            super::values::GridRepetitionCount::Count(number.value().max(0) as u16)
+            crate::style::GridRepetitionCount::Count(number.value().max(0) as u16)
         }
-        StyloRepeatCount::AutoFill => super::values::GridRepetitionCount::AutoFill,
-        StyloRepeatCount::AutoFit => super::values::GridRepetitionCount::AutoFit,
+        StyloRepeatCount::AutoFill => crate::style::GridRepetitionCount::AutoFill,
+        StyloRepeatCount::AutoFit => crate::style::GridRepetitionCount::AutoFit,
     };
     let line_names = value
         .line_names
@@ -268,7 +268,7 @@ fn compile_grid_track_repeat(
         .map(compile_grid_track_size)
         .collect::<Result<Vec<_>, _>>()?;
 
-    Ok(super::values::GridTrackRepeat {
+    Ok(crate::style::GridTrackRepeat {
         count,
         line_names,
         tracks,
@@ -277,15 +277,15 @@ fn compile_grid_track_repeat(
 
 fn compile_grid_track_size(
     value: &StyloTrackSize<StyloLengthPercentage>,
-) -> Result<super::values::GridTrackValue, CssParseError> {
+) -> Result<crate::style::GridTrackValue, CssParseError> {
     match value {
         StyloTrackSize::Breadth(breadth) => compile_grid_track_breadth(breadth),
-        StyloTrackSize::Minmax(min, max) => Ok(super::values::GridTrackValue::MinMax(
+        StyloTrackSize::Minmax(min, max) => Ok(crate::style::GridTrackValue::MinMax(
             compile_grid_track_min_breadth(min)?,
             compile_grid_track_max_breadth(max)?,
         )),
         StyloTrackSize::FitContent(breadth) => match breadth {
-            StyloTrackBreadth::Breadth(length) => Ok(super::values::GridTrackValue::FitContent(
+            StyloTrackBreadth::Breadth(length) => Ok(crate::style::GridTrackValue::FitContent(
                 compile_length_percentage(length)?,
             )),
             _ => Err(CssParseError::InvalidSyntax { line: 1, column: 1 }),
@@ -295,62 +295,62 @@ fn compile_grid_track_size(
 
 fn compile_grid_track_breadth(
     value: &StyloTrackBreadth<StyloLengthPercentage>,
-) -> Result<super::values::GridTrackValue, CssParseError> {
+) -> Result<crate::style::GridTrackValue, CssParseError> {
     Ok(match value {
         StyloTrackBreadth::Breadth(length) => {
-            super::values::GridTrackValue::LengthPercentage(compile_length_percentage(length)?)
+            crate::style::GridTrackValue::LengthPercentage(compile_length_percentage(length)?)
         }
-        StyloTrackBreadth::Fr(fr) => super::values::GridTrackValue::Fraction(*fr),
-        StyloTrackBreadth::Auto => super::values::GridTrackValue::Auto,
-        StyloTrackBreadth::MinContent => super::values::GridTrackValue::MinContent,
-        StyloTrackBreadth::MaxContent => super::values::GridTrackValue::MaxContent,
+        StyloTrackBreadth::Fr(fr) => crate::style::GridTrackValue::Fraction(*fr),
+        StyloTrackBreadth::Auto => crate::style::GridTrackValue::Auto,
+        StyloTrackBreadth::MinContent => crate::style::GridTrackValue::MinContent,
+        StyloTrackBreadth::MaxContent => crate::style::GridTrackValue::MaxContent,
     })
 }
 
 fn compile_grid_track_min_breadth(
     value: &StyloTrackBreadth<StyloLengthPercentage>,
-) -> Result<super::values::GridTrackMinValue, CssParseError> {
+) -> Result<crate::style::GridTrackMinValue, CssParseError> {
     Ok(match value {
         StyloTrackBreadth::Breadth(length) => {
-            super::values::GridTrackMinValue::LengthPercentage(compile_length_percentage(length)?)
+            crate::style::GridTrackMinValue::LengthPercentage(compile_length_percentage(length)?)
         }
-        StyloTrackBreadth::Auto => super::values::GridTrackMinValue::Auto,
-        StyloTrackBreadth::MinContent => super::values::GridTrackMinValue::MinContent,
-        StyloTrackBreadth::MaxContent => super::values::GridTrackMinValue::MaxContent,
+        StyloTrackBreadth::Auto => crate::style::GridTrackMinValue::Auto,
+        StyloTrackBreadth::MinContent => crate::style::GridTrackMinValue::MinContent,
+        StyloTrackBreadth::MaxContent => crate::style::GridTrackMinValue::MaxContent,
         StyloTrackBreadth::Fr(_) => {
-            return Err(CssParseError::InvalidSyntax { line: 1, column: 1 })
+            return Err(CssParseError::InvalidSyntax { line: 1, column: 1 });
         }
     })
 }
 
 fn compile_grid_track_max_breadth(
     value: &StyloTrackBreadth<StyloLengthPercentage>,
-) -> Result<super::values::GridTrackMaxValue, CssParseError> {
+) -> Result<crate::style::GridTrackMaxValue, CssParseError> {
     Ok(match value {
         StyloTrackBreadth::Breadth(length) => {
-            super::values::GridTrackMaxValue::LengthPercentage(compile_length_percentage(length)?)
+            crate::style::GridTrackMaxValue::LengthPercentage(compile_length_percentage(length)?)
         }
-        StyloTrackBreadth::Fr(fr) => super::values::GridTrackMaxValue::Fraction(*fr),
-        StyloTrackBreadth::Auto => super::values::GridTrackMaxValue::Auto,
-        StyloTrackBreadth::MinContent => super::values::GridTrackMaxValue::MinContent,
-        StyloTrackBreadth::MaxContent => super::values::GridTrackMaxValue::MaxContent,
+        StyloTrackBreadth::Fr(fr) => crate::style::GridTrackMaxValue::Fraction(*fr),
+        StyloTrackBreadth::Auto => crate::style::GridTrackMaxValue::Auto,
+        StyloTrackBreadth::MinContent => crate::style::GridTrackMaxValue::MinContent,
+        StyloTrackBreadth::MaxContent => crate::style::GridTrackMaxValue::MaxContent,
     })
 }
 
 fn compile_length_percentage(
     value: &StyloLengthPercentage,
-) -> Result<super::values::LengthPercentage, CssParseError> {
+) -> Result<crate::style::LengthPercentage, CssParseError> {
     Ok(match value {
-        StyloLengthPercentage::Length(length) => super::values::LengthPercentage::Px(
+        StyloLengthPercentage::Length(length) => crate::style::LengthPercentage::Px(
             length
                 .to_computed_pixel_length_without_context()
                 .map_err(|_| CssParseError::InvalidSyntax { line: 1, column: 1 })?,
         ),
         StyloLengthPercentage::Percentage(percent) => {
-            super::values::LengthPercentage::Percent(percent.0 * 100.0)
+            crate::style::LengthPercentage::Percent(percent.0 * 100.0)
         }
         StyloLengthPercentage::Calc(_) => {
-            return Err(CssParseError::InvalidSyntax { line: 1, column: 1 })
+            return Err(CssParseError::InvalidSyntax { line: 1, column: 1 });
         }
     })
 }
