@@ -1,0 +1,34 @@
+use crate::css::{compute_style, map_computed_style_to_taffy, CssValueError, NodeComputedStyle, StyledLayoutTree};
+use spiders_tree::ResolvedLayoutNode;
+
+pub fn build_styled_layout_tree_from_sheet(
+    root: &ResolvedLayoutNode,
+    sheet: &crate::css::CompiledStyleSheet,
+) -> Result<StyledLayoutTree, CssValueError> {
+    Ok(StyledLayoutTree {
+        root: style_node(root, sheet)?,
+    })
+}
+
+fn style_node(
+    node: &ResolvedLayoutNode,
+    sheet: &crate::css::CompiledStyleSheet,
+) -> Result<NodeComputedStyle, CssValueError> {
+    let computed = compute_style(sheet, node)?;
+    let taffy_style = map_computed_style_to_taffy(&computed);
+    let children = match node {
+        ResolvedLayoutNode::Workspace { children, .. }
+        | ResolvedLayoutNode::Group { children, .. } => children
+            .iter()
+            .map(|child| style_node(child, sheet))
+            .collect::<Result<Vec<_>, _>>()?,
+        ResolvedLayoutNode::Window { .. } => Vec::new(),
+    };
+
+    Ok(NodeComputedStyle {
+        node: node.clone(),
+        computed,
+        taffy_style,
+        children,
+    })
+}

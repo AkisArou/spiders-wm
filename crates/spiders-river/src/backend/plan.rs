@@ -1,5 +1,5 @@
-use spiders_shared::ids::WindowId;
-use spiders_shared::ids::{OutputId, WorkspaceId};
+use spiders_tree::WindowId;
+use spiders_tree::{OutputId, WorkspaceId};
 use spiders_shared::wm::WindowMode;
 
 use crate::protocol::river_window_management_v1::river_window_v1;

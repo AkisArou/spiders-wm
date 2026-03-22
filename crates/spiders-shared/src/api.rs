@@ -1,7 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::ids::{OutputId, WindowId, WorkspaceId};
-use crate::layout::LayoutRect;
+use spiders_tree::{LayoutRect, OutputId, WindowId, WorkspaceId};
 use crate::wm::{LayoutRef, OutputSnapshot, StateSnapshot, WindowSnapshot, WorkspaceSnapshot};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

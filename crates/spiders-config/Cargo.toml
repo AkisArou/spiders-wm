@@ -9,6 +9,7 @@ publish.workspace = true
 anyhow.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-spiders-layout = { path = "../spiders-layout" }
+spiders-scene = { path = "../spiders-scene" }
 spiders-shared = { path = "../spiders-shared" }
+spiders-tree = { path = "../spiders-tree" }
 thiserror.workspace = true

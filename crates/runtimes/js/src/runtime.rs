@@ -1,19 +1,19 @@
 use std::collections::BTreeMap;
 
 use serde::Deserialize;
-use spiders_config::model::Config;
-use spiders_layout::ast::{
+use spiders_config::model::{Config, JavaScriptModule, JavaScriptModuleGraph};
+use spiders_scene::ast::{
     AuthoredLayoutNode, AuthoredNodeMeta, LayoutValidationError, ValidatedLayoutTree,
 };
-use spiders_shared::layout::{SlotTake, SourceLayoutNode};
 use spiders_shared::runtime::{
-    AuthoringLayoutRuntime, JavaScriptModule, JavaScriptModuleGraph, LayoutModuleContract,
-    PreparedLayout, PreparedLayoutRuntime, RuntimeError,
+    AuthoringLayoutRuntime, LayoutEvaluationContext, LayoutModuleContract, PreparedLayout,
+    PreparedLayoutRuntime, RuntimeError, SelectedLayout,
 };
-use spiders_shared::wm::{LayoutEvaluationContext, SelectedLayout};
+use spiders_tree::{SlotTake, SourceLayoutNode};
 
 use crate::loader::{InlineLayoutSourceLoader, JsLayoutSourceLoader};
 use crate::module_graph_runtime::call_entry_export_with_json_arg;
+use crate::payload::{decode_runtime_graph_payload, encode_runtime_graph_payload};
 
 #[cfg(test)]
 use crate::loader::FsLayoutSourceLoader;
@@ -297,10 +297,11 @@ impl PreparedLayoutRuntime for StubPreparedLayoutRuntime {
             })?
             .map(|selected| PreparedLayout {
                 selected,
-                runtime_graph: JavaScriptModuleGraph {
+                runtime_payload: encode_runtime_graph_payload(&JavaScriptModuleGraph {
                     entry: String::new(),
                     modules: Vec::new(),
-                },
+                }),
+                stylesheets: spiders_shared::runtime::PreparedStylesheets::default(),
             }))
     }
 
@@ -360,10 +361,11 @@ impl<L: JsLayoutSourceLoader> PreparedLayoutRuntime for QuickJsPreparedLayoutRun
         loaded_layout: &PreparedLayout,
         context: &LayoutEvaluationContext,
     ) -> Result<SourceLayoutNode, RuntimeError> {
+        let runtime_graph = decode_runtime_graph_payload(&loaded_layout.runtime_payload)?;
         self.evaluate_module_graph(
             &loaded_layout.selected,
             context,
-            &loaded_layout.runtime_graph,
+            &runtime_graph,
         )
         .map_err(|error| RuntimeError::Other {
             message: error.to_string(),
@@ -547,7 +549,7 @@ mod tests {
 
     use serde_json::json;
     use spiders_config::model::{Config, LayoutDefinition};
-    use spiders_shared::ids::{OutputId, WorkspaceId};
+    use spiders_tree::{OutputId, WorkspaceId};
     use spiders_shared::wm::{
         LayoutRef, OutputSnapshot, OutputTransform, StateSnapshot, WorkspaceSnapshot,
     };
@@ -605,9 +607,8 @@ mod tests {
             .evaluate_module_source(
                 &SelectedLayout {
                     name: "master-stack".into(),
+                    directory: "layouts/master-stack".into(),
                     module: "layouts/master-stack.js".into(),
-                    stylesheet: String::new(),
-                    effects_stylesheet: String::new(),
                 },
                 &state().layout_context(&workspace(), None),
                 "ctx => ({ type: 'workspace', children: [{ type: 'window', match: 'app_id=\"firefox\"' }] })",
@@ -671,9 +672,9 @@ mod tests {
         let config = Config {
             layouts: vec![LayoutDefinition {
                 name: "master-stack".into(),
+                directory: "layouts/master-stack".into(),
                 module: module_path.to_string_lossy().into_owned(),
-                stylesheet: String::new(),
-                effects_stylesheet: String::new(),
+                stylesheet_path: Some("layouts/master-stack/index.css".into()),
                 runtime_graph: None,
             }],
             ..Config::default()

@@ -21,7 +21,7 @@ Build `spiders-river` as a river-backed window manager client that reuses the ex
 
 - `crates/spiders-config`
 - `crates/runtimes/js`
-- `crates/spiders-layout`
+- `crates/spiders-scene`
 - `crates/spiders-shared`
 - `crates/spiders-ipc`
 

@@ -10,12 +10,11 @@ anyhow.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 spiders-config = { path = "../spiders-config" }
-spiders-wm = { path = "../spiders-wm", features = ["smithay-winit"] }
-spiders-effects = { path = "../spiders-effects" }
 spiders-ipc = { path = "../spiders-ipc" }
-spiders-layout = { path = "../spiders-layout" }
+spiders-scene = { path = "../spiders-scene" }
 spiders-runtime-js = { path = "../runtimes/js" }
 spiders-shared = { path = "../spiders-shared" }
+spiders-tree = { path = "../spiders-tree" }
 
 [[bin]]
 name = "spiders-cli"

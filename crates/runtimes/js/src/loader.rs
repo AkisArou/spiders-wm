@@ -1,7 +1,10 @@
-use spiders_shared::runtime::{PreparedLayout, RuntimeError};
-use spiders_shared::wm::SelectedLayout;
+use spiders_shared::runtime::{
+    PreparedLayout, PreparedStylesheet, PreparedStylesheets, RuntimeError, SelectedLayout,
+};
 
-use spiders_config::model::{Config, LayoutConfigError, LayoutDefinition};
+use spiders_config::model::{Config, JavaScriptModule, JavaScriptModuleGraph, LayoutConfigError, LayoutDefinition};
+
+use crate::payload::encode_runtime_graph_payload;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimePathResolver {
@@ -180,26 +183,40 @@ impl JsLayoutSourceLoader for RuntimeProjectLayoutSourceLoader {
 pub fn loaded_layout_definition(
     layout: &LayoutDefinition,
     module: String,
-    runtime_graph: spiders_shared::runtime::JavaScriptModuleGraph,
+    runtime_graph: JavaScriptModuleGraph,
 ) -> PreparedLayout {
     PreparedLayout {
         selected: SelectedLayout {
             name: layout.name.clone(),
+            directory: layout.directory.clone(),
             module,
-            stylesheet: layout.stylesheet.clone(),
-            effects_stylesheet: layout.effects_stylesheet.clone(),
         },
-        runtime_graph: layout.runtime_graph.clone().unwrap_or(runtime_graph),
+        runtime_payload: encode_runtime_graph_payload(
+            &layout.runtime_graph.clone().unwrap_or(runtime_graph),
+        ),
+        stylesheets: PreparedStylesheets {
+            layout: layout
+                .stylesheet_path
+                .as_ref()
+                .map(|path| load_stylesheet_asset(path)),
+        },
+    }
+}
+
+fn load_stylesheet_asset(path: &str) -> PreparedStylesheet {
+    PreparedStylesheet {
+        path: path.into(),
+        source: std::fs::read_to_string(path).unwrap_or_default(),
     }
 }
 
 fn single_module_graph(
     module: String,
     source: String,
-) -> spiders_shared::runtime::JavaScriptModuleGraph {
-    spiders_shared::runtime::JavaScriptModuleGraph {
+) -> JavaScriptModuleGraph {
+    JavaScriptModuleGraph {
         entry: module.clone(),
-        modules: vec![spiders_shared::runtime::JavaScriptModule {
+        modules: vec![JavaScriptModule {
             specifier: module,
             source: normalize_runtime_module_source(&source),
             resolved_imports: Default::default(),
@@ -224,10 +241,11 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
 
-    use spiders_shared::ids::{OutputId, WorkspaceId};
+    use spiders_tree::{OutputId, WorkspaceId};
     use spiders_shared::wm::{LayoutRef, WorkspaceSnapshot};
 
     use super::*;
+    use crate::payload::decode_runtime_graph_payload;
     use spiders_config::model::{Config, LayoutDefinition};
 
     fn workspace() -> WorkspaceSnapshot {
@@ -254,9 +272,9 @@ mod tests {
         let config = Config {
             layouts: vec![LayoutDefinition {
                 name: "master-stack".into(),
+                directory: "layouts/master-stack".into(),
                 module: "layouts/master-stack.js".into(),
-                stylesheet: "workspace { display: flex; }".into(),
-                effects_stylesheet: String::new(),
+                stylesheet_path: Some("layouts/master-stack/index.css".into()),
                 runtime_graph: None,
             }],
             ..Config::default()
@@ -280,9 +298,9 @@ mod tests {
         let config = Config {
             layouts: vec![LayoutDefinition {
                 name: "master-stack".into(),
+                directory: "layouts/master-stack".into(),
                 module: "layouts/master-stack.js".into(),
-                stylesheet: "workspace { display: flex; }".into(),
-                effects_stylesheet: String::new(),
+                stylesheet_path: Some("layouts/master-stack/index.css".into()),
                 runtime_graph: None,
             }],
             ..Config::default()
@@ -309,19 +327,20 @@ mod tests {
 
         let definition = LayoutDefinition {
             name: "master-stack".into(),
+            directory: "layouts/master-stack".into(),
             module: module_path.to_string_lossy().into_owned(),
-            stylesheet: "workspace { display: flex; }".into(),
-            effects_stylesheet: String::new(),
+            stylesheet_path: Some("layouts/master-stack/index.css".into()),
             runtime_graph: None,
         };
 
         let loaded = loader.load_definition(&definition).unwrap();
+        let loaded_graph = decode_runtime_graph_payload(&loaded.runtime_payload).unwrap();
 
         assert_eq!(loaded.selected.module, definition.module);
-        assert_eq!(loaded.runtime_graph.entry, definition.module);
-        assert_eq!(loaded.runtime_graph.modules.len(), 1);
+        assert_eq!(loaded_graph.entry, definition.module);
+        assert_eq!(loaded_graph.modules.len(), 1);
         assert_eq!(
-            loaded.runtime_graph.modules[0].source,
+            loaded_graph.modules[0].source,
             "export default (ctx => ({ type: 'workspace', children: [] }));"
         );
 
@@ -370,16 +389,17 @@ mod tests {
         ));
         let definition = LayoutDefinition {
             name: "master-stack".into(),
+            directory: "layouts/master-stack".into(),
             module: "layouts/master-stack.js".into(),
-            stylesheet: String::new(),
-            effects_stylesheet: String::new(),
+            stylesheet_path: Some("layouts/master-stack/index.css".into()),
             runtime_graph: None,
         };
 
         let loaded = loader.load_definition(&definition).unwrap();
+        let loaded_graph = decode_runtime_graph_payload(&loaded.runtime_payload).unwrap();
 
         assert_eq!(loaded.selected.module, module_path.to_string_lossy());
-        assert!(loaded.runtime_graph.modules[0].source.contains("workspace"));
+        assert!(loaded_graph.modules[0].source.contains("workspace"));
     }
 
     #[test]
@@ -394,19 +414,54 @@ mod tests {
         ));
         let definition = LayoutDefinition {
             name: "fallback".into(),
+            directory: "layouts/fallback".into(),
             module: "layouts/fallback.js".into(),
-            stylesheet: String::new(),
-            effects_stylesheet: String::new(),
+            stylesheet_path: Some("layouts/fallback/index.css".into()),
             runtime_graph: None,
         };
 
         let loaded = loader.load_definition(&definition).unwrap();
+        let loaded_graph = decode_runtime_graph_payload(&loaded.runtime_payload).unwrap();
 
         assert!(loaded.selected.module.ends_with("layouts/fallback.js"));
         assert!(
-            loaded.runtime_graph.modules[0]
+            loaded_graph.modules[0]
                 .source
                 .contains("fallback-group")
         );
+    }
+
+    #[test]
+    fn loaded_layout_definition_preserves_stylesheet_paths_when_source_missing() {
+        let missing_global = "/tmp/spiders-wm-missing-global.css";
+        let missing_layout = "/tmp/spiders-wm-missing-layout.css";
+        let definition = LayoutDefinition {
+            name: "master-stack".into(),
+            directory: "layouts/master-stack".into(),
+            module: "layouts/master-stack.js".into(),
+            stylesheet_path: Some(missing_layout.into()),
+            runtime_graph: None,
+        };
+        let config = Config {
+            layouts: vec![definition.clone()],
+            global_stylesheet_path: Some(missing_global.into()),
+            ..Config::default()
+        };
+
+        let loaded = loaded_layout_definition(
+            &definition,
+            definition.module.clone(),
+            single_module_graph(definition.module.clone(), "export default () => null".into()),
+        );
+
+        assert_eq!(
+            loaded.stylesheets.layout.as_ref().map(|sheet| sheet.path.as_str()),
+            Some(missing_layout)
+        );
+        assert_eq!(
+            loaded.stylesheets.layout.as_ref().map(|sheet| sheet.source.as_str()),
+            Some("")
+        );
+        assert_eq!(config.global_stylesheet_path.as_deref(), Some(missing_global));
     }
 }

@@ -1,5 +1,5 @@
 use spiders_shared::api::FocusDirection;
-use spiders_shared::ids::WindowId;
+use spiders_tree::WindowId;
 
 use crate::model::WmState;
 

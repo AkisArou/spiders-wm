@@ -49,7 +49,9 @@ Current layout CSS support includes:
 - `grid-row`, `grid-column`
 - `grid-row-start`, `grid-row-end`, `grid-column-start`, `grid-column-end`
 - named grid lines, named spans, and `repeat(...)`
-- `border-width`, `padding`, `margin`
+- `border-width`, `border-top-width`, `border-right-width`, `border-bottom-width`, `border-left-width`
+- `padding`, `padding-top`, `padding-right`, `padding-bottom`, `padding-left`
+- `margin`, `margin-top`, `margin-right`, `margin-bottom`, `margin-left`
 
 Unsupported properties should fail clearly instead of being ignored.
 

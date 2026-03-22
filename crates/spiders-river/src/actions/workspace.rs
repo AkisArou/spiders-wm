@@ -1,4 +1,4 @@
-use spiders_shared::ids::WorkspaceId;
+use spiders_tree::WorkspaceId;
 
 use crate::model::WmState;
 

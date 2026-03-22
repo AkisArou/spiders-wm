@@ -52,7 +52,7 @@ where
 #[cfg(test)]
 mod tests {
     use spiders_shared::api::{CompositorEvent, QueryRequest};
-    use spiders_shared::ids::WindowId;
+    use spiders_tree::WindowId;
 
     use crate::{IpcClientMessage, IpcEnvelope, IpcServerMessage, IpcSubscriptionTopic};
 

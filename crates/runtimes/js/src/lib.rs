@@ -3,6 +3,7 @@ pub mod compile;
 pub mod graph;
 pub mod loader;
 mod module_graph_runtime;
+mod payload;
 pub mod runtime;
 
 pub type DefaultLayoutRuntime =

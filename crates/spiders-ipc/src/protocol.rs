@@ -181,7 +181,7 @@ pub fn subscription_matches_event(
 
 #[cfg(test)]
 mod tests {
-    use spiders_shared::ids::{OutputId, WindowId};
+    use spiders_tree::{OutputId, WindowId};
     use spiders_shared::wm::OutputSnapshot;
 
     use super::*;

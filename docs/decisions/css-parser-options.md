@@ -2,43 +2,36 @@
 
 ## Status
 
-Accepted.
+Accepted (updated to match current implementation).
 
 ## Decision
 
-`spiders-wm` uses `swc_css_parser` as the stylesheet frontend for both:
+`spiders-wm` currently uses a `cssparser` + Stylo-assisted pipeline for
+structural layout CSS in `spiders-scene`:
 
-- structural layout CSS parsing
-- effects CSS parsing
+- selectors are parsed/matched with the local Stylo adapter
+- declaration blocks are parsed through Stylo where possible
+- values are lowered into local typed declarations
+- typed declarations are mapped into `taffy`
 
-The engine keeps its own small internal domain model and only implements the
-supported CSS subset documented in this repository.
+The engine keeps its own constrained runtime style model and only implements the
+supported subset documented in this repository.
 
 ## Why
 
 - the project intentionally supports a constrained structural CSS subset
-- SWC gives us a robust stylesheet/parser frontend without forcing SWC AST into runtime logic
+- the current `cssparser` + Stylo path already integrates with selector logic
+  and property/value handling used by layout runtime
 - the engine still owns selector policy, lowering, validation, and `taffy` mapping locally
-- it keeps the parser/frontend separate from our authored CSS domain and backend mapping
-
-## Non-Decision
-
-- Oxc is not used for CSS parsing
-- `lightningcss` is not the default parser direction
-- `raffia` is not selected
-- `cssparser` is no longer the chosen primary stylesheet parser
-
-## Optional Future Helper
-
-`parcel_selectors` may still be adopted later if selector parsing or matching
-grows beyond the simple V1 subset.
+- it keeps parser/frontend details separate from authored CSS domain and backend mapping
 
 ## Implementation Rule
 
 When adding CSS support:
 
-- parse with `swc_css_parser`
+- parse and lower through the active crate pipeline (`cssparser`/Stylo adapter
+  in `spiders-scene` today)
 - lower into project-specific domain/types
-- keep SWC AST types out of the runtime style domain
+- keep parser/frontend AST details out of the runtime style domain
 - map into local semantic values before mapping to `taffy`
 - reject unsupported properties or selector forms clearly

@@ -1,4 +1,5 @@
 use super::*;
+use spiders_tree::LayoutRect;
 use crate::actions::{
     active_tiled_window_ids, compute_horizontal_tiled_edges, compute_pointer_render_positions,
     compute_window_borders, configured_mode_for_window, directional_neighbor_window_id,
@@ -158,7 +159,7 @@ impl RiverBackendState {
                 let mode = configured_mode_for_window(&self.config, window)?;
                 let (x, y, width, height) = match &mode {
                     spiders_shared::wm::WindowMode::Floating { rect } => {
-                        let rect = rect.unwrap_or(spiders_shared::layout::LayoutRect {
+                        let rect = rect.unwrap_or(LayoutRect {
                             x: origin_x as f32 + (total_width as f32 * 0.1),
                             y: origin_y as f32 + (total_height as f32 * 0.1),
                             width: (total_width as f32 * 0.8).max(1.0),
@@ -204,7 +205,7 @@ impl RiverBackendState {
             spiders_shared::wm::WindowMode::Tiled | spiders_shared::wm::WindowMode::Fullscreen => {
                 spiders_shared::wm::WindowMode::Floating {
                     rect: Some(window.last_floating_rect.unwrap_or(
-                        spiders_shared::layout::LayoutRect {
+                        LayoutRect {
                             x: origin_x as f32 + (total_width as f32 * 0.1),
                             y: origin_y as f32 + (total_height as f32 * 0.1),
                             width: (total_width as f32 * 0.8).max(1.0),
@@ -315,7 +316,7 @@ impl RiverBackendState {
 
     pub(super) fn plan_activate_workspace_command(
         &self,
-        workspace_id: spiders_shared::ids::WorkspaceId,
+        workspace_id: spiders_tree::WorkspaceId,
     ) -> ActivateWorkspacePlan {
         ActivateWorkspacePlan {
             workspace_id,
@@ -326,7 +327,7 @@ impl RiverBackendState {
     pub(super) fn plan_move_focused_window_to_workspace_command(
         &self,
         seat_id: &ObjectId,
-        workspace_id: spiders_shared::ids::WorkspaceId,
+        workspace_id: spiders_tree::WorkspaceId,
     ) -> Option<MoveFocusedWindowToWorkspacePlan> {
         let window_id = self.seat_focused_state_window_id(seat_id)?;
         let focus = self.plan_focus_for_seat(seat_id);
@@ -361,7 +362,7 @@ impl RiverBackendState {
 
     pub(super) fn plan_focus_window_command(
         &self,
-        window_id: spiders_shared::ids::WindowId,
+        window_id: spiders_tree::WindowId,
     ) -> Option<(MoveWindowToTopPlan, FocusPlan)> {
         self.window_object_id(&window_id)?;
         Some((

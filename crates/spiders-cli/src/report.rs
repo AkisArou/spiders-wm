@@ -1,7 +1,6 @@
 use serde::Serialize;
 use spiders_shared::api::{CompositorEvent, QueryRequest, QueryResponse, WmAction};
 use spiders_shared::runtime::RuntimeRefreshSummary;
-use spiders_wm::{BootstrapDiagnostics, BootstrapEvent, ControllerPhase, StartupRegistration};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum OutputMode {
@@ -38,15 +37,6 @@ pub struct BuildConfigReport {
 }
 
 #[derive(Debug, Serialize, PartialEq, Eq)]
-pub struct WinitRunReport {
-    pub status: &'static str,
-    pub wayland_display: String,
-    pub output_name: String,
-    pub seat_name: String,
-    pub logical_size: (i32, i32),
-}
-
-#[derive(Debug, Serialize, PartialEq, Eq)]
 pub struct ErrorReport {
     pub status: &'static str,
     pub phase: &'static str,
@@ -57,47 +47,6 @@ pub struct ErrorReport {
     pub errors: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
-}
-
-#[derive(Debug, Serialize, PartialEq, Eq)]
-pub struct BootstrapReport {
-    pub status: &'static str,
-    pub runtime_ready: bool,
-    pub authored_config: String,
-    pub prepared_config: String,
-    pub controller_phase: ControllerPhase,
-    pub active_seat: Option<String>,
-    pub active_output: Option<String>,
-    pub current_workspace: Option<String>,
-    pub focused_window: Option<String>,
-    pub seat_names: Vec<String>,
-    pub output_ids: Vec<String>,
-    pub surface_ids: Vec<String>,
-    pub mapped_surface_ids: Vec<String>,
-    pub seat_count: usize,
-    pub output_count: usize,
-    pub surface_count: usize,
-    pub mapped_surface_count: usize,
-    pub applied_events: usize,
-    pub startup: StartupRegistration,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub prepared_config_update: Option<RuntimeRefreshSummary>,
-}
-
-#[derive(Debug, Serialize, PartialEq, Eq)]
-pub struct BootstrapFailureReport {
-    pub status: &'static str,
-    pub runtime_ready: bool,
-    pub authored_config: String,
-    pub prepared_config: String,
-    pub controller_phase: ControllerPhase,
-    pub error: String,
-    pub failed_event: Option<BootstrapEvent>,
-    pub applied_events: usize,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub diagnostics: Option<BootstrapDiagnostics>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub prepared_config_update: Option<RuntimeRefreshSummary>,
 }
 
 #[derive(Debug, Serialize, PartialEq, Eq)]
@@ -170,68 +119,4 @@ mod tests {
         assert!(json.get("prepared_config").is_none());
     }
 
-    #[test]
-    fn bootstrap_report_serializes_expected_fields() {
-        let report = BootstrapReport {
-            status: "ok",
-            runtime_ready: true,
-            authored_config: "/tmp/authored.js".into(),
-            prepared_config: "/tmp/runtime.js".into(),
-            controller_phase: ControllerPhase::Running,
-            active_seat: Some("seat-0".into()),
-            active_output: Some("out-1".into()),
-            current_workspace: Some("ws-1".into()),
-            focused_window: Some("w1".into()),
-            seat_names: vec!["seat-0".into()],
-            output_ids: vec!["out-1".into()],
-            surface_ids: vec!["window-w1".into()],
-            mapped_surface_ids: vec!["window-w1".into()],
-            seat_count: 1,
-            output_count: 1,
-            surface_count: 0,
-            mapped_surface_count: 0,
-            applied_events: 0,
-            startup: StartupRegistration {
-                seats: vec!["seat-0".into()],
-                outputs: vec![spiders_shared::ids::OutputId::from("out-1")],
-                active_seat: Some("seat-0".into()),
-                active_output: Some(spiders_shared::ids::OutputId::from("out-1")),
-            },
-            prepared_config_update: None,
-        };
-
-        let json = serde_json::to_value(report).unwrap();
-
-        assert_eq!(json["status"], "ok");
-        assert_eq!(json["controller_phase"], "running");
-        assert_eq!(json["active_seat"], "seat-0");
-        assert_eq!(json["current_workspace"], "ws-1");
-        assert_eq!(json["focused_window"], "w1");
-        assert_eq!(json["seat_names"][0], "seat-0");
-        assert_eq!(json["startup"]["active_seat"], "seat-0");
-    }
-
-    #[test]
-    fn bootstrap_failure_report_serializes_failed_event() {
-        let report = BootstrapFailureReport {
-            status: "error",
-            runtime_ready: true,
-            authored_config: "/tmp/authored.js".into(),
-            prepared_config: "/tmp/runtime.js".into(),
-            controller_phase: ControllerPhase::Degraded,
-            error: "boom".into(),
-            failed_event: Some(BootstrapEvent::RemoveOutput {
-                output_id: spiders_shared::ids::OutputId::from("out-9"),
-            }),
-            applied_events: 1,
-            diagnostics: None,
-            prepared_config_update: None,
-        };
-
-        let json = serde_json::to_value(report).unwrap();
-
-        assert_eq!(json["status"], "error");
-        assert_eq!(json["controller_phase"], "degraded");
-        assert_eq!(json["failed_event"]["remove-output"]["output_id"], "out-9");
-    }
 }

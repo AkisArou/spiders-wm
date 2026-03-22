@@ -28,7 +28,6 @@ You can override discovery with:
 - `workspaces?: string[]`
 - `options?: OptionsConfig`
 - `layouts?: LayoutsConfig`
-- `outputs?: OutputsConfig`
 - `inputs?: InputsConfig`
 - `rules?: RulesConfig`
 - `bindings?: BindingsConfig`
@@ -119,7 +118,7 @@ Example:
 rules: [
   { app_id: "pavucontrol", floating: true },
   { app_id: "slack", workspaces: "3" },
-]
+];
 ```
 
 ## Bindings
@@ -188,19 +187,6 @@ Supported input fields include:
 - keyboard: `xkb_layout`, `xkb_model`, `xkb_variant`, `xkb_options`, `repeat_rate`, `repeat_delay`
 - pointer and touchpad: `accel_profile`, `pointer_accel`, `left_handed`, `middle_emulation`
 - touchpad extras: `natural_scroll`, `tap`, `drag_lock`, `dwt`
-
-## Outputs
-
-`outputs` is a map keyed by output name or description.
-
-Supported fields:
-
-- `mode?: string`
-- `scale?: number`
-- `transform?: "normal" | "90" | "180" | "270" | "flipped" | "flipped-90" | "flipped-180" | "flipped-270"`
-- `position?: string`
-- `adaptive_sync?: boolean`
-- `enabled?: boolean`
 
 ## Runtime API From Config
 

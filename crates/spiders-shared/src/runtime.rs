@@ -1,10 +1,77 @@
-use std::collections::BTreeMap;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use crate::layout::SourceLayoutNode;
-use crate::wm::{LayoutEvaluationContext, SelectedLayout, StateSnapshot, WorkspaceSnapshot};
+use spiders_tree::{LayoutSpace, OutputId, SourceLayoutNode, WindowId, WorkspaceId};
+use crate::wm::{OutputSnapshot, StateSnapshot, WorkspaceSnapshot};
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SelectedLayout {
+    pub name: String,
+    pub directory: String,
+    pub module: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct LayoutEvaluationContext {
+    pub monitor: LayoutMonitorContext,
+    pub workspace: LayoutWorkspaceContext,
+    pub windows: Vec<LayoutWindowContext>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state: Option<LayoutStateContext>,
+    #[serde(skip)]
+    pub workspace_id: WorkspaceId,
+    #[serde(skip)]
+    pub output: Option<OutputSnapshot>,
+    #[serde(skip)]
+    pub selected_layout_name: Option<String>,
+    #[serde(skip)]
+    pub space: LayoutSpace,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LayoutMonitorContext {
+    pub name: String,
+    pub width: u32,
+    pub height: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scale: Option<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LayoutWorkspaceContext {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub workspaces: Vec<String>,
+    #[serde(rename = "windowCount")]
+    pub window_count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LayoutWindowContext {
+    pub id: WindowId,
+    pub app_id: Option<String>,
+    pub title: Option<String>,
+    pub class: Option<String>,
+    pub instance: Option<String>,
+    pub role: Option<String>,
+    pub shell: Option<String>,
+    pub window_type: Option<String>,
+    pub floating: bool,
+    pub fullscreen: bool,
+    pub focused: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LayoutStateContext {
+    pub focused_window_id: Option<WindowId>,
+    pub current_output_id: Option<OutputId>,
+    pub current_workspace_id: Option<WorkspaceId>,
+    pub visible_window_ids: Vec<WindowId>,
+    pub workspace_names: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selected_layout_name: Option<String>,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LayoutModuleContract {
@@ -41,20 +108,6 @@ pub enum RuntimeError {
     Other { message: String },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct JavaScriptModule {
-    pub specifier: String,
-    pub source: String,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub resolved_imports: BTreeMap<String, String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct JavaScriptModuleGraph {
-    pub entry: String,
-    pub modules: Vec<JavaScriptModule>,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct RuntimeRefreshSummary {
     pub refreshed_files: usize,
@@ -70,7 +123,31 @@ impl RuntimeRefreshSummary {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PreparedLayout {
     pub selected: SelectedLayout,
-    pub runtime_graph: JavaScriptModuleGraph,
+    #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
+    pub runtime_payload: serde_json::Value,
+    #[serde(default)]
+    pub stylesheets: PreparedStylesheets,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PreparedStylesheet {
+    pub path: String,
+    pub source: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct PreparedStylesheets {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layout: Option<PreparedStylesheet>,
+}
+
+impl PreparedStylesheets {
+    pub fn combined_source(&self) -> String {
+        self.layout
+            .as_ref()
+            .map(|stylesheet| stylesheet.source.clone())
+            .unwrap_or_default()
+    }
 }
 
 pub trait PreparedLayoutRuntime: std::fmt::Debug {

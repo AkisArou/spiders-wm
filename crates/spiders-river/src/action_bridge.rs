@@ -1,6 +1,6 @@
 use spiders_shared::api::{FocusDirection, WmAction};
-use spiders_shared::ids::{OutputId, WindowId, WorkspaceId};
-use spiders_shared::layout::LayoutRect;
+use spiders_tree::{OutputId, WindowId, WorkspaceId};
+use spiders_tree::LayoutRect;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum RiverCommand {

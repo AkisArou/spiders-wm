@@ -3,9 +3,8 @@ mod report;
 
 use bootstrap::CliBootstrap;
 use report::{
-    BootstrapFailureReport, BootstrapReport, BuildConfigReport, DiscoveryReport, ErrorReport,
-    IpcActionReport, IpcMonitorReport, IpcQueryReport, IpcSmokeReport, OutputMode,
-    SuccessCheckReport, WinitRunReport, emit,
+    BuildConfigReport, DiscoveryReport, ErrorReport, IpcActionReport, IpcMonitorReport,
+    IpcQueryReport, IpcSmokeReport, OutputMode, SuccessCheckReport, emit,
 };
 
 #[derive(Debug, Clone)]
@@ -39,26 +38,21 @@ fn main() -> std::process::ExitCode {
     let args: Vec<String> = std::env::args().collect();
     let check_config = args.iter().any(|arg| arg == "check-config");
     let build_config = args.iter().any(|arg| arg == "build-config");
-    let bootstrap_trace = args.iter().any(|arg| arg == "bootstrap-trace");
     let ipc_smoke = args.iter().any(|arg| arg == "ipc-smoke");
     let ipc_query = args.iter().any(|arg| arg == "ipc-query");
     let ipc_action = args.iter().any(|arg| arg == "ipc-action");
     let ipc_monitor = args.iter().any(|arg| arg == "ipc-monitor");
-    let winit_run = args.iter().any(|arg| arg == "winit-run");
     let output_mode = if args.iter().any(|arg| arg == "--json") {
         OutputMode::Json
     } else {
         OutputMode::Text
     };
-    let events_path = arg_value(&args, "--events");
-    let transcript_path = arg_value(&args, "--transcript");
     let socket_path = arg_value(&args, "--socket")
         .map(std::path::PathBuf::from)
         .or_else(default_ipc_socket_path);
     let query_name = arg_value(&args, "--query");
     let action_name = arg_value(&args, "--action");
     let topic_names = arg_values(&args, "--topic");
-    let socket_name = arg_value(&args, "--socket-name");
 
     let cli = CliContext::new();
 
@@ -70,10 +64,6 @@ fn main() -> std::process::ExitCode {
         ipc_action_command(output_mode, socket_path, action_name)
     } else if ipc_monitor {
         ipc_monitor_command(output_mode, socket_path, topic_names)
-    } else if winit_run {
-        winit_run_command(&cli, output_mode, socket_name)
-    } else if bootstrap_trace {
-        bootstrap_trace_command(&cli, output_mode, events_path, transcript_path)
     } else if build_config {
         build_config_command(&cli, output_mode)
     } else if check_config {
@@ -220,217 +210,6 @@ fn ipc_smoke_command(output_mode: OutputMode) -> std::process::ExitCode {
             std::process::ExitCode::from(1)
         }
     }
-}
-
-fn winit_run_command(
-    cli: &CliContext,
-    output_mode: OutputMode,
-    socket_name: Option<&str>,
-) -> std::process::ExitCode {
-    let bootstrap = match cli.bootstrap() {
-        Ok(bootstrap) => bootstrap,
-        Err(error) => {
-            emit(
-                output_mode,
-                &ErrorReport {
-                    status: "error",
-                    phase: "discovery",
-                    runtime_ready: cli.ready,
-                    prepared_config: None,
-                    errors: None,
-                    message: Some(error.to_string()),
-                },
-                || format!("winit run discovery error: {error}"),
-            );
-            return std::process::ExitCode::from(1);
-        }
-    };
-    let prepared_config = bootstrap.paths.prepared_config.display().to_string();
-
-    let (config, _) = match bootstrap
-        .service
-        .load_config_with_cache_update(&bootstrap.paths)
-    {
-        Ok(result) => result,
-        Err(error) => {
-            emit(
-                output_mode,
-                &ErrorReport {
-                    status: "error",
-                    phase: "load",
-                    runtime_ready: cli.ready,
-                    prepared_config: Some(prepared_config.clone()),
-                    errors: None,
-                    message: Some(error.to_string()),
-                },
-                || format!("winit run config load error: {error}"),
-            );
-            return std::process::ExitCode::from(1);
-        }
-    };
-
-    let state = synthetic_winit_state(&config);
-    let mut runtime_bootstrap = match spiders_wm::bootstrap_winit_with_options(
-        bootstrap.service,
-        config,
-        state,
-        spiders_wm::SmithayWinitOptions {
-            socket_name: socket_name.map(str::to_owned),
-        },
-    ) {
-        Ok(bootstrap) => bootstrap,
-        Err(error) => {
-            emit(
-                output_mode,
-                &ErrorReport {
-                    status: "error",
-                    phase: "bootstrap",
-                    runtime_ready: cli.ready,
-                    prepared_config: Some(prepared_config.clone()),
-                    errors: None,
-                    message: Some(error.to_string()),
-                },
-                || format!("winit run bootstrap error: {error}"),
-            );
-            return std::process::ExitCode::from(1);
-        }
-    };
-
-    let wayland_display = runtime_bootstrap.runtime.socket_name().to_string();
-    let report = WinitRunReport {
-        status: "ok",
-        wayland_display: wayland_display.clone(),
-        output_name: runtime_bootstrap.report.output_name.clone(),
-        seat_name: runtime_bootstrap.report.seat_name.clone(),
-        logical_size: runtime_bootstrap.report.logical_size,
-    };
-
-    emit(output_mode, &report, || {
-        format!(
-            "nested winit compositor running (WAYLAND_DISPLAY={}, output: {}, seat: {}, size: {}x{})",
-            wayland_display,
-            report.output_name,
-            report.seat_name,
-            report.logical_size.0,
-            report.logical_size.1
-        )
-    });
-
-    let debug_snapshot_path = winit_debug_snapshot_path();
-    if let Some(path) = debug_snapshot_path.as_deref() {
-        if let Err(error) = write_winit_debug_snapshot(path, &runtime_bootstrap) {
-            emit(
-                output_mode,
-                &ErrorReport {
-                    status: "error",
-                    phase: "runtime",
-                    runtime_ready: cli.ready,
-                    prepared_config: Some(prepared_config.clone()),
-                    errors: None,
-                    message: Some(error),
-                },
-                || "winit run snapshot write error".into(),
-            );
-            return std::process::ExitCode::from(1);
-        }
-    }
-
-    if should_exit_winit_after_startup() {
-        return std::process::ExitCode::SUCCESS;
-    }
-
-    loop {
-        match runtime_bootstrap.run_startup_cycle() {
-            Ok(()) => {}
-            Err(error) => {
-                emit(
-                    output_mode,
-                    &ErrorReport {
-                        status: "error",
-                        phase: "runtime",
-                        runtime_ready: cli.ready,
-                        prepared_config: Some(prepared_config),
-                        errors: None,
-                        message: Some(error.to_string()),
-                    },
-                    || format!("winit run runtime error: {error}"),
-                );
-                return std::process::ExitCode::from(1);
-            }
-        }
-
-        if let Some(path) = debug_snapshot_path.as_deref() {
-            if let Err(error) = write_winit_debug_snapshot(path, &runtime_bootstrap) {
-                emit(
-                    output_mode,
-                    &ErrorReport {
-                        status: "error",
-                        phase: "runtime",
-                        runtime_ready: cli.ready,
-                        prepared_config: Some(prepared_config),
-                        errors: None,
-                        message: Some(error),
-                    },
-                    || "winit run snapshot write error".into(),
-                );
-                return std::process::ExitCode::from(1);
-            }
-        }
-
-        if runtime_bootstrap.runtime.should_stop() {
-            return std::process::ExitCode::SUCCESS;
-        }
-
-        std::thread::sleep(std::time::Duration::from_millis(16));
-    }
-}
-
-fn winit_debug_snapshot_path() -> Option<std::path::PathBuf> {
-    std::env::var_os("SPIDERS_WM_WINIT_DEBUG_SNAPSHOT_PATH").map(std::path::PathBuf::from)
-}
-
-fn write_winit_debug_snapshot<R>(
-    path: &std::path::Path,
-    runtime_bootstrap: &spiders_wm::SmithayBootstrap<R>,
-) -> Result<(), String>
-where
-    R: spiders_shared::runtime::AuthoringLayoutRuntime<Config = spiders_config::model::Config>,
-{
-    let snapshot = runtime_bootstrap.snapshot();
-    let controller_state = runtime_bootstrap.controller.state_snapshot();
-    let window_placements = runtime_bootstrap
-        .controller
-        .app()
-        .session()
-        .current_window_placements();
-    let titlebar_plan = runtime_bootstrap
-        .controller
-        .app()
-        .session()
-        .current_titlebar_render_plan();
-    let current_layout = runtime_bootstrap
-        .controller
-        .app()
-        .session()
-        .current_layout()
-        .cloned();
-    let runtime_outputs = &snapshot.runtime.state.outputs;
-    let debug = format!(
-        "runtime_bootstrap_snapshot = {snapshot:#?}\n\ncontroller_state = {controller_state:#?}\n\nruntime_outputs = {runtime_outputs:#?}\n\ncurrent_layout = {current_layout:#?}\n\nwindow_placements = {window_placements:#?}\n\ntitlebar_plan = {titlebar_plan:#?}\n"
-    );
-
-    std::fs::write(path, debug).map_err(|error| {
-        format!(
-            "failed to write winit debug snapshot to {}: {error}",
-            path.display()
-        )
-    })
-}
-
-fn should_exit_winit_after_startup() -> bool {
-    std::env::var("SPIDERS_WM_WINIT_EXIT_AFTER_STARTUP")
-        .ok()
-        .is_some_and(|value| matches!(value.as_str(), "1" | "true" | "yes"))
 }
 
 fn arg_value<'a>(args: &'a [String], flag: &str) -> Option<&'a str> {
@@ -732,239 +511,6 @@ fn build_config_command(cli: &CliContext, output_mode: OutputMode) -> std::proce
     }
 }
 
-fn bootstrap_trace_command(
-    cli: &CliContext,
-    output_mode: OutputMode,
-    events_path: Option<&str>,
-    transcript_path: Option<&str>,
-) -> std::process::ExitCode {
-    let bootstrap = match cli.bootstrap() {
-        Ok(bootstrap) => bootstrap,
-        Err(error) => {
-            emit(
-                output_mode,
-                &ErrorReport {
-                    status: "error",
-                    phase: "discovery",
-                    runtime_ready: cli.ready,
-                    prepared_config: None,
-                    errors: None,
-                    message: Some(error.to_string()),
-                },
-                || format!("bootstrap trace discovery error: {error}"),
-            );
-            return std::process::ExitCode::from(1);
-        }
-    };
-
-    let (config, prepared_config_update) = match bootstrap
-        .service
-        .load_config_with_cache_update(&bootstrap.paths)
-    {
-        Ok(result) => result,
-        Err(error) => {
-            emit(
-                output_mode,
-                &ErrorReport {
-                    status: "error",
-                    phase: "load",
-                    runtime_ready: cli.ready,
-                    prepared_config: Some(bootstrap.paths.prepared_config.display().to_string()),
-                    errors: None,
-                    message: Some(error.to_string()),
-                },
-                || format!("bootstrap trace config load error: {error}"),
-            );
-            return std::process::ExitCode::from(1);
-        }
-    };
-
-    let authored_config = bootstrap.paths.authored_config.display().to_string();
-    let prepared_config = bootstrap.paths.prepared_config.display().to_string();
-
-    if let Some(script_path) = transcript_path.or(events_path) {
-        let contents = match std::fs::read_to_string(script_path) {
-            Ok(contents) => contents,
-            Err(error) => {
-                emit(
-                    output_mode,
-                    &ErrorReport {
-                        status: "error",
-                        phase: "script",
-                        runtime_ready: cli.ready,
-                        prepared_config: Some(prepared_config.clone()),
-                        errors: None,
-                        message: Some(error.to_string()),
-                    },
-                    || format!("bootstrap trace script read error: {error}"),
-                );
-                return std::process::ExitCode::from(1);
-            }
-        };
-
-        let script = match spiders_wm::BootstrapScript::from_json_str(&contents) {
-            Ok(script) => script,
-            Err(error) => {
-                emit(
-                    output_mode,
-                    &ErrorReport {
-                        status: "error",
-                        phase: "script",
-                        runtime_ready: cli.ready,
-                        prepared_config: Some(prepared_config.clone()),
-                        errors: None,
-                        message: Some(error.to_string()),
-                    },
-                    || format!("bootstrap trace script parse error: {error}"),
-                );
-                return std::process::ExitCode::from(1);
-            }
-        };
-
-        let state = synthetic_bootstrap_state();
-        let mut controller = match spiders_wm::CompositorController::initialize_with_script(
-            bootstrap.service,
-            config,
-            state,
-            &script,
-        ) {
-            Ok(controller) => controller,
-            Err(error) => {
-                emit(
-                    output_mode,
-                    &ErrorReport {
-                        status: "error",
-                        phase: "bootstrap",
-                        runtime_ready: cli.ready,
-                        prepared_config: Some(prepared_config.clone()),
-                        errors: None,
-                        message: Some(error.to_string()),
-                    },
-                    || format!("bootstrap trace runner error: {error}"),
-                );
-                return std::process::ExitCode::from(1);
-            }
-        };
-
-        if let Err(trace) = controller.apply_bootstrap_script(script) {
-            emit(
-                output_mode,
-                &BootstrapFailureReport {
-                    status: "error",
-                    runtime_ready: cli.ready,
-                    authored_config: authored_config.clone(),
-                    prepared_config: prepared_config.clone(),
-                    controller_phase: controller.phase(),
-                    error: trace.error.clone(),
-                    failed_event: trace.failed_event,
-                    applied_events: trace.applied_events.len(),
-                    diagnostics: trace.diagnostics,
-                    prepared_config_update,
-                },
-                || {
-                    format!(
-                        "bootstrap trace failed after {} events: {} (cache: {})",
-                        trace.applied_events.len(),
-                        trace.error,
-                        describe_prepared_config_update(prepared_config_update)
-                    )
-                },
-            );
-            return std::process::ExitCode::from(1);
-        }
-
-        return emit_bootstrap_trace(
-            cli,
-            output_mode,
-            authored_config,
-            prepared_config,
-            prepared_config_update,
-            controller.report(),
-        );
-    }
-
-    let state = synthetic_bootstrap_state();
-    let controller =
-        match spiders_wm::CompositorController::initialize(bootstrap.service, config, state) {
-            Ok(controller) => controller,
-            Err(error) => {
-                emit(
-                    output_mode,
-                    &ErrorReport {
-                        status: "error",
-                        phase: "bootstrap",
-                        runtime_ready: cli.ready,
-                        prepared_config: Some(prepared_config.clone()),
-                        errors: None,
-                        message: Some(error.to_string()),
-                    },
-                    || format!("bootstrap trace runner error: {error}"),
-                );
-                return std::process::ExitCode::from(1);
-            }
-        };
-
-    emit_bootstrap_trace(
-        cli,
-        output_mode,
-        authored_config,
-        prepared_config,
-        prepared_config_update,
-        controller.report(),
-    )
-}
-
-fn emit_bootstrap_trace(
-    cli: &CliContext,
-    output_mode: OutputMode,
-    authored_config: String,
-    prepared_config: String,
-    prepared_config_update: Option<spiders_shared::runtime::RuntimeRefreshSummary>,
-    report: spiders_wm::ControllerReport,
-) -> std::process::ExitCode {
-    let current_workspace = report.diagnostics.current_workspace.clone();
-    let focused_window = report.diagnostics.focused_window.clone();
-    emit(
-        output_mode,
-        &BootstrapReport {
-            status: "ok",
-            runtime_ready: cli.ready,
-            authored_config,
-            prepared_config,
-            controller_phase: report.phase,
-            active_seat: report.diagnostics.active_seat,
-            active_output: report.diagnostics.active_output.map(|id| id.to_string()),
-            current_workspace: current_workspace.clone(),
-            focused_window: focused_window.clone(),
-            seat_names: report.diagnostics.seat_names,
-            output_ids: report.diagnostics.output_ids,
-            surface_ids: report.diagnostics.surface_ids,
-            mapped_surface_ids: report.diagnostics.mapped_surface_ids,
-            seat_count: report.diagnostics.seat_count,
-            output_count: report.diagnostics.output_count,
-            surface_count: report.diagnostics.surface_count,
-            mapped_surface_count: report.diagnostics.mapped_surface_count,
-            applied_events: report.applied_events,
-            startup: report.startup,
-            prepared_config_update,
-        },
-        || {
-            format!(
-                "bootstrap trace ok (workspace: {}, focused: {}, seats: {}, outputs: {}, surfaces: {}, mapped: {}, cache: {})",
-                current_workspace.as_deref().unwrap_or("none"),
-                focused_window.as_deref().unwrap_or("none"),
-                report.diagnostics.seat_count,
-                report.diagnostics.output_count,
-                report.diagnostics.surface_count,
-                report.diagnostics.mapped_surface_count,
-                describe_prepared_config_update(prepared_config_update)
-            )
-        },
-    );
-
-    std::process::ExitCode::SUCCESS
-}
-
 fn describe_prepared_config_update(
     update: Option<spiders_shared::runtime::RuntimeRefreshSummary>,
 ) -> String {
@@ -979,7 +525,7 @@ fn describe_prepared_config_update(
 }
 
 fn synthetic_bootstrap_state() -> spiders_shared::wm::StateSnapshot {
-    use spiders_shared::ids::{OutputId, WindowId, WorkspaceId};
+    use spiders_tree::{OutputId, WindowId, WorkspaceId};
     use spiders_shared::wm::{
         LayoutRef, OutputSnapshot, OutputTransform, ShellKind, StateSnapshot, WindowSnapshot,
         WorkspaceSnapshot,
@@ -1032,71 +578,6 @@ fn synthetic_bootstrap_state() -> spiders_shared::wm::StateSnapshot {
         visible_window_ids: vec![WindowId::from("bootstrap-window")],
         workspace_names: vec!["bootstrap".into()],
     }
-}
-
-fn synthetic_winit_state(
-    config: &spiders_config::model::Config,
-) -> spiders_shared::wm::StateSnapshot {
-    use spiders_shared::ids::{OutputId, WorkspaceId};
-    use spiders_shared::wm::{LayoutRef, OutputTransform, StateSnapshot, WorkspaceSnapshot};
-
-    let workspace_id = WorkspaceId::from("winit-workspace");
-    let output_id = OutputId::from("smithay-winit-output");
-    let active_workspace = "1";
-    let effective_layout =
-        synthetic_winit_layout_name(config, &output_id.to_string(), active_workspace)
-            .map(|name| LayoutRef { name });
-
-    StateSnapshot {
-        focused_window_id: None,
-        current_output_id: Some(output_id.clone()),
-        current_workspace_id: Some(workspace_id.clone()),
-        outputs: vec![spiders_shared::wm::OutputSnapshot {
-            id: output_id,
-            name: "smithay-winit-output".into(),
-            logical_x: 0,
-            logical_y: 0,
-            logical_width: 1280,
-            logical_height: 720,
-            scale: 1,
-            transform: OutputTransform::Normal,
-            enabled: true,
-            current_workspace_id: Some(workspace_id.clone()),
-        }],
-        workspaces: vec![WorkspaceSnapshot {
-            id: workspace_id,
-            name: "winit".into(),
-            output_id: Some(OutputId::from("smithay-winit-output")),
-            active_workspaces: vec![active_workspace.into()],
-            focused: true,
-            visible: true,
-            effective_layout,
-        }],
-        windows: Vec::new(),
-        visible_window_ids: Vec::new(),
-        workspace_names: vec!["1".into()],
-    }
-}
-
-fn synthetic_winit_layout_name(
-    config: &spiders_config::model::Config,
-    output_name: &str,
-    active_workspace: &str,
-) -> Option<String> {
-    config
-        .layout_selection
-        .per_monitor
-        .get(output_name)
-        .cloned()
-        .or_else(|| {
-            config
-                .workspaces
-                .iter()
-                .position(|workspace| workspace == active_workspace)
-                .and_then(|index| config.layout_selection.per_workspace.get(index).cloned())
-        })
-        .or_else(|| config.layout_selection.default.clone())
-        .or_else(|| config.layouts.first().map(|layout| layout.name.clone()))
 }
 
 fn run_ipc_smoke() -> Result<IpcSmokeReport, String> {

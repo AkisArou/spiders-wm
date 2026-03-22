@@ -1,9 +1,10 @@
 use std::collections::BTreeMap;
 
 use spiders_shared::runtime::{
-    AuthoringLayoutRuntime, PreparedLayout, RuntimeError, RuntimeRefreshSummary,
+    AuthoringLayoutRuntime, LayoutEvaluationContext, PreparedLayout, RuntimeError,
+    RuntimeRefreshSummary,
 };
-use spiders_shared::wm::LayoutEvaluationContext;
+use spiders_tree::SourceLayoutNode;
 
 use crate::model::{Config, ConfigDiscoveryOptions, ConfigPaths, LayoutConfigError};
 
@@ -120,7 +121,7 @@ where
 
         for layout in &config.layouts {
             let workspace = spiders_shared::wm::WorkspaceSnapshot {
-                id: spiders_shared::ids::WorkspaceId::from("validation"),
+                id: spiders_tree::WorkspaceId::from("validation"),
                 name: "validation".into(),
                 output_id: None,
                 active_workspaces: vec![],
@@ -184,26 +185,25 @@ where
 pub struct PreparedLayoutEvaluation {
     pub artifact: PreparedLayout,
     pub context: LayoutEvaluationContext,
-    pub layout: spiders_shared::layout::SourceLayoutNode,
+    pub layout: SourceLayoutNode,
 }
 
 #[cfg(test)]
 mod tests {
     use std::fs;
 
-    use spiders_shared::ids::{OutputId, WorkspaceId};
-    use spiders_shared::layout::SourceLayoutNode;
+    use spiders_tree::{OutputId, WorkspaceId};
     use spiders_shared::runtime::{
-        AuthoringLayoutRuntime, JavaScriptModule, JavaScriptModuleGraph, LayoutModuleContract,
-        PreparedLayout, PreparedLayoutRuntime, RuntimeError,
+        AuthoringLayoutRuntime, LayoutModuleContract, PreparedLayout, PreparedLayoutRuntime,
+        RuntimeError, SelectedLayout,
     };
-    use spiders_shared::wm::{
-        LayoutRef, OutputSnapshot, OutputTransform, SelectedLayout, StateSnapshot,
-        WorkspaceSnapshot,
-    };
+    use spiders_shared::wm::{LayoutRef, OutputSnapshot, OutputTransform, StateSnapshot, WorkspaceSnapshot};
 
     use super::*;
-    use crate::model::{Config, ConfigDiscoveryOptions, LayoutDefinition};
+    use crate::model::{
+        Config, ConfigDiscoveryOptions, JavaScriptModule, JavaScriptModuleGraph,
+        LayoutDefinition,
+    };
 
     #[derive(Debug, Clone)]
     struct StubRuntime {
@@ -233,7 +233,7 @@ mod tests {
             state: &StateSnapshot,
             workspace: &WorkspaceSnapshot,
             artifact: Option<&PreparedLayout>,
-        ) -> spiders_shared::wm::LayoutEvaluationContext {
+        ) -> spiders_shared::runtime::LayoutEvaluationContext {
             state.layout_context(
                 workspace,
                 artifact.map(|artifact| artifact.selected.clone()),
@@ -243,7 +243,7 @@ mod tests {
         fn evaluate_layout(
             &self,
             _prepared_layout: &PreparedLayout,
-            _context: &spiders_shared::wm::LayoutEvaluationContext,
+            _context: &spiders_shared::runtime::LayoutEvaluationContext,
         ) -> Result<SourceLayoutNode, RuntimeError> {
             Ok(SourceLayoutNode::Workspace {
                 meta: Default::default(),
@@ -273,9 +273,9 @@ mod tests {
             Ok(Config {
                 layouts: vec![LayoutDefinition {
                     name: "master-stack".into(),
+                    directory: "layouts/master-stack".into(),
                     module: "layouts/master-stack.js".into(),
-                    stylesheet: "workspace { display: flex; }".into(),
-                    effects_stylesheet: String::new(),
+                    stylesheet_path: Some("layouts/master-stack/index.css".into()),
                     runtime_graph: None,
                 }],
                 ..Config::default()
@@ -330,7 +330,7 @@ mod tests {
             state: &StateSnapshot,
             workspace: &WorkspaceSnapshot,
             artifact: Option<&PreparedLayout>,
-        ) -> spiders_shared::wm::LayoutEvaluationContext {
+        ) -> spiders_shared::runtime::LayoutEvaluationContext {
             StubRuntime {
                 loaded: None,
                 error_message: None,
@@ -341,7 +341,7 @@ mod tests {
         fn evaluate_layout(
             &self,
             prepared_layout: &PreparedLayout,
-            context: &spiders_shared::wm::LayoutEvaluationContext,
+            context: &spiders_shared::runtime::LayoutEvaluationContext,
         ) -> Result<SourceLayoutNode, RuntimeError> {
             StubRuntime {
                 loaded: None,
@@ -391,11 +391,11 @@ mod tests {
         PreparedLayout {
             selected: SelectedLayout {
                 name: name.into(),
+                directory: "layouts/master-stack".into(),
                 module: module.into(),
-                stylesheet: String::new(),
-                effects_stylesheet: String::new(),
             },
-            runtime_graph: single_module_graph(module),
+            runtime_payload: serde_json::to_value(single_module_graph(module)).unwrap(),
+            stylesheets: Default::default(),
         }
     }
 
@@ -458,9 +458,9 @@ mod tests {
         let config = Config {
             layouts: vec![LayoutDefinition {
                 name: "master-stack".into(),
+                directory: "layouts/master-stack".into(),
                 module: "layouts/master-stack.js".into(),
-                stylesheet: String::new(),
-                effects_stylesheet: String::new(),
+                stylesheet_path: Some("layouts/master-stack/index.css".into()),
                 runtime_graph: None,
             }],
             ..Config::default()
@@ -485,9 +485,9 @@ mod tests {
         let config = Config {
             layouts: vec![LayoutDefinition {
                 name: "master-stack".into(),
+                directory: "layouts/master-stack".into(),
                 module: "layouts/master-stack.js".into(),
-                stylesheet: String::new(),
-                effects_stylesheet: String::new(),
+                stylesheet_path: Some("layouts/master-stack/index.css".into()),
                 runtime_graph: None,
             }],
             ..Config::default()
@@ -501,7 +501,7 @@ mod tests {
         assert_eq!(evaluated.artifact.selected.name, "master-stack");
         assert!(matches!(
             evaluated.layout,
-            spiders_shared::layout::SourceLayoutNode::Workspace { .. }
+            SourceLayoutNode::Workspace { .. }
         ));
     }
 
@@ -568,9 +568,9 @@ mod tests {
         let config = Config {
             layouts: vec![LayoutDefinition {
                 name: "missing".into(),
+                directory: "layouts/missing".into(),
                 module: "layouts/missing.js".into(),
-                stylesheet: String::new(),
-                effects_stylesheet: String::new(),
+                stylesheet_path: Some("layouts/missing/index.css".into()),
                 runtime_graph: None,
             }],
             ..Config::default()
@@ -590,9 +590,9 @@ mod tests {
             bindings: vec![],
             layouts: vec![LayoutDefinition {
                 name: "master-stack".into(),
+                directory: "layouts/master-stack".into(),
                 module: "layouts/master-stack/index.js".into(),
-                stylesheet: String::new(),
-                effects_stylesheet: String::new(),
+                stylesheet_path: Some("layouts/master-stack/index.css".into()),
                 runtime_graph: Some(single_module_graph("layouts/master-stack/index.js")),
             }],
             ..Config::default()

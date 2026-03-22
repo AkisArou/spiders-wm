@@ -1,8 +1,8 @@
 use std::collections::{BTreeMap, VecDeque};
 
 use spiders_config::model::Config;
-use spiders_shared::ids::{OutputId, WindowId, WorkspaceId};
-use spiders_shared::layout::LayoutRect;
+use spiders_tree::{OutputId, WindowId, WorkspaceId};
+use spiders_tree::LayoutRect;
 use spiders_shared::wm::{
     OutputSnapshot, OutputTransform, ShellKind, StateSnapshot, WindowMode, WindowSnapshot,
     WorkspaceSnapshot,

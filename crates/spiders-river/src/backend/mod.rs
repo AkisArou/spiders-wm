@@ -152,7 +152,7 @@ impl RiverBackendState {
             .map(|seat| seat.state_name.as_str())
     }
 
-    fn seat_focused_state_window_id(&self, seat_id: &ObjectId) -> Option<spiders_shared::ids::WindowId> {
+    fn seat_focused_state_window_id(&self, seat_id: &ObjectId) -> Option<spiders_tree::WindowId> {
         let seat_name = self.seat_name(seat_id)?;
         self.runtime_state
             .seats
@@ -172,11 +172,11 @@ impl RiverBackendState {
             .cloned()
     }
 
-    fn window_object_id(&self, state_id: &spiders_shared::ids::WindowId) -> Option<ObjectId> {
+    fn window_object_id(&self, state_id: &spiders_tree::WindowId) -> Option<ObjectId> {
         self.registry.window_ids_by_state.get(state_id).cloned()
     }
 
-    fn apply_window_rules(&mut self, window_id: &spiders_shared::ids::WindowId) {
+    fn apply_window_rules(&mut self, window_id: &spiders_tree::WindowId) {
         let Some(window) = self.runtime_state.windows.get(window_id).cloned() else {
             return;
         };
@@ -426,12 +426,12 @@ impl RiverBackendState {
         }
     }
 
-    fn next_output_id(&mut self) -> spiders_shared::ids::OutputId {
+    fn next_output_id(&mut self) -> spiders_tree::OutputId {
         self.next_output_serial += 1;
         format!("river-output-{}", self.next_output_serial).into()
     }
 
-    fn next_window_id(&mut self) -> spiders_shared::ids::WindowId {
+    fn next_window_id(&mut self) -> spiders_tree::WindowId {
         self.next_window_serial += 1;
         format!("river-window-{}", self.next_window_serial).into()
     }
@@ -717,7 +717,7 @@ impl RiverBackendState {
         }
     }
 
-    fn active_workspace_window_state_ids(&self) -> Vec<spiders_shared::ids::WindowId> {
+    fn active_workspace_window_state_ids(&self) -> Vec<spiders_tree::WindowId> {
         let state_window_stack = self.runtime_state.window_stack.iter().cloned().collect::<Vec<_>>();
 
         active_workspace_window_ids(&self.runtime_state, &state_window_stack)
@@ -905,6 +905,7 @@ impl RiverBackendState {
     mod tests {
         use super::*;
     use spiders_config::model::{ConfigOptions, WindowRule};
+    use spiders_tree::LayoutRect;
 
     #[test]
     fn falls_back_to_milestone_bindings_when_config_is_empty() {
@@ -1088,7 +1089,7 @@ impl RiverBackendState {
         state.set_window_mode(
             &"win-1".into(),
             spiders_shared::wm::WindowMode::Floating {
-                rect: Some(spiders_shared::layout::LayoutRect {
+                rect: Some(LayoutRect {
                     x: 10.0,
                     y: 20.0,
                     width: 300.0,
@@ -1103,7 +1104,7 @@ impl RiverBackendState {
 
         assert_eq!(
             window.last_floating_rect,
-            Some(spiders_shared::layout::LayoutRect {
+            Some(LayoutRect {
                 x: 10.0,
                 y: 20.0,
                 width: 300.0,

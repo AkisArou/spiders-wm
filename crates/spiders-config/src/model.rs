@@ -3,12 +3,12 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use spiders_shared::api::WmAction;
-use spiders_shared::layout::LayoutRequest;
-use spiders_shared::layout::{LayoutSpace, ResolvedLayoutNode};
-use spiders_shared::runtime::JavaScriptModuleGraph;
+use spiders_shared::runtime::{PreparedLayout, SelectedLayout};
 use spiders_shared::wm::{
-    LayoutRef, OutputSnapshot, SelectedLayout, StateSnapshot, WorkspaceSnapshot,
+    LayoutRef, OutputSnapshot, StateSnapshot, WorkspaceSnapshot,
 };
+use spiders_scene::SceneRequest;
+use spiders_tree::{LayoutSpace, ResolvedLayoutNode};
 use thiserror::Error;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -57,13 +57,26 @@ pub struct InputConfig {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct LayoutDefinition {
     pub name: String,
+    pub directory: String,
     pub module: String,
-    #[serde(default)]
-    pub stylesheet: String,
-    #[serde(default)]
-    pub effects_stylesheet: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stylesheet_path: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runtime_graph: Option<JavaScriptModuleGraph>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct JavaScriptModule {
+    pub specifier: String,
+    pub source: String,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub resolved_imports: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct JavaScriptModuleGraph {
+    pub entry: String,
+    pub modules: Vec<JavaScriptModule>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -108,6 +121,8 @@ pub struct Config {
     pub inputs: Vec<InputConfig>,
     #[serde(default)]
     pub layouts: Vec<LayoutDefinition>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub global_stylesheet_path: Option<String>,
     #[serde(default)]
     pub layout_selection: LayoutSelectionConfig,
     #[serde(default)]
@@ -124,6 +139,8 @@ pub struct Config {
 pub enum LayoutConfigError {
     #[error("layout `{name}` is not defined in config")]
     UnknownLayout { name: String },
+    #[error("prepared artifact layout mismatch: expected `{expected}`, got `{actual}`")]
+    ArtifactLayoutMismatch { expected: String, actual: String },
     #[error("config file `{path}` could not be read")]
     ReadConfig { path: PathBuf },
     #[error("config file `{path}` is invalid")]
@@ -226,9 +243,8 @@ impl Config {
             .map(|layout| {
                 Ok(SelectedLayout {
                     name: layout.name.clone(),
+                    directory: layout.directory.clone(),
                     module: layout.module.clone(),
-                    stylesheet: layout.stylesheet.clone(),
-                    effects_stylesheet: layout.effects_stylesheet.clone(),
                 })
             })
             .or_else(|| {
@@ -241,15 +257,25 @@ impl Config {
             .transpose()
     }
 
-    pub fn build_layout_request(
+    pub fn build_scene_request(
         &self,
         workspace: &WorkspaceSnapshot,
         output: Option<&OutputSnapshot>,
         root: ResolvedLayoutNode,
-    ) -> Result<LayoutRequest, LayoutConfigError> {
+        artifact: &PreparedLayout,
+    ) -> Result<SceneRequest, LayoutConfigError> {
         let selected_layout = self.resolve_selected_layout(workspace)?;
 
-        Ok(LayoutRequest {
+        if let Some(selected_layout) = selected_layout.as_ref() {
+            if selected_layout.name != artifact.selected.name {
+                return Err(LayoutConfigError::ArtifactLayoutMismatch {
+                    expected: selected_layout.name.clone(),
+                    actual: artifact.selected.name.clone(),
+                });
+            }
+        }
+
+        Ok(SceneRequest {
             workspace_id: workspace.id.clone(),
             output_id: output.map(|output| output.id.clone()),
             layout_name: workspace
@@ -257,14 +283,7 @@ impl Config {
                 .as_ref()
                 .map(|layout| layout.name.clone()),
             root,
-            stylesheet: selected_layout
-                .as_ref()
-                .map(|layout| layout.stylesheet.clone())
-                .unwrap_or_default(),
-            effects_stylesheet: selected_layout
-                .as_ref()
-                .map(|layout| layout.effects_stylesheet.clone())
-                .unwrap_or_default(),
+            stylesheets: artifact.stylesheets.clone(),
             space: LayoutSpace {
                 width: output
                     .map(|output| output.logical_width as f32)
@@ -276,11 +295,12 @@ impl Config {
         })
     }
 
-    pub fn build_layout_request_from_state(
+    pub fn build_scene_request_from_state(
         &self,
         state: &StateSnapshot,
         root: ResolvedLayoutNode,
-    ) -> Result<Option<LayoutRequest>, LayoutConfigError> {
+        artifact: &PreparedLayout,
+    ) -> Result<Option<SceneRequest>, LayoutConfigError> {
         let Some(workspace) = state.current_workspace() else {
             return Ok(None);
         };
@@ -289,7 +309,8 @@ impl Config {
             .as_ref()
             .and_then(|output_id| state.output_by_id(output_id));
 
-        self.build_layout_request(workspace, output, root).map(Some)
+        self.build_scene_request(workspace, output, root, artifact)
+            .map(Some)
     }
 }
 
@@ -304,7 +325,8 @@ impl From<&LayoutDefinition> for LayoutRef {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use spiders_shared::ids::{OutputId, WorkspaceId};
+    use spiders_tree::{OutputId, WorkspaceId};
+    use spiders_shared::runtime::{PreparedLayout, PreparedStylesheets};
     use spiders_shared::wm::OutputTransform;
     use std::fs;
 
@@ -337,14 +359,30 @@ mod tests {
         }
     }
 
+    fn artifact(layout_name: &str, module: &str) -> PreparedLayout {
+        PreparedLayout {
+            selected: SelectedLayout {
+                name: layout_name.into(),
+                directory: "layouts/master-stack".into(),
+                module: module.into(),
+            },
+            runtime_payload: serde_json::to_value(JavaScriptModuleGraph {
+                entry: module.into(),
+                modules: vec![],
+            })
+            .unwrap(),
+            stylesheets: PreparedStylesheets::default(),
+        }
+    }
+
     #[test]
     fn selects_layout_definition_by_workspace_layout_ref() {
         let config = Config {
             layouts: vec![LayoutDefinition {
                 name: "master-stack".into(),
+                directory: "layouts/master-stack".into(),
                 module: "layouts/master-stack.js".into(),
-                stylesheet: "workspace { display: flex; }".into(),
-                effects_stylesheet: String::new(),
+                stylesheet_path: Some("layouts/master-stack/index.css".into()),
                 runtime_graph: None,
             }],
             ..Config::default()
@@ -357,31 +395,31 @@ mod tests {
     }
 
     #[test]
-    fn builds_layout_request_from_config_and_workspace_state() {
+    fn builds_scene_request_from_config_and_workspace_state() {
         let config = Config {
             layouts: vec![LayoutDefinition {
                 name: "master-stack".into(),
+                directory: "layouts/master-stack".into(),
                 module: "layouts/master-stack.js".into(),
-                stylesheet: "workspace { display: flex; }".into(),
-                effects_stylesheet: String::new(),
+                stylesheet_path: Some("layouts/master-stack/index.css".into()),
                 runtime_graph: None,
             }],
             ..Config::default()
         };
 
         let request = config
-            .build_layout_request(
+            .build_scene_request(
                 &workspace("master-stack"),
                 Some(&output()),
                 ResolvedLayoutNode::Workspace {
                     meta: Default::default(),
                     children: vec![],
                 },
+                &artifact("master-stack", "layouts/master-stack.js"),
             )
             .unwrap();
 
         assert_eq!(request.layout_name.as_deref(), Some("master-stack"));
-        assert_eq!(request.stylesheet, "workspace { display: flex; }");
         assert_eq!(request.space.width, 1920.0);
         assert_eq!(request.space.height, 1080.0);
     }
@@ -391,9 +429,9 @@ mod tests {
         let config = Config {
             layouts: vec![LayoutDefinition {
                 name: "master-stack".into(),
+                directory: "layouts/master-stack".into(),
                 module: "layouts/master-stack.js".into(),
-                stylesheet: "workspace { display: flex; }".into(),
-                effects_stylesheet: String::new(),
+                stylesheet_path: Some("layouts/master-stack/index.css".into()),
                 runtime_graph: None,
             }],
             ..Config::default()
@@ -407,21 +445,20 @@ mod tests {
             selected,
             Some(SelectedLayout {
                 name: "master-stack".into(),
+                directory: "layouts/master-stack".into(),
                 module: "layouts/master-stack.js".into(),
-                stylesheet: "workspace { display: flex; }".into(),
-                effects_stylesheet: String::new(),
             })
         );
     }
 
     #[test]
-    fn builds_layout_request_from_state_snapshot() {
+    fn builds_scene_request_from_state_snapshot() {
         let config = Config {
             layouts: vec![LayoutDefinition {
                 name: "master-stack".into(),
+                directory: "layouts/master-stack".into(),
                 module: "layouts/master-stack.js".into(),
-                stylesheet: "workspace { display: flex; }".into(),
-                effects_stylesheet: String::new(),
+                stylesheet_path: Some("layouts/master-stack/index.css".into()),
                 runtime_graph: None,
             }],
             ..Config::default()
@@ -438,12 +475,13 @@ mod tests {
         };
 
         let request = config
-            .build_layout_request_from_state(
+            .build_scene_request_from_state(
                 &state,
                 ResolvedLayoutNode::Workspace {
                     meta: Default::default(),
                     children: vec![],
                 },
+                &artifact("master-stack", "layouts/master-stack.js"),
             )
             .unwrap()
             .unwrap();
@@ -457,13 +495,14 @@ mod tests {
     fn missing_layout_definition_returns_error() {
         let config = Config::default();
         let error = config
-            .build_layout_request(
+            .build_scene_request(
                 &workspace("missing"),
                 Some(&output()),
                 ResolvedLayoutNode::Workspace {
                     meta: Default::default(),
                     children: vec![],
                 },
+                &artifact("missing", "layouts/missing.js"),
             )
             .unwrap_err();
 
@@ -476,12 +515,46 @@ mod tests {
     }
 
     #[test]
+    fn scene_request_rejects_mismatched_prepared_artifact() {
+        let config = Config {
+            layouts: vec![LayoutDefinition {
+                name: "master-stack".into(),
+                directory: "layouts/master-stack".into(),
+                module: "layouts/master-stack.js".into(),
+                stylesheet_path: Some("layouts/master-stack/index.css".into()),
+                runtime_graph: None,
+            }],
+            ..Config::default()
+        };
+
+        let error = config
+            .build_scene_request(
+                &workspace("master-stack"),
+                Some(&output()),
+                ResolvedLayoutNode::Workspace {
+                    meta: Default::default(),
+                    children: vec![],
+                },
+                &artifact("secondary", "layouts/secondary.js"),
+            )
+            .unwrap_err();
+
+        assert_eq!(
+            error,
+            LayoutConfigError::ArtifactLayoutMismatch {
+                expected: "master-stack".into(),
+                actual: "secondary".into(),
+            }
+        );
+    }
+
+    #[test]
     fn loads_config_from_json_path() {
         let temp_dir = std::env::temp_dir();
         let config_path = temp_dir.join("spiders-config-test.json");
         fs::write(
             &config_path,
-            r#"{"layouts":[{"name":"master-stack","module":"layouts/master-stack.js","stylesheet":"workspace { display: flex; }"}]}"#,
+            r#"{"layouts":[{"name":"master-stack","directory":"layouts/master-stack","module":"layouts/master-stack.js","stylesheet_path":"layouts/master-stack/index.css"}]}"#,
         )
         .unwrap();
 
@@ -508,12 +581,16 @@ mod tests {
         })
         .unwrap();
 
-        assert!(paths
-            .authored_config
-            .ends_with(".config/spiders-wm/config.ts"));
-        assert!(paths
-            .prepared_config
-            .ends_with(".cache/spiders-wm/config.js"));
+        assert!(
+            paths
+                .authored_config
+                .ends_with(".config/spiders-wm/config.ts")
+        );
+        assert!(
+            paths
+                .prepared_config
+                .ends_with(".cache/spiders-wm/config.js")
+        );
 
         let _ = fs::remove_file(config_dir.join("config.ts"));
     }

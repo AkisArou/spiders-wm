@@ -1,12 +1,12 @@
 # spiders-wm
 
-`spiders-wm` is a Rust-native Wayland compositor and window manager built around
+`spiders-wm` is a Rust-native Wayland window management stack built around
 JavaScript or TypeScript configuration, structural JSX layouts, CSS-based layout
 styling, and CSS-based visual effects.
 
 The rewrite targets:
 
-- `smithay` for compositor integration
+- `river` for compositor integration
 - `taffy` for layout computation
 - `rquickjs` for the embedded JavaScript runtime
 - `keyframe` for animation timelines
@@ -26,23 +26,15 @@ The rewrite targets:
 - `docs/config.md` - config shape, rules, bindings, and examples
 - `docs/css.md` - supported layout CSS and effects CSS
 - `docs/jsx.md` - JSX layout elements, props, matching, and examples
-- `docs/development.md` - build, run, and debugging workflow
 - `docs/ipc.md` - IPC transport, queries, actions, and events
 - `docs/cli.md` - CLI commands and examples
-
-Compatibility notes for older paths:
-
-- `docs/spec/config-runtime.md` points to `docs/config.md`
-- `docs/spec/layout-system.md` points to `docs/jsx.md` and `docs/css.md`
-- `docs/spec/effects-css.md` points to `docs/css.md`
-- `docs/spec/ipc.md` points to `docs/ipc.md`
 
 ## Quick Start
 
 1. Run `cargo check`.
 2. Validate config with `cargo run -p spiders-cli -- check-config`.
 3. Build prepared config with `cargo run -p spiders-cli -- build-config`.
-4. Start the nested compositor with `cargo run -p spiders-cli -- winit-run`.
+4. Use IPC tooling with `cargo run -p spiders-cli -- ipc-query --query state`.
 
 ## Configuration At A Glance
 
@@ -65,12 +57,11 @@ export default {
 
 ## Repository Layout
 
-- `crates/spiders-wm` - compositor integration, runtime hosting, WM state, and backend-agnostic domain logic
+- `crates/spiders-river` - river-focused compositor/runtime integration
 - `crates/spiders-config` - config loading and prepared config handling
-- `crates/spiders-layout` - layout validation and geometry pipeline
-- `crates/spiders-effects` - effects stylesheet model
+- `crates/spiders-scene` - scene validation, styling, and geometry pipeline
 - `crates/spiders-ipc` - IPC protocol, transport, and server helpers
-- - `crates/runtimes/js` - JavaScript runtime bridge and SDK surface
+- `crates/runtimes/js` - JavaScript runtime bridge and SDK surface
 - `crates/spiders-cli` - local development and IPC CLI
 
 ## Notes

@@ -12,6 +12,9 @@ rquickjs = { version = "0.11.0", features = ["loader"] }
 serde.workspace = true
 serde_json.workspace = true
 spiders-config = { path = "../../spiders-config" }
-spiders-layout = { path = "../../spiders-layout" }
+spiders-scene = { path = "../../spiders-scene" }
 spiders-shared = { path = "../../spiders-shared" }
+spiders-tree = { path = "../../spiders-tree" }
 thiserror.workspace = true
+
+[dev-dependencies]

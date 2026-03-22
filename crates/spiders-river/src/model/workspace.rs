@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use spiders_shared::ids::WorkspaceId;
+use spiders_tree::WorkspaceId;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorkspaceState {

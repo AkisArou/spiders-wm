@@ -1,5 +1,5 @@
 use spiders_config::model::{Config, WindowRule};
-use spiders_shared::ids::WorkspaceId;
+use spiders_tree::WorkspaceId;
 use spiders_shared::wm::WindowMode;
 
 use crate::model::WindowState;

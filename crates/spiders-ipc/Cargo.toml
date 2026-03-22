@@ -10,3 +10,6 @@ serde.workspace = true
 serde_json.workspace = true
 spiders-shared = { path = "../spiders-shared" }
 thiserror.workspace = true
+
+[dev-dependencies]
+spiders-tree = { path = "../spiders-tree" }

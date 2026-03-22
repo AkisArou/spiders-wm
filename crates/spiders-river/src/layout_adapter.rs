@@ -1,11 +1,10 @@
 use spiders_config::authoring_layout::AuthoringLayoutService;
 use spiders_config::model::Config;
-use spiders_layout::ast::ValidatedLayoutTree;
-use spiders_layout::pipeline::compute_layout_from_request;
-use spiders_shared::ids::WindowId;
-use spiders_shared::layout::{
-    LayoutNodeMeta, LayoutRequest, LayoutSnapshotNode, RemainingTake, SlotTake, SourceLayoutNode,
-};
+use spiders_scene::ast::ValidatedLayoutTree;
+use spiders_scene::{LayoutSnapshotNode, SceneRequest};
+use spiders_scene::pipeline::compute_layout_from_request;
+use spiders_tree::{LayoutNodeMeta, RemainingTake, ResolvedLayoutNode, SlotTake, SourceLayoutNode, WindowId};
+use spiders_shared::runtime::PreparedStylesheet;
 use spiders_shared::wm::{LayoutRef, WindowSnapshot};
 use spiders_runtime_js::DefaultLayoutRuntime;
 
@@ -70,21 +69,21 @@ fn resolved_layout_root(
     source_tree: SourceLayoutNode,
     state: &spiders_shared::wm::StateSnapshot,
     window_ids: &[WindowId],
-) -> spiders_shared::layout::ResolvedLayoutNode {
+) -> ResolvedLayoutNode {
     let windows = visible_window_snapshots(state, window_ids);
 
     ValidatedLayoutTree::new(source_tree)
         .ok()
         .and_then(|tree| tree.resolve(&windows).ok())
         .map(|resolved| resolved.root)
-        .unwrap_or_else(|| spiders_shared::layout::ResolvedLayoutNode::Workspace {
+        .unwrap_or_else(|| ResolvedLayoutNode::Workspace {
             meta: LayoutNodeMeta {
                 class: vec!["river-workspace".into()],
                 ..LayoutNodeMeta::default()
             },
             children: window_ids
                 .iter()
-                .map(|window_id| spiders_shared::layout::ResolvedLayoutNode::Window {
+                .map(|window_id| ResolvedLayoutNode::Window {
                     meta: LayoutNodeMeta {
                         class: vec!["river-window".into()],
                         ..LayoutNodeMeta::default()
@@ -112,23 +111,38 @@ pub fn compute_layout_snapshot(
         current_workspace.effective_layout = selected_layout.map(|name| LayoutRef { name });
     }
 
-    let source_tree = snapshot
+    let evaluation = snapshot
         .current_workspace()
         .and_then(|workspace| {
             layout_service
                 .evaluate_prepared_for_workspace(config, &snapshot, workspace)
                 .ok()
                 .flatten()
-                .map(|evaluation| evaluation.layout)
-        })
+        });
+
+    let source_tree = evaluation
+        .as_ref()
+        .map(|evaluation| evaluation.layout.clone())
         .unwrap_or_else(default_source_layout_tree);
 
-    let mut request: LayoutRequest = config
-        .build_layout_request_from_state(&snapshot, resolved_layout_root(source_tree, &snapshot, window_ids))
+    let mut request: SceneRequest = config
+        .build_scene_request_from_state(
+            &snapshot,
+            resolved_layout_root(source_tree, &snapshot, window_ids),
+            &evaluation.as_ref()?.artifact,
+        )
         .ok()??;
 
-    if request.stylesheet.trim().is_empty() {
-        request.stylesheet = FALLBACK_HORIZONTAL_STYLESHEET.into();
+    let layout_stylesheet_missing = request
+        .stylesheets
+        .layout
+        .as_ref()
+        .is_none_or(|sheet| sheet.source.trim().is_empty());
+    if layout_stylesheet_missing {
+        request.stylesheets.layout = Some(PreparedStylesheet {
+            path: "fallback://river-layout.css".into(),
+            source: FALLBACK_HORIZONTAL_STYLESHEET.into(),
+        });
     }
 
     compute_layout_from_request(&request).ok().map(|response| response.root)
@@ -138,8 +152,7 @@ pub fn compute_layout_snapshot(
 mod tests {
     use super::*;
     use spiders_config::model::Config;
-    use spiders_shared::ids::OutputId;
-    use spiders_shared::layout::ResolvedLayoutNode;
+    use spiders_tree::{MatchClause, MatchKey, OutputId, WindowMatch};
 
     fn fixture_state() -> spiders_shared::wm::StateSnapshot {
         let config = Config {
@@ -180,9 +193,9 @@ mod tests {
                     },
                     children: vec![SourceLayoutNode::Slot {
                         meta: LayoutNodeMeta::default(),
-                        window_match: Some(spiders_shared::layout::WindowMatch {
-                            clauses: vec![spiders_shared::layout::MatchClause {
-                                key: spiders_shared::layout::MatchKey::AppId,
+                        window_match: Some(WindowMatch {
+                            clauses: vec![MatchClause {
+                                key: MatchKey::AppId,
                                 value: "firefox".into(),
                             }],
                         }),
@@ -244,9 +257,9 @@ mod tests {
                     id: Some("matched".into()),
                     ..LayoutNodeMeta::default()
                 },
-                window_match: Some(spiders_shared::layout::WindowMatch {
-                    clauses: vec![spiders_shared::layout::MatchClause {
-                        key: spiders_shared::layout::MatchKey::Title,
+                window_match: Some(WindowMatch {
+                    clauses: vec![MatchClause {
+                        key: MatchKey::Title,
                         value: "Terminal".into(),
                     }],
                 }),

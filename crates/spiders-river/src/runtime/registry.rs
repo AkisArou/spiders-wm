@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, HashMap};
 
 use spiders_shared::api::WmAction;
-use spiders_shared::ids::{OutputId, WindowId};
+use spiders_tree::{OutputId, WindowId};
 use wayland_backend::client::ObjectId;
 
 use crate::protocol::river_window_management_v1::{
@@ -26,14 +26,14 @@ pub struct RiverRegistry {
 #[derive(Debug, Clone)]
 pub struct OutputRecord {
     pub proxy: river_output_v1::RiverOutputV1,
-    pub state_id: spiders_shared::ids::OutputId,
+    pub state_id: spiders_tree::OutputId,
 }
 
 #[derive(Debug, Clone)]
 pub struct WindowRecord {
     pub proxy: river_window_v1::RiverWindowV1,
     pub node: river_node_v1::RiverNodeV1,
-    pub state_id: spiders_shared::ids::WindowId,
+    pub state_id: spiders_tree::WindowId,
 }
 
 #[derive(Debug, Clone)]

@@ -49,15 +49,10 @@ fn load_project_config(path: &Path) -> Result<Config, LayoutConfigError> {
     let config_value = evaluate_compiled_config(path, &config_runtime_graph)?;
     let mut config = decode_config_value(path, &config_value)?;
 
-    let global_stylesheet = project
+    config.global_stylesheet_path = project
         .global_stylesheet_path
         .as_ref()
-        .map(std::fs::read_to_string)
-        .transpose()
-        .map_err(|_| LayoutConfigError::ReadConfig {
-            path: project.config_app.root_dir.join("index.css"),
-        })?
-        .unwrap_or_default();
+        .map(|path| path.to_string_lossy().into_owned());
 
     let mut layout_defs = Vec::new();
     for app in &project.layout_apps {
@@ -82,9 +77,16 @@ fn load_project_config(path: &Path) -> Result<Config, LayoutConfigError> {
 
         layout_defs.push(LayoutDefinition {
             name: app.name.clone(),
+            directory: app
+                .entry_path
+                .parent()
+                .map(|path| path.to_string_lossy().into_owned())
+                .unwrap_or_default(),
             module: runtime_graph.entry.clone(),
-            stylesheet: compiled.stylesheet,
-            effects_stylesheet: global_stylesheet.clone(),
+            stylesheet_path: app
+                .stylesheet_path
+                .as_ref()
+                .map(|path| path.to_string_lossy().into_owned()),
             runtime_graph: Some(runtime_graph),
         });
     }
@@ -142,7 +144,7 @@ fn write_runtime_cache(
             stylesheet
                 .file_name()
                 .map(PathBuf::from)
-                .unwrap_or_else(|| PathBuf::from("effects.css")),
+                .unwrap_or_else(|| PathBuf::from("index.css")),
         );
         if copy_stylesheet_if_stale(stylesheet, &destination, force_rebuild)? {
             update.copied_stylesheets += 1;
@@ -156,7 +158,7 @@ fn write_runtime_cache(
 
 fn evaluate_compiled_config(
     path: &Path,
-    graph: &spiders_shared::runtime::JavaScriptModuleGraph,
+    graph: &spiders_config::model::JavaScriptModuleGraph,
 ) -> Result<Value, LayoutConfigError> {
     evaluate_entry_export_to_json(graph, &graph.entry, "default")
         .map_err(|error| LayoutConfigError::EvaluateAuthoredConfig {
@@ -413,7 +415,7 @@ fn runtime_static_relative_path(source_path: &Path, authored_root: &Path) -> Pat
 }
 
 fn rewrite_module_for_runtime(
-    module: &spiders_shared::runtime::JavaScriptModule,
+    module: &spiders_config::model::JavaScriptModule,
     destination: &Path,
     runtime_root: &Path,
     runtime_entry_path: &Path,
@@ -633,6 +635,7 @@ fn decode_config_value(path: &Path, value: &Value) -> Result<Config, LayoutConfi
         options: decode_options(root.get("options"), path)?,
         inputs: decode_inputs(root.get("inputs"), path)?,
         layouts: Vec::new(),
+        global_stylesheet_path: None,
         layout_selection: decode_layout_selection(root.get("layouts"), path)?,
         rules: decode_rules(root.get("rules"), path)?,
         bindings: decode_bindings(root.get("bindings"), path)?,
@@ -1317,12 +1320,8 @@ mod tests {
                 .iter()
                 .any(|module| module.source.contains("export default function layout"))
         );
-        assert!(config.layouts[0].stylesheet.contains(".master {}"));
-        assert!(
-            config.layouts[0]
-                .effects_stylesheet
-                .contains("window { appearance: none; }")
-        );
+        let stylesheet_path = config.layouts[0].stylesheet_path.clone().unwrap();
+        assert!(stylesheet_path.ends_with("layouts/master-stack/index.css"));
     }
 
     #[test]

@@ -172,10 +172,8 @@ pub fn discover_project_apps(
 }
 
 fn discover_global_stylesheet(root_dir: &Path) -> Option<PathBuf> {
-    ["effects.css", "index.css"]
-        .into_iter()
-        .map(|name| root_dir.join(name))
-        .find(|path| path.exists())
+    let path = root_dir.join("index.css");
+    path.exists().then_some(path)
 }
 
 fn discover_layout_entry(layout_dir: &Path) -> Option<PathBuf> {
@@ -408,12 +406,11 @@ mod tests {
     }
 
     #[test]
-    fn discovers_effects_css_before_root_index_css() {
-        let root = unique_root("effects");
+    fn discovers_root_index_css_as_global_stylesheet() {
+        let root = unique_root("global-index");
         fs::create_dir_all(root.join("layouts/master-stack")).unwrap();
         fs::write(root.join("config.ts"), "export default {};").unwrap();
         fs::write(root.join("index.css"), "workspace {}").unwrap();
-        fs::write(root.join("effects.css"), "window { border-width: 2px; }").unwrap();
         fs::write(
             root.join("layouts/master-stack/index.tsx"),
             "export default function layout() { return null; }",
@@ -422,10 +419,7 @@ mod tests {
 
         let project = discover_project_apps(root.join("config.ts")).unwrap();
 
-        assert_eq!(
-            project.global_stylesheet_path,
-            Some(root.join("effects.css"))
-        );
+        assert_eq!(project.global_stylesheet_path, Some(root.join("index.css")));
     }
 
     #[test]

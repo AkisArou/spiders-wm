@@ -1,4 +1,4 @@
-use spiders_shared::ids::WindowId;
+use spiders_tree::WindowId;
 
 use crate::protocol::river_window_management_v1::river_window_v1;
 
