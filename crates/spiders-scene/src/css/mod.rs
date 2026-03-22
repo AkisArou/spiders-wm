@@ -305,14 +305,26 @@ mod tests {
         );
         assert_eq!(
             titlebar_style.font_family,
-            Some("\"DejaVu Sans\", sans-serif".into())
+            Some(vec!["\"DejaVu Sans\"".into(), "sans-serif".into()])
         );
         assert_eq!(titlebar_style.font_size, Some(LengthPercentage::Px(15.0)));
         assert_eq!(titlebar_style.font_weight, Some(FontWeightValue::Bold));
         assert_eq!(titlebar_style.letter_spacing, Some(2.0));
         assert_eq!(
             titlebar_style.box_shadow,
-            Some("rgba(0, 0, 0, 0.35) 0px 3px 8px".into())
+            Some(vec![BoxShadowValue {
+                color: Some(ColorValue {
+                    red: 0,
+                    green: 0,
+                    blue: 0,
+                    alpha: 89,
+                }),
+                offset_x: 0,
+                offset_y: 3,
+                blur_radius: 8,
+                spread_radius: 0,
+                inset: false,
+            }])
         );
         assert_eq!(
             titlebar_style.border,
@@ -419,7 +431,7 @@ mod tests {
 
         assert_eq!(style.text_align, Some(TextAlignValue::End));
         assert_eq!(style.text_transform, Some(TextTransformValue::Capitalize));
-        assert_eq!(style.font_family, Some("serif".into()));
+        assert_eq!(style.font_family, Some(vec!["serif".into()]));
         assert_eq!(style.font_size, Some(LengthPercentage::Percent(85.0)));
         assert_eq!(style.font_weight, Some(FontWeightValue::Bold));
         assert_eq!(style.letter_spacing, Some(0.0));

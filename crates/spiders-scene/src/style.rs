@@ -63,6 +63,18 @@ pub enum BorderStyleValue {
     Solid,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BoxShadowValue {
+    pub color: Option<ColorValue>,
+    pub offset_x: i32,
+    pub offset_y: i32,
+    pub blur_radius: i32,
+    pub spread_radius: i32,
+    pub inset: bool,
+}
+
+pub type FontFamilyValue = Vec<String>;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TextAlignValue {
     Left,
@@ -236,12 +248,12 @@ pub struct ComputedStyle {
     pub border_side_colors: Option<BoxEdges<Option<ColorValue>>>,
     pub border_style: Option<BoxEdges<BorderStyleValue>>,
     pub border_radius: Option<String>,
-    pub box_shadow: Option<String>,
+    pub box_shadow: Option<Vec<BoxShadowValue>>,
     pub backdrop_filter: Option<String>,
     pub transform: Option<String>,
     pub text_align: Option<TextAlignValue>,
     pub text_transform: Option<TextTransformValue>,
-    pub font_family: Option<String>,
+    pub font_family: Option<FontFamilyValue>,
     pub font_size: Option<LengthPercentage>,
     pub font_weight: Option<FontWeightValue>,
     pub letter_spacing: Option<f32>,

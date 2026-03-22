@@ -1,15 +1,20 @@
 use thiserror::Error;
 
+use cssparser::{Parser, ParserInput};
 use super::grid::*;
 use super::parse_values::*;
 
 use crate::style::{
-    AlignmentValue, AppearanceValue, BorderStyleValue, BoxEdges, BoxSizingValue, ColorValue,
-    ContentAlignmentValue, Display, FlexDirectionValue, FlexWrapValue, FontWeightValue,
-    GridAutoFlow, GridPlacementValue, GridTemplate, GridTemplateArea, GridTrackValue,
-    LengthPercentage, Line, OverflowValue, PositionValue, Size2, SizeValue, TextAlignValue,
-    TextTransformValue,
+    AlignmentValue, AppearanceValue, BorderStyleValue, BoxEdges, BoxShadowValue,
+    BoxSizingValue, ColorValue, ContentAlignmentValue, Display, FlexDirectionValue,
+    FlexWrapValue, FontFamilyValue, FontWeightValue, GridAutoFlow, GridPlacementValue,
+    GridTemplate, GridTemplateArea, GridTrackValue, LengthPercentage, Line, OverflowValue,
+    PositionValue, Size2, SizeValue, TextAlignValue, TextTransformValue,
 };
+use style::parser::{Parse as StyloParse, ParserContext};
+use style::stylesheets::{CssRuleType, Origin, UrlExtraData};
+use style::values::specified::effects::BoxShadow as StyloBoxShadow;
+use style_traits::ParsingMode;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BoxSide {
@@ -40,12 +45,12 @@ pub enum CompiledDeclaration {
     BorderStyle(BoxEdges<BorderStyleValue>),
     BorderStyleSide(BoxSide, BorderStyleValue),
     BorderRadius(String),
-    BoxShadow(String),
+    BoxShadow(Vec<BoxShadowValue>),
     BackdropFilter(String),
     Transform(String),
     TextAlign(TextAlignValue),
     TextTransform(TextTransformValue),
-    FontFamily(String),
+    FontFamily(FontFamilyValue),
     FontSize(LengthPercentage),
     FontWeight(FontWeightValue),
     LetterSpacing(f32),
@@ -167,7 +172,7 @@ pub fn compile_declaration_from_value(
         "border-radius" => Ok(CompiledDeclaration::BorderRadius(parse_raw_text_direct(
             property, value,
         )?)),
-        "box-shadow" => Ok(CompiledDeclaration::BoxShadow(parse_raw_text_direct(
+        "box-shadow" => Ok(CompiledDeclaration::BoxShadow(parse_box_shadow_direct(
             property, value,
         )?)),
         "backdrop-filter" => Ok(CompiledDeclaration::BackdropFilter(parse_raw_text_direct(
@@ -182,7 +187,7 @@ pub fn compile_declaration_from_value(
         "text-transform" => Ok(CompiledDeclaration::TextTransform(
             parse_text_transform_direct(property, value)?,
         )),
-        "font-family" => Ok(CompiledDeclaration::FontFamily(parse_raw_text_direct(
+        "font-family" => Ok(CompiledDeclaration::FontFamily(parse_font_family_direct(
             property, value,
         )?)),
         "font-size" => Ok(CompiledDeclaration::FontSize(parse_length_percentage_word(
@@ -550,6 +555,147 @@ fn parse_raw_text_direct(property: &str, value: &CssValue) -> Result<String, Css
     } else {
         Ok(text.to_string())
     }
+}
+
+fn parse_box_shadow_direct(
+    property: &str,
+    value: &CssValue,
+) -> Result<Vec<BoxShadowValue>, CssValueError> {
+    let text = value.text.trim();
+    if text.is_empty() {
+        return Err(CssValueError::UnsupportedValue {
+            property: property.to_string(),
+            value: value.text.clone(),
+        });
+    }
+
+    parse_box_shadow_list(text).ok_or_else(|| CssValueError::UnsupportedValue {
+        property: property.to_string(),
+        value: value.text.clone(),
+    })
+}
+
+fn parse_font_family_direct(
+    property: &str,
+    value: &CssValue,
+) -> Result<FontFamilyValue, CssValueError> {
+    let families = split_font_family_list(value.text.trim())
+        .into_iter()
+        .filter(|family| !family.is_empty())
+        .collect::<Vec<_>>();
+
+    if families.is_empty() {
+        return Err(CssValueError::UnsupportedValue {
+            property: property.to_string(),
+            value: value.text.clone(),
+        });
+    }
+
+    Ok(families)
+}
+
+fn split_font_family_list(font_family: &str) -> Vec<String> {
+    let mut families = Vec::new();
+    let mut current = String::new();
+    let mut quote: Option<char> = None;
+
+    for character in font_family.chars() {
+        match character {
+            '\'' | '"' => {
+                if quote == Some(character) {
+                    quote = None;
+                } else if quote.is_none() {
+                    quote = Some(character);
+                }
+                current.push(character);
+            }
+            ',' if quote.is_none() => {
+                let family = current.trim();
+                if !family.is_empty() {
+                    families.push(family.to_string());
+                }
+                current.clear();
+            }
+            _ => current.push(character),
+        }
+    }
+
+    let family = current.trim();
+    if !family.is_empty() {
+        families.push(family.to_string());
+    }
+
+    families
+}
+
+fn parse_box_shadow_list(text: &str) -> Option<Vec<BoxShadowValue>> {
+    let url_data = UrlExtraData(url::Url::parse("about:blank").ok()?.into());
+    let context = ParserContext::new(
+        Origin::Author,
+        &url_data,
+        Some(CssRuleType::Style),
+        ParsingMode::DEFAULT,
+        style::context::QuirksMode::NoQuirks,
+        Default::default(),
+        None,
+        None,
+    );
+    let mut input = ParserInput::new(text);
+    let mut parser = Parser::new(&mut input);
+    let shadows = parser
+        .parse_comma_separated(|input| StyloBoxShadow::parse(&context, input))
+        .ok()?;
+    parser.expect_exhausted().ok()?;
+
+    shadows
+        .into_iter()
+        .map(|shadow| {
+            Some(BoxShadowValue {
+                color: shadow.base.color.as_ref().and_then(stylo_color_to_scene),
+                offset_x: shadow
+                    .base
+                    .horizontal
+                    .to_computed_pixel_length_without_context()
+                    .ok()?
+                    .round() as i32,
+                offset_y: shadow
+                    .base
+                    .vertical
+                    .to_computed_pixel_length_without_context()
+                    .ok()?
+                    .round() as i32,
+                blur_radius: shadow
+                    .base
+                    .blur
+                    .as_ref()
+                    .map(|value| value.0.to_computed_pixel_length_without_context())
+                    .transpose()
+                    .ok()?
+                    .unwrap_or(0.0)
+                    .round() as i32,
+                spread_radius: shadow
+                    .spread
+                    .as_ref()
+                    .map(|value| value.to_computed_pixel_length_without_context())
+                    .transpose()
+                    .ok()?
+                    .unwrap_or(0.0)
+                    .round() as i32,
+                inset: shadow.inset,
+            })
+        })
+        .collect()
+}
+
+fn stylo_color_to_scene(color: &style::values::specified::color::Color) -> Option<ColorValue> {
+    let rgba = color.resolve_to_absolute()?.into_srgb_legacy();
+    let components = rgba.raw_components();
+    Some(ColorValue {
+        red: (components[0].clamp(0.0, 1.0) * 255.0).round() as u8,
+        green: (components[1].clamp(0.0, 1.0) * 255.0).round() as u8,
+        blue: (components[2].clamp(0.0, 1.0) * 255.0).round() as u8,
+        alpha: (components[3].clamp(0.0, 1.0) * 255.0).round() as u8,
+    })
 }
 
 fn parse_hex_color(input: &str) -> Option<ColorValue> {

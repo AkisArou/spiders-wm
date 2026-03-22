@@ -195,11 +195,11 @@ fn titlebar_text_align(style: Option<&ComputedStyle>) -> TextAlignValue {
         .unwrap_or(TextAlignValue::Left)
 }
 
-fn titlebar_font_family(style: Option<&ComputedStyle>) -> Option<String> {
+fn titlebar_font_family(style: Option<&ComputedStyle>) -> Option<spiders_scene::FontFamilyValue> {
     style
         .and_then(|style| style.font_family.as_ref())
-        .map(|family| family.trim().to_string())
-        .filter(|family| !family.is_empty())
+    .cloned()
+    .filter(|families| !families.is_empty())
 }
 
 fn titlebar_font_weight(style: Option<&ComputedStyle>) -> FontWeightValue {
@@ -225,11 +225,11 @@ fn titlebar_letter_spacing(style: Option<&ComputedStyle>) -> i32 {
         .round() as i32
 }
 
-fn titlebar_box_shadow(style: Option<&ComputedStyle>) -> Option<String> {
+fn titlebar_box_shadow(style: Option<&ComputedStyle>) -> Option<Vec<spiders_scene::BoxShadowValue>> {
     style
         .and_then(|style| style.box_shadow.as_ref())
-        .map(|shadow| shadow.trim().to_string())
-        .filter(|shadow| !shadow.is_empty())
+    .cloned()
+    .filter(|shadow| !shadow.is_empty())
 }
 
 fn style_opacity(style: Option<&ComputedStyle>) -> f32 {
@@ -1379,20 +1379,32 @@ mod tests {
     }
 
     #[test]
-    fn titlebar_family_and_shadow_helpers_preserve_raw_values() {
+    fn titlebar_family_and_shadow_helpers_preserve_values() {
         let style = ComputedStyle {
-            font_family: Some(" 'DejaVu Sans', sans-serif ".into()),
-            box_shadow: Some(" 0 4px 10px rgba(0, 0, 0, 0.3) ".into()),
+            font_family: Some(vec!["'DejaVu Sans'".into(), "sans-serif".into()]),
+            box_shadow: Some(vec![spiders_scene::BoxShadowValue {
+                color: Some(spiders_scene::ColorValue {
+                    red: 0,
+                    green: 0,
+                    blue: 0,
+                    alpha: 77,
+                }),
+                offset_x: 0,
+                offset_y: 4,
+                blur_radius: 10,
+                spread_radius: 0,
+                inset: false,
+            }]),
             ..ComputedStyle::default()
         };
 
         assert_eq!(
             titlebar_font_family(Some(&style)),
-            Some("'DejaVu Sans', sans-serif".into())
+            Some(vec!["'DejaVu Sans'".into(), "sans-serif".into()])
         );
         assert_eq!(
             titlebar_box_shadow(Some(&style)),
-            Some("0 4px 10px rgba(0, 0, 0, 0.3)".into())
+            style.box_shadow.clone()
         );
     }
 

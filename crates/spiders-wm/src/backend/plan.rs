@@ -1,6 +1,6 @@
 use spiders_tree::WindowId;
 use spiders_tree::{OutputId, WorkspaceId};
-use spiders_scene::{ColorValue, FontWeightValue, TextAlignValue};
+use spiders_scene::{BoxShadowValue, ColorValue, FontFamilyValue, FontWeightValue, TextAlignValue};
 use spiders_shared::types::WindowMode;
 
 use crate::protocol::river_window_management_v1::river_window_v1;
@@ -68,11 +68,11 @@ pub struct TitlebarPlan {
     pub title: String,
     pub text_color: ColorValue,
     pub text_align: TextAlignValue,
-    pub font_family: Option<String>,
+    pub font_family: Option<FontFamilyValue>,
     pub font_size: i32,
     pub font_weight: FontWeightValue,
     pub letter_spacing: i32,
-    pub box_shadow: Option<String>,
+    pub box_shadow: Option<Vec<BoxShadowValue>>,
     pub padding_top: i32,
     pub padding_right: i32,
     pub padding_bottom: i32,

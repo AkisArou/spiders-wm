@@ -82,6 +82,8 @@ export default {
 
 `titlebar_font` lets the compositor titlebar renderer use explicit font files instead of only probing common Linux defaults.
 
+The compositor titlebar renderer currently supports titlebar background, bottom border, text typography, top corner radii, and non-inset `box-shadow`. Shadow rendering is intentionally approximate: multiple non-inset shadows are drawn, rounded top corners are respected, and the clipped titlebar body is composited over the shadow layer.
+
 Example:
 
 ```ts
@@ -99,15 +101,18 @@ options: {
 Config can specify custom `bindings`. If not provided, default milestone bindings are generated based on `mod_key`:
 
 **Default Focus Bindings** (non-reordering):
+
 - `{mod_key}+h/j/k/l` - focus left/down/up/right
 - `{mod_key}+ctrl+1-9` - toggle view workspace
 - `{mod_key}+1-9` - view workspace
 
 **Default Move/Swap Bindings**:
+
 - `{mod_key}+Shift+h/j/k/l` - swap/move left/down/up/right
 - `{mod_key}+Shift+1-9` - assign focused window to workspace
 
 **Default Spawn/Utility Bindings**:
+
 - `{mod_key}+Return` - spawn terminal (foot)
 - `{mod_key}+q` - close focused window
 - `{mod_key}+space` - cycle layout
@@ -165,7 +170,7 @@ rules: [
 ];
 ```
 
-## Bindings
+## Bindings Object
 
 Bindings are declarative entries with a trigger and an action descriptor.
 
