@@ -55,18 +55,14 @@ pub struct InputConfig {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct LayoutDefinition {
     pub name: String,
     pub directory: String,
     pub module: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stylesheet_path: Option<String>,
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        alias = "runtime_payload",
-        alias = "runtime_graph"
-    )]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runtime_cache_payload: Option<serde_json::Value>,
 }
 
@@ -551,6 +547,28 @@ mod tests {
         let config = Config::from_path(&config_path).unwrap();
 
         assert_eq!(config.layouts[0].name, "master-stack");
+
+        let _ = fs::remove_file(config_path);
+    }
+
+    #[test]
+    fn rejects_legacy_runtime_payload_field_in_layout_definition() {
+        let temp_dir = std::env::temp_dir();
+        let config_path = temp_dir.join("spiders-config-legacy-runtime-payload-test.json");
+        fs::write(
+            &config_path,
+            r#"{"layouts":[{"name":"master-stack","directory":"layouts/master-stack","module":"layouts/master-stack.js","runtime_payload":{"entry":"layouts/master-stack.js","modules":[]}}]}"#,
+        )
+        .unwrap();
+
+        let error = Config::from_path(&config_path).unwrap_err();
+
+        assert_eq!(
+            error,
+            LayoutConfigError::ParseConfig {
+                path: config_path.clone(),
+            }
+        );
 
         let _ = fs::remove_file(config_path);
     }

@@ -91,16 +91,9 @@ where
     }
 
     pub fn reload_config(&mut self) -> Result<Config, AuthoringLayoutServiceError> {
-        let Some(paths) = self.paths.as_ref() else {
-            return Err(RuntimeError::Other {
-                message: "prepared config reload requires configured paths".into(),
-            }
-            .into());
-        };
-
-        let _ = prepared_cache::write_prepared_config(&self.runtime, paths)?;
+        let config = prepared_cache::reload_config(&self.runtime, self.paths.as_ref())?;
         self.cache.clear();
-        Ok(self.runtime.load_prepared_config(&paths.prepared_config)?)
+        Ok(config)
     }
 
     pub fn validate_layout_modules(

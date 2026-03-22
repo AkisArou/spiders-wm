@@ -40,3 +40,21 @@ where
 {
     Ok(runtime.rebuild_prepared_config(&paths.authored_config, &paths.prepared_config)?)
 }
+
+pub(super) fn reload_config<R>(
+    runtime: &R,
+    paths: Option<&ConfigPaths>,
+) -> Result<Config, AuthoringLayoutServiceError>
+where
+    R: AuthoringLayoutRuntime<Config = Config>,
+{
+    let Some(paths) = paths else {
+        return Err(spiders_shared::runtime::RuntimeError::Other {
+            message: "prepared config reload requires configured paths".into(),
+        }
+        .into());
+    };
+
+    let _ = write_prepared_config(runtime, paths)?;
+    Ok(runtime.load_prepared_config(&paths.prepared_config)?)
+}
