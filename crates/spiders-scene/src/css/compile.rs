@@ -4,10 +4,11 @@ use super::grid::*;
 use super::parse_values::*;
 
 use crate::style::{
-    AlignmentValue, AppearanceValue, BoxEdges, BoxSizingValue, ColorValue,
-    ContentAlignmentValue, Display, FlexDirectionValue, FlexWrapValue, GridAutoFlow,
-    GridPlacementValue, GridTemplate, GridTemplateArea, GridTrackValue, LengthPercentage, Line,
-    OverflowValue, PositionValue, Size2, SizeValue,
+    AlignmentValue, AppearanceValue, BorderStyleValue, BoxEdges, BoxSizingValue, ColorValue,
+    ContentAlignmentValue, Display, FlexDirectionValue, FlexWrapValue, FontWeightValue,
+    GridAutoFlow, GridPlacementValue, GridTemplate, GridTemplateArea, GridTrackValue,
+    LengthPercentage, Line, OverflowValue, PositionValue, Size2, SizeValue, TextAlignValue,
+    TextTransformValue,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -32,12 +33,21 @@ pub enum CompiledDeclaration {
     AspectRatio(f32),
     Appearance(AppearanceValue),
     Background(ColorValue),
+    Color(ColorValue),
     Opacity(f32),
     BorderColor(ColorValue),
+    BorderColorSide(BoxSide, ColorValue),
+    BorderStyle(BoxEdges<BorderStyleValue>),
+    BorderStyleSide(BoxSide, BorderStyleValue),
     BorderRadius(String),
     BoxShadow(String),
     BackdropFilter(String),
     Transform(String),
+    TextAlign(TextAlignValue),
+    TextTransform(TextTransformValue),
+    FontSize(LengthPercentage),
+    FontWeight(FontWeightValue),
+    LetterSpacing(f32),
     Animation(String),
     Transition(String),
     TransitionProperty(String),
@@ -109,12 +119,50 @@ pub fn compile_declaration_from_value(
         "background" | "background-color" => Ok(CompiledDeclaration::Background(parse_color_direct(
             property, value,
         )?)),
+        "color" => Ok(CompiledDeclaration::Color(parse_color_direct(
+            property, value,
+        )?)),
         "opacity" => Ok(CompiledDeclaration::Opacity(parse_number_direct(
             property, value,
         )?)),
         "border-color" => Ok(CompiledDeclaration::BorderColor(parse_color_direct(
             property, value,
         )?)),
+        "border-style" => Ok(CompiledDeclaration::BorderStyle(parse_box_border_styles_direct(
+            property, value,
+        )?)),
+        "border-top-style" => Ok(CompiledDeclaration::BorderStyleSide(
+            BoxSide::Top,
+            parse_border_style_direct(property, value)?,
+        )),
+        "border-right-style" => Ok(CompiledDeclaration::BorderStyleSide(
+            BoxSide::Right,
+            parse_border_style_direct(property, value)?,
+        )),
+        "border-bottom-style" => Ok(CompiledDeclaration::BorderStyleSide(
+            BoxSide::Bottom,
+            parse_border_style_direct(property, value)?,
+        )),
+        "border-left-style" => Ok(CompiledDeclaration::BorderStyleSide(
+            BoxSide::Left,
+            parse_border_style_direct(property, value)?,
+        )),
+        "border-top-color" => Ok(CompiledDeclaration::BorderColorSide(
+            BoxSide::Top,
+            parse_color_direct(property, value)?,
+        )),
+        "border-right-color" => Ok(CompiledDeclaration::BorderColorSide(
+            BoxSide::Right,
+            parse_color_direct(property, value)?,
+        )),
+        "border-bottom-color" => Ok(CompiledDeclaration::BorderColorSide(
+            BoxSide::Bottom,
+            parse_color_direct(property, value)?,
+        )),
+        "border-left-color" => Ok(CompiledDeclaration::BorderColorSide(
+            BoxSide::Left,
+            parse_color_direct(property, value)?,
+        )),
         "border-radius" => Ok(CompiledDeclaration::BorderRadius(parse_raw_text_direct(
             property, value,
         )?)),
@@ -127,6 +175,22 @@ pub fn compile_declaration_from_value(
         "transform" => Ok(CompiledDeclaration::Transform(parse_raw_text_direct(
             property, value,
         )?)),
+        "text-align" => Ok(CompiledDeclaration::TextAlign(parse_text_align_direct(
+            property, value,
+        )?)),
+        "text-transform" => Ok(CompiledDeclaration::TextTransform(
+            parse_text_transform_direct(property, value)?,
+        )),
+        "font-size" => Ok(CompiledDeclaration::FontSize(parse_length_percentage_word(
+            property,
+            value.text.trim(),
+        )?)),
+        "font-weight" => Ok(CompiledDeclaration::FontWeight(parse_font_weight_direct(
+            property, value,
+        )?)),
+        "letter-spacing" => Ok(CompiledDeclaration::LetterSpacing(
+            parse_letter_spacing_direct(property, value)?,
+        )),
         "animation" => Ok(CompiledDeclaration::Animation(parse_raw_text_direct(
             property, value,
         )?)),
@@ -370,6 +434,63 @@ fn parse_appearance_direct(
     }
 }
 
+fn parse_text_align_direct(property: &str, value: &CssValue) -> Result<TextAlignValue, CssValueError> {
+    match keyword(property, value)? {
+        "left" => Ok(TextAlignValue::Left),
+        "right" => Ok(TextAlignValue::Right),
+        "center" => Ok(TextAlignValue::Center),
+        "start" => Ok(TextAlignValue::Start),
+        "end" => Ok(TextAlignValue::End),
+        _ => Err(CssValueError::UnsupportedValue {
+            property: property.to_string(),
+            value: value.text.clone(),
+        }),
+    }
+}
+
+fn parse_text_transform_direct(
+    property: &str,
+    value: &CssValue,
+) -> Result<TextTransformValue, CssValueError> {
+    match keyword(property, value)? {
+        "none" => Ok(TextTransformValue::None),
+        "uppercase" => Ok(TextTransformValue::Uppercase),
+        "lowercase" => Ok(TextTransformValue::Lowercase),
+        "capitalize" => Ok(TextTransformValue::Capitalize),
+        _ => Err(CssValueError::UnsupportedValue {
+            property: property.to_string(),
+            value: value.text.clone(),
+        }),
+    }
+}
+
+fn parse_font_weight_direct(
+    property: &str,
+    value: &CssValue,
+) -> Result<FontWeightValue, CssValueError> {
+    match keyword(property, value)? {
+        "normal" | "400" => Ok(FontWeightValue::Normal),
+        "bold" | "700" => Ok(FontWeightValue::Bold),
+        _ => Err(CssValueError::UnsupportedValue {
+            property: property.to_string(),
+            value: value.text.clone(),
+        }),
+    }
+}
+
+fn parse_letter_spacing_direct(property: &str, value: &CssValue) -> Result<f32, CssValueError> {
+    match keyword(property, value)? {
+        "normal" => Ok(0.0),
+        text => text
+            .strip_suffix("px")
+            .and_then(|number| number.parse::<f32>().ok())
+            .ok_or_else(|| CssValueError::UnsupportedValue {
+                property: property.to_string(),
+                value: value.text.clone(),
+            }),
+    }
+}
+
 fn parse_color_direct(property: &str, value: &CssValue) -> Result<ColorValue, CssValueError> {
     let text = value.text.trim();
     if text.is_empty() {
@@ -399,6 +520,20 @@ fn parse_color_direct(property: &str, value: &CssValue) -> Result<ColorValue, Cs
         property: property.to_string(),
         value: value.text.clone(),
     })
+}
+
+fn parse_border_style_direct(
+    property: &str,
+    value: &CssValue,
+) -> Result<BorderStyleValue, CssValueError> {
+    match keyword(property, value)? {
+        "none" => Ok(BorderStyleValue::None),
+        "solid" => Ok(BorderStyleValue::Solid),
+        _ => Err(CssValueError::UnsupportedValue {
+            property: property.to_string(),
+            value: value.text.clone(),
+        }),
+    }
 }
 
 fn parse_raw_text_direct(property: &str, value: &CssValue) -> Result<String, CssValueError> {
@@ -810,6 +945,28 @@ fn parse_box_edges_direct(
     let parsed = split_words(value)
         .into_iter()
         .map(|word| parse_length_percentage_word(property, word))
+        .collect::<Result<Vec<_>, _>>()?;
+    expand_box_sides(&parsed).ok_or_else(|| CssValueError::UnsupportedValue {
+        property: property.into(),
+        value: value.text.clone(),
+    })
+}
+
+fn parse_box_border_styles_direct(
+    property: &str,
+    value: &CssValue,
+) -> Result<BoxEdges<BorderStyleValue>, CssValueError> {
+    let parsed = split_words(value)
+        .into_iter()
+        .map(|word| {
+            parse_border_style_direct(
+                property,
+                &CssValue {
+                    text: word.to_string(),
+                    components: Vec::new(),
+                },
+            )
+        })
         .collect::<Result<Vec<_>, _>>()?;
     expand_box_sides(&parsed).ok_or_else(|| CssValueError::UnsupportedValue {
         property: property.into(),

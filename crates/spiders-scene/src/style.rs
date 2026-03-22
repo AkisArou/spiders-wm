@@ -58,6 +58,35 @@ pub struct ColorValue {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum BorderStyleValue {
+    None,
+    Solid,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TextAlignValue {
+    Left,
+    Right,
+    Center,
+    Start,
+    End,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TextTransformValue {
+    None,
+    Uppercase,
+    Lowercase,
+    Capitalize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum FontWeightValue {
+    Normal,
+    Bold,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AlignmentValue {
     Start,
     End,
@@ -201,12 +230,20 @@ pub struct ComputedStyle {
     pub aspect_ratio: Option<f32>,
     pub appearance: Option<AppearanceValue>,
     pub background: Option<ColorValue>,
+    pub color: Option<ColorValue>,
     pub opacity: Option<f32>,
     pub border_color: Option<ColorValue>,
+    pub border_side_colors: Option<BoxEdges<Option<ColorValue>>>,
+    pub border_style: Option<BoxEdges<BorderStyleValue>>,
     pub border_radius: Option<String>,
     pub box_shadow: Option<String>,
     pub backdrop_filter: Option<String>,
     pub transform: Option<String>,
+    pub text_align: Option<TextAlignValue>,
+    pub text_transform: Option<TextTransformValue>,
+    pub font_size: Option<LengthPercentage>,
+    pub font_weight: Option<FontWeightValue>,
+    pub letter_spacing: Option<f32>,
     pub animation: Option<String>,
     pub transition: Option<String>,
     pub transition_property: Option<String>,

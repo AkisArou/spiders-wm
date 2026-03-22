@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::fs::File;
 
 use spiders_shared::api::WmAction;
-use spiders_scene::ColorValue;
+use spiders_scene::{ColorValue, FontWeightValue, TextAlignValue};
 use spiders_tree::{OutputId, WindowId};
 use wayland_backend::client::ObjectId;
 use wayland_client::protocol::{wl_buffer, wl_shm_pool, wl_surface};
@@ -56,7 +56,21 @@ pub struct TitlebarBufferRecord {
     pub file: File,
     pub width: i32,
     pub height: i32,
-    pub color: ColorValue,
+    pub background: ColorValue,
+    pub border_bottom_width: i32,
+    pub border_bottom_color: ColorValue,
+    pub title: String,
+    pub text_color: ColorValue,
+    pub text_align: TextAlignValue,
+    pub font_size: i32,
+    pub font_weight: FontWeightValue,
+    pub letter_spacing: i32,
+    pub padding_top: i32,
+    pub padding_right: i32,
+    pub padding_bottom: i32,
+    pub padding_left: i32,
+    pub corner_radius_top_left: i32,
+    pub corner_radius_top_right: i32,
 }
 
 #[derive(Debug, Clone)]

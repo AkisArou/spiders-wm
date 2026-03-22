@@ -1,5 +1,8 @@
 use super::*;
-use spiders_scene::{AppearanceValue, BoxEdges, ColorValue, ComputedStyle, LayoutSnapshotNode, LengthPercentage, SizeValue};
+use spiders_scene::{
+    AppearanceValue, BorderStyleValue, BoxEdges, ColorValue, ComputedStyle, LayoutSnapshotNode,
+    FontWeightValue, LengthPercentage, SizeValue, TextAlignValue, TextTransformValue,
+};
 use spiders_shared::types::WindowMode;
 use spiders_tree::LayoutRect;
 use crate::backend::plan::TitlebarPlan;
@@ -39,9 +42,92 @@ fn river_border_from_box_edges(
     )
 }
 
+fn apply_border_styles(
+    border: BoxEdges<LengthPercentage>,
+    border_style: Option<BoxEdges<BorderStyleValue>>,
+) -> BoxEdges<LengthPercentage> {
+    let Some(border_style) = border_style else {
+        return border;
+    };
+
+    BoxEdges {
+        top: if matches!(border_style.top, BorderStyleValue::None) {
+            LengthPercentage::Px(0.0)
+        } else {
+            border.top
+        },
+        right: if matches!(border_style.right, BorderStyleValue::None) {
+            LengthPercentage::Px(0.0)
+        } else {
+            border.right
+        },
+        bottom: if matches!(border_style.bottom, BorderStyleValue::None) {
+            LengthPercentage::Px(0.0)
+        } else {
+            border.bottom
+        },
+        left: if matches!(border_style.left, BorderStyleValue::None) {
+            LengthPercentage::Px(0.0)
+        } else {
+            border.left
+        },
+    }
+}
+
 fn river_border_from_layout_node(node: &LayoutSnapshotNode) -> Option<(river_window_v1::Edges, i32)> {
-    let border = node.styles()?.layout.border?;
+    let style = &node.styles()?.layout;
+    let border = apply_border_styles(style.border?, style.border_style);
     Some(river_border_from_box_edges(border))
+}
+
+fn river_rgb_component_from_u8(component: u8) -> u32 {
+    if component == 0 {
+        0
+    } else {
+        (u32::from(component) << 16) | 0x0000_ffff
+    }
+}
+
+fn river_alpha_component_from_u8(alpha: u8) -> u32 {
+    u32::from(alpha) * 0x0101_0101
+}
+
+fn apply_opacity(color: ColorValue, opacity: f32) -> ColorValue {
+    let clamped = opacity.clamp(0.0, 1.0);
+    ColorValue {
+        alpha: ((f32::from(color.alpha) * clamped).round() as u16).min(255) as u8,
+        ..color
+    }
+}
+
+fn river_color_to_color_value(red: u32, green: u32, blue: u32, alpha: u32) -> ColorValue {
+    ColorValue {
+        red: ((red >> 16) & 0xff) as u8,
+        green: ((green >> 16) & 0xff) as u8,
+        blue: ((blue >> 16) & 0xff) as u8,
+        alpha: ((alpha >> 24) & 0xff) as u8,
+    }
+}
+
+fn river_border_color_from_color(color: ColorValue) -> (u32, u32, u32, u32) {
+    let alpha = u32::from(color.alpha);
+    let premultiply = |component: u8| -> u8 {
+        ((u32::from(component) * alpha + 127) / 255) as u8
+    };
+
+    (
+        river_rgb_component_from_u8(premultiply(color.red)),
+        river_rgb_component_from_u8(premultiply(color.green)),
+        river_rgb_component_from_u8(premultiply(color.blue)),
+        river_alpha_component_from_u8(color.alpha),
+    )
+}
+
+fn river_border_color_from_layout_node(node: &LayoutSnapshotNode) -> Option<(u32, u32, u32, u32)> {
+    node.styles()?
+        .layout
+        .border_color
+        .map(river_border_color_from_color)
 }
 
 fn titlebar_height_to_px(style: Option<&ComputedStyle>) -> i32 {
@@ -77,6 +163,192 @@ fn titlebar_background(style: Option<&ComputedStyle>, focused: bool) -> ColorVal
     style
         .and_then(|style| style.background)
         .unwrap_or_else(|| default_titlebar_background(focused))
+}
+
+fn default_titlebar_text_color(focused: bool) -> ColorValue {
+    if focused {
+        ColorValue {
+            red: 235,
+            green: 240,
+            blue: 248,
+            alpha: 255,
+        }
+    } else {
+        ColorValue {
+            red: 208,
+            green: 214,
+            blue: 222,
+            alpha: 255,
+        }
+    }
+}
+
+fn titlebar_text_color(style: Option<&ComputedStyle>, focused: bool) -> ColorValue {
+    style
+        .and_then(|style| style.color)
+        .unwrap_or_else(|| default_titlebar_text_color(focused))
+}
+
+fn titlebar_text_align(style: Option<&ComputedStyle>) -> TextAlignValue {
+    style
+        .and_then(|style| style.text_align)
+        .unwrap_or(TextAlignValue::Left)
+}
+
+fn titlebar_font_weight(style: Option<&ComputedStyle>) -> FontWeightValue {
+    style
+        .and_then(|style| style.font_weight)
+        .unwrap_or(FontWeightValue::Normal)
+}
+
+fn titlebar_font_size(style: Option<&ComputedStyle>) -> i32 {
+    match style.and_then(|style| style.font_size) {
+        Some(LengthPercentage::Px(value)) | Some(LengthPercentage::Percent(value)) => {
+            value.round() as i32
+        }
+        None => 14,
+    }
+    .clamp(8, 48)
+}
+
+fn titlebar_letter_spacing(style: Option<&ComputedStyle>) -> i32 {
+    style
+        .and_then(|style| style.letter_spacing)
+        .unwrap_or(0.0)
+        .round() as i32
+}
+
+fn style_opacity(style: Option<&ComputedStyle>) -> f32 {
+    style
+        .and_then(|style| style.opacity)
+        .unwrap_or(1.0)
+        .clamp(0.0, 1.0)
+}
+
+fn titlebar_padding(style: Option<&ComputedStyle>) -> (i32, i32, i32, i32) {
+    let Some(padding) = style.and_then(|style| style.padding) else {
+        return (0, 0, 0, 0);
+    };
+
+    (
+        border_length_to_px(padding.top),
+        border_length_to_px(padding.right),
+        border_length_to_px(padding.bottom),
+        border_length_to_px(padding.left),
+    )
+}
+
+fn parse_radius_px(raw: &str) -> Option<i32> {
+    match raw.trim() {
+        "0" | "0.0" => Some(0),
+        value => value
+            .strip_suffix("px")
+            .and_then(|number| number.parse::<f32>().ok())
+            .map(|value| value.round() as i32)
+            .map(|value| value.max(0)),
+    }
+}
+
+fn titlebar_corner_radii(
+    titlebar_style: Option<&ComputedStyle>,
+    window_style: Option<&ComputedStyle>,
+) -> (i32, i32) {
+    let raw = titlebar_style
+        .and_then(|style| style.border_radius.as_deref())
+        .or_else(|| window_style.and_then(|style| style.border_radius.as_deref()));
+    let Some(raw) = raw else {
+        return (0, 0);
+    };
+
+    let horizontal = raw.split('/').next().unwrap_or(raw);
+    let values = horizontal
+        .split_whitespace()
+        .filter_map(parse_radius_px)
+        .collect::<Vec<_>>();
+
+    match values.as_slice() {
+        [single] => (*single, *single),
+        [top_left, top_right] => (*top_left, *top_right),
+        [top_left, top_right, ..] => (*top_left, *top_right),
+        _ => (0, 0),
+    }
+}
+
+fn titlebar_text(window: &crate::model::WindowState) -> String {
+    window
+        .title
+        .as_ref()
+        .filter(|title| !title.trim().is_empty())
+        .cloned()
+        .or_else(|| {
+            window
+                .app_id
+                .as_ref()
+                .filter(|app_id| !app_id.trim().is_empty())
+                .cloned()
+        })
+        .unwrap_or_default()
+}
+
+fn apply_titlebar_text_transform(style: Option<&ComputedStyle>, text: String) -> String {
+    match style
+        .and_then(|style| style.text_transform)
+        .unwrap_or(TextTransformValue::None)
+    {
+        TextTransformValue::None => text,
+        TextTransformValue::Uppercase => text.to_uppercase(),
+        TextTransformValue::Lowercase => text.to_lowercase(),
+        TextTransformValue::Capitalize => {
+            let mut result = String::with_capacity(text.len());
+            let mut at_word_start = true;
+
+            for character in text.chars() {
+                if at_word_start && character.is_alphanumeric() {
+                    result.extend(character.to_uppercase());
+                    at_word_start = false;
+                } else {
+                    result.push(character);
+                    if !character.is_alphanumeric() {
+                        at_word_start = true;
+                    }
+                }
+            }
+
+            result
+        }
+    }
+}
+
+fn titlebar_bottom_border_width(style: Option<&ComputedStyle>) -> i32 {
+    if matches!(
+        style
+            .and_then(|style| style.border_style)
+            .map(|border| border.bottom),
+        Some(BorderStyleValue::None)
+    ) {
+        return 0;
+    }
+
+    style
+        .and_then(|style| style.border)
+        .map(|border| border_length_to_px(border.bottom))
+        .unwrap_or(0)
+}
+
+fn titlebar_bottom_border_color(
+    style: Option<&ComputedStyle>,
+    background: ColorValue,
+) -> ColorValue {
+    if let Some(color) = style
+        .and_then(|style| style.border_side_colors)
+        .and_then(|colors| colors.bottom)
+    {
+        return color;
+    }
+
+    style
+        .and_then(|style| style.border_color)
+        .unwrap_or(background)
 }
 
 fn decoration_mode_for_window(
@@ -266,6 +538,28 @@ impl RiverBackendState {
                     plan.width = width;
                 }
 
+                if let Some(snapshot) = snapshot.as_ref()
+                    && let Some(node) = snapshot.find_by_window_id(&border.window_id)
+                    && let Some((red, green, blue, alpha)) = river_border_color_from_layout_node(node)
+                {
+                    plan.red = red;
+                    plan.green = green;
+                    plan.blue = blue;
+                    plan.alpha = alpha;
+                }
+
+                if let Some(snapshot) = snapshot.as_ref()
+                    && let Some(node) = snapshot.find_by_window_id(&border.window_id)
+                    && let Some(opacity) = node.styles().and_then(|styles| styles.layout.opacity)
+                {
+                    let color = apply_opacity(
+                        river_color_to_color_value(plan.red, plan.green, plan.blue, plan.alpha),
+                        opacity,
+                    );
+                    (plan.red, plan.green, plan.blue, plan.alpha) =
+                        river_border_color_from_color(color);
+                }
+
                 plan
             })
             .collect()
@@ -346,11 +640,43 @@ impl RiverBackendState {
             .filter_map(|window_id| {
                 let node = snapshot.find_by_window_id(&window_id)?;
                 let titlebar_style = node.styles().and_then(|styles| styles.titlebar.as_ref());
+                let window_style = node.styles().map(|styles| &styles.layout);
                 let focused = self.runtime_state.focused_window_id.as_ref() == Some(&window_id);
+                let window = self.runtime_state.windows.get(&window_id)?;
+                let opacity = style_opacity(titlebar_style);
+                let background = apply_opacity(titlebar_background(titlebar_style, focused), opacity);
+                let text_color = apply_opacity(titlebar_text_color(titlebar_style, focused), opacity);
+                let text_align = titlebar_text_align(titlebar_style);
+                let font_size = titlebar_font_size(titlebar_style);
+                let font_weight = titlebar_font_weight(titlebar_style);
+                let letter_spacing = titlebar_letter_spacing(titlebar_style);
+                let border_bottom_color = apply_opacity(
+                    titlebar_bottom_border_color(titlebar_style, background),
+                    opacity,
+                );
+                let (padding_top, padding_right, padding_bottom, padding_left) =
+                    titlebar_padding(titlebar_style);
+                let (corner_radius_top_left, corner_radius_top_right) =
+                    titlebar_corner_radii(titlebar_style, window_style);
+                let title = apply_titlebar_text_transform(titlebar_style, titlebar_text(window));
                 Some(TitlebarPlan {
                     window_id,
                     height: titlebar_height_to_px(titlebar_style),
-                    background: titlebar_background(titlebar_style, focused),
+                    background,
+                    border_bottom_width: titlebar_bottom_border_width(titlebar_style),
+                    border_bottom_color,
+                    title,
+                    text_color,
+                    text_align,
+                    font_size,
+                    font_weight,
+                    letter_spacing,
+                    padding_top,
+                    padding_right,
+                    padding_bottom,
+                    padding_left,
+                    corner_radius_top_left,
+                    corner_radius_top_right,
                 })
             })
             .collect()
@@ -801,6 +1127,322 @@ mod tests {
                 4,
             ))
         );
+    }
+
+    #[test]
+    fn river_border_from_layout_node_honors_border_style_none_edges() {
+        let node = LayoutSnapshotNode::Window {
+            meta: LayoutNodeMeta::default(),
+            rect: LayoutRect {
+                x: 0.0,
+                y: 0.0,
+                width: 100.0,
+                height: 100.0,
+            },
+            styles: Some(SceneNodeStyle {
+                layout: ComputedStyle {
+                    border: Some(BoxEdges {
+                        top: LengthPercentage::Px(5.0),
+                        right: LengthPercentage::Px(4.0),
+                        bottom: LengthPercentage::Px(3.0),
+                        left: LengthPercentage::Px(2.0),
+                    }),
+                    border_style: Some(BoxEdges {
+                        top: BorderStyleValue::None,
+                        right: BorderStyleValue::Solid,
+                        bottom: BorderStyleValue::None,
+                        left: BorderStyleValue::Solid,
+                    }),
+                    ..ComputedStyle::default()
+                },
+                titlebar: None,
+            }),
+            window_id: Some(WindowId::from("w1")),
+        };
+
+        assert_eq!(
+            river_border_from_layout_node(&node),
+            Some((
+                river_window_v1::Edges::Right | river_window_v1::Edges::Left,
+                4,
+            ))
+        );
+    }
+
+    #[test]
+    fn river_border_color_from_layout_node_reads_scene_border_color() {
+        let node = LayoutSnapshotNode::Window {
+            meta: LayoutNodeMeta::default(),
+            rect: LayoutRect {
+                x: 0.0,
+                y: 0.0,
+                width: 100.0,
+                height: 100.0,
+            },
+            styles: Some(SceneNodeStyle {
+                layout: ComputedStyle {
+                    border_color: Some(ColorValue {
+                        red: 40,
+                        green: 85,
+                        blue: 119,
+                        alpha: 255,
+                    }),
+                    ..ComputedStyle::default()
+                },
+                titlebar: None,
+            }),
+            window_id: Some(WindowId::from("w1")),
+        };
+
+        assert_eq!(
+            river_border_color_from_layout_node(&node),
+            Some((0x0028_ffff, 0x0055_ffff, 0x0077_ffff, 0xffff_ffff))
+        );
+    }
+
+    #[test]
+    fn river_border_color_premultiplies_alpha() {
+        assert_eq!(
+            river_border_color_from_color(ColorValue {
+                red: 255,
+                green: 128,
+                blue: 0,
+                alpha: 128,
+            }),
+            (0x0080_ffff, 0x0040_ffff, 0, 0x8080_8080)
+        );
+    }
+
+    #[test]
+    fn titlebar_bottom_border_helpers_read_style_values() {
+        let style = ComputedStyle {
+            border: Some(BoxEdges {
+                top: LengthPercentage::Px(0.0),
+                right: LengthPercentage::Px(0.0),
+                bottom: LengthPercentage::Px(3.0),
+                left: LengthPercentage::Px(0.0),
+            }),
+            border_style: Some(BoxEdges {
+                top: BorderStyleValue::None,
+                right: BorderStyleValue::None,
+                bottom: BorderStyleValue::Solid,
+                left: BorderStyleValue::None,
+            }),
+            border_color: Some(ColorValue {
+                red: 12,
+                green: 18,
+                blue: 24,
+                alpha: 255,
+            }),
+            border_side_colors: Some(BoxEdges {
+                top: None,
+                right: None,
+                bottom: Some(ColorValue {
+                    red: 21,
+                    green: 22,
+                    blue: 23,
+                    alpha: 255,
+                }),
+                left: None,
+            }),
+            ..ComputedStyle::default()
+        };
+
+        assert_eq!(titlebar_bottom_border_width(Some(&style)), 3);
+        assert_eq!(
+            titlebar_bottom_border_color(
+                Some(&style),
+                ColorValue {
+                    red: 1,
+                    green: 2,
+                    blue: 3,
+                    alpha: 4,
+                }
+            ),
+            ColorValue {
+                red: 21,
+                green: 22,
+                blue: 23,
+                alpha: 255,
+            }
+        );
+    }
+
+    #[test]
+    fn titlebar_bottom_border_color_falls_back_to_background() {
+        let background = ColorValue {
+            red: 33,
+            green: 44,
+            blue: 55,
+            alpha: 200,
+        };
+
+        assert_eq!(titlebar_bottom_border_width(None), 0);
+        assert_eq!(titlebar_bottom_border_color(None, background), background);
+    }
+
+    #[test]
+    fn titlebar_text_prefers_window_title_then_app_id() {
+        let mut window = crate::model::WindowState {
+            id: WindowId::from("w1"),
+            app_id: Some("foot".into()),
+            title: Some("terminal".into()),
+            class: None,
+            instance: None,
+            role: None,
+            window_type: None,
+            identifier: None,
+            unreliable_pid: None,
+            output_id: None,
+            workspace_ids: Vec::new(),
+            is_new: false,
+            closed: false,
+            mapped: true,
+            mode: WindowMode::Tiled,
+            focused: false,
+            x: 0,
+            y: 0,
+            width: 0,
+            height: 0,
+            last_floating_rect: None,
+        };
+
+        assert_eq!(titlebar_text(&window), "terminal");
+        window.title = Some("   ".into());
+        assert_eq!(titlebar_text(&window), "foot");
+    }
+
+    #[test]
+    fn titlebar_padding_converts_lengths_to_pixels() {
+        let style = ComputedStyle {
+            padding: Some(BoxEdges {
+                top: LengthPercentage::Px(3.0),
+                right: LengthPercentage::Px(4.0),
+                bottom: LengthPercentage::Px(5.0),
+                left: LengthPercentage::Px(6.0),
+            }),
+            ..ComputedStyle::default()
+        };
+
+        assert_eq!(titlebar_padding(Some(&style)), (3, 4, 5, 6));
+    }
+
+    #[test]
+    fn titlebar_text_transform_applies_supported_modes() {
+        let uppercase = ComputedStyle {
+            text_transform: Some(TextTransformValue::Uppercase),
+            ..ComputedStyle::default()
+        };
+        let capitalize = ComputedStyle {
+            text_transform: Some(TextTransformValue::Capitalize),
+            ..ComputedStyle::default()
+        };
+
+        assert_eq!(
+            apply_titlebar_text_transform(Some(&uppercase), "Term 42".into()),
+            "TERM 42"
+        );
+        assert_eq!(
+            apply_titlebar_text_transform(Some(&capitalize), "hello river world".into()),
+            "Hello River World"
+        );
+    }
+
+    #[test]
+    fn titlebar_text_align_defaults_left() {
+        assert_eq!(titlebar_text_align(None), TextAlignValue::Left);
+        assert_eq!(
+            titlebar_text_align(Some(&ComputedStyle {
+                text_align: Some(TextAlignValue::End),
+                ..ComputedStyle::default()
+            })),
+            TextAlignValue::End
+        );
+    }
+
+    #[test]
+    fn titlebar_typography_defaults_and_conversions() {
+        assert_eq!(titlebar_font_size(None), 14);
+        assert_eq!(titlebar_font_weight(None), FontWeightValue::Normal);
+        assert_eq!(titlebar_letter_spacing(None), 0);
+        assert_eq!(
+            titlebar_font_size(Some(&ComputedStyle {
+                font_size: Some(LengthPercentage::Px(17.0)),
+                ..ComputedStyle::default()
+            })),
+            17
+        );
+        assert_eq!(
+            titlebar_font_weight(Some(&ComputedStyle {
+                font_weight: Some(FontWeightValue::Bold),
+                ..ComputedStyle::default()
+            })),
+            FontWeightValue::Bold
+        );
+        assert_eq!(
+            titlebar_letter_spacing(Some(&ComputedStyle {
+                letter_spacing: Some(1.6),
+                ..ComputedStyle::default()
+            })),
+            2
+        );
+    }
+
+    #[test]
+    fn apply_opacity_scales_alpha_only() {
+        assert_eq!(
+            apply_opacity(
+                ColorValue {
+                    red: 10,
+                    green: 20,
+                    blue: 30,
+                    alpha: 200,
+                },
+                0.5,
+            ),
+            ColorValue {
+                red: 10,
+                green: 20,
+                blue: 30,
+                alpha: 100,
+            }
+        );
+    }
+
+    #[test]
+    fn titlebar_corner_radii_uses_titlebar_then_window_radius() {
+        let titlebar_style = ComputedStyle {
+            border_radius: Some("12px 6px 0 0".into()),
+            ..ComputedStyle::default()
+        };
+        let window_style = ComputedStyle {
+            border_radius: Some("20px 18px".into()),
+            ..ComputedStyle::default()
+        };
+
+        assert_eq!(titlebar_corner_radii(Some(&titlebar_style), Some(&window_style)), (12, 6));
+        assert_eq!(titlebar_corner_radii(None, Some(&window_style)), (20, 18));
+    }
+
+    #[test]
+    fn titlebar_bottom_border_width_honors_none_style() {
+        let style = ComputedStyle {
+            border: Some(BoxEdges {
+                top: LengthPercentage::Px(0.0),
+                right: LengthPercentage::Px(0.0),
+                bottom: LengthPercentage::Px(4.0),
+                left: LengthPercentage::Px(0.0),
+            }),
+            border_style: Some(BoxEdges {
+                top: BorderStyleValue::None,
+                right: BorderStyleValue::None,
+                bottom: BorderStyleValue::None,
+                left: BorderStyleValue::None,
+            }),
+            ..ComputedStyle::default()
+        };
+
+        assert_eq!(titlebar_bottom_border_width(Some(&style)), 0);
     }
 
     #[test]

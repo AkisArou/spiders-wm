@@ -100,19 +100,26 @@ Supported now:
 - `border-right-width`
 - `border-bottom-width`
 - `border-left-width`
+- `border-style`
+- `border-top-style`
+- `border-right-style`
+- `border-bottom-style`
+- `border-left-style`
 - `padding`, `padding-top`, `padding-right`, `padding-bottom`, `padding-left`
 - `margin`, `margin-top`, `margin-right`, `margin-bottom`, `margin-left`
 
 Current behavior:
 
 - `border-width` on `window` nodes is used by `spiders-wm` for compositor-drawn borders.
-- Border colors are still controlled by compositor policy, not CSS.
+- `border-style` on `window` nodes suppresses compositor border edges whose style is `none`.
+- `border-color` on `window` nodes is used by `spiders-wm` for compositor-drawn borders.
+- `opacity` on `window` nodes currently scales compositor-drawn border alpha only. It does not change client content opacity.
+- When CSS does not provide a border color, `spiders-wm` falls back to the existing focused and unfocused compositor border palette.
 
 ### Window Presentation
 
 - `appearance`
-- `opacity` `(TODO)`
-- `border-color` `(TODO)`
+- `opacity` best-effort for compositor-drawn borders only
 - `border-radius` `(TODO)`
 - `box-shadow` `(TODO)`
 - `backdrop-filter` `(TODO)`
@@ -126,20 +133,22 @@ Supported now:
 - `background`
 - `background-color`
 - `height`
+- `border-bottom-width`
+- `border-bottom-style` with `solid` and `none`
+- `border-bottom-color`
+- `padding`
+- `color`
+- `opacity`
+- `text-align`
+- `text-transform`
+- `font-size` with `px` and `%`
+- `font-weight` with `normal`, `bold`, `400`, and `700`
+- `letter-spacing` with `px` values and `normal`
+- `border-radius` best-effort for rounded top corners on compositor titlebars
 
 Still TODO:
 
-- `color` `(TODO)`
-- `padding` `(TODO)`
-- `border-bottom-width` `(TODO)`
-- `border-bottom-style` `(TODO)`
-- `border-bottom-color` `(TODO)`
 - `font-family` `(TODO)`
-- `font-size` `(TODO)`
-- `font-weight` `(TODO)`
-- `letter-spacing` `(TODO)`
-- `text-transform` `(TODO)`
-- `text-align` `(TODO)`
 - `box-shadow` `(TODO)`
 - `border-radius` `(TODO)`
 
@@ -148,6 +157,15 @@ Planned semantics:
 - `appearance: auto` prefers compositor-rendered titlebars only when `window::titlebar` contributes style and river exposes the required decoration support. Otherwise it falls back to client-side decorations.
 - `appearance: none` suppresses titlebars and requests a titlebar-free window.
 - compositor titlebars currently render a solid background strip above the window using the computed `window::titlebar` `height` and `background` or `background-color`.
+- when `window::titlebar` sets `border-bottom-width`, the compositor draws a bottom rule only if `border-bottom-style` is not `none`.
+- that bottom rule uses `border-bottom-color` if present, otherwise `border-color`, otherwise the titlebar background color.
+- compositor titlebars now draw a single-line text label from the window title, falling back to `app_id`, and `padding`, `color`, and `opacity` affect that rendered label.
+- `text-align` supports `left`, `right`, `center`, `start`, and `end` for compositor titlebar labels.
+- `text-transform` supports `none`, `uppercase`, `lowercase`, and `capitalize` for compositor titlebar labels.
+- `font-size` supports `px` and `%` values for compositor titlebar labels.
+- `font-weight` supports `normal`, `bold`, `400`, and `700` via regular and bold font selection when both are available.
+- `letter-spacing` supports `normal` and `px` values for compositor titlebar labels.
+- `border-radius` currently rounds the top corners of compositor titlebars only; it does not clip client window content.
 - `appearance: none` is currently implemented as a best-effort `use_ssd()` request for SSD-capable clients while omitting compositor titlebar surfaces.
 - clients that only support CSD can still show their own client-drawn decorations; river does not provide a stronger override for those windows.
 

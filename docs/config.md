@@ -78,6 +78,21 @@ export default {
 - `layouts_dir?: string`
 - `source_layouts_dir?: string`
 - `snapshot_fadeout_ms?: number`
+- `titlebar_font?: { regular_path?: string; bold_path?: string }`
+
+`titlebar_font` lets the compositor titlebar renderer use explicit font files instead of only probing common Linux defaults.
+
+Example:
+
+```ts
+options: {
+  sloppyfocus: true,
+  titlebar_font: {
+    regular_path: "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    bold_path: "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+  },
+}
+```
 
 ## Bindings
 

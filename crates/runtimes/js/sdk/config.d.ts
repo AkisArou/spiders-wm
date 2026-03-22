@@ -134,6 +134,10 @@ export interface OptionsConfig {
   sloppyfocus?: boolean;
   snapshot_fadeout_ms?: number;
   attach?: AttachDirection;
+  titlebar_font?: {
+    regular_path?: string;
+    bold_path?: string;
+  };
 }
 
 export interface LayoutsConfig {

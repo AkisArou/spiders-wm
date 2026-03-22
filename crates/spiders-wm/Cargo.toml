@@ -20,6 +20,8 @@ spiders-tree = { path = "../spiders-tree" }
 thiserror.workspace = true
 tracing = "0.1"
 tempfile = "3"
+ab_glyph = "0.2"
+tiny-skia = "0.11"
 wayland-backend = "0.3"
 wayland-client = "0.31"
 wayland-scanner = "0.31"

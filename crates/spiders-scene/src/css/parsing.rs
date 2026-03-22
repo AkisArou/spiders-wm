@@ -41,12 +41,19 @@ pub(super) const SUPPORTED_PROPERTIES: &[&str] = &[
     "appearance",
     "background",
     "background-color",
+    "color",
     "opacity",
     "border-color",
+    "border-style",
     "border-radius",
     "box-shadow",
     "backdrop-filter",
     "transform",
+    "text-align",
+    "text-transform",
+    "font-size",
+    "font-weight",
+    "letter-spacing",
     "animation",
     "animation-name",
     "animation-duration",
@@ -108,6 +115,14 @@ pub(super) const SUPPORTED_PROPERTIES: &[&str] = &[
     "border-right-width",
     "border-bottom-width",
     "border-left-width",
+    "border-top-color",
+    "border-right-color",
+    "border-bottom-color",
+    "border-left-color",
+    "border-top-style",
+    "border-right-style",
+    "border-bottom-style",
+    "border-left-style",
     "padding",
     "padding-top",
     "padding-right",
@@ -391,10 +406,6 @@ fn is_ignored_background_expansion(property: &str) -> bool {
             | "border-top-right-radius"
             | "border-bottom-right-radius"
             | "border-bottom-left-radius"
-            | "border-top-color"
-            | "border-right-color"
-            | "border-bottom-color"
-            | "border-left-color"
     )
 }
 

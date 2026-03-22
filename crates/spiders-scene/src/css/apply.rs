@@ -14,12 +14,34 @@ impl ApplyCompiledDeclaration for ComputedStyle {
             CompiledDeclaration::AspectRatio(value) => self.aspect_ratio = Some(value),
             CompiledDeclaration::Appearance(value) => self.appearance = Some(value),
             CompiledDeclaration::Background(value) => self.background = Some(value),
+            CompiledDeclaration::Color(value) => self.color = Some(value),
             CompiledDeclaration::Opacity(value) => self.opacity = Some(value),
             CompiledDeclaration::BorderColor(value) => self.border_color = Some(value),
+            CompiledDeclaration::BorderColorSide(side, value) => {
+                let mut border_side_colors = self.border_side_colors.unwrap_or(BoxEdges {
+                    top: None,
+                    right: None,
+                    bottom: None,
+                    left: None,
+                });
+                match side {
+                    BoxSide::Top => border_side_colors.top = Some(value),
+                    BoxSide::Right => border_side_colors.right = Some(value),
+                    BoxSide::Bottom => border_side_colors.bottom = Some(value),
+                    BoxSide::Left => border_side_colors.left = Some(value),
+                }
+                self.border_side_colors = Some(border_side_colors);
+            }
+            CompiledDeclaration::BorderStyle(value) => self.border_style = Some(value),
             CompiledDeclaration::BorderRadius(value) => self.border_radius = Some(value),
             CompiledDeclaration::BoxShadow(value) => self.box_shadow = Some(value),
             CompiledDeclaration::BackdropFilter(value) => self.backdrop_filter = Some(value),
             CompiledDeclaration::Transform(value) => self.transform = Some(value),
+            CompiledDeclaration::TextAlign(value) => self.text_align = Some(value),
+            CompiledDeclaration::TextTransform(value) => self.text_transform = Some(value),
+            CompiledDeclaration::FontSize(value) => self.font_size = Some(value),
+            CompiledDeclaration::FontWeight(value) => self.font_weight = Some(value),
+            CompiledDeclaration::LetterSpacing(value) => self.letter_spacing = Some(value),
             CompiledDeclaration::Animation(value) => self.animation = Some(value),
             CompiledDeclaration::Transition(value) => self.transition = Some(value),
             CompiledDeclaration::TransitionProperty(value) => self.transition_property = Some(value),
@@ -103,6 +125,21 @@ impl ApplyCompiledDeclaration for ComputedStyle {
                     BoxSide::Left => border.left = value,
                 }
                 self.border = Some(border);
+            }
+            CompiledDeclaration::BorderStyleSide(side, value) => {
+                let mut border_style = self.border_style.unwrap_or(BoxEdges {
+                    top: BorderStyleValue::None,
+                    right: BorderStyleValue::None,
+                    bottom: BorderStyleValue::None,
+                    left: BorderStyleValue::None,
+                });
+                match side {
+                    BoxSide::Top => border_style.top = value,
+                    BoxSide::Right => border_style.right = value,
+                    BoxSide::Bottom => border_style.bottom = value,
+                    BoxSide::Left => border_style.left = value,
+                }
+                self.border_style = Some(border_style);
             }
             CompiledDeclaration::Padding(value) => self.padding = Some(value),
             CompiledDeclaration::PaddingSide(side, value) => {

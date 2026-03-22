@@ -89,9 +89,10 @@ mod tests {
 
         assert_eq!(
             error,
-            CssParseError::UnsupportedProperty {
+            CssParseError::CssValue(CssValueError::UnsupportedValue {
                 property: "color".into(),
-            }
+                value: "red".into(),
+            })
         );
     }
 
@@ -255,7 +256,7 @@ mod tests {
     #[test]
     fn computes_titlebar_pseudo_styles_separately_from_window_styles() {
         let sheet = parse_stylesheet(
-            "window { height: 100%; } window::titlebar { height: 28px; background: rgba(12, 24, 48, 0.5); }",
+            "window { height: 100%; } window::titlebar { height: 28px; background: rgba(12, 24, 48, 0.5); color: #ddeeff; padding: 4px 10px; text-align: center; text-transform: uppercase; font-size: 15px; font-weight: bold; letter-spacing: 2px; border-bottom-width: 2px; border-bottom-style: solid; border-color: #102030; border-bottom-color: #aabbcc; }",
         )
         .unwrap();
         let node = runtime_window_with_meta(LayoutNodeMeta::default());
@@ -279,6 +280,140 @@ mod tests {
                 alpha: 128,
             })
         );
+        assert_eq!(
+            titlebar_style.color,
+            Some(ColorValue {
+                red: 221,
+                green: 238,
+                blue: 255,
+                alpha: 255,
+            })
+        );
+        assert_eq!(
+            titlebar_style.padding,
+            Some(BoxEdges {
+                top: LengthPercentage::Px(4.0),
+                right: LengthPercentage::Px(10.0),
+                bottom: LengthPercentage::Px(4.0),
+                left: LengthPercentage::Px(10.0),
+            })
+        );
+        assert_eq!(titlebar_style.text_align, Some(TextAlignValue::Center));
+        assert_eq!(
+            titlebar_style.text_transform,
+            Some(TextTransformValue::Uppercase)
+        );
+        assert_eq!(titlebar_style.font_size, Some(LengthPercentage::Px(15.0)));
+        assert_eq!(titlebar_style.font_weight, Some(FontWeightValue::Bold));
+        assert_eq!(titlebar_style.letter_spacing, Some(2.0));
+        assert_eq!(
+            titlebar_style.border,
+            Some(BoxEdges {
+                top: LengthPercentage::Px(0.0),
+                right: LengthPercentage::Px(0.0),
+                bottom: LengthPercentage::Px(2.0),
+                left: LengthPercentage::Px(0.0),
+            })
+        );
+        assert_eq!(
+            titlebar_style.border_color,
+            Some(ColorValue {
+                red: 16,
+                green: 32,
+                blue: 48,
+                alpha: 255,
+            })
+        );
+        assert_eq!(
+            titlebar_style.border_style,
+            Some(BoxEdges {
+                top: BorderStyleValue::None,
+                right: BorderStyleValue::None,
+                bottom: BorderStyleValue::Solid,
+                left: BorderStyleValue::None,
+            })
+        );
+        assert_eq!(
+            titlebar_style.border_side_colors,
+            Some(BoxEdges {
+                top: Some(ColorValue {
+                    red: 16,
+                    green: 32,
+                    blue: 48,
+                    alpha: 255,
+                }),
+                right: Some(ColorValue {
+                    red: 16,
+                    green: 32,
+                    blue: 48,
+                    alpha: 255,
+                }),
+                bottom: Some(ColorValue {
+                    red: 170,
+                    green: 187,
+                    blue: 204,
+                    alpha: 255,
+                }),
+                left: Some(ColorValue {
+                    red: 16,
+                    green: 32,
+                    blue: 48,
+                    alpha: 255,
+                }),
+            })
+        );
+    }
+
+    #[test]
+    fn parses_border_style_shorthand() {
+        let sheet = parse_stylesheet("window { border-style: solid none; }").unwrap();
+        let node = runtime_window_with_meta(LayoutNodeMeta::default());
+        let style = compute_style(&sheet, &node).unwrap();
+
+        assert_eq!(
+            style.border_style,
+            Some(BoxEdges {
+                top: BorderStyleValue::Solid,
+                right: BorderStyleValue::None,
+                bottom: BorderStyleValue::Solid,
+                left: BorderStyleValue::None,
+            })
+        );
+    }
+
+    #[test]
+    fn supports_color_property() {
+        let sheet = parse_stylesheet("window { color: rgba(12, 34, 56, 0.5); }").unwrap();
+        let node = runtime_window_with_meta(LayoutNodeMeta::default());
+        let style = compute_style(&sheet, &node).unwrap();
+
+        assert_eq!(
+            style.color,
+            Some(ColorValue {
+                red: 12,
+                green: 34,
+                blue: 56,
+                alpha: 128,
+            })
+        );
+    }
+
+    #[test]
+    fn supports_text_align_and_text_transform_properties() {
+        let sheet = parse_stylesheet(
+            "window::titlebar { text-align: end; text-transform: capitalize; font-size: 85%; font-weight: 700; letter-spacing: normal; }",
+        )
+        .unwrap();
+        let node = runtime_window_with_meta(LayoutNodeMeta::default());
+        let style = compute_style_for_pseudo(&sheet, &node, LayoutPseudoElement::Titlebar)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(style.text_align, Some(TextAlignValue::End));
+        assert_eq!(style.text_transform, Some(TextTransformValue::Capitalize));
+        assert_eq!(style.font_size, Some(LengthPercentage::Percent(85.0)));
+        assert_eq!(style.font_weight, Some(FontWeightValue::Bold));
+        assert_eq!(style.letter_spacing, Some(0.0));
     }
 
         #[test]
@@ -327,13 +462,13 @@ mod tests {
                 assert_eq!(style.appearance, Some(AppearanceValue::None));
                 assert_eq!(style.opacity, Some(0.94));
                 assert_eq!(
-                        style.border_color,
-                        Some(ColorValue {
-                                red: 34,
-                                green: 34,
-                                blue: 34,
-                                alpha: 255,
-                        })
+                    style.border_color,
+                    Some(ColorValue {
+                        red: 34,
+                        green: 34,
+                        blue: 34,
+                        alpha: 255,
+                    })
                 );
                 assert!(style.border_radius.is_some() || style.box_shadow.is_some() || style.animation.is_some());
         }

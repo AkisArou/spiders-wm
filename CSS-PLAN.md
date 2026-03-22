@@ -61,17 +61,28 @@ Status: in progress
   - `height`
   - `background`
   - `background-color`
-  - `padding` (TODO)
-  - `color` (TODO)
+  - `border-bottom-width`
+  - `border-bottom-style`
+  - `border-bottom-color`
+  - `padding`
+  - `color`
+  - `opacity`
+  - `text-align`
+  - `text-transform`
+  - `font-size`
+  - `font-weight`
+  - `letter-spacing`
+  - `border-radius` (top corners only)
+- `border-color` and `border-bottom-color` drive the rendered titlebar bottom border.
 - Keep `appearance: none` as the "no titlebar" contract once compositor titlebars exist.
 
 ### 6. Richer Visual Properties
 
-Status: TODO
+Status: in progress
 
-- `border-color` (TODO)
-- `border-radius` (TODO)
-- `opacity` (TODO)
+- `border-color`
+- `border-radius` partial
+- `opacity` partial
 - `box-shadow` (TODO)
 - `transform` (TODO)
 - `backdrop-filter` (TODO)

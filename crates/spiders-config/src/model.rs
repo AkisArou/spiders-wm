@@ -13,6 +13,14 @@ use spiders_tree::{LayoutSpace, ResolvedLayoutNode};
 use thiserror::Error;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct TitlebarFontConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub regular_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bold_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ConfigOptions {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mod_key: Option<String>,
@@ -20,6 +28,8 @@ pub struct ConfigOptions {
     pub sloppyfocus: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub attach: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub titlebar_font: Option<TitlebarFontConfig>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

@@ -15,7 +15,7 @@ use crate::payload::decode_runtime_graph_payload;
 use crate::payload::encode_runtime_graph_payload;
 use spiders_config::model::{
     Binding, Config, ConfigOptions, InputConfig, LayoutConfigError, LayoutDefinition,
-    LayoutSelectionConfig, WindowRule,
+    LayoutSelectionConfig, TitlebarFontConfig, WindowRule,
 };
 
 pub fn load_authored_config(path: impl AsRef<Path>) -> Result<Config, LayoutConfigError> {
@@ -723,7 +723,31 @@ fn decode_options(value: Option<&Value>, path: &Path) -> Result<ConfigOptions, L
             "root.options.sloppyfocus",
         )?,
         attach: decode_optional_string(object.get("attach"), path, "root.options.attach")?,
+        titlebar_font: decode_titlebar_font(object.get("titlebar_font"), path)?,
     })
+}
+
+fn decode_titlebar_font(
+    value: Option<&Value>,
+    path: &Path,
+) -> Result<Option<TitlebarFontConfig>, LayoutConfigError> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+
+    let object = expect_object(path, value, "root.options.titlebar_font")?;
+    Ok(Some(TitlebarFontConfig {
+        regular_path: decode_optional_string(
+            object.get("regular_path"),
+            path,
+            "root.options.titlebar_font.regular_path",
+        )?,
+        bold_path: decode_optional_string(
+            object.get("bold_path"),
+            path,
+            "root.options.titlebar_font.bold_path",
+        )?,
+    }))
 }
 
 fn decode_inputs(

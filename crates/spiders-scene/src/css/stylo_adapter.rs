@@ -322,13 +322,6 @@ impl LayoutDomTree {
 }
 
 impl<'a> LayoutElement<'a> {
-    pub fn with_pseudo(self, pseudo: LayoutPseudoElement) -> Self {
-        Self {
-            pseudo: Some(pseudo),
-            ..self
-        }
-    }
-
     fn node(&self) -> &'a LayoutDomNode {
         &self.tree.nodes[self.index]
     }
@@ -539,14 +532,6 @@ pub fn selector_matches_element(
         MatchingForInvalidation::No,
     );
     matches_selector_list(selector, &element, &mut context)
-}
-
-pub fn selector_matches_element_pseudo(
-    selector: &SelectorList<LayoutSelectorImpl>,
-    element: LayoutElement<'_>,
-    pseudo: LayoutPseudoElement,
-) -> bool {
-    selector_matches_element(selector, element.with_pseudo(pseudo))
 }
 
 #[cfg(test)]

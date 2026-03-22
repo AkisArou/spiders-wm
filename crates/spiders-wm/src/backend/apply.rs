@@ -3,28 +3,28 @@ use std::os::fd::AsFd;
 
 use super::*;
 use crate::backend::plan::TitlebarPlan;
+use crate::backend::titlebar_renderer::render_titlebar_pixels;
 use wayland_client::protocol::wl_shm;
 
 impl RiverBackendState {
     fn write_titlebar_buffer(
         &self,
         width: i32,
-        height: i32,
-        background: spiders_scene::ColorValue,
+        entry: &TitlebarPlan,
     ) -> Option<crate::runtime::registry::TitlebarBufferRecord> {
         let shm = self.shm.as_ref()?;
         let stride = width.checked_mul(4)?;
-        let size = stride.checked_mul(height)?;
+        let size = stride.checked_mul(entry.height)?;
         let mut file = tempfile::tempfile().ok()?;
         file.set_len(size as u64).ok()?;
 
-        let pixel = u32::from_le_bytes([
-            background.blue,
-            background.green,
-            background.red,
-            background.alpha,
-        ]);
-        for _ in 0..(width * height) {
+        let pixels = render_titlebar_pixels(
+            width,
+            entry,
+            self.config.options.titlebar_font.as_ref(),
+        )?;
+
+        for pixel in pixels {
             file.write_all(&pixel.to_le_bytes()).ok()?;
         }
         file.rewind().ok()?;
@@ -33,7 +33,7 @@ impl RiverBackendState {
         let buffer = pool.create_buffer(
             0,
             width,
-            height,
+            entry.height,
             stride,
             wl_shm::Format::Argb8888,
             self.queue_handle(),
@@ -45,8 +45,22 @@ impl RiverBackendState {
             pool,
             file,
             width,
-            height,
-            color: background,
+            height: entry.height,
+            background: entry.background,
+            border_bottom_width: entry.border_bottom_width,
+            border_bottom_color: entry.border_bottom_color,
+            title: entry.title.clone(),
+            text_color: entry.text_color,
+            text_align: entry.text_align,
+            font_size: entry.font_size,
+            font_weight: entry.font_weight,
+            letter_spacing: entry.letter_spacing,
+            padding_top: entry.padding_top,
+            padding_right: entry.padding_right,
+            padding_bottom: entry.padding_bottom,
+            padding_left: entry.padding_left,
+            corner_radius_top_left: entry.corner_radius_top_left,
+            corner_radius_top_right: entry.corner_radius_top_right,
         })
     }
 
@@ -176,14 +190,28 @@ impl RiverBackendState {
                 titlebar.buffer.as_ref().is_none_or(|buffer| {
                     buffer.width != width
                         || buffer.height != entry.height
-                        || buffer.color != entry.background
+                        || buffer.background != entry.background
+                        || buffer.border_bottom_width != entry.border_bottom_width
+                        || buffer.border_bottom_color != entry.border_bottom_color
+                        || buffer.title != entry.title
+                        || buffer.text_color != entry.text_color
+                        || buffer.text_align != entry.text_align
+                        || buffer.font_size != entry.font_size
+                        || buffer.font_weight != entry.font_weight
+                        || buffer.letter_spacing != entry.letter_spacing
+                        || buffer.padding_top != entry.padding_top
+                        || buffer.padding_right != entry.padding_right
+                        || buffer.padding_bottom != entry.padding_bottom
+                        || buffer.padding_left != entry.padding_left
+                        || buffer.corner_radius_top_left != entry.corner_radius_top_left
+                        || buffer.corner_radius_top_right != entry.corner_radius_top_right
                 })
             }) else {
                 continue;
             };
 
             if needs_buffer {
-                let next_buffer = self.write_titlebar_buffer(width, entry.height, entry.background);
+                let next_buffer = self.write_titlebar_buffer(width, entry);
                 let Some(titlebar) = self.registry.titlebars.get_mut(&object_id) else {
                     continue;
                 };

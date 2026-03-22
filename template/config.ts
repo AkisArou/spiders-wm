@@ -12,6 +12,10 @@ export default {
 
   options: {
     sloppyfocus: true,
+    // titlebar_font: {
+    //   regular_path: "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    //   bold_path: "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    // },
   },
 
   inputs,
