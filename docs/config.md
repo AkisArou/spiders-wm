@@ -14,12 +14,12 @@ Prepared runtime output is written to:
 
 - `~/.cache/spiders-wm/config.js`
 
-You can override discovery with:
+You can override discovery with environment variables:
 
-- `SPIDERS_WM_HOME`
-- `SPIDERS_WM_CONFIG_DIR`
-- `SPIDERS_WM_CACHE_DIR`
-- `SPIDERS_WM_AUTHORED_CONFIG`
+- `SPIDERS_WM_AUTHORED_CONFIG` - path to config.ts/config.js file
+- `SPIDERS_WM_CACHE_DIR` - path to runtime output cache directory
+- `SPIDERS_WM_CONFIG_DIR` - config search directory (default: `~/.config/spiders-wm`)
+- `SPIDERS_WM_HOME` - home directory base (used if other vars not set)
 
 ## Top-Level Keys
 
@@ -41,8 +41,11 @@ import type { SpiderWMConfig } from "spiders-wm/config";
 
 export default {
   workspaces: ["1", "2", "3", "4", "5"],
+  layouts: () => <workspace>{/* layout tree */}</workspace>,
 } satisfies SpiderWMConfig;
 ```
+
+For details on layout JSX, bindings, and rules, see `configs/` in the template or test_config directories.
 
 ## Typical Example
 
@@ -71,9 +74,35 @@ export default {
 
 - `sloppyfocus?: boolean`
 - `attach?: "after" | "before"`
+- `mod_key?: string` - modifier key for default bindings (default: `"Alt"`)
 - `layouts_dir?: string`
 - `source_layouts_dir?: string`
 - `snapshot_fadeout_ms?: number`
+
+## Bindings
+
+Config can specify custom `bindings`. If not provided, default milestone bindings are generated based on `mod_key`:
+
+**Default Focus Bindings** (non-reordering):
+- `{mod_key}+h/j/k/l` - focus left/down/up/right
+- `{mod_key}+ctrl+1-9` - toggle view workspace
+- `{mod_key}+1-9` - view workspace
+
+**Default Move/Swap Bindings**:
+- `{mod_key}+Shift+h/j/k/l` - swap/move left/down/up/right
+- `{mod_key}+Shift+1-9` - assign focused window to workspace
+
+**Default Spawn/Utility Bindings**:
+- `{mod_key}+Return` - spawn terminal (foot)
+- `{mod_key}+q` - close focused window
+- `{mod_key}+space` - cycle layout
+- `{mod_key}+Shift+space` - toggle floating
+
+Bindings are deduplicated by semantic signature (modifiers + key/button), so custom bindings override defaults automatically without conflicts.
+
+## Bindings Format
+
+Each binding specifies a trigger and action:
 
 ## Layout Selection
 

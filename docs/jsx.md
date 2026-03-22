@@ -1,8 +1,8 @@
 # JSX Layouts
 
-Layout modules return structural trees. They describe arrangement, not pixels.
-Rust validates the tree, resolves window claims, applies layout CSS, and computes
-final geometry.
+Layout modules return structural trees from TypeScript or JavaScript. They describe arrangement semantics, not pixels.
+
+The runtime evaluates layout JSX, Rust validates the tree structure, resolves window claims, applies layout CSS, computes final geometry, and communicates assignments to the compositor.
 
 ## Elements
 
@@ -147,6 +147,7 @@ export default function Layout() {
 ## Behavior Notes
 
 - unclaimed `window` nodes remain in the resolved tree even if nothing matches
-- claim order is document order
-- later nodes only see windows that earlier nodes did not claim
-- floating windows are compositor-managed and can override tiled placement
+- claim order is document order; later nodes only see windows not claimed by earlier nodes
+- floating windows are compositor-rendered and can override tiled placement rules
+- layout functions are called on every state change; return consistent results to avoid flickering
+- slot `take` parameter is useful for limiting window captures to specific regions (e.g., sidebar with max 2 windows)

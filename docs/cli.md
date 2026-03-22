@@ -1,11 +1,23 @@
 # CLI
 
-The main entry point is `spiders-cli`.
+The main entry point is `spiders-cli`. It provides CLI tooling for config validation, building, and IPC queries.
 
 Run commands with:
 
 ```bash
 cargo run -p spiders-cli -- <command>
+```
+
+The compositor runtime is in `crates/spiders-wm` and is launched via:
+
+```bash
+just dev
+```
+
+or directly:
+
+```bash
+cargo build -p spiders-wm && river -c ./target/debug/spiders-wm
 ```
 
 ## General
@@ -118,10 +130,19 @@ cargo run -p spiders-cli -- ipc-monitor --topic workspaces --topic layout
 
 Useful environment variables:
 
-- `SPIDERS_WM_HOME`
-- `SPIDERS_WM_CONFIG_DIR`
-- `SPIDERS_WM_CACHE_DIR`
-- `SPIDERS_WM_AUTHORED_CONFIG`
-- `SPIDERS_WM_IPC_SOCKET`
-- `SPIDERS_WM_WINIT_DEBUG_SNAPSHOT_PATH`
-- `SPIDERS_WM_WINIT_EXIT_AFTER_STARTUP`
+**Config Discovery:**
+- `SPIDERS_WM_HOME` - home directory base for config/cache
+- `SPIDERS_WM_CONFIG_DIR` - config search directory (default: `~/.config/spiders-wm`)
+- `SPIDERS_WM_CACHE_DIR` - runtime output cache directory
+- `SPIDERS_WM_AUTHORED_CONFIG` - direct path to config.ts/config.js file
+
+**Runtime:**
+- `SPIDERS_WM_IPC_SOCKET` - socket path for IPC communication
+
+**Logging:**
+- `SPIDERS_LOG` - tracing filter (e.g., `warn,spiders_wm=debug`)
+- `RUST_LOG` - fallback tracing filter
+
+**Development:**
+- `SPIDERS_WM_WINIT_DEBUG_SNAPSHOT_PATH` - save window tree snapshots
+- `SPIDERS_WM_WINIT_EXIT_AFTER_STARTUP` - exit compositor after init

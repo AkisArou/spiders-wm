@@ -1,11 +1,24 @@
 # Supported CSS
 
-`spiders-wm` uses two separate CSS domains:
+`spiders-wm` uses two separate CSS domains, intentionally kept apart:
 
-- layout CSS controls structure and geometry
-- effects CSS controls visual presentation and transitions
+- **layout CSS** controls window tree structure, arrangement, and geometry computation
+- **effects CSS** controls visual presentation, window chrome, and state transitions
 
-They are intentionally separate.
+## Layout CSS Pipeline
+
+Layout CSS is applied after JSX layout evaluation:
+
+1. Layout function returns structural JSX tree (workspace > group/window/slot)
+2. Runtime validates and resolves window claims for each node
+3. Rust applies layout CSS selectors and computes flex/grid layout
+4. Final geometry is sent to compositor for window positioning
+5. Compositor renders windows and applies effects CSS in parallel
+
+This separation ensures:
+- Geometry decisions are deterministic and auditable (CSS cannot affect layout decisions that affect CSS)
+- Effects can be changed without recompiling layouts
+- Layout trees describe intent, not presentation details
 
 ## Layout CSS
 

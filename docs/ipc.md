@@ -109,3 +109,5 @@ Typical subscribe envelope:
 - IPC payloads use serializable snapshots and typed actions
 - raw compositor or Wayland handles are not exposed
 - workspace subscriptions track workspace-change events, not low-level backend events
+- Focus actions (`focus-left`, `focus-right`, `focus-up`, `focus-down`) navigate between windows without reordering; they are distinct from swap/move actions
+- Keybindings are deduplicated semantically (same modifiers + keysym = single binding, even if trigger text differs like `alt+Return` vs `Alt+Enter`)
