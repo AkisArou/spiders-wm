@@ -25,14 +25,27 @@ pub struct PreparedStylesheet {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct PreparedStylesheets {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub global: Option<PreparedStylesheet>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub layout: Option<PreparedStylesheet>,
 }
 
 impl PreparedStylesheets {
     pub fn combined_source(&self) -> String {
-        self.layout
-            .as_ref()
-            .map(|stylesheet| stylesheet.source.clone())
-            .unwrap_or_default()
+        let mut sections = Vec::new();
+
+        if let Some(stylesheet) = self.global.as_ref()
+            && !stylesheet.source.trim().is_empty()
+        {
+            sections.push(stylesheet.source.as_str());
+        }
+
+        if let Some(stylesheet) = self.layout.as_ref()
+            && !stylesheet.source.trim().is_empty()
+        {
+            sections.push(stylesheet.source.as_str());
+        }
+
+        sections.join("\n")
     }
 }

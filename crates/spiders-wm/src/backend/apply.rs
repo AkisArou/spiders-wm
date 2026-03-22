@@ -1,6 +1,55 @@
+use std::io::{Seek, Write};
+use std::os::fd::AsFd;
+
 use super::*;
+use crate::backend::plan::TitlebarPlan;
+use wayland_client::protocol::wl_shm;
 
 impl RiverBackendState {
+    fn write_titlebar_buffer(
+        &self,
+        width: i32,
+        height: i32,
+        background: spiders_scene::ColorValue,
+    ) -> Option<crate::runtime::registry::TitlebarBufferRecord> {
+        let shm = self.shm.as_ref()?;
+        let stride = width.checked_mul(4)?;
+        let size = stride.checked_mul(height)?;
+        let mut file = tempfile::tempfile().ok()?;
+        file.set_len(size as u64).ok()?;
+
+        let pixel = u32::from_le_bytes([
+            background.blue,
+            background.green,
+            background.red,
+            background.alpha,
+        ]);
+        for _ in 0..(width * height) {
+            file.write_all(&pixel.to_le_bytes()).ok()?;
+        }
+        file.rewind().ok()?;
+
+        let pool = shm.create_pool(file.as_fd(), size, self.queue_handle(), ());
+        let buffer = pool.create_buffer(
+            0,
+            width,
+            height,
+            stride,
+            wl_shm::Format::Argb8888,
+            self.queue_handle(),
+            (),
+        );
+
+        Some(crate::runtime::registry::TitlebarBufferRecord {
+            buffer,
+            pool,
+            file,
+            width,
+            height,
+            color: background,
+        })
+    }
+
     pub(super) fn apply_manage_window_plan(&mut self, plan: &[ManageWindowPlan]) {
         for entry in plan {
             let Some(object_id) = self.window_object_id(&entry.window_id) else {
@@ -80,6 +129,83 @@ impl RiverBackendState {
                 entry.blue,
                 entry.alpha,
             );
+        }
+    }
+
+    pub(super) fn apply_appearance_plan(&mut self, plan: &[AppearancePlan]) {
+        for entry in plan {
+            let Some(object_id) = self.window_object_id(&entry.window_id) else {
+                continue;
+            };
+            let Some(window) = self.registry.windows.get_mut(&object_id) else {
+                continue;
+            };
+
+            match entry.decoration_mode {
+                DecorationMode::ClientSide => window.proxy.use_csd(),
+                DecorationMode::CompositorTitlebar => window.proxy.use_ssd(),
+                DecorationMode::NoTitlebar => {
+                    // Best effort "no titlebar": for SSD-capable clients ask the client not to
+                    // draw decorations, and do not create compositor titlebar surfaces. If the
+                    // client only supports CSD, river cannot suppress its client-drawn chrome.
+                    if window.supports_ssd {
+                        window.proxy.use_ssd();
+                    } else {
+                        window.proxy.use_csd();
+                    }
+                }
+            }
+        }
+    }
+
+    pub(super) fn apply_titlebar_plan(&mut self, plan: &[TitlebarPlan]) {
+        let planned = plan
+            .iter()
+            .filter_map(|entry| self.window_object_id(&entry.window_id).map(|id| (id, entry)))
+            .collect::<Vec<_>>();
+
+        for (object_id, entry) in planned {
+            let width = self
+                .runtime_state
+                .windows
+                .get(&entry.window_id)
+                .map(|window| window.width)
+                .unwrap_or(0)
+                .max(1);
+            let Some(needs_buffer) = self.registry.titlebars.get(&object_id).map(|titlebar| {
+                titlebar.buffer.as_ref().is_none_or(|buffer| {
+                    buffer.width != width
+                        || buffer.height != entry.height
+                        || buffer.color != entry.background
+                })
+            }) else {
+                continue;
+            };
+
+            if needs_buffer {
+                let next_buffer = self.write_titlebar_buffer(width, entry.height, entry.background);
+                let Some(titlebar) = self.registry.titlebars.get_mut(&object_id) else {
+                    continue;
+                };
+                if let Some(old) = titlebar.buffer.take() {
+                    old.buffer.destroy();
+                    old.pool.destroy();
+                }
+                titlebar.buffer = next_buffer;
+            }
+
+            let Some(titlebar) = self.registry.titlebars.get_mut(&object_id) else {
+                continue;
+            };
+            let Some(buffer) = titlebar.buffer.as_ref() else {
+                continue;
+            };
+
+            titlebar.decoration.set_offset(0, -entry.height);
+            titlebar.decoration.sync_next_commit();
+            titlebar.surface.attach(Some(&buffer.buffer), 0, 0);
+            titlebar.surface.damage_buffer(0, 0, width, entry.height);
+            titlebar.surface.commit();
         }
     }
 

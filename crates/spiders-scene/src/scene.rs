@@ -42,6 +42,7 @@ pub struct SceneResponse {
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct SceneNodeStyle {
     pub layout: ComputedStyle,
+    pub titlebar: Option<ComputedStyle>,
 }
 
 impl LayoutSnapshotNode {

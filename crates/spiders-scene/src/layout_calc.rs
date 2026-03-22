@@ -18,6 +18,7 @@ pub enum LayoutCalcError {
 pub struct LaidOutNode {
     pub node: ResolvedLayoutNode,
     pub computed: crate::css::ComputedStyle,
+    pub titlebar: Option<crate::css::ComputedStyle>,
     pub taffy_style: taffy::style::Style,
     pub geometry: LayoutRect,
     pub children: Vec<LaidOutNode>,
@@ -36,7 +37,7 @@ impl LaidOutTree {
 
 impl LaidOutNode {
     pub fn snapshot(&self) -> LayoutSnapshotNode {
-        let styles = scene_style_from_computed(&self.computed);
+        let styles = scene_style_from_node(self);
 
         match &self.node {
             ResolvedLayoutNode::Workspace { meta, .. } => LayoutSnapshotNode::Workspace {
@@ -87,12 +88,14 @@ pub fn compute_layout_from_styled(
     })
 }
 
-fn scene_style_from_computed(computed: &crate::css::ComputedStyle) -> Option<SceneNodeStyle> {
-    if computed == &crate::css::ComputedStyle::default() {
+fn scene_style_from_node(node: &LaidOutNode) -> Option<SceneNodeStyle> {
+    let base_is_default = node.computed == crate::css::ComputedStyle::default();
+    if base_is_default && node.titlebar.is_none() {
         None
     } else {
         Some(SceneNodeStyle {
-            layout: computed.clone(),
+            layout: node.computed.clone(),
+            titlebar: node.titlebar.clone(),
         })
     }
 }
@@ -143,6 +146,7 @@ fn collect_layout(
     Ok(LaidOutNode {
         node: node.node.clone(),
         computed: node.computed.clone(),
+        titlebar: node.titlebar.clone(),
         taffy_style: node.taffy_style.clone(),
         geometry,
         children,

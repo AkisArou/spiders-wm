@@ -10,10 +10,11 @@ mod taffy;
 mod tokenizer;
 
 pub use crate::style::*;
-pub use crate::style_calc::compute_style;
+pub use crate::style_calc::{compute_style, compute_style_for_pseudo};
 pub use compile::CssValueError;
 pub use compiled::*;
 pub use parsing::{CssParseError, parse_stylesheet};
+pub use stylo_adapter::LayoutPseudoElement;
 pub use taffy::{NodeComputedStyle, StyledLayoutTree, map_computed_style_to_taffy};
 
 #[cfg(test)]
@@ -142,6 +143,27 @@ mod tests {
     }
 
     #[test]
+    fn matches_window_state_pseudo_selectors_against_runtime_nodes() {
+        let node = runtime_window_with_meta(LayoutNodeMeta {
+            class: vec!["focused".into(), "floating".into()],
+            ..LayoutNodeMeta::default()
+        });
+
+        assert!(selector_matches(
+            &parse_selector_list("window:focused").unwrap(),
+            &node
+        ));
+        assert!(selector_matches(
+            &parse_selector_list("window:floating").unwrap(),
+            &node
+        ));
+        assert!(!selector_matches(
+            &parse_selector_list("window:fullscreen").unwrap(),
+            &node
+        ));
+    }
+
+    #[test]
     fn collects_rules_matching_any_selector_in_rule() {
         let sheet = parse_stylesheet(
             "group { gap: 8px; } #main, .stack { width: 50%; } window { height: 100%; }",
@@ -213,6 +235,108 @@ mod tests {
             })
         );
     }
+
+    #[test]
+    fn supports_window_appearance_values() {
+        let auto_sheet = parse_stylesheet("window { appearance: auto; }").unwrap();
+        let none_sheet = parse_stylesheet("window { appearance: none; }").unwrap();
+        let node = runtime_window_with_meta(LayoutNodeMeta::default());
+
+        assert_eq!(
+            compute_style(&auto_sheet, &node).unwrap().appearance,
+            Some(AppearanceValue::Auto)
+        );
+        assert_eq!(
+            compute_style(&none_sheet, &node).unwrap().appearance,
+            Some(AppearanceValue::None)
+        );
+    }
+
+    #[test]
+    fn computes_titlebar_pseudo_styles_separately_from_window_styles() {
+        let sheet = parse_stylesheet(
+            "window { height: 100%; } window::titlebar { height: 28px; background: rgba(12, 24, 48, 0.5); }",
+        )
+        .unwrap();
+        let node = runtime_window_with_meta(LayoutNodeMeta::default());
+
+        let window_style = compute_style(&sheet, &node).unwrap();
+        let titlebar_style = compute_style_for_pseudo(&sheet, &node, LayoutPseudoElement::Titlebar)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(window_style.background, None);
+        assert_eq!(
+            titlebar_style.height,
+            Some(SizeValue::LengthPercentage(LengthPercentage::Px(28.0)))
+        );
+        assert_eq!(
+            titlebar_style.background,
+            Some(ColorValue {
+                red: 12,
+                green: 24,
+                blue: 48,
+                alpha: 128,
+            })
+        );
+    }
+
+        #[test]
+        fn parses_effect_properties_and_keyframes_used_by_root_stylesheet() {
+                let sheet = parse_stylesheet(
+                        r#"
+                        workspace {
+                            transition-property: transform, opacity;
+                            transition-duration: 220ms;
+                            transition-timing-function: cubic-bezier(0.46, 1, 0.29, 0.99);
+                        }
+
+                        workspace:enter-from-right {
+                            transform: translate(100%, 0%);
+                            opacity: 0.98;
+                        }
+
+                        window {
+                            border-width: 2px;
+                            border-color: #222222;
+                            opacity: 0.94;
+                            border-radius: 14px 10px 18px 8px / 14px 10px 18px 8px;
+                            box-shadow: 0 12px 28px 4px #00000066;
+                            backdrop-filter: blur(12px);
+                            animation: open-zoom 400ms cubic-bezier(0.46, 1, 0.29, 0.99) both;
+                            transition: opacity 140ms ease-in-out, box-shadow 220ms ease-out;
+                            appearance: none;
+                        }
+
+                        @keyframes open-zoom {
+                            from { opacity: 0.15; transform: translate(0px, 24px) scale(0.3); }
+                            to { opacity: 1; transform: translate(0px, 0px) scale(1); }
+                        }
+
+                        window:closing {
+                            opacity: 0;
+                            transition: all 300ms cubic-bezier(0.46, 1.0, 0.29, 0.99);
+                        }
+                        "#,
+                )
+                .unwrap();
+
+                let node = runtime_window_with_meta(LayoutNodeMeta::default());
+                let style = compute_style(&sheet, &node).unwrap();
+
+                assert_eq!(style.appearance, Some(AppearanceValue::None));
+                assert_eq!(style.opacity, Some(0.94));
+                assert_eq!(
+                        style.border_color,
+                        Some(ColorValue {
+                                red: 34,
+                                green: 34,
+                                blue: 34,
+                                alpha: 255,
+                        })
+                );
+                assert!(style.border_radius.is_some() || style.box_shadow.is_some() || style.animation.is_some());
+        }
 
     #[test]
     fn supports_row_and_column_gap_overrides() {

@@ -343,6 +343,7 @@ mod tests {
                         height: Some(SizeValue::LengthPercentage(LengthPercentage::Px(300.0))),
                         ..crate::css::ComputedStyle::default()
                     },
+                    titlebar: None,
                 }),
                 children: vec![LayoutSnapshotNode::Window {
                     meta: LayoutNodeMeta {
@@ -361,6 +362,7 @@ mod tests {
                             width: Some(SizeValue::LengthPercentage(LengthPercentage::Px(200.0))),
                             ..crate::css::ComputedStyle::default()
                         },
+                        titlebar: None,
                     }),
                     window_id: Some(WindowId::from("win-1")),
                 }],
@@ -376,6 +378,7 @@ mod tests {
             layout_name: Some("master-stack".into()),
             root: sample_tree(),
             stylesheets: spiders_shared::runtime::prepared_layout::PreparedStylesheets {
+                global: None,
                 layout: Some(spiders_shared::runtime::prepared_layout::PreparedStylesheet {
                     path: "layouts/master-stack/index.css".into(),
                     source:
@@ -412,6 +415,7 @@ mod tests {
                             height: Some(SizeValue::LengthPercentage(LengthPercentage::Px(200.0))),
                             ..crate::css::ComputedStyle::default()
                         },
+                        titlebar: None,
                     }),
                     children: vec![LayoutSnapshotNode::Window {
                         meta: LayoutNodeMeta {
@@ -430,6 +434,7 @@ mod tests {
                                 width: Some(SizeValue::LengthPercentage(LengthPercentage::Px(100.0))),
                                 ..crate::css::ComputedStyle::default()
                             },
+                            titlebar: None,
                         }),
                         window_id: Some(WindowId::from("win-1")),
                     }],
@@ -486,6 +491,7 @@ mod tests {
             layout_name: Some("master-stack".into()),
             root: sample_tree(),
             stylesheets: spiders_shared::runtime::prepared_layout::PreparedStylesheets {
+                global: None,
                 layout: Some(spiders_shared::runtime::prepared_layout::PreparedStylesheet {
                     path: "layouts/master-stack/index.css".into(),
                     source: stylesheet.into(),
@@ -513,6 +519,7 @@ mod tests {
             layout_name: Some("master-stack".into()),
             root: sample_tree(),
             stylesheets: spiders_shared::runtime::prepared_layout::PreparedStylesheets {
+                global: None,
                 layout: Some(spiders_shared::runtime::prepared_layout::PreparedStylesheet {
                     path: "layouts/master-stack/index.css".into(),
                     source:
@@ -528,6 +535,7 @@ mod tests {
 
         let request_b = SceneRequest {
             stylesheets: spiders_shared::runtime::prepared_layout::PreparedStylesheets {
+                global: None,
                 layout: Some(spiders_shared::runtime::prepared_layout::PreparedStylesheet {
                     path: "layouts/master-stack/index.css".into(),
                     source:

@@ -284,27 +284,71 @@ pub fn compute_layout_snapshot(
         });
     }
 
-    scene_cache
-        .compute_layout_from_request(&request)
-        .map(|response| {
+    match scene_cache.compute_layout_from_request(&request) {
+        Ok(response) => {
             debug!(
                 %workspace_id,
                 workspace_name = %workspace_name,
                 window_count = window_ids.len(),
                 "computed layout snapshot"
             );
-            response.root
-        })
-        .map_err(|error| {
+            Some(response.root)
+        }
+        Err(error) => {
             warn!(
                 %error,
                 %workspace_id,
                 workspace_name = %workspace_name,
+                global_stylesheet_path = request
+                    .stylesheets
+                    .global
+                    .as_ref()
+                    .map(|sheet| sheet.path.as_str())
+                    .unwrap_or("<none>"),
+                layout_stylesheet_path = request
+                    .stylesheets
+                    .layout
+                    .as_ref()
+                    .map(|sheet| sheet.path.as_str())
+                    .unwrap_or("<none>"),
                 "scene cache failed computing layout from request"
             );
-            error
-        })
-        .ok()
+
+            if request.stylesheets.global.is_some() && request.stylesheets.layout.is_some() {
+                warn!(
+                    %workspace_id,
+                    workspace_name = %workspace_name,
+                    "retrying layout computation without global stylesheet"
+                );
+
+                let mut fallback_request = request.clone();
+                fallback_request.stylesheets.global = None;
+                return scene_cache
+                    .compute_layout_from_request(&fallback_request)
+                    .map(|response| {
+                        debug!(
+                            %workspace_id,
+                            workspace_name = %workspace_name,
+                            window_count = window_ids.len(),
+                            "computed layout snapshot after dropping global stylesheet"
+                        );
+                        response.root
+                    })
+                    .map_err(|fallback_error| {
+                        warn!(
+                            %fallback_error,
+                            %workspace_id,
+                            workspace_name = %workspace_name,
+                            "layout computation still failed after dropping global stylesheet"
+                        );
+                        fallback_error
+                    })
+                    .ok();
+            }
+
+            None
+        }
+    }
 }
 
 #[cfg(test)]

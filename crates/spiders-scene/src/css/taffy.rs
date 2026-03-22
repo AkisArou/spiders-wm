@@ -24,6 +24,7 @@ use spiders_tree::ResolvedLayoutNode;
 pub struct NodeComputedStyle {
     pub node: ResolvedLayoutNode,
     pub computed: ComputedStyle,
+    pub titlebar: Option<ComputedStyle>,
     pub taffy_style: TaffyStyle,
     pub children: Vec<NodeComputedStyle>,
 }

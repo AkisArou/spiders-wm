@@ -1,5 +1,6 @@
 use spiders_tree::WindowId;
 use spiders_tree::{OutputId, WorkspaceId};
+use spiders_scene::ColorValue;
 use spiders_shared::types::WindowMode;
 
 use crate::protocol::river_window_management_v1::river_window_v1;
@@ -42,6 +43,26 @@ pub struct BorderPlan {
     pub green: u32,
     pub blue: u32,
     pub alpha: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DecorationMode {
+    ClientSide,
+    CompositorTitlebar,
+    NoTitlebar,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AppearancePlan {
+    pub window_id: WindowId,
+    pub decoration_mode: DecorationMode,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TitlebarPlan {
+    pub window_id: WindowId,
+    pub height: i32,
+    pub background: ColorValue,
 }
 
 #[derive(Debug, Clone, PartialEq)]

@@ -75,6 +75,7 @@ impl RuntimeProjectLayoutSourceLoader {
 
     pub fn load_definition(
         &self,
+        global_stylesheet_path: Option<&str>,
         layout: &LayoutDefinition,
     ) -> Result<PreparedLayout, LayoutLoadError> {
         let module_path = self.resolver.resolve_module_path(&layout.module);
@@ -87,6 +88,7 @@ impl RuntimeProjectLayoutSourceLoader {
             })?;
             return Ok(loaded_layout_definition(
                 layout,
+                global_stylesheet_path,
                 module_path.to_string_lossy().into_owned(),
                 runtime_graph,
             ));
@@ -99,6 +101,7 @@ impl RuntimeProjectLayoutSourceLoader {
 
         Ok(loaded_layout_definition(
             layout,
+            global_stylesheet_path,
             module_path.to_string_lossy().into_owned(),
             single_module_graph(module_path.to_string_lossy().into_owned(), runtime_source),
         ))
@@ -130,6 +133,7 @@ impl JsLayoutSourceLoader for InlineLayoutSourceLoader {
 impl FsLayoutSourceLoader {
     pub fn load_definition(
         &self,
+        global_stylesheet_path: Option<&str>,
         layout: &LayoutDefinition,
     ) -> Result<PreparedLayout, LayoutLoadError> {
         if let Some(runtime_payload) = layout.runtime_cache_payload.clone() {
@@ -141,6 +145,7 @@ impl FsLayoutSourceLoader {
             })?;
             return Ok(loaded_layout_definition(
                 layout,
+                global_stylesheet_path,
                 layout.module.clone(),
                 runtime_graph,
             ));
@@ -153,6 +158,7 @@ impl FsLayoutSourceLoader {
 
         Ok(loaded_layout_definition(
             layout,
+            global_stylesheet_path,
             layout.module.clone(),
             single_module_graph(layout.module.clone(), runtime_source),
         ))
@@ -169,7 +175,7 @@ impl JsLayoutSourceLoader for FsLayoutSourceLoader {
             return Ok(None);
         };
 
-        self.load_definition(layout)
+        self.load_definition(config.global_stylesheet_path.as_deref(), layout)
             .map(Some)
             .map_err(|error| RuntimeError::Other {
                 message: error.to_string(),
@@ -187,7 +193,7 @@ impl JsLayoutSourceLoader for RuntimeProjectLayoutSourceLoader {
             return Ok(None);
         };
 
-        self.load_definition(layout)
+        self.load_definition(config.global_stylesheet_path.as_deref(), layout)
             .map(Some)
             .map_err(|error| RuntimeError::Other {
                 message: error.to_string(),
@@ -197,6 +203,7 @@ impl JsLayoutSourceLoader for RuntimeProjectLayoutSourceLoader {
 
 pub fn loaded_layout_definition(
     layout: &LayoutDefinition,
+    global_stylesheet_path: Option<&str>,
     module: String,
     runtime_graph: JavaScriptModuleGraph,
 ) -> PreparedLayout {
@@ -211,6 +218,7 @@ pub fn loaded_layout_definition(
             .clone()
             .unwrap_or_else(|| encode_runtime_graph_payload(&runtime_graph)),
         stylesheets: PreparedStylesheets {
+            global: global_stylesheet_path.map(|path| load_global_stylesheet_asset(layout, path)),
             layout: layout
                 .stylesheet_path
                 .as_ref()
@@ -249,6 +257,40 @@ fn load_stylesheet_asset(
             module = %module_path,
             bytes = source.len(),
             "loaded layout stylesheet source"
+        );
+    }
+
+    PreparedStylesheet {
+        path: path.into(),
+        source,
+    }
+}
+
+fn load_global_stylesheet_asset(
+    layout: &LayoutDefinition,
+    path: &str,
+) -> PreparedStylesheet {
+    let source = std::fs::read_to_string(path).unwrap_or_else(|_| {
+        warn!(
+            layout = %layout.name,
+            stylesheet_path = %path,
+            "failed to load global stylesheet"
+        );
+        String::new()
+    });
+
+    if source.trim().is_empty() {
+        warn!(
+            layout = %layout.name,
+            stylesheet_path = %path,
+            "loaded global stylesheet is empty"
+        );
+    } else {
+        debug!(
+            layout = %layout.name,
+            stylesheet_path = %path,
+            bytes = source.len(),
+            "loaded global stylesheet source"
         );
     }
 
@@ -421,7 +463,7 @@ mod tests {
             runtime_cache_payload: None,
         };
 
-        let loaded = loader.load_definition(&definition).unwrap();
+        let loaded = loader.load_definition(None, &definition).unwrap();
         let loaded_graph = decode_runtime_graph_payload(&loaded.runtime_payload).unwrap();
 
         assert_eq!(loaded.selected.module, definition.module);
@@ -483,7 +525,7 @@ mod tests {
             runtime_cache_payload: None,
         };
 
-        let loaded = loader.load_definition(&definition).unwrap();
+        let loaded = loader.load_definition(None, &definition).unwrap();
         let loaded_graph = decode_runtime_graph_payload(&loaded.runtime_payload).unwrap();
 
         assert_eq!(loaded.selected.module, module_path.to_string_lossy());
@@ -508,7 +550,7 @@ mod tests {
             runtime_cache_payload: None,
         };
 
-        let loaded = loader.load_definition(&definition).unwrap();
+        let loaded = loader.load_definition(None, &definition).unwrap();
         let loaded_graph = decode_runtime_graph_payload(&loaded.runtime_payload).unwrap();
 
         assert!(loaded.selected.module.ends_with("layouts/fallback.js"));
@@ -538,6 +580,7 @@ mod tests {
 
         let loaded = loaded_layout_definition(
             &definition,
+            config.global_stylesheet_path.as_deref(),
             definition.module.clone(),
             single_module_graph(definition.module.clone(), "export default () => null".into()),
         );
@@ -550,6 +593,9 @@ mod tests {
             loaded.stylesheets.layout.as_ref().map(|sheet| sheet.source.as_str()),
             Some("")
         );
-        assert_eq!(config.global_stylesheet_path.as_deref(), Some(missing_global));
+        assert_eq!(
+            loaded.stylesheets.global.as_ref().map(|sheet| sheet.path.as_str()),
+            Some(missing_global)
+        );
     }
 }

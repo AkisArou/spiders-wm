@@ -1,11 +1,15 @@
 use std::collections::{BTreeMap, HashMap};
+use std::fs::File;
 
 use spiders_shared::api::WmAction;
+use spiders_scene::ColorValue;
 use spiders_tree::{OutputId, WindowId};
 use wayland_backend::client::ObjectId;
+use wayland_client::protocol::{wl_buffer, wl_shm_pool, wl_surface};
 
 use crate::protocol::river_window_management_v1::{
-    river_node_v1, river_output_v1, river_pointer_binding_v1, river_seat_v1, river_window_v1,
+    river_decoration_v1, river_node_v1, river_output_v1, river_pointer_binding_v1,
+    river_seat_v1, river_window_v1,
 };
 use crate::protocol::river_xkb_bindings::river_xkb_binding_v1;
 
@@ -15,6 +19,7 @@ pub struct RiverRegistry {
     pub output_ids_by_state: HashMap<OutputId, ObjectId>,
     pub windows: HashMap<ObjectId, WindowRecord>,
     pub window_ids_by_state: HashMap<WindowId, ObjectId>,
+    pub titlebars: HashMap<ObjectId, TitlebarRecord>,
     pub seats: HashMap<ObjectId, SeatRecord>,
     pub input_devices: HashMap<ObjectId, InputDeviceRecord>,
     pub xkb_keyboards: HashMap<ObjectId, XkbKeyboardRecord>,
@@ -34,6 +39,24 @@ pub struct WindowRecord {
     pub proxy: river_window_v1::RiverWindowV1,
     pub node: river_node_v1::RiverNodeV1,
     pub state_id: spiders_tree::WindowId,
+    pub supports_ssd: bool,
+}
+
+#[derive(Debug)]
+pub struct TitlebarRecord {
+    pub decoration: river_decoration_v1::RiverDecorationV1,
+    pub surface: wl_surface::WlSurface,
+    pub buffer: Option<TitlebarBufferRecord>,
+}
+
+#[derive(Debug)]
+pub struct TitlebarBufferRecord {
+    pub buffer: wl_buffer::WlBuffer,
+    pub pool: wl_shm_pool::WlShmPool,
+    pub file: File,
+    pub width: i32,
+    pub height: i32,
+    pub color: ColorValue,
 }
 
 #[derive(Debug, Clone)]

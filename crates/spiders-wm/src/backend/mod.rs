@@ -12,7 +12,7 @@ use spiders_scene::pipeline::SceneCache;
 use spiders_shared::api::{FocusDirection, WmAction};
 use spiders_runtime_js::{build_authoring_layout_service, DefaultLayoutRuntime};
 use wayland_backend::client::ObjectId;
-use wayland_client::protocol::{wl_output, wl_registry, wl_seat};
+use wayland_client::protocol::{wl_buffer, wl_compositor, wl_output, wl_registry, wl_seat, wl_shm, wl_shm_pool, wl_surface};
 use wayland_client::{Connection, Dispatch, EventQueue, Proxy, QueueHandle};
 use tracing::{debug, info, warn};
 use xkbcommon::xkb;
@@ -28,8 +28,8 @@ use crate::protocol::river_libinput_config::{
     river_libinput_config_v1, river_libinput_device_v1, river_libinput_result_v1,
 };
 use crate::protocol::river_window_management_v1::{
-    river_node_v1, river_output_v1, river_pointer_binding_v1, river_seat_v1,
-    river_window_manager_v1, river_window_v1,
+    river_decoration_v1, river_node_v1, river_output_v1, river_pointer_binding_v1,
+    river_seat_v1, river_window_manager_v1, river_window_v1,
 };
 use crate::protocol::river_xkb_bindings::{river_xkb_binding_v1, river_xkb_bindings_v1};
 use crate::protocol::river_xkb_config::{
@@ -46,6 +46,7 @@ use crate::runtime::{
     ParsedBinding, PointerBindingRecord, RiverRegistry, SeatRecord, WindowRecord,
     WlOutputRecord, WlSeatRecord, XkbBindingRecord, XkbKeyboardRecord,
 };
+use crate::runtime::registry::TitlebarRecord;
 
 mod apply;
 mod dispatch;
@@ -55,10 +56,10 @@ mod transient;
 
 use self::apply::{effective_bindings, parse_binding};
 use self::plan::{
-    ActivateWorkspacePlan, BorderPlan, ClearTiledStatePlan, CloseWindowPlan, CommandPlan,
-    FocusPlan, ManageWindowPlan, MoveFocusedWindowToWorkspacePlan, MoveWindowToTopPlan,
-    MoveWindowInWorkspacePlan, OffscreenWindowPlan, PointerRenderPlan, RenderWindowPlan,
-    ResizeWindowPlan, WindowModePlan,
+    ActivateWorkspacePlan, AppearancePlan, BorderPlan, ClearTiledStatePlan, CloseWindowPlan,
+    CommandPlan, DecorationMode, FocusPlan, ManageWindowPlan,
+    MoveFocusedWindowToWorkspacePlan, MoveWindowToTopPlan, MoveWindowInWorkspacePlan,
+    OffscreenWindowPlan, PointerRenderPlan, RenderWindowPlan, ResizeWindowPlan, WindowModePlan,
 };
 use self::transient::BackendTransientState;
 
@@ -79,6 +80,7 @@ impl RiverConnection {
         let _registry = display.get_registry(&qh, ());
 
         let mut state = RiverBackendState::new(paths, config, runtime_state);
+        state.queue_handle = Some(qh.clone());
         event_queue.roundtrip(&mut state)?;
 
         if !state.protocol_support.supports_minimum_viable_wm() {
@@ -133,7 +135,10 @@ struct RiverBackendState {
     protocol_support: RiverProtocolSupport,
     runtime_state: WmState,
     running: bool,
+    queue_handle: Option<QueueHandle<Self>>,
     wm: Option<river_window_manager_v1::RiverWindowManagerV1>,
+    compositor: Option<wl_compositor::WlCompositor>,
+    shm: Option<wl_shm::WlShm>,
     layer_shell: Option<river_layer_shell_v1::RiverLayerShellV1>,
     xkb_bindings: Option<river_xkb_bindings_v1::RiverXkbBindingsV1>,
     input_manager: Option<river_input_manager_v1::RiverInputManagerV1>,
@@ -460,7 +465,10 @@ impl RiverBackendState {
             protocol_support: RiverProtocolSupport::default(),
             runtime_state,
             running: true,
+            queue_handle: None,
             wm: None,
+            compositor: None,
+            shm: None,
             layer_shell: None,
             xkb_bindings: None,
             input_manager: None,
@@ -490,6 +498,64 @@ impl RiverBackendState {
     fn next_seat_name(&mut self) -> String {
         self.next_seat_serial += 1;
         format!("seat-{}", self.next_seat_serial)
+    }
+
+    fn queue_handle(&self) -> &QueueHandle<Self> {
+        self.queue_handle
+            .as_ref()
+            .expect("backend queue handle must be initialized")
+    }
+
+    fn destroy_titlebar_record(titlebar: &mut TitlebarRecord) {
+        if let Some(buffer) = titlebar.buffer.take() {
+            buffer.buffer.destroy();
+            buffer.pool.destroy();
+        }
+        titlebar.decoration.destroy();
+        titlebar.surface.destroy();
+    }
+
+    fn sync_window_titlebars(&mut self, qh: &QueueHandle<Self>) {
+        let desired = self
+            .plan_window_appearance()
+            .into_iter()
+            .filter(|plan| matches!(plan.decoration_mode, DecorationMode::CompositorTitlebar))
+            .filter_map(|plan| self.window_object_id(&plan.window_id))
+            .collect::<Vec<_>>();
+
+        let existing = self.registry.titlebars.keys().cloned().collect::<Vec<_>>();
+        for object_id in existing {
+            if desired.iter().any(|desired_id| desired_id == &object_id) {
+                continue;
+            }
+            if let Some(mut titlebar) = self.registry.titlebars.remove(&object_id) {
+                Self::destroy_titlebar_record(&mut titlebar);
+            }
+        }
+
+        let Some(compositor) = self.compositor.clone() else {
+            return;
+        };
+
+        for object_id in desired {
+            if self.registry.titlebars.contains_key(&object_id) {
+                continue;
+            }
+            let Some(window) = self.registry.windows.get(&object_id) else {
+                continue;
+            };
+
+            let surface = compositor.create_surface(qh, ());
+            let decoration = window.proxy.get_decoration_above(&surface, qh, ());
+            self.registry.titlebars.insert(
+                object_id,
+                TitlebarRecord {
+                    decoration,
+                    surface,
+                    buffer: None,
+                },
+            );
+        }
     }
 
     fn output_name_for_global(&self, global_name: u32) -> String {
@@ -530,6 +596,9 @@ impl RiverBackendState {
         for window in self.registry.windows.values() {
             window.node.destroy();
             window.proxy.destroy();
+        }
+        for titlebar in self.registry.titlebars.values_mut() {
+            Self::destroy_titlebar_record(titlebar);
         }
         for output in self.registry.outputs.values() {
             output.proxy.destroy();
@@ -623,6 +692,9 @@ impl RiverBackendState {
                 if seat.interacted_window_id.as_ref() == Some(&state_id) {
                     seat.interacted_window_id = None;
                 }
+            }
+            if let Some(mut titlebar) = self.registry.titlebars.remove(&id) {
+                Self::destroy_titlebar_record(&mut titlebar);
             }
             self.registry.windows.remove(&id);
             self.runtime_state.remove_window(&state_id);
@@ -894,6 +966,8 @@ impl RiverBackendState {
         self.handle_window_requests();
         let mode_plans = self.plan_window_mode_updates();
         self.apply_window_mode_plan(&mode_plans);
+        self.apply_window_appearance();
+        self.sync_window_titlebars(qh);
 
         let new_focus_candidate = self
             .active_workspace_window_state_ids()
@@ -971,6 +1045,7 @@ impl RiverBackendState {
         }
 
         self.apply_window_borders();
+        self.apply_window_titlebars();
 
         let plan = self.plan_pointer_render_ops();
         self.apply_pointer_render_plan(&plan);

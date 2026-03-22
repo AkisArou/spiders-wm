@@ -87,6 +87,24 @@ impl Dispatch<wl_registry::WlRegistry, ()> for RiverBackendState {
                         .wl_outputs_by_global
                         .insert(name, WlOutputRecord { logical_name: None });
                 }
+                "wl_compositor" => {
+                    let compositor = registry.bind::<wl_compositor::WlCompositor, _, _>(
+                        name,
+                        version.min(4),
+                        qh,
+                        (),
+                    );
+                    state.compositor = Some(compositor);
+                }
+                "wl_shm" => {
+                    let shm = registry.bind::<wl_shm::WlShm, _, _>(
+                        name,
+                        version.min(1),
+                        qh,
+                        (),
+                    );
+                    state.shm = Some(shm);
+                }
                 "wl_seat" => {
                     let _ = registry.bind::<wl_seat::WlSeat, _, _>(name, version.min(2), qh, name);
                     state
@@ -210,6 +228,7 @@ impl Dispatch<river_window_manager_v1::RiverWindowManagerV1, ()> for RiverBacken
                         proxy: id,
                         node,
                         state_id: window_id,
+                        supports_ssd: true,
                     },
                 );
             }
@@ -322,8 +341,88 @@ impl Dispatch<river_window_v1::RiverWindowV1, ()> for RiverBackendState {
                         .set_window_output(&window.state_id, Some(output_record.state_id.clone()));
                 }
             }
+            river_window_v1::Event::DecorationHint { hint } => {
+                if let Some(window) = state.registry.windows.get_mut(&proxy.id()) {
+                    window.supports_ssd = !matches!(
+                        hint.into_result(),
+                        Ok(river_window_v1::DecorationHint::OnlySupportsCsd)
+                    );
+                }
+            }
             _ => {}
         }
+    }
+}
+
+impl Dispatch<river_decoration_v1::RiverDecorationV1, ()> for RiverBackendState {
+    fn event(
+        _state: &mut Self,
+        _proxy: &river_decoration_v1::RiverDecorationV1,
+        _event: river_decoration_v1::Event,
+        _: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+    }
+}
+
+impl Dispatch<wl_compositor::WlCompositor, ()> for RiverBackendState {
+    fn event(
+        _state: &mut Self,
+        _proxy: &wl_compositor::WlCompositor,
+        _event: wl_compositor::Event,
+        _: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+    }
+}
+
+impl Dispatch<wl_shm::WlShm, ()> for RiverBackendState {
+    fn event(
+        _state: &mut Self,
+        _proxy: &wl_shm::WlShm,
+        _event: wl_shm::Event,
+        _: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+    }
+}
+
+impl Dispatch<wl_surface::WlSurface, ()> for RiverBackendState {
+    fn event(
+        _state: &mut Self,
+        _proxy: &wl_surface::WlSurface,
+        _event: wl_surface::Event,
+        _: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+    }
+}
+
+impl Dispatch<wl_shm_pool::WlShmPool, ()> for RiverBackendState {
+    fn event(
+        _state: &mut Self,
+        _proxy: &wl_shm_pool::WlShmPool,
+        _event: wl_shm_pool::Event,
+        _: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+    }
+}
+
+impl Dispatch<wl_buffer::WlBuffer, ()> for RiverBackendState {
+    fn event(
+        _state: &mut Self,
+        _proxy: &wl_buffer::WlBuffer,
+        _event: wl_buffer::Event,
+        _: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
     }
 }
 

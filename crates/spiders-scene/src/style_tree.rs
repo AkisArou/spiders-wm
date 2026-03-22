@@ -1,4 +1,7 @@
-use crate::css::{compute_style, map_computed_style_to_taffy, CssValueError, NodeComputedStyle, StyledLayoutTree};
+use crate::css::{
+    compute_style, compute_style_for_pseudo, map_computed_style_to_taffy, CssValueError,
+    LayoutPseudoElement, NodeComputedStyle, StyledLayoutTree,
+};
 use spiders_tree::ResolvedLayoutNode;
 
 pub fn build_styled_layout_tree_from_sheet(
@@ -15,6 +18,12 @@ fn style_node(
     sheet: &crate::css::CompiledStyleSheet,
 ) -> Result<NodeComputedStyle, CssValueError> {
     let computed = compute_style(sheet, node)?;
+    let titlebar = match node {
+        ResolvedLayoutNode::Window { .. } => {
+            compute_style_for_pseudo(sheet, node, LayoutPseudoElement::Titlebar)?
+        }
+        _ => None,
+    };
     let taffy_style = map_computed_style_to_taffy(&computed);
     let children = match node {
         ResolvedLayoutNode::Workspace { children, .. }
@@ -28,6 +37,7 @@ fn style_node(
     Ok(NodeComputedStyle {
         node: node.clone(),
         computed,
+        titlebar,
         taffy_style,
         children,
     })

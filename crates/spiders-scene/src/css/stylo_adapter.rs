@@ -43,6 +43,7 @@ struct LayoutDomNode {
 pub struct LayoutElement<'a> {
     tree: &'a LayoutDomTree,
     index: usize,
+    pseudo: Option<LayoutPseudoElement>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -55,10 +56,22 @@ pub struct LayoutAtom(String);
 pub struct LayoutAttrValue(String);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum LayoutPseudoClass {}
+pub enum LayoutPseudoClass {
+    Focused,
+    Floating,
+    Fullscreen,
+    Urgent,
+    Closing,
+    EnterFromLeft,
+    EnterFromRight,
+    ExitToLeft,
+    ExitToRight,
+}
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum LayoutPseudoElement {}
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LayoutPseudoElement {
+    Titlebar,
+}
 
 #[derive(Default)]
 pub struct LayoutSelectorParser;
@@ -91,20 +104,34 @@ impl ToCss for LayoutAttrValue {
 }
 
 impl ToCss for LayoutPseudoClass {
-    fn to_css<W>(&self, _dest: &mut W) -> fmt::Result
+    fn to_css<W>(&self, dest: &mut W) -> fmt::Result
     where
         W: fmt::Write,
     {
-        match *self {}
+        let name = match self {
+            Self::Focused => "focused",
+            Self::Floating => "floating",
+            Self::Fullscreen => "fullscreen",
+            Self::Urgent => "urgent",
+            Self::Closing => "closing",
+            Self::EnterFromLeft => "enter-from-left",
+            Self::EnterFromRight => "enter-from-right",
+            Self::ExitToLeft => "exit-to-left",
+            Self::ExitToRight => "exit-to-right",
+        };
+        serialize_identifier(name, dest)
     }
 }
 
 impl ToCss for LayoutPseudoElement {
-    fn to_css<W>(&self, _dest: &mut W) -> fmt::Result
+    fn to_css<W>(&self, dest: &mut W) -> fmt::Result
     where
         W: fmt::Write,
     {
-        match *self {}
+        let name = match self {
+            Self::Titlebar => "titlebar",
+        };
+        serialize_identifier(name, dest)
     }
 }
 
@@ -154,11 +181,11 @@ impl selectors::parser::NonTSPseudoClass for LayoutPseudoClass {
     type Impl = LayoutSelectorImpl;
 
     fn is_active_or_hover(&self) -> bool {
-        match *self {}
+        false
     }
 
     fn is_user_action_state(&self) -> bool {
-        match *self {}
+        false
     }
 }
 
@@ -182,6 +209,40 @@ impl SelectorImpl for LayoutSelectorImpl {
 impl<'i> SelectorParserTrait<'i> for LayoutSelectorParser {
     type Impl = LayoutSelectorImpl;
     type Error = SelectorParseErrorKind<'i>;
+
+    fn parse_non_ts_pseudo_class(
+        &self,
+        location: cssparser::SourceLocation,
+        name: cssparser::CowRcStr<'i>,
+    ) -> Result<LayoutPseudoClass, cssparser::ParseError<'i, SelectorParseErrorKind<'i>>> {
+        match name.as_ref().to_ascii_lowercase().as_str() {
+            "focused" => Ok(LayoutPseudoClass::Focused),
+            "floating" => Ok(LayoutPseudoClass::Floating),
+            "fullscreen" => Ok(LayoutPseudoClass::Fullscreen),
+            "urgent" => Ok(LayoutPseudoClass::Urgent),
+            "closing" => Ok(LayoutPseudoClass::Closing),
+            "enter-from-left" => Ok(LayoutPseudoClass::EnterFromLeft),
+            "enter-from-right" => Ok(LayoutPseudoClass::EnterFromRight),
+            "exit-to-left" => Ok(LayoutPseudoClass::ExitToLeft),
+            "exit-to-right" => Ok(LayoutPseudoClass::ExitToRight),
+            _ => Err(location.new_custom_error(
+                SelectorParseErrorKind::UnsupportedPseudoClassOrElement(name),
+            )),
+        }
+    }
+
+    fn parse_pseudo_element(
+        &self,
+        location: cssparser::SourceLocation,
+        name: cssparser::CowRcStr<'i>,
+    ) -> Result<LayoutPseudoElement, cssparser::ParseError<'i, SelectorParseErrorKind<'i>>> {
+        match name.as_ref().to_ascii_lowercase().as_str() {
+            "titlebar" => Ok(LayoutPseudoElement::Titlebar),
+            _ => Err(location.new_custom_error(
+                SelectorParseErrorKind::UnsupportedPseudoClassOrElement(name),
+            )),
+        }
+    }
 }
 
 impl LayoutDomTree {
@@ -198,6 +259,7 @@ impl LayoutDomTree {
         LayoutElement {
             tree: self,
             index: self.root,
+            pseudo: None,
         }
     }
 
@@ -213,7 +275,11 @@ impl LayoutDomTree {
                 ResolvedLayoutNode::Window {
                     window_id: Some(id),
                     ..
-                } if id == window_id => Some(LayoutElement { tree: self, index }),
+                } if id == window_id => Some(LayoutElement {
+                    tree: self,
+                    index,
+                    pseudo: None,
+                }),
                 _ => None,
             })
     }
@@ -256,6 +322,13 @@ impl LayoutDomTree {
 }
 
 impl<'a> LayoutElement<'a> {
+    pub fn with_pseudo(self, pseudo: LayoutPseudoElement) -> Self {
+        Self {
+            pseudo: Some(pseudo),
+            ..self
+        }
+    }
+
     fn node(&self) -> &'a LayoutDomNode {
         &self.tree.nodes[self.index]
     }
@@ -280,6 +353,7 @@ impl<'a> Element for LayoutElement<'a> {
         self.node().parent.map(|index| Self {
             tree: self.tree,
             index,
+            pseudo: None,
         })
     }
 
@@ -290,13 +364,14 @@ impl<'a> Element for LayoutElement<'a> {
         None
     }
     fn is_pseudo_element(&self) -> bool {
-        false
+        self.pseudo.is_some()
     }
 
     fn prev_sibling_element(&self) -> Option<Self> {
         self.node().prev_sibling.map(|index| Self {
             tree: self.tree,
             index,
+            pseudo: None,
         })
     }
 
@@ -304,6 +379,7 @@ impl<'a> Element for LayoutElement<'a> {
         self.node().next_sibling.map(|index| Self {
             tree: self.tree,
             index,
+            pseudo: None,
         })
     }
 
@@ -311,6 +387,7 @@ impl<'a> Element for LayoutElement<'a> {
         self.node().first_child.map(|index| Self {
             tree: self.tree,
             index,
+            pseudo: None,
         })
     }
 
@@ -353,18 +430,35 @@ impl<'a> Element for LayoutElement<'a> {
 
     fn match_non_ts_pseudo_class(
         &self,
-        _pc: &LayoutPseudoClass,
+        pc: &LayoutPseudoClass,
         _context: &mut MatchingContext<LayoutSelectorImpl>,
     ) -> bool {
-        false
+        let class_name = match pc {
+            LayoutPseudoClass::Focused => "focused",
+            LayoutPseudoClass::Floating => "floating",
+            LayoutPseudoClass::Fullscreen => "fullscreen",
+            LayoutPseudoClass::Urgent => "urgent",
+            LayoutPseudoClass::Closing => "closing",
+            LayoutPseudoClass::EnterFromLeft => "enter-from-left",
+            LayoutPseudoClass::EnterFromRight => "enter-from-right",
+            LayoutPseudoClass::ExitToLeft => "exit-to-left",
+            LayoutPseudoClass::ExitToRight => "exit-to-right",
+        };
+
+        self.node()
+            .node
+            .meta()
+            .class
+            .iter()
+            .any(|class| class == class_name)
     }
 
     fn match_pseudo_element(
         &self,
-        _pe: &LayoutPseudoElement,
+        pe: &LayoutPseudoElement,
         _context: &mut MatchingContext<LayoutSelectorImpl>,
     ) -> bool {
-        false
+        self.pseudo.as_ref() == Some(pe)
     }
 
     fn apply_selector_flags(&self, _flags: selectors::matching::ElementSelectorFlags) {}
@@ -445,6 +539,14 @@ pub fn selector_matches_element(
         MatchingForInvalidation::No,
     );
     matches_selector_list(selector, &element, &mut context)
+}
+
+pub fn selector_matches_element_pseudo(
+    selector: &SelectorList<LayoutSelectorImpl>,
+    element: LayoutElement<'_>,
+    pseudo: LayoutPseudoElement,
+) -> bool {
+    selector_matches_element(selector, element.with_pseudo(pseudo))
 }
 
 #[cfg(test)]
@@ -528,6 +630,15 @@ mod tests {
         let tree = tree();
         let window = tree.find_window_element(&WindowId::from("w1")).unwrap();
         let selector = parse_selector_list("workspace #stack window").unwrap();
+
+        assert!(selector_matches_element(&selector, window));
+    }
+
+    #[test]
+    fn selector_adapter_matches_window_state_pseudo_selectors() {
+        let tree = tree();
+        let window = tree.find_window_element(&WindowId::from("w1")).unwrap();
+        let selector = parse_selector_list("window:focused").unwrap();
 
         assert!(selector_matches_element(&selector, window));
     }

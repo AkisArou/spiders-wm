@@ -8,9 +8,25 @@ pub(crate) trait ApplyCompiledDeclaration {
 impl ApplyCompiledDeclaration for ComputedStyle {
     fn apply(&mut self, declaration: CompiledDeclaration) {
         match declaration {
+            CompiledDeclaration::Ignored => {}
             CompiledDeclaration::Display(value) => self.display = Some(value),
             CompiledDeclaration::BoxSizing(value) => self.box_sizing = Some(value),
             CompiledDeclaration::AspectRatio(value) => self.aspect_ratio = Some(value),
+            CompiledDeclaration::Appearance(value) => self.appearance = Some(value),
+            CompiledDeclaration::Background(value) => self.background = Some(value),
+            CompiledDeclaration::Opacity(value) => self.opacity = Some(value),
+            CompiledDeclaration::BorderColor(value) => self.border_color = Some(value),
+            CompiledDeclaration::BorderRadius(value) => self.border_radius = Some(value),
+            CompiledDeclaration::BoxShadow(value) => self.box_shadow = Some(value),
+            CompiledDeclaration::BackdropFilter(value) => self.backdrop_filter = Some(value),
+            CompiledDeclaration::Transform(value) => self.transform = Some(value),
+            CompiledDeclaration::Animation(value) => self.animation = Some(value),
+            CompiledDeclaration::Transition(value) => self.transition = Some(value),
+            CompiledDeclaration::TransitionProperty(value) => self.transition_property = Some(value),
+            CompiledDeclaration::TransitionDuration(value) => self.transition_duration = Some(value),
+            CompiledDeclaration::TransitionTimingFunction(value) => {
+                self.transition_timing_function = Some(value)
+            }
             CompiledDeclaration::FlexDirection(value) => self.flex_direction = Some(value),
             CompiledDeclaration::FlexWrap(value) => self.flex_wrap = Some(value),
             CompiledDeclaration::FlexGrow(value) => self.flex_grow = Some(value),

@@ -1,7 +1,10 @@
 use spiders_tree::ResolvedLayoutNode;
 
 use crate::css::{CompiledStyleRule, CompiledStyleSheet};
-use crate::css::stylo_adapter::{selector_matches_element, LayoutDomTree, LayoutSelectorImpl};
+use crate::css::stylo_adapter::{
+    selector_matches_element, selector_matches_element_pseudo, LayoutDomTree, LayoutPseudoElement,
+    LayoutSelectorImpl,
+};
 
 pub fn matching_rules<'a>(
     sheet: &'a CompiledStyleSheet,
@@ -10,6 +13,7 @@ pub fn matching_rules<'a>(
     sheet
         .rules
         .iter()
+        .filter(|rule| rule.target_pseudo.is_none())
         .filter(|rule| selector_matches(&rule.selectors, node))
         .collect()
 }
@@ -20,4 +24,30 @@ pub fn selector_matches(
 ) -> bool {
     let tree = LayoutDomTree::from_resolved_root(node);
     selector_matches_element(selector, tree.root_element())
+}
+
+pub fn matching_rules_for_pseudo<'a>(
+    sheet: &'a CompiledStyleSheet,
+    node: &ResolvedLayoutNode,
+    pseudo: LayoutPseudoElement,
+) -> Vec<&'a CompiledStyleRule> {
+    sheet
+        .rules
+        .iter()
+        .filter(|rule| rule.target_pseudo.as_ref() == Some(&pseudo))
+        .filter(|rule| {
+            rule.pseudo_base_selectors
+                .as_ref()
+                .is_some_and(|selector| selector_matches(selector, node))
+        })
+        .collect()
+}
+
+pub fn selector_matches_pseudo(
+    selector: &selectors::parser::SelectorList<LayoutSelectorImpl>,
+    node: &ResolvedLayoutNode,
+    pseudo: LayoutPseudoElement,
+) -> bool {
+    let tree = LayoutDomTree::from_resolved_root(node);
+    selector_matches_element_pseudo(selector, tree.root_element(), pseudo)
 }

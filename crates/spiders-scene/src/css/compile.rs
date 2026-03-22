@@ -4,9 +4,10 @@ use super::grid::*;
 use super::parse_values::*;
 
 use crate::style::{
-    AlignmentValue, BoxEdges, BoxSizingValue, ContentAlignmentValue, Display, FlexDirectionValue,
-    FlexWrapValue, GridAutoFlow, GridPlacementValue, GridTemplate, GridTemplateArea,
-    GridTrackValue, LengthPercentage, Line, OverflowValue, PositionValue, Size2, SizeValue,
+    AlignmentValue, AppearanceValue, BoxEdges, BoxSizingValue, ColorValue,
+    ContentAlignmentValue, Display, FlexDirectionValue, FlexWrapValue, GridAutoFlow,
+    GridPlacementValue, GridTemplate, GridTemplateArea, GridTrackValue, LengthPercentage, Line,
+    OverflowValue, PositionValue, Size2, SizeValue,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -25,9 +26,23 @@ pub enum CssValueError {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum CompiledDeclaration {
+    Ignored,
     Display(Display),
     BoxSizing(BoxSizingValue),
     AspectRatio(f32),
+    Appearance(AppearanceValue),
+    Background(ColorValue),
+    Opacity(f32),
+    BorderColor(ColorValue),
+    BorderRadius(String),
+    BoxShadow(String),
+    BackdropFilter(String),
+    Transform(String),
+    Animation(String),
+    Transition(String),
+    TransitionProperty(String),
+    TransitionDuration(String),
+    TransitionTimingFunction(String),
     FlexDirection(FlexDirectionValue),
     FlexWrap(FlexWrapValue),
     FlexGrow(f32),
@@ -88,6 +103,54 @@ pub fn compile_declaration_from_value(
         "aspect-ratio" => Ok(CompiledDeclaration::AspectRatio(parse_aspect_ratio_direct(
             property, value,
         )?)),
+        "appearance" => Ok(CompiledDeclaration::Appearance(parse_appearance_direct(
+            property, value,
+        )?)),
+        "background" | "background-color" => Ok(CompiledDeclaration::Background(parse_color_direct(
+            property, value,
+        )?)),
+        "opacity" => Ok(CompiledDeclaration::Opacity(parse_number_direct(
+            property, value,
+        )?)),
+        "border-color" => Ok(CompiledDeclaration::BorderColor(parse_color_direct(
+            property, value,
+        )?)),
+        "border-radius" => Ok(CompiledDeclaration::BorderRadius(parse_raw_text_direct(
+            property, value,
+        )?)),
+        "box-shadow" => Ok(CompiledDeclaration::BoxShadow(parse_raw_text_direct(
+            property, value,
+        )?)),
+        "backdrop-filter" => Ok(CompiledDeclaration::BackdropFilter(parse_raw_text_direct(
+            property, value,
+        )?)),
+        "transform" => Ok(CompiledDeclaration::Transform(parse_raw_text_direct(
+            property, value,
+        )?)),
+        "animation" => Ok(CompiledDeclaration::Animation(parse_raw_text_direct(
+            property, value,
+        )?)),
+        "animation-name"
+        | "animation-duration"
+        | "animation-timing-function"
+        | "animation-delay"
+        | "animation-iteration-count"
+        | "animation-direction"
+        | "animation-fill-mode"
+        | "animation-play-state" => Ok(CompiledDeclaration::Ignored),
+        "transition" => Ok(CompiledDeclaration::Transition(parse_raw_text_direct(
+            property, value,
+        )?)),
+        "transition-property" => Ok(CompiledDeclaration::TransitionProperty(parse_raw_text_direct(
+            property, value,
+        )?)),
+        "transition-duration" => Ok(CompiledDeclaration::TransitionDuration(parse_raw_text_direct(
+            property, value,
+        )?)),
+        "transition-timing-function" => Ok(CompiledDeclaration::TransitionTimingFunction(parse_raw_text_direct(
+            property, value,
+        )?)),
+        "transition-delay" | "transition-behavior" => Ok(CompiledDeclaration::Ignored),
         "flex-direction" => Ok(CompiledDeclaration::FlexDirection(
             parse_flex_direction_direct(property, value)?,
         )),
@@ -291,6 +354,141 @@ fn parse_display_direct(property: &str, value: &CssValue) -> Result<Display, Css
             value: value.text.clone(),
         }),
     }
+}
+
+fn parse_appearance_direct(
+    property: &str,
+    value: &CssValue,
+) -> Result<AppearanceValue, CssValueError> {
+    match keyword(property, value)? {
+        "auto" => Ok(AppearanceValue::Auto),
+        "none" => Ok(AppearanceValue::None),
+        _ => Err(CssValueError::UnsupportedValue {
+            property: property.to_string(),
+            value: value.text.clone(),
+        }),
+    }
+}
+
+fn parse_color_direct(property: &str, value: &CssValue) -> Result<ColorValue, CssValueError> {
+    let text = value.text.trim();
+    if text.is_empty() {
+        return Err(CssValueError::UnsupportedValue {
+            property: property.to_string(),
+            value: value.text.clone(),
+        });
+    }
+    if text.eq_ignore_ascii_case("transparent") {
+        return Ok(ColorValue {
+            red: 0,
+            green: 0,
+            blue: 0,
+            alpha: 0,
+        });
+    }
+
+    if let Some(color) = parse_hex_color(text) {
+        return Ok(color);
+    }
+
+    if let Some(color) = parse_rgb_function(text) {
+        return Ok(color);
+    }
+
+    Err(CssValueError::UnsupportedValue {
+        property: property.to_string(),
+        value: value.text.clone(),
+    })
+}
+
+fn parse_raw_text_direct(property: &str, value: &CssValue) -> Result<String, CssValueError> {
+    let text = value.text.trim();
+    if text.is_empty() {
+        Err(CssValueError::UnsupportedValue {
+            property: property.to_string(),
+            value: value.text.clone(),
+        })
+    } else {
+        Ok(text.to_string())
+    }
+}
+
+fn parse_hex_color(input: &str) -> Option<ColorValue> {
+    let hex = input.strip_prefix('#')?;
+    match hex.len() {
+        3 => Some(ColorValue {
+            red: parse_hex_nibble(hex.as_bytes()[0])? * 17,
+            green: parse_hex_nibble(hex.as_bytes()[1])? * 17,
+            blue: parse_hex_nibble(hex.as_bytes()[2])? * 17,
+            alpha: 255,
+        }),
+        4 => Some(ColorValue {
+            red: parse_hex_nibble(hex.as_bytes()[0])? * 17,
+            green: parse_hex_nibble(hex.as_bytes()[1])? * 17,
+            blue: parse_hex_nibble(hex.as_bytes()[2])? * 17,
+            alpha: parse_hex_nibble(hex.as_bytes()[3])? * 17,
+        }),
+        6 => Some(ColorValue {
+            red: parse_hex_byte(&hex[0..2])?,
+            green: parse_hex_byte(&hex[2..4])?,
+            blue: parse_hex_byte(&hex[4..6])?,
+            alpha: 255,
+        }),
+        8 => Some(ColorValue {
+            red: parse_hex_byte(&hex[0..2])?,
+            green: parse_hex_byte(&hex[2..4])?,
+            blue: parse_hex_byte(&hex[4..6])?,
+            alpha: parse_hex_byte(&hex[6..8])?,
+        }),
+        _ => None,
+    }
+}
+
+fn parse_hex_nibble(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
+}
+
+fn parse_hex_byte(input: &str) -> Option<u8> {
+    u8::from_str_radix(input, 16).ok()
+}
+
+fn parse_rgb_function(input: &str) -> Option<ColorValue> {
+    let (name, args) = input.split_once('(')?;
+    let args = args.strip_suffix(')')?;
+    let parts = args.split(',').map(str::trim).collect::<Vec<_>>();
+
+    match name {
+        "rgb" if parts.len() == 3 => Some(ColorValue {
+            red: parse_color_channel(parts[0])?,
+            green: parse_color_channel(parts[1])?,
+            blue: parse_color_channel(parts[2])?,
+            alpha: 255,
+        }),
+        "rgba" if parts.len() == 4 => Some(ColorValue {
+            red: parse_color_channel(parts[0])?,
+            green: parse_color_channel(parts[1])?,
+            blue: parse_color_channel(parts[2])?,
+            alpha: parse_alpha_channel(parts[3])?,
+        }),
+        _ => None,
+    }
+}
+
+fn parse_color_channel(input: &str) -> Option<u8> {
+    input.parse::<u16>().ok().map(|value| value.min(255) as u8)
+}
+
+fn parse_alpha_channel(input: &str) -> Option<u8> {
+    if let Ok(value) = input.parse::<f32>() {
+        return Some((value.clamp(0.0, 1.0) * 255.0).round() as u8);
+    }
+
+    input.parse::<u16>().ok().map(|value| value.min(255) as u8)
 }
 
 fn parse_box_sizing_direct(

@@ -367,3 +367,61 @@ fn resolve_later_nodes_only_see_unclaimed_windows() {
         }
     );
 }
+
+#[test]
+fn resolve_window_meta_adds_runtime_state_classes() {
+    let tree = ValidatedLayoutTree::new(SourceLayoutNode::Workspace {
+        meta: LayoutNodeMeta::default(),
+        children: vec![SourceLayoutNode::Window {
+            meta: LayoutNodeMeta::default(),
+            window_match: None,
+        }],
+    })
+    .unwrap();
+
+    let mut floating = window("w1", "foot", "Terminal");
+    floating.focused = true;
+    floating.urgent = true;
+    floating.mode = WindowMode::Floating { rect: None };
+
+    let resolved = tree.resolve(&[floating]).unwrap();
+
+    let ResolvedLayoutNode::Workspace { children, .. } = resolved.root else {
+        panic!("expected workspace root");
+    };
+    let ResolvedLayoutNode::Window { meta, .. } = &children[0] else {
+        panic!("expected window node");
+    };
+
+    assert!(meta.class.iter().any(|class| class == "focused"));
+    assert!(meta.class.iter().any(|class| class == "urgent"));
+    assert!(meta.class.iter().any(|class| class == "floating"));
+    assert!(!meta.class.iter().any(|class| class == "fullscreen"));
+}
+
+#[test]
+fn resolve_window_meta_adds_fullscreen_class() {
+    let tree = ValidatedLayoutTree::new(SourceLayoutNode::Workspace {
+        meta: LayoutNodeMeta::default(),
+        children: vec![SourceLayoutNode::Window {
+            meta: LayoutNodeMeta::default(),
+            window_match: None,
+        }],
+    })
+    .unwrap();
+
+    let mut fullscreen = window("w1", "foot", "Terminal");
+    fullscreen.mode = WindowMode::Fullscreen;
+
+    let resolved = tree.resolve(&[fullscreen]).unwrap();
+
+    let ResolvedLayoutNode::Workspace { children, .. } = resolved.root else {
+        panic!("expected workspace root");
+    };
+    let ResolvedLayoutNode::Window { meta, .. } = &children[0] else {
+        panic!("expected window node");
+    };
+
+    assert!(meta.class.iter().any(|class| class == "fullscreen"));
+    assert!(!meta.class.iter().any(|class| class == "floating"));
+}

@@ -72,6 +72,17 @@ fn resolved_window_meta(meta: &LayoutNodeMeta, window: Option<&WindowSnapshot>) 
         .to_owned(),
     );
 
+    let mut add_state_class = |class_name: &str, enabled: bool| {
+        if enabled && !resolved.class.iter().any(|class| class == class_name) {
+            resolved.class.push(class_name.to_owned());
+        }
+    };
+
+    add_state_class("focused", window.focused);
+    add_state_class("urgent", window.urgent);
+    add_state_class("floating", window.mode.is_floating());
+    add_state_class("fullscreen", window.mode.is_fullscreen());
+
     resolved
 }
 

@@ -44,6 +44,20 @@ pub enum OverflowValue {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AppearanceValue {
+    Auto,
+    None,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ColorValue {
+    pub red: u8,
+    pub green: u8,
+    pub blue: u8,
+    pub alpha: u8,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AlignmentValue {
     Start,
     End,
@@ -185,6 +199,19 @@ pub struct ComputedStyle {
     pub display: Option<Display>,
     pub box_sizing: Option<BoxSizingValue>,
     pub aspect_ratio: Option<f32>,
+    pub appearance: Option<AppearanceValue>,
+    pub background: Option<ColorValue>,
+    pub opacity: Option<f32>,
+    pub border_color: Option<ColorValue>,
+    pub border_radius: Option<String>,
+    pub box_shadow: Option<String>,
+    pub backdrop_filter: Option<String>,
+    pub transform: Option<String>,
+    pub animation: Option<String>,
+    pub transition: Option<String>,
+    pub transition_property: Option<String>,
+    pub transition_duration: Option<String>,
+    pub transition_timing_function: Option<String>,
     pub flex_direction: Option<FlexDirectionValue>,
     pub flex_wrap: Option<FlexWrapValue>,
     pub flex_grow: Option<f32>,
