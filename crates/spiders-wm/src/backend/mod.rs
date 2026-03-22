@@ -801,7 +801,7 @@ impl RiverBackendState {
             .collect()
     }
 
-    fn initialize_new_windows(&mut self) {
+    fn initialize_new_windows(&mut self) -> Vec<spiders_tree::WindowId> {
         let output_geometry = self.current_output_geometry();
 
         let new_window_ids = self
@@ -812,12 +812,14 @@ impl RiverBackendState {
             .map(|window| window.id.clone())
             .collect::<Vec<_>>();
 
-        for window_id in new_window_ids {
+        for window_id in &new_window_ids {
             let (x, y, width, height) = output_geometry;
             self.runtime_state
                 .set_window_geometry(&window_id, x, y, width, height);
             self.runtime_state.set_window_new(&window_id, false);
         }
+
+        new_window_ids
     }
 
     fn current_output_geometry(&self) -> (i32, i32, i32, i32) {
@@ -887,11 +889,17 @@ impl RiverBackendState {
         self.remove_outputs();
         self.remove_windows();
         self.remove_seats();
-        self.initialize_new_windows();
+        let new_window_ids = self.initialize_new_windows();
         self.initialize_seat_bindings(qh);
         self.handle_window_requests();
         let mode_plans = self.plan_window_mode_updates();
         self.apply_window_mode_plan(&mode_plans);
+
+        let new_focus_candidate = self
+            .active_workspace_window_state_ids()
+            .into_iter()
+            .rev()
+            .find(|window_id| new_window_ids.iter().any(|id| id == window_id));
 
         let seat_ids = self.registry.seats.keys().cloned().collect::<Vec<_>>();
         for seat_id in seat_ids {
@@ -910,7 +918,9 @@ impl RiverBackendState {
                 }
             }
 
-            if self.seat_focused_state_window_id(&seat_id).is_none() {
+            if let Some(window_id) = new_focus_candidate.clone() {
+                self.apply_focus_plan(&seat_id, &FocusPlan::FocusWindow { window_id });
+            } else if self.seat_focused_state_window_id(&seat_id).is_none() {
                 self.focus_top_window_for_seat(&seat_id);
             }
 
