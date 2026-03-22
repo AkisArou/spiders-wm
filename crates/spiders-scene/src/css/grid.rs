@@ -5,16 +5,16 @@ use cssparser::{
     RuleBodyItemParser, RuleBodyParser,
 };
 
-use super::apply::*;
-use super::compile::{compile_declaration, CompiledDeclaration, CssValueError};
+use super::compile::*;
 use super::parse_values::*;
+use super::tokenizer::parse_component_values;
 use super::values::*;
 #[derive(Default)]
 pub(super) struct GridFallbackDeclarationParser;
 
 impl<'i> DeclarationParser<'i> for GridFallbackDeclarationParser {
     type Declaration = CompiledDeclaration;
-    type Error = super::parser::CssParseError;
+    type Error = super::parsing::CssParseError;
 
     fn parse_value<'t>(
         &mut self,
@@ -23,36 +23,36 @@ impl<'i> DeclarationParser<'i> for GridFallbackDeclarationParser {
         _declaration_start: &cssparser::ParserState,
     ) -> Result<Self::Declaration, cssparser::ParseError<'i, Self::Error>> {
         let property = name.to_ascii_lowercase();
-        if !super::parser::SUPPORTED_PROPERTIES.contains(&property.as_str()) {
+        if !super::parsing::SUPPORTED_PROPERTIES.contains(&property.as_str()) {
             return Err(input
-                .new_custom_error(super::parser::CssParseError::UnsupportedProperty { property }));
+            .new_custom_error(super::parsing::CssParseError::UnsupportedProperty { property }));
         }
 
         let value_start = input.state();
-        let components = super::parser::parse_component_values(input)?;
+        let components = parse_component_values(input)?;
         let text = input.slice_from(value_start.position()).trim().to_string();
         let parsed = ParsedDeclaration {
             property,
             value: CssValue { text, components },
         };
         compile_declaration(&parsed)
-            .map_err(|error| input.new_custom_error(super::parser::CssParseError::CssValue(error)))
+            .map_err(|error| input.new_custom_error(super::parsing::CssParseError::CssValue(error)))
     }
 }
 
 impl<'i> AtRuleParser<'i> for GridFallbackDeclarationParser {
     type Prelude = ();
     type AtRule = CompiledDeclaration;
-    type Error = super::parser::CssParseError;
+    type Error = super::parsing::CssParseError;
 }
 
 impl<'i> QualifiedRuleParser<'i> for GridFallbackDeclarationParser {
     type Prelude = ();
     type QualifiedRule = CompiledDeclaration;
-    type Error = super::parser::CssParseError;
+    type Error = super::parsing::CssParseError;
 }
 
-impl<'i> RuleBodyItemParser<'i, CompiledDeclaration, super::parser::CssParseError>
+impl<'i> RuleBodyItemParser<'i, CompiledDeclaration, super::parsing::CssParseError>
     for GridFallbackDeclarationParser
 {
     fn parse_declarations(&self) -> bool {
@@ -66,7 +66,7 @@ impl<'i> RuleBodyItemParser<'i, CompiledDeclaration, super::parser::CssParseErro
 
 pub(super) fn parse_grid_fallback_declarations(
     input: &str,
-) -> Result<Vec<CompiledDeclaration>, super::parser::CssParseError> {
+) -> Result<Vec<CompiledDeclaration>, super::parsing::CssParseError> {
     let mut input_buf = ParserInput::new(input);
     let mut parser_input = Parser::new(&mut input_buf);
     let mut parser = GridFallbackDeclarationParser;
@@ -78,7 +78,7 @@ pub(super) fn parse_grid_fallback_declarations(
             Err((err, _)) => {
                 return Err(match err.kind {
                     cssparser::ParseErrorKind::Custom(error) => error,
-                    _ => super::parser::CssParseError::InvalidSyntax {
+                    _ => super::parsing::CssParseError::InvalidSyntax {
                         line: err.location.line,
                         column: err.location.column,
                     },

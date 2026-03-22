@@ -1,21 +1,21 @@
-mod apply;
+pub(crate) mod apply;
 mod compile;
 mod compiled;
 mod grid;
-mod matching;
 mod parse_values;
-mod parser;
-mod style_calc;
-mod stylo_adapter;
+mod parsing;
+mod stylo_compile;
+pub(crate) mod stylo_adapter;
 mod taffy;
+mod tokenizer;
 mod values;
 
 pub use compile::{
     CssValueError,
 };
 pub use compiled::*;
-pub use style_calc::compute_style;
-pub use parser::{parse_stylesheet, CssParseError};
+pub use crate::style_calc::compute_style;
+pub use parsing::{parse_stylesheet, CssParseError};
 pub use taffy::{
     map_computed_style_to_taffy, NodeComputedStyle, StyledLayoutTree,
 };
@@ -25,7 +25,7 @@ pub use values::*;
 mod tests {
     use super::*;
     use crate::css::compile::CompiledDeclaration;
-    use crate::css::matching::{matching_rules, selector_matches};
+    use crate::css_matching::{matching_rules, selector_matches};
     use super::stylo_adapter::parse_selector_list;
     use spiders_tree::WindowId;
     use spiders_tree::{LayoutNodeMeta, ResolvedLayoutNode};

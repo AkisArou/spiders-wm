@@ -1,5 +1,6 @@
 use std::process::Command;
 use std::{io::Write, os::unix::net::UnixListener};
+use tempfile::TempDir;
 
 use spiders_ipc::{IpcEnvelope, IpcServerMessage, IpcSubscriptionTopic, encode_response_line};
 use spiders_shared::api::{CompositorEvent, QueryResponse};
@@ -17,20 +18,19 @@ fn runtime_fixture_paths() -> (std::path::PathBuf, std::path::PathBuf) {
     )
 }
 
-fn write_prepared_config(name: &str) -> std::path::PathBuf {
+fn write_prepared_config() -> (TempDir, std::path::PathBuf) {
     let (runtime_dir, _) = runtime_fixture_paths();
-    let runtime_root = std::env::temp_dir().join(name.trim_end_matches(".json"));
-    let _ = std::fs::remove_dir_all(&runtime_root);
-    std::fs::create_dir_all(runtime_root.join("layouts/master-stack")).unwrap();
+    let runtime_root = TempDir::new().unwrap();
+    std::fs::create_dir_all(runtime_root.path().join("layouts/master-stack")).unwrap();
     let layout_source =
         std::fs::read_to_string(runtime_dir.join("layouts/master-stack.js")).unwrap();
     std::fs::write(
-        runtime_root.join("layouts/master-stack/index.js"),
+        runtime_root.path().join("layouts/master-stack/index.js"),
         format!("export default ({});", layout_source.trim()),
     )
     .unwrap();
     std::fs::write(
-        runtime_root.join("config.js"),
+        runtime_root.path().join("config.js"),
         r#"
             export default {
               layouts: { default: "master-stack" }
@@ -38,7 +38,8 @@ fn write_prepared_config(name: &str) -> std::path::PathBuf {
         "#,
     )
     .unwrap();
-    runtime_root.join("config.js")
+    let prepared_config = runtime_root.path().join("config.js");
+    (runtime_root, prepared_config)
 }
 
 #[test]
@@ -61,11 +62,8 @@ fn cli_reports_discovery_in_json_mode() {
 
 #[test]
 fn cli_check_config_reports_validation_errors_in_json_mode() {
-    let temp_dir = std::env::temp_dir();
-    let runtime_root = temp_dir.join("spiders-cli-runtime-config-missing");
-    let _ = std::fs::remove_dir_all(&runtime_root);
-    std::fs::create_dir_all(&runtime_root).unwrap();
-    let prepared_config = runtime_root.join("config.js");
+    let runtime_root = TempDir::new().unwrap();
+    let prepared_config = runtime_root.path().join("config.js");
     std::fs::write(
         &prepared_config,
         r#"
@@ -91,14 +89,12 @@ fn cli_check_config_reports_validation_errors_in_json_mode() {
     assert_eq!(json["status"], "error");
     assert_eq!(json["phase"], "load");
     assert!(json["message"].as_str().unwrap().contains("missing"));
-
-    let _ = std::fs::remove_dir_all(runtime_root);
 }
 
 #[test]
 fn cli_check_config_reports_success_in_json_mode_with_fixture_layout() {
     let (_, authored_config) = runtime_fixture_paths();
-    let prepared_config = write_prepared_config("spiders-cli-runtime-success.json");
+    let (_runtime_root, prepared_config) = write_prepared_config();
 
     let output = Command::new(cli_bin())
         .arg("check-config")
@@ -114,17 +110,14 @@ fn cli_check_config_reports_success_in_json_mode_with_fixture_layout() {
     let json: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
     assert_eq!(json["status"], "ok");
     assert_eq!(json["layouts"], 1);
-
-    let _ = std::fs::remove_file(prepared_config);
 }
 
 #[test]
 fn cli_build_config_writes_prepared_config_with_module_graphs() {
-    let root = std::env::temp_dir().join("spiders-cli-build-config-project");
-    let _ = std::fs::remove_dir_all(&root);
-    std::fs::create_dir_all(root.join("layouts/master-stack")).unwrap();
+    let root = TempDir::new().unwrap();
+    std::fs::create_dir_all(root.path().join("layouts/master-stack")).unwrap();
     std::fs::write(
-        root.join("config.ts"),
+        root.path().join("config.ts"),
         r#"
             export default {
               layouts: { default: "master-stack" },
@@ -133,7 +126,7 @@ fn cli_build_config_writes_prepared_config_with_module_graphs() {
     )
     .unwrap();
     std::fs::write(
-        root.join("layouts/master-stack/index.ts"),
+        root.path().join("layouts/master-stack/index.ts"),
         r#"
             export default function layout() {
               return { type: "workspace", children: [] };
@@ -141,12 +134,11 @@ fn cli_build_config_writes_prepared_config_with_module_graphs() {
         "#,
     )
     .unwrap();
-    std::fs::write(root.join("layouts/master-stack/index.css"), "workspace {}").unwrap();
+    std::fs::write(root.path().join("layouts/master-stack/index.css"), "workspace {}").unwrap();
 
-    let authored_config = root.join("config.ts");
-    let runtime_root = std::env::temp_dir().join("spiders-cli-built-runtime-config");
-    let _ = std::fs::remove_dir_all(&runtime_root);
-    let prepared_config = runtime_root.join("config.js");
+    let authored_config = root.path().join("config.ts");
+    let runtime_root = TempDir::new().unwrap();
+    let prepared_config = runtime_root.path().join("config.js");
 
     let output = Command::new(cli_bin())
         .arg("build-config")
@@ -165,10 +157,7 @@ fn cli_build_config_writes_prepared_config_with_module_graphs() {
 
     let built = std::fs::read_to_string(&prepared_config).unwrap();
     assert!(built.contains("export default"));
-    assert!(std::fs::metadata(runtime_root.join("layouts/master-stack/index.js")).is_ok());
-
-    let _ = std::fs::remove_dir_all(runtime_root);
-    let _ = std::fs::remove_dir_all(root);
+    assert!(std::fs::metadata(runtime_root.path().join("layouts/master-stack/index.js")).is_ok());
 }
 
 

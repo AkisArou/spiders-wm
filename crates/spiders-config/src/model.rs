@@ -61,22 +61,13 @@ pub struct LayoutDefinition {
     pub module: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stylesheet_path: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub runtime_graph: Option<JavaScriptModuleGraph>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct JavaScriptModule {
-    pub specifier: String,
-    pub source: String,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub resolved_imports: BTreeMap<String, String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct JavaScriptModuleGraph {
-    pub entry: String,
-    pub modules: Vec<JavaScriptModule>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        alias = "runtime_payload",
+        alias = "runtime_graph"
+    )]
+    pub runtime_cache_payload: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -366,11 +357,10 @@ mod tests {
                 directory: "layouts/master-stack".into(),
                 module: module.into(),
             },
-            runtime_payload: serde_json::to_value(JavaScriptModuleGraph {
-                entry: module.into(),
-                modules: vec![],
-            })
-            .unwrap(),
+            runtime_payload: serde_json::json!({
+                "entry": module,
+                "modules": [],
+            }),
             stylesheets: PreparedStylesheets::default(),
         }
     }
@@ -383,7 +373,7 @@ mod tests {
                 directory: "layouts/master-stack".into(),
                 module: "layouts/master-stack.js".into(),
                 stylesheet_path: Some("layouts/master-stack/index.css".into()),
-                runtime_graph: None,
+                runtime_cache_payload: None,
             }],
             ..Config::default()
         };
@@ -402,7 +392,7 @@ mod tests {
                 directory: "layouts/master-stack".into(),
                 module: "layouts/master-stack.js".into(),
                 stylesheet_path: Some("layouts/master-stack/index.css".into()),
-                runtime_graph: None,
+                runtime_cache_payload: None,
             }],
             ..Config::default()
         };
@@ -432,7 +422,7 @@ mod tests {
                 directory: "layouts/master-stack".into(),
                 module: "layouts/master-stack.js".into(),
                 stylesheet_path: Some("layouts/master-stack/index.css".into()),
-                runtime_graph: None,
+                runtime_cache_payload: None,
             }],
             ..Config::default()
         };
@@ -459,7 +449,7 @@ mod tests {
                 directory: "layouts/master-stack".into(),
                 module: "layouts/master-stack.js".into(),
                 stylesheet_path: Some("layouts/master-stack/index.css".into()),
-                runtime_graph: None,
+                runtime_cache_payload: None,
             }],
             ..Config::default()
         };
@@ -522,7 +512,7 @@ mod tests {
                 directory: "layouts/master-stack".into(),
                 module: "layouts/master-stack.js".into(),
                 stylesheet_path: Some("layouts/master-stack/index.css".into()),
-                runtime_graph: None,
+                runtime_cache_payload: None,
             }],
             ..Config::default()
         };

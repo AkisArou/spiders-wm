@@ -9,14 +9,12 @@ use report::{
 
 #[derive(Debug, Clone)]
 struct CliContext {
-    ready: bool,
     options: spiders_config::model::ConfigDiscoveryOptions,
 }
 
 impl CliContext {
     fn new() -> Self {
         Self {
-            ready: spiders_config::crate_ready(),
             options: spiders_config::model::ConfigDiscoveryOptions {
                 home_dir: std::env::var_os("SPIDERS_WM_HOME").map(std::path::PathBuf::from),
                 config_dir_override: std::env::var_os("SPIDERS_WM_CONFIG_DIR")
@@ -96,7 +94,6 @@ fn ipc_monitor_command(
                 &ErrorReport {
                     status: "error",
                     phase: "ipc-monitor",
-                    runtime_ready: spiders_ipc::crate_ready(),
                     prepared_config: None,
                     errors: None,
                     message: Some(error),
@@ -131,7 +128,6 @@ fn ipc_query_command(
                 &ErrorReport {
                     status: "error",
                     phase: "ipc-query",
-                    runtime_ready: spiders_ipc::crate_ready(),
                     prepared_config: None,
                     errors: None,
                     message: Some(error),
@@ -166,7 +162,6 @@ fn ipc_action_command(
                 &ErrorReport {
                     status: "error",
                     phase: "ipc-action",
-                    runtime_ready: spiders_ipc::crate_ready(),
                     prepared_config: None,
                     errors: None,
                     message: Some(error),
@@ -200,7 +195,6 @@ fn ipc_smoke_command(output_mode: OutputMode) -> std::process::ExitCode {
                 &ErrorReport {
                     status: "error",
                     phase: "ipc-smoke",
-                    runtime_ready: spiders_ipc::crate_ready(),
                     prepared_config: None,
                     errors: None,
                     message: Some(error.to_string()),
@@ -232,14 +226,12 @@ fn print_discovery(cli: &CliContext, output_mode: OutputMode) -> std::process::E
                 output_mode,
                 &DiscoveryReport {
                     status: "ok",
-                    runtime_ready: cli.ready,
                     authored_config: bootstrap.paths.authored_config.display().to_string(),
                     prepared_config: bootstrap.paths.prepared_config.display().to_string(),
                 },
                 || {
                     format!(
-                        "spiders-cli placeholder (config runtime ready: {}, authored: {}, runtime: {})",
-                        cli.ready,
+                        "spiders-cli placeholder (authored: {}, runtime: {})",
                         bootstrap.paths.authored_config.display(),
                         bootstrap.paths.prepared_config.display()
                     )
@@ -253,17 +245,11 @@ fn print_discovery(cli: &CliContext, output_mode: OutputMode) -> std::process::E
                 &ErrorReport {
                     status: "error",
                     phase: "discovery",
-                    runtime_ready: cli.ready,
                     prepared_config: None,
                     errors: None,
                     message: Some(error.to_string()),
                 },
-                || {
-                    format!(
-                        "spiders-cli placeholder (config runtime ready: {}, discovery error: {error})",
-                        cli.ready
-                    )
-                },
+                || format!("spiders-cli placeholder (discovery error: {error})"),
             );
             std::process::ExitCode::from(1)
         }
@@ -279,17 +265,11 @@ fn check_config_command(cli: &CliContext, output_mode: OutputMode) -> std::proce
                 &ErrorReport {
                     status: "error",
                     phase: "discovery",
-                    runtime_ready: cli.ready,
                     prepared_config: None,
                     errors: None,
                     message: Some(error.to_string()),
                 },
-                || {
-                    format!(
-                        "config error (runtime ready: {}, discovery): {error}",
-                        cli.ready
-                    )
-                },
+                || format!("config error (discovery): {error}"),
             );
             return std::process::ExitCode::from(1);
         }
@@ -306,15 +286,13 @@ fn check_config_command(cli: &CliContext, output_mode: OutputMode) -> std::proce
                         output_mode,
                         &SuccessCheckReport {
                             status: "ok",
-                            runtime_ready: cli.ready,
                             layouts: config.layouts.len(),
                             prepared_config: bootstrap.paths.prepared_config.display().to_string(),
                             prepared_config_update,
                         },
                         || {
                             format!(
-                                "config ok (runtime ready: {}, layouts: {}, runtime: {}, cache: {})",
-                                cli.ready,
+                                "config ok (layouts: {}, runtime: {}, cache: {})",
                                 config.layouts.len(),
                                 bootstrap.paths.prepared_config.display(),
                                 describe_prepared_config_update(prepared_config_update)
@@ -329,7 +307,6 @@ fn check_config_command(cli: &CliContext, output_mode: OutputMode) -> std::proce
                         &ErrorReport {
                             status: "error",
                             phase: "validation",
-                            runtime_ready: cli.ready,
                             prepared_config: Some(
                                 bootstrap.paths.prepared_config.display().to_string(),
                             ),
@@ -338,8 +315,7 @@ fn check_config_command(cli: &CliContext, output_mode: OutputMode) -> std::proce
                         },
                         || {
                             format!(
-                                "config error (runtime ready: {}, runtime: {}): {}",
-                                cli.ready,
+                                "config error (runtime: {}): {}",
                                 bootstrap.paths.prepared_config.display(),
                                 errors.join("; ")
                             )
@@ -353,17 +329,11 @@ fn check_config_command(cli: &CliContext, output_mode: OutputMode) -> std::proce
                         &ErrorReport {
                             status: "error",
                             phase: "validation",
-                            runtime_ready: cli.ready,
                             prepared_config: None,
                             errors: None,
                             message: Some(error.to_string()),
                         },
-                        || {
-                            format!(
-                                "config error (runtime ready: {}, validation): {error}",
-                                cli.ready
-                            )
-                        },
+                        || format!("config error (validation): {error}"),
                     );
                     std::process::ExitCode::from(1)
                 }
@@ -375,15 +345,13 @@ fn check_config_command(cli: &CliContext, output_mode: OutputMode) -> std::proce
                 &ErrorReport {
                     status: "error",
                     phase: "load",
-                    runtime_ready: cli.ready,
                     prepared_config: Some(bootstrap.paths.prepared_config.display().to_string()),
                     errors: None,
                     message: Some(error.to_string()),
                 },
                 || {
                     format!(
-                        "config error (runtime ready: {}, runtime: {}): {error}",
-                        cli.ready,
+                        "config error (runtime: {}): {error}",
                         bootstrap.paths.prepared_config.display()
                     )
                 },
@@ -402,7 +370,6 @@ fn build_config_command(cli: &CliContext, output_mode: OutputMode) -> std::proce
                 &ErrorReport {
                     status: "error",
                     phase: "discovery",
-                    runtime_ready: cli.ready,
                     prepared_config: None,
                     errors: None,
                     message: Some(error.to_string()),
@@ -421,7 +388,6 @@ fn build_config_command(cli: &CliContext, output_mode: OutputMode) -> std::proce
                 &ErrorReport {
                     status: "error",
                     phase: "load-authored",
-                    runtime_ready: cli.ready,
                     prepared_config: Some(bootstrap.paths.prepared_config.display().to_string()),
                     errors: None,
                     message: Some(error.to_string()),
@@ -439,7 +405,6 @@ fn build_config_command(cli: &CliContext, output_mode: OutputMode) -> std::proce
                 &ErrorReport {
                     status: "error",
                     phase: "validation",
-                    runtime_ready: cli.ready,
                     prepared_config: Some(bootstrap.paths.prepared_config.display().to_string()),
                     errors: Some(errors.clone()),
                     message: None,
@@ -457,7 +422,6 @@ fn build_config_command(cli: &CliContext, output_mode: OutputMode) -> std::proce
                     output_mode,
                     &BuildConfigReport {
                         status: "ok",
-                        runtime_ready: cli.ready,
                         authored_config: bootstrap.paths.authored_config.display().to_string(),
                         prepared_config: bootstrap.paths.prepared_config.display().to_string(),
                         layouts: config.layouts.len(),
@@ -481,7 +445,6 @@ fn build_config_command(cli: &CliContext, output_mode: OutputMode) -> std::proce
                     &ErrorReport {
                         status: "error",
                         phase: "write-runtime",
-                        runtime_ready: cli.ready,
                         prepared_config: Some(
                             bootstrap.paths.prepared_config.display().to_string(),
                         ),
@@ -499,7 +462,6 @@ fn build_config_command(cli: &CliContext, output_mode: OutputMode) -> std::proce
                 &ErrorReport {
                     status: "error",
                     phase: "validation",
-                    runtime_ready: cli.ready,
                     prepared_config: Some(bootstrap.paths.prepared_config.display().to_string()),
                     errors: None,
                     message: Some(error.to_string()),

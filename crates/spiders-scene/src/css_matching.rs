@@ -1,10 +1,12 @@
 use spiders_tree::ResolvedLayoutNode;
-use super::stylo_adapter::{selector_matches_element, LayoutDomTree, LayoutSelectorImpl};
+
+use crate::css::{CompiledStyleRule, CompiledStyleSheet};
+use crate::css::stylo_adapter::{selector_matches_element, LayoutDomTree, LayoutSelectorImpl};
 
 pub fn matching_rules<'a>(
-    sheet: &'a super::compiled::CompiledStyleSheet,
+    sheet: &'a CompiledStyleSheet,
     node: &ResolvedLayoutNode,
-) -> Vec<&'a super::compiled::CompiledStyleRule> {
+) -> Vec<&'a CompiledStyleRule> {
     sheet
         .rules
         .iter()

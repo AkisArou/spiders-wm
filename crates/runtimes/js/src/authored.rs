@@ -7,7 +7,11 @@ use spiders_shared::api::{FocusDirection, WmAction};
 
 use crate::compile::{AppBuildPlan, compile_app, compiled_app_to_module_graph};
 use crate::graph::{ModuleGraphBuilder, discover_project_apps};
+use crate::module_graph::{JavaScriptModule, JavaScriptModuleGraph};
 use crate::module_graph_runtime::evaluate_entry_export_to_json;
+#[cfg(test)]
+use crate::payload::decode_runtime_graph_payload;
+use crate::payload::encode_runtime_graph_payload;
 use spiders_config::model::{
     Binding, Config, ConfigOptions, InputConfig, LayoutConfigError, LayoutDefinition,
     LayoutSelectionConfig, WindowRule,
@@ -87,7 +91,7 @@ fn load_project_config(path: &Path) -> Result<Config, LayoutConfigError> {
                 .stylesheet_path
                 .as_ref()
                 .map(|path| path.to_string_lossy().into_owned()),
-            runtime_graph: Some(runtime_graph),
+            runtime_cache_payload: Some(encode_runtime_graph_payload(&runtime_graph)),
         });
     }
 
@@ -158,7 +162,7 @@ fn write_runtime_cache(
 
 fn evaluate_compiled_config(
     path: &Path,
-    graph: &spiders_config::model::JavaScriptModuleGraph,
+    graph: &JavaScriptModuleGraph,
 ) -> Result<Value, LayoutConfigError> {
     evaluate_entry_export_to_json(graph, &graph.entry, "default")
         .map_err(|error| LayoutConfigError::EvaluateAuthoredConfig {
@@ -415,7 +419,7 @@ fn runtime_static_relative_path(source_path: &Path, authored_root: &Path) -> Pat
 }
 
 fn rewrite_module_for_runtime(
-    module: &spiders_config::model::JavaScriptModule,
+    module: &JavaScriptModule,
     destination: &Path,
     runtime_root: &Path,
     runtime_entry_path: &Path,
@@ -1307,15 +1311,15 @@ mod tests {
         );
         assert_eq!(config.layouts.len(), 1);
         assert_eq!(config.layouts[0].module, "layouts/master-stack/index.tsx");
+        let runtime_graph =
+            decode_runtime_graph_payload(config.layouts[0].runtime_cache_payload.as_ref().unwrap())
+                .unwrap();
         assert_eq!(
-            config.layouts[0].runtime_graph.as_ref().unwrap().entry,
+            runtime_graph.entry,
             "layouts/master-stack/index.tsx"
         );
         assert!(
-            config.layouts[0]
-                .runtime_graph
-                .as_ref()
-                .unwrap()
+            runtime_graph
                 .modules
                 .iter()
                 .any(|module| module.source.contains("export default function layout"))

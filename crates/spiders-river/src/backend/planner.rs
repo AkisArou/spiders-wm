@@ -33,6 +33,7 @@ impl RiverBackendState {
 
         if let Some(snapshot) = compute_layout_snapshot(
             &mut self.layout_service,
+            &mut self.scene_cache,
             &self.config,
             &self.runtime_state,
             &active_state_ids,
@@ -89,6 +90,7 @@ impl RiverBackendState {
 
         if let Some(snapshot) = compute_layout_snapshot(
             &mut self.layout_service,
+            &mut self.scene_cache,
             &self.config,
             &self.runtime_state,
             &active_state_ids,

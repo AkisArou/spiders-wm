@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use serde::Deserialize;
-use spiders_config::model::{Config, JavaScriptModule, JavaScriptModuleGraph};
+use spiders_config::model::Config;
 use spiders_scene::ast::{
     AuthoredLayoutNode, AuthoredNodeMeta, LayoutValidationError, ValidatedLayoutTree,
 };
@@ -12,6 +12,7 @@ use spiders_shared::runtime::{
 use spiders_tree::{SlotTake, SourceLayoutNode};
 
 use crate::loader::{InlineLayoutSourceLoader, JsLayoutSourceLoader};
+use crate::module_graph::{JavaScriptModule, JavaScriptModuleGraph};
 use crate::module_graph_runtime::call_entry_export_with_json_arg;
 use crate::payload::{decode_runtime_graph_payload, encode_runtime_graph_payload};
 
@@ -675,7 +676,7 @@ mod tests {
                 directory: "layouts/master-stack".into(),
                 module: module_path.to_string_lossy().into_owned(),
                 stylesheet_path: Some("layouts/master-stack/index.css".into()),
-                runtime_graph: None,
+                runtime_cache_payload: None,
             }],
             ..Config::default()
         };

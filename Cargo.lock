@@ -1847,6 +1847,7 @@ dependencies = [
  "spiders-scene",
  "spiders-shared",
  "spiders-tree",
+ "tempfile",
 ]
 
 [[package]]
@@ -1859,6 +1860,7 @@ dependencies = [
  "spiders-scene",
  "spiders-shared",
  "spiders-tree",
+ "tempfile",
  "thiserror",
 ]
 

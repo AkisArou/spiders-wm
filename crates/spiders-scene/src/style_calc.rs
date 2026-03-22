@@ -1,9 +1,7 @@
 use spiders_tree::ResolvedLayoutNode;
 
-use super::apply::ApplyCompiledDeclaration;
-use super::compile::CssValueError;
-use super::compiled::CompiledStyleSheet;
-use super::values::ComputedStyle;
+use crate::css::apply::ApplyCompiledDeclaration;
+use crate::css::{CompiledStyleSheet, ComputedStyle, CssValueError};
 
 pub fn compute_style(
     sheet: &CompiledStyleSheet,
@@ -11,7 +9,7 @@ pub fn compute_style(
 ) -> Result<ComputedStyle, CssValueError> {
     let mut style = ComputedStyle::default();
 
-    for rule in super::matching::matching_rules(sheet, node) {
+    for rule in crate::css_matching::matching_rules(sheet, node) {
         for declaration in &rule.declarations {
             style.apply(declaration.clone());
         }

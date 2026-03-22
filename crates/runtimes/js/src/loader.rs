@@ -2,9 +2,10 @@ use spiders_shared::runtime::{
     PreparedLayout, PreparedStylesheet, PreparedStylesheets, RuntimeError, SelectedLayout,
 };
 
-use spiders_config::model::{Config, JavaScriptModule, JavaScriptModuleGraph, LayoutConfigError, LayoutDefinition};
+use spiders_config::model::{Config, LayoutConfigError, LayoutDefinition};
 
-use crate::payload::encode_runtime_graph_payload;
+use crate::module_graph::{JavaScriptModule, JavaScriptModuleGraph};
+use crate::payload::{decode_runtime_graph_payload, encode_runtime_graph_payload};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimePathResolver {
@@ -44,6 +45,8 @@ pub enum LayoutLoadError {
     Config(#[from] LayoutConfigError),
     #[error("layout module `{module}` graph is unavailable")]
     MissingRuntimeSource { module: String },
+    #[error("layout module `{module}` runtime payload is invalid: {message}")]
+    InvalidRuntimePayload { module: String, message: String },
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -75,7 +78,13 @@ impl RuntimeProjectLayoutSourceLoader {
         layout: &LayoutDefinition,
     ) -> Result<PreparedLayout, LayoutLoadError> {
         let module_path = self.resolver.resolve_module_path(&layout.module);
-        if let Some(runtime_graph) = layout.runtime_graph.clone() {
+        if let Some(runtime_payload) = layout.runtime_cache_payload.clone() {
+            let runtime_graph = decode_runtime_graph_payload(&runtime_payload).map_err(|error| {
+                LayoutLoadError::InvalidRuntimePayload {
+                    module: layout.module.clone(),
+                    message: error.to_string(),
+                }
+            })?;
             return Ok(loaded_layout_definition(
                 layout,
                 module_path.to_string_lossy().into_owned(),
@@ -123,7 +132,13 @@ impl FsLayoutSourceLoader {
         &self,
         layout: &LayoutDefinition,
     ) -> Result<PreparedLayout, LayoutLoadError> {
-        if let Some(runtime_graph) = layout.runtime_graph.clone() {
+        if let Some(runtime_payload) = layout.runtime_cache_payload.clone() {
+            let runtime_graph = decode_runtime_graph_payload(&runtime_payload).map_err(|error| {
+                LayoutLoadError::InvalidRuntimePayload {
+                    module: layout.module.clone(),
+                    message: error.to_string(),
+                }
+            })?;
             return Ok(loaded_layout_definition(
                 layout,
                 layout.module.clone(),
@@ -191,9 +206,10 @@ pub fn loaded_layout_definition(
             directory: layout.directory.clone(),
             module,
         },
-        runtime_payload: encode_runtime_graph_payload(
-            &layout.runtime_graph.clone().unwrap_or(runtime_graph),
-        ),
+        runtime_payload: layout
+            .runtime_cache_payload
+            .clone()
+            .unwrap_or_else(|| encode_runtime_graph_payload(&runtime_graph)),
         stylesheets: PreparedStylesheets {
             layout: layout
                 .stylesheet_path
@@ -275,7 +291,7 @@ mod tests {
                 directory: "layouts/master-stack".into(),
                 module: "layouts/master-stack.js".into(),
                 stylesheet_path: Some("layouts/master-stack/index.css".into()),
-                runtime_graph: None,
+                runtime_cache_payload: None,
             }],
             ..Config::default()
         };
@@ -301,7 +317,7 @@ mod tests {
                 directory: "layouts/master-stack".into(),
                 module: "layouts/master-stack.js".into(),
                 stylesheet_path: Some("layouts/master-stack/index.css".into()),
-                runtime_graph: None,
+                runtime_cache_payload: None,
             }],
             ..Config::default()
         };
@@ -330,7 +346,7 @@ mod tests {
             directory: "layouts/master-stack".into(),
             module: module_path.to_string_lossy().into_owned(),
             stylesheet_path: Some("layouts/master-stack/index.css".into()),
-            runtime_graph: None,
+            runtime_cache_payload: None,
         };
 
         let loaded = loader.load_definition(&definition).unwrap();
@@ -392,7 +408,7 @@ mod tests {
             directory: "layouts/master-stack".into(),
             module: "layouts/master-stack.js".into(),
             stylesheet_path: Some("layouts/master-stack/index.css".into()),
-            runtime_graph: None,
+            runtime_cache_payload: None,
         };
 
         let loaded = loader.load_definition(&definition).unwrap();
@@ -417,7 +433,7 @@ mod tests {
             directory: "layouts/fallback".into(),
             module: "layouts/fallback.js".into(),
             stylesheet_path: Some("layouts/fallback/index.css".into()),
-            runtime_graph: None,
+            runtime_cache_payload: None,
         };
 
         let loaded = loader.load_definition(&definition).unwrap();
@@ -440,7 +456,7 @@ mod tests {
             directory: "layouts/master-stack".into(),
             module: "layouts/master-stack.js".into(),
             stylesheet_path: Some(missing_layout.into()),
-            runtime_graph: None,
+            runtime_cache_payload: None,
         };
         let config = Config {
             layouts: vec![definition.clone()],

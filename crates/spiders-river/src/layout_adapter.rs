@@ -2,7 +2,7 @@ use spiders_config::authoring_layout::AuthoringLayoutService;
 use spiders_config::model::Config;
 use spiders_scene::ast::ValidatedLayoutTree;
 use spiders_scene::{LayoutSnapshotNode, SceneRequest};
-use spiders_scene::pipeline::compute_layout_from_request;
+use spiders_scene::pipeline::SceneCache;
 use spiders_tree::{LayoutNodeMeta, RemainingTake, ResolvedLayoutNode, SlotTake, SourceLayoutNode, WindowId};
 use spiders_shared::runtime::PreparedStylesheet;
 use spiders_shared::wm::{LayoutRef, WindowSnapshot};
@@ -96,6 +96,7 @@ fn resolved_layout_root(
 
 pub fn compute_layout_snapshot(
     layout_service: &mut AuthoringLayoutService<DefaultLayoutRuntime>,
+    scene_cache: &mut SceneCache,
     config: &Config,
     state: &WmState,
     window_ids: &[WindowId],
@@ -145,7 +146,10 @@ pub fn compute_layout_snapshot(
         });
     }
 
-    compute_layout_from_request(&request).ok().map(|response| response.root)
+    scene_cache
+        .compute_layout_from_request(&request)
+        .ok()
+        .map(|response| response.root)
 }
 
 #[cfg(test)]

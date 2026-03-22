@@ -11,7 +11,6 @@ pub enum OutputMode {
 #[derive(Debug, Serialize, PartialEq, Eq)]
 pub struct DiscoveryReport {
     pub status: &'static str,
-    pub runtime_ready: bool,
     pub authored_config: String,
     pub prepared_config: String,
 }
@@ -19,7 +18,6 @@ pub struct DiscoveryReport {
 #[derive(Debug, Serialize, PartialEq, Eq)]
 pub struct SuccessCheckReport {
     pub status: &'static str,
-    pub runtime_ready: bool,
     pub layouts: usize,
     pub prepared_config: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -29,7 +27,6 @@ pub struct SuccessCheckReport {
 #[derive(Debug, Serialize, PartialEq, Eq)]
 pub struct BuildConfigReport {
     pub status: &'static str,
-    pub runtime_ready: bool,
     pub authored_config: String,
     pub prepared_config: String,
     pub layouts: usize,
@@ -40,7 +37,6 @@ pub struct BuildConfigReport {
 pub struct ErrorReport {
     pub status: &'static str,
     pub phase: &'static str,
-    pub runtime_ready: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub prepared_config: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -105,7 +101,6 @@ mod tests {
         let report = ErrorReport {
             status: "error",
             phase: "load",
-            runtime_ready: true,
             prepared_config: None,
             errors: None,
             message: Some("boom".into()),

@@ -393,3 +393,36 @@ At the end of this refactor:
 - the workspace no longer uses the term `effects.css`
 - the workspace no longer depends on the old `spiders-layout` versus
   `spiders-effects` split
+
+## Implementation Update (2026-03-22)
+
+The scene internals were split into focused modules to match the architecture
+direction and reduce mixed-concern files.
+
+Completed module extractions in `crates/spiders-scene/src`:
+
+- CSS parsing layer renamed and split:
+  - `css/parsing.rs` (stylesheet parser)
+  - `css/stylo_compile.rs` (Stylo declaration lowering)
+  - `css/tokenizer.rs` (value tokenization)
+- CSS matching extracted from `css` internals:
+  - `css_matching.rs` (selector matching over compiled rules)
+- Style calculator extracted from `css` internals:
+  - `style_calc.rs` (computed style evaluation)
+- Layout calculator extracted from `pipeline` internals:
+  - `layout_calc.rs` (taffy tree build + layout collection)
+- Style-tree builder extracted from `pipeline` internals:
+  - `style_tree.rs` (styled node tree construction)
+
+Pipeline boundary is now a thin facade in `pipeline/mod.rs` that orchestrates:
+
+1. stylesheet parsing,
+2. styled tree build,
+3. layout computation,
+4. request/response adaptation.
+
+Validation status at extraction time:
+
+- `cargo check -p spiders-scene` passed
+- `cargo test -p spiders-scene` passed (46 tests)
+- `cargo check --workspace` passed

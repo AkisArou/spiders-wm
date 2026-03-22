@@ -1,5 +1,6 @@
-use spiders_config::model::JavaScriptModuleGraph;
 use spiders_shared::runtime::RuntimeError;
+
+use crate::module_graph::JavaScriptModuleGraph;
 
 pub fn encode_runtime_graph_payload(graph: &JavaScriptModuleGraph) -> serde_json::Value {
     serde_json::to_value(graph).unwrap_or(serde_json::Value::Null)

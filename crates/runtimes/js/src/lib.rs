@@ -2,6 +2,7 @@ pub mod authored;
 pub mod compile;
 pub mod graph;
 pub mod loader;
+mod module_graph;
 mod module_graph_runtime;
 mod payload;
 pub mod runtime;
@@ -28,8 +29,4 @@ pub fn build_authoring_layout_service(
     let loader = loader::RuntimeProjectLayoutSourceLoader::new(resolver);
     let runtime = runtime::QuickJsPreparedLayoutRuntime::with_loader(loader);
     spiders_config::authoring_layout::AuthoringLayoutService::with_paths(runtime, paths.clone())
-}
-
-pub fn crate_ready() -> bool {
-    true
 }

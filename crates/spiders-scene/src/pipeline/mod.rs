@@ -1,10 +1,69 @@
 use crate::css::{parse_stylesheet, CssParseError, CssValueError, StyledLayoutTree};
-pub use self::layout_calc::{LaidOutNode, LaidOutTree};
-use spiders_tree::ResolvedLayoutNode;
+pub use crate::layout_calc::{LaidOutNode, LaidOutTree};
 use crate::scene::{SceneRequest, SceneResponse};
+use spiders_tree::ResolvedLayoutNode;
+use std::collections::HashMap;
 
-mod layout_calc;
-mod style_tree;
+#[derive(Debug, Clone)]
+struct CachedStylesheet {
+    source: String,
+    sheet: crate::css::CompiledStyleSheet,
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct SceneCache {
+    stylesheets: HashMap<String, CachedStylesheet>,
+}
+
+impl SceneCache {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn clear(&mut self) {
+        self.stylesheets.clear();
+    }
+
+    pub fn precompile_layout(
+        &mut self,
+        layout_name: impl Into<String>,
+        stylesheet_source: &str,
+    ) -> Result<(), LayoutPipelineError> {
+        let layout_name = layout_name.into();
+
+        match self.stylesheets.get(&layout_name) {
+            Some(cached) if cached.source == stylesheet_source => Ok(()),
+            _ => {
+                let sheet = compile_stylesheet(stylesheet_source)?;
+                self.stylesheets.insert(
+                    layout_name,
+                    CachedStylesheet {
+                        source: stylesheet_source.to_owned(),
+                        sheet,
+                    },
+                );
+                Ok(())
+            }
+        }
+    }
+
+    pub fn compute_layout_from_request(
+        &mut self,
+        request: &SceneRequest,
+    ) -> Result<SceneResponse, LayoutPipelineError> {
+        let layout_name = request.layout_name.as_deref().unwrap_or("__default__");
+        let stylesheet_source = request.stylesheets.combined_source();
+        self.precompile_layout(layout_name, &stylesheet_source)?;
+
+        let sheet = self
+            .stylesheets
+            .get(layout_name)
+            .map(|cached| &cached.sheet)
+            .expect("scene cache entry must exist after successful precompile");
+
+        compute_layout_from_request_with_sheet(request, sheet)
+    }
+}
 
 #[derive(Debug, thiserror::Error, PartialEq)]
 pub enum LayoutPipelineError {
@@ -13,7 +72,13 @@ pub enum LayoutPipelineError {
     #[error(transparent)]
     CssValue(#[from] CssValueError),
     #[error(transparent)]
-    LayoutCalc(#[from] self::layout_calc::LayoutCalcError),
+    LayoutCalc(#[from] crate::layout_calc::LayoutCalcError),
+}
+
+pub fn compile_stylesheet(
+    stylesheet_source: &str,
+) -> Result<crate::css::CompiledStyleSheet, LayoutPipelineError> {
+    parse_stylesheet(stylesheet_source).map_err(LayoutPipelineError::from)
 }
 
 pub fn build_styled_layout_tree(
@@ -21,7 +86,7 @@ pub fn build_styled_layout_tree(
     stylesheet_source: &str,
 ) -> Result<StyledLayoutTree, LayoutPipelineError> {
     let sheet = parse_stylesheet(stylesheet_source)?;
-    self::style_tree::build_styled_layout_tree_from_sheet(root, &sheet)
+    crate::style_tree::build_styled_layout_tree_from_sheet(root, &sheet)
         .map_err(LayoutPipelineError::from)
 }
 
@@ -31,7 +96,18 @@ pub fn compute_layout(
     width: f32,
     height: f32,
 ) -> Result<LaidOutTree, LayoutPipelineError> {
-    let styled = build_styled_layout_tree(root, stylesheet_source)?;
+    let sheet = compile_stylesheet(stylesheet_source)?;
+    compute_layout_from_sheet(root, &sheet, width, height)
+}
+
+pub fn compute_layout_from_sheet(
+    root: &ResolvedLayoutNode,
+    sheet: &crate::css::CompiledStyleSheet,
+    width: f32,
+    height: f32,
+) -> Result<LaidOutTree, LayoutPipelineError> {
+    let styled = build_styled_layout_tree_from_sheet(root, sheet)
+        .map_err(LayoutPipelineError::from)?;
     compute_layout_from_styled(&styled, width, height)
 }
 
@@ -40,17 +116,33 @@ pub fn compute_layout_from_styled(
     width: f32,
     height: f32,
 ) -> Result<LaidOutTree, LayoutPipelineError> {
-    self::layout_calc::compute_layout_from_styled(styled, width, height)
+    crate::layout_calc::compute_layout_from_styled(styled, width, height)
         .map_err(LayoutPipelineError::from)
 }
 
 pub fn compute_layout_from_request(
     request: &SceneRequest,
 ) -> Result<SceneResponse, LayoutPipelineError> {
-    let stylesheet = request.stylesheets.combined_source();
-    let laid_out = compute_layout(
+    let sheet = compile_stylesheet(&request.stylesheets.combined_source())?;
+    let laid_out = compute_layout_from_sheet(
         &request.root,
-        &stylesheet,
+        &sheet,
+        request.space.width,
+        request.space.height,
+    )?;
+
+    Ok(SceneResponse {
+        root: laid_out.snapshot(),
+    })
+}
+
+pub fn compute_layout_from_request_with_sheet(
+    request: &SceneRequest,
+    sheet: &crate::css::CompiledStyleSheet,
+) -> Result<SceneResponse, LayoutPipelineError> {
+    let laid_out = compute_layout_from_sheet(
+        &request.root,
+        sheet,
         request.space.width,
         request.space.height,
     )?;
@@ -64,7 +156,7 @@ pub fn build_styled_layout_tree_from_sheet(
     root: &ResolvedLayoutNode,
     sheet: &crate::css::CompiledStyleSheet,
 ) -> Result<StyledLayoutTree, CssValueError> {
-    self::style_tree::build_styled_layout_tree_from_sheet(root, sheet)
+    crate::style_tree::build_styled_layout_tree_from_sheet(root, sheet)
 }
 
 #[cfg(test)]
@@ -373,5 +465,88 @@ mod tests {
         assert_eq!(laid_out.root.children[0].geometry.height, 720.0);
         assert_eq!(laid_out.root.children[0].children[0].geometry.width, 1272.0);
         assert_eq!(laid_out.root.children[0].children[0].geometry.height, 712.0);
+    }
+
+    #[test]
+    fn pipeline_reuses_precompiled_stylesheet_for_multiple_requests() {
+        let stylesheet =
+            "workspace { display: flex; width: 320px; height: 200px; } #main { width: 100px; }";
+        let sheet = compile_stylesheet(stylesheet).unwrap();
+
+        let request = SceneRequest {
+            workspace_id: WorkspaceId::from("ws-1"),
+            output_id: Some(OutputId::from("out-1")),
+            layout_name: Some("master-stack".into()),
+            root: sample_tree(),
+            stylesheets: spiders_shared::runtime::PreparedStylesheets {
+                layout: Some(spiders_shared::runtime::PreparedStylesheet {
+                    path: "layouts/master-stack/index.css".into(),
+                    source: stylesheet.into(),
+                }),
+            },
+            space: LayoutSpace {
+                width: 320.0,
+                height: 200.0,
+            },
+        };
+
+        let response_a = compute_layout_from_request(&request).unwrap();
+        let response_b = compute_layout_from_request_with_sheet(&request, &sheet).unwrap();
+
+        assert_eq!(response_a, response_b);
+    }
+
+    #[test]
+    fn scene_cache_recompiles_when_layout_source_changes() {
+        let mut cache = SceneCache::new();
+
+        let request_a = SceneRequest {
+            workspace_id: WorkspaceId::from("ws-1"),
+            output_id: Some(OutputId::from("out-1")),
+            layout_name: Some("master-stack".into()),
+            root: sample_tree(),
+            stylesheets: spiders_shared::runtime::PreparedStylesheets {
+                layout: Some(spiders_shared::runtime::PreparedStylesheet {
+                    path: "layouts/master-stack/index.css".into(),
+                    source:
+                        "workspace { display: flex; width: 320px; height: 200px; } #main { width: 100px; }"
+                            .into(),
+                }),
+            },
+            space: LayoutSpace {
+                width: 320.0,
+                height: 200.0,
+            },
+        };
+
+        let request_b = SceneRequest {
+            stylesheets: spiders_shared::runtime::PreparedStylesheets {
+                layout: Some(spiders_shared::runtime::PreparedStylesheet {
+                    path: "layouts/master-stack/index.css".into(),
+                    source:
+                        "workspace { display: flex; width: 320px; height: 200px; } #main { width: 200px; }"
+                            .into(),
+                }),
+            },
+            ..request_a.clone()
+        };
+
+        let response_a = cache.compute_layout_from_request(&request_a).unwrap();
+        let response_b = cache.compute_layout_from_request(&request_b).unwrap();
+
+        let width_a = response_a
+            .root
+            .find_by_window_id(&WindowId::from("win-1"))
+            .expect("window node should exist")
+            .rect()
+            .width;
+        let width_b = response_b
+            .root
+            .find_by_window_id(&WindowId::from("win-1"))
+            .expect("window node should exist")
+            .rect()
+            .width;
+
+        assert_ne!(width_a, width_b);
     }
 }

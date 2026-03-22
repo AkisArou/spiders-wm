@@ -5,7 +5,8 @@ use rquickjs::{
     Value,
     loader::{Loader, Resolver},
 };
-use spiders_config::model::JavaScriptModuleGraph;
+
+use crate::module_graph::JavaScriptModuleGraph;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ModuleGraphRuntimeError {

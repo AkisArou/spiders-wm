@@ -1,11 +1,25 @@
-use taffy::geometry::Size as TaffySize;
-use taffy::prelude::Dimension as TaffyDimension;
-use taffy::style::Overflow as TaffyOverflow;
-use taffy::style::Style as TaffyStyle;
+use taffy::geometry::{Line as TaffyLine, Rect as TaffyRect, Size as TaffySize};
+use taffy::prelude::{
+    AlignContent as TaffyAlignContent, AlignItems as TaffyAlignItems, BoxSizing as TaffyBoxSizing,
+    Dimension as TaffyDimension, Display as TaffyDisplay, FlexDirection as TaffyFlexDirection,
+    FlexWrap as TaffyFlexWrap, FromFr, FromLength, FromPercent, GridAutoFlow as TaffyGridAutoFlow,
+    GridPlacement as TaffyGridPlacement, GridTemplateComponent as TaffyGridTemplateComponent,
+    JustifyContent as TaffyJustifyContent, LengthPercentage as TaffyTrackLengthPercentage,
+    MaxTrackSizingFunction as TaffyMaxTrackSizingFunction,
+    MinTrackSizingFunction as TaffyMinTrackSizingFunction, Position as TaffyPosition,
+    RepetitionCount as TaffyRepetitionCount, TaffyAuto, TaffyFitContent, TaffyMaxContent,
+    TaffyMinContent, TrackSizingFunction as TaffyTrackSizingFunction,
+};
+use taffy::style::{
+    GridTemplateArea as TaffyGridTemplateArea,
+    GridTemplateRepetition as TaffyGridTemplateRepetition,
+    LengthPercentage as TaffyLengthPercentage, LengthPercentageAuto as TaffyLengthPercentageAuto,
+    Overflow as TaffyOverflow,
+    Style as TaffyStyle,
+};
 
 use spiders_tree::ResolvedLayoutNode;
-use super::apply::*;
-use super::values::ComputedStyle;
+use super::values::*;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct NodeComputedStyle {
@@ -178,4 +192,262 @@ pub fn map_computed_style_to_taffy(style: &ComputedStyle) -> TaffyStyle {
     }
 
     taffy_style
+}
+
+fn map_display(display: Display) -> TaffyDisplay {
+    match display {
+        Display::Block => TaffyDisplay::Block,
+        Display::Flex => TaffyDisplay::Flex,
+        Display::Grid => TaffyDisplay::Grid,
+        Display::None => TaffyDisplay::None,
+    }
+}
+
+fn map_box_sizing(box_sizing: BoxSizingValue) -> TaffyBoxSizing {
+    match box_sizing {
+        BoxSizingValue::BorderBox => TaffyBoxSizing::BorderBox,
+        BoxSizingValue::ContentBox => TaffyBoxSizing::ContentBox,
+    }
+}
+
+fn map_flex_direction(direction: FlexDirectionValue) -> TaffyFlexDirection {
+    match direction {
+        FlexDirectionValue::Row => TaffyFlexDirection::Row,
+        FlexDirectionValue::Column => TaffyFlexDirection::Column,
+        FlexDirectionValue::RowReverse => TaffyFlexDirection::RowReverse,
+        FlexDirectionValue::ColumnReverse => TaffyFlexDirection::ColumnReverse,
+    }
+}
+
+fn map_flex_wrap(wrap: FlexWrapValue) -> TaffyFlexWrap {
+    match wrap {
+        FlexWrapValue::NoWrap => TaffyFlexWrap::NoWrap,
+        FlexWrapValue::Wrap => TaffyFlexWrap::Wrap,
+        FlexWrapValue::WrapReverse => TaffyFlexWrap::WrapReverse,
+    }
+}
+
+fn map_position(position: PositionValue) -> TaffyPosition {
+    match position {
+        PositionValue::Relative => TaffyPosition::Relative,
+        PositionValue::Absolute => TaffyPosition::Absolute,
+    }
+}
+
+fn map_overflow(overflow: OverflowValue) -> TaffyOverflow {
+    match overflow {
+        OverflowValue::Visible => TaffyOverflow::Visible,
+        OverflowValue::Clip => TaffyOverflow::Clip,
+        OverflowValue::Hidden => TaffyOverflow::Hidden,
+        OverflowValue::Scroll => TaffyOverflow::Scroll,
+    }
+}
+
+fn map_align_items(value: AlignmentValue) -> TaffyAlignItems {
+    match value {
+        AlignmentValue::Start => TaffyAlignItems::Start,
+        AlignmentValue::End => TaffyAlignItems::End,
+        AlignmentValue::FlexStart => TaffyAlignItems::FlexStart,
+        AlignmentValue::FlexEnd => TaffyAlignItems::FlexEnd,
+        AlignmentValue::Center => TaffyAlignItems::Center,
+        AlignmentValue::Baseline => TaffyAlignItems::Baseline,
+        AlignmentValue::Stretch => TaffyAlignItems::Stretch,
+    }
+}
+
+fn map_align_content(value: ContentAlignmentValue) -> TaffyAlignContent {
+    match value {
+        ContentAlignmentValue::Start => TaffyAlignContent::Start,
+        ContentAlignmentValue::End => TaffyAlignContent::End,
+        ContentAlignmentValue::FlexStart => TaffyAlignContent::FlexStart,
+        ContentAlignmentValue::FlexEnd => TaffyAlignContent::FlexEnd,
+        ContentAlignmentValue::Center => TaffyAlignContent::Center,
+        ContentAlignmentValue::Stretch => TaffyAlignContent::Stretch,
+        ContentAlignmentValue::SpaceBetween => TaffyAlignContent::SpaceBetween,
+        ContentAlignmentValue::SpaceEvenly => TaffyAlignContent::SpaceEvenly,
+        ContentAlignmentValue::SpaceAround => TaffyAlignContent::SpaceAround,
+    }
+}
+
+fn map_justify_content(value: ContentAlignmentValue) -> TaffyJustifyContent {
+    match value {
+        ContentAlignmentValue::Start => TaffyJustifyContent::Start,
+        ContentAlignmentValue::End => TaffyJustifyContent::End,
+        ContentAlignmentValue::FlexStart => TaffyJustifyContent::FlexStart,
+        ContentAlignmentValue::FlexEnd => TaffyJustifyContent::FlexEnd,
+        ContentAlignmentValue::Center => TaffyJustifyContent::Center,
+        ContentAlignmentValue::Stretch => TaffyJustifyContent::Stretch,
+        ContentAlignmentValue::SpaceBetween => TaffyJustifyContent::SpaceBetween,
+        ContentAlignmentValue::SpaceEvenly => TaffyJustifyContent::SpaceEvenly,
+        ContentAlignmentValue::SpaceAround => TaffyJustifyContent::SpaceAround,
+    }
+}
+
+fn map_size_value(value: SizeValue) -> TaffyDimension {
+    match value {
+        SizeValue::Auto => TaffyDimension::auto(),
+        SizeValue::LengthPercentage(value) => match value {
+            LengthPercentage::Px(value) => TaffyDimension::length(value),
+            LengthPercentage::Percent(value) => TaffyDimension::percent(value / 100.0),
+        },
+    }
+}
+
+fn map_size_value_auto(value: SizeValue) -> TaffyLengthPercentageAuto {
+    match value {
+        SizeValue::Auto => TaffyLengthPercentageAuto::AUTO,
+        SizeValue::LengthPercentage(value) => map_length_percentage_auto(value),
+    }
+}
+
+fn map_length_percentage(value: LengthPercentage) -> TaffyLengthPercentage {
+    match value {
+        LengthPercentage::Px(value) => TaffyLengthPercentage::length(value),
+        LengthPercentage::Percent(value) => TaffyLengthPercentage::percent(value / 100.0),
+    }
+}
+
+fn map_length_percentage_auto(value: LengthPercentage) -> TaffyLengthPercentageAuto {
+    match value {
+        LengthPercentage::Px(value) => TaffyLengthPercentageAuto::length(value),
+        LengthPercentage::Percent(value) => TaffyLengthPercentageAuto::percent(value / 100.0),
+    }
+}
+
+fn map_box_edges<T, U>(edges: BoxEdges<T>, map: fn(T) -> U) -> TaffyRect<U> {
+    TaffyRect {
+        left: map(edges.left),
+        right: map(edges.right),
+        top: map(edges.top),
+        bottom: map(edges.bottom),
+    }
+}
+
+fn map_grid_auto_flow(flow: GridAutoFlow) -> TaffyGridAutoFlow {
+    match flow {
+        GridAutoFlow::Row => TaffyGridAutoFlow::Row,
+        GridAutoFlow::Column => TaffyGridAutoFlow::Column,
+        GridAutoFlow::RowDense => TaffyGridAutoFlow::RowDense,
+        GridAutoFlow::ColumnDense => TaffyGridAutoFlow::ColumnDense,
+    }
+}
+
+fn map_grid_line(value: Line<GridPlacementValue>) -> TaffyLine<TaffyGridPlacement> {
+    TaffyLine {
+        start: map_grid_placement(value.start),
+        end: map_grid_placement(value.end),
+    }
+}
+
+fn map_grid_placement(value: GridPlacementValue) -> TaffyGridPlacement {
+    match value {
+        GridPlacementValue::Auto => TaffyGridPlacement::Auto,
+        GridPlacementValue::Line(line) => TaffyGridPlacement::Line(line.into()),
+        GridPlacementValue::NamedLine(name, index) => TaffyGridPlacement::NamedLine(name, index),
+        GridPlacementValue::Span(span) => TaffyGridPlacement::Span(span),
+        GridPlacementValue::NamedSpan(name, span) => TaffyGridPlacement::NamedSpan(name, span),
+    }
+}
+
+fn map_grid_template_component(
+    value: &GridTemplateComponent,
+) -> TaffyGridTemplateComponent<String> {
+    match value {
+        GridTemplateComponent::Single(track) => {
+            TaffyGridTemplateComponent::Single(map_grid_track_sizing_function(*track))
+        }
+        GridTemplateComponent::Repeat(repetition) => {
+            TaffyGridTemplateComponent::Repeat(map_grid_track_repeat(repetition))
+        }
+    }
+}
+
+fn map_grid_track_repeat(
+    repetition: &GridTrackRepeat,
+) -> TaffyGridTemplateRepetition<String> {
+    TaffyGridTemplateRepetition {
+        count: map_grid_repetition_count(repetition.count),
+        tracks: repetition
+            .tracks
+            .iter()
+            .copied()
+            .map(map_grid_track_sizing_function)
+            .collect(),
+        line_names: repetition.line_names.clone(),
+    }
+}
+
+fn map_grid_repetition_count(value: GridRepetitionCount) -> TaffyRepetitionCount {
+    match value {
+        GridRepetitionCount::AutoFill => TaffyRepetitionCount::AutoFill,
+        GridRepetitionCount::AutoFit => TaffyRepetitionCount::AutoFit,
+        GridRepetitionCount::Count(count) => TaffyRepetitionCount::Count(count),
+    }
+}
+
+fn map_grid_template_area(area: &GridTemplateArea) -> TaffyGridTemplateArea<String> {
+    TaffyGridTemplateArea {
+        name: area.name.clone(),
+        row_start: area.row_start,
+        row_end: area.row_end,
+        column_start: area.column_start,
+        column_end: area.column_end,
+    }
+}
+
+fn map_grid_track_sizing_function(value: GridTrackValue) -> TaffyTrackSizingFunction {
+    match value {
+        GridTrackValue::Auto => TaffyTrackSizingFunction::AUTO,
+        GridTrackValue::MinContent => TaffyTrackSizingFunction::MIN_CONTENT,
+        GridTrackValue::MaxContent => TaffyTrackSizingFunction::MAX_CONTENT,
+        GridTrackValue::LengthPercentage(value) => match value {
+            LengthPercentage::Px(value) => TaffyTrackSizingFunction::from_length(value),
+            LengthPercentage::Percent(value) => {
+                TaffyTrackSizingFunction::from_percent(value / 100.0)
+            }
+        },
+        GridTrackValue::Fraction(value) => TaffyTrackSizingFunction::from_fr(value),
+        GridTrackValue::FitContent(value) => {
+            TaffyTrackSizingFunction::fit_content(map_track_length_percentage(value))
+        }
+        GridTrackValue::MinMax(min, max) => TaffyTrackSizingFunction {
+            min: map_grid_track_min_value(min),
+            max: map_grid_track_max_value(max),
+        },
+    }
+}
+
+fn map_grid_track_min_value(value: GridTrackMinValue) -> TaffyMinTrackSizingFunction {
+    match value {
+        GridTrackMinValue::Auto => TaffyMinTrackSizingFunction::AUTO,
+        GridTrackMinValue::MinContent => TaffyMinTrackSizingFunction::MIN_CONTENT,
+        GridTrackMinValue::MaxContent => TaffyMinTrackSizingFunction::MAX_CONTENT,
+        GridTrackMinValue::LengthPercentage(value) => match value {
+            LengthPercentage::Px(value) => TaffyMinTrackSizingFunction::length(value),
+            LengthPercentage::Percent(value) => TaffyMinTrackSizingFunction::percent(value / 100.0),
+        },
+    }
+}
+
+fn map_grid_track_max_value(value: GridTrackMaxValue) -> TaffyMaxTrackSizingFunction {
+    match value {
+        GridTrackMaxValue::Auto => TaffyMaxTrackSizingFunction::AUTO,
+        GridTrackMaxValue::MinContent => TaffyMaxTrackSizingFunction::MIN_CONTENT,
+        GridTrackMaxValue::MaxContent => TaffyMaxTrackSizingFunction::MAX_CONTENT,
+        GridTrackMaxValue::LengthPercentage(value) => match value {
+            LengthPercentage::Px(value) => TaffyMaxTrackSizingFunction::length(value),
+            LengthPercentage::Percent(value) => TaffyMaxTrackSizingFunction::percent(value / 100.0),
+        },
+        GridTrackMaxValue::Fraction(value) => TaffyMaxTrackSizingFunction::fr(value),
+        GridTrackMaxValue::FitContent(value) => {
+            TaffyMaxTrackSizingFunction::fit_content(map_track_length_percentage(value))
+        }
+    }
+}
+
+fn map_track_length_percentage(value: LengthPercentage) -> TaffyTrackLengthPercentage {
+    match value {
+        LengthPercentage::Px(value) => TaffyTrackLengthPercentage::from_length(value),
+        LengthPercentage::Percent(value) => TaffyTrackLengthPercentage::from_percent(value / 100.0),
+    }
 }

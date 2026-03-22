@@ -8,6 +8,7 @@ use spiders_config::authoring_layout::AuthoringLayoutService;
 use spiders_config::model::{Binding, Config};
 use spiders_config::model::ConfigPaths;
 use spiders_config::model::InputConfig;
+use spiders_scene::pipeline::SceneCache;
 use spiders_shared::api::{FocusDirection, WmAction};
 use spiders_runtime_js::{build_authoring_layout_service, DefaultLayoutRuntime};
 use wayland_backend::client::ObjectId;
@@ -128,6 +129,7 @@ impl RiverConnection {
 struct RiverBackendState {
     config: Config,
     layout_service: AuthoringLayoutService<DefaultLayoutRuntime>,
+    scene_cache: SceneCache,
     protocol_support: RiverProtocolSupport,
     runtime_state: WmState,
     running: bool,
@@ -145,6 +147,47 @@ struct RiverBackendState {
 }
 
 impl RiverBackendState {
+    fn prewarm_scene_cache(&mut self) {
+        self.scene_cache.clear();
+
+        let snapshot = self.runtime_state.as_state_snapshot();
+        let base_workspace = snapshot.current_workspace().cloned();
+
+        for layout in &self.config.layouts {
+            let workspace = base_workspace.clone().unwrap_or(spiders_shared::wm::WorkspaceSnapshot {
+                id: spiders_tree::WorkspaceId::from("warmup"),
+                name: "warmup".into(),
+                output_id: None,
+                active_workspaces: Vec::new(),
+                focused: true,
+                visible: true,
+                effective_layout: None,
+            });
+            let mut workspace = workspace;
+            workspace.effective_layout = Some(spiders_shared::wm::LayoutRef {
+                name: layout.name.clone(),
+            });
+
+            let prepared = match self.layout_service.prepare_for_workspace(&self.config, &workspace) {
+                Ok(Some(prepared)) => prepared,
+                Ok(None) => continue,
+                Err(error) => {
+                    warn!(layout = %layout.name, %error, "failed to prepare layout for scene cache prewarm");
+                    continue;
+                }
+            };
+
+            let source = prepared.stylesheets.combined_source();
+            if source.trim().is_empty() {
+                continue;
+            }
+
+            if let Err(error) = self.scene_cache.precompile_layout(layout.name.clone(), &source) {
+                warn!(layout = %layout.name, %error, "failed to precompile stylesheet for scene cache");
+            }
+        }
+    }
+
     fn seat_name(&self, seat_id: &ObjectId) -> Option<&str> {
         self.registry
             .seats
@@ -406,9 +449,10 @@ impl RiverBackendState {
     }
 
     fn new(paths: ConfigPaths, config: Config, runtime_state: WmState) -> Self {
-        Self {
+        let mut state = Self {
             config,
             layout_service: build_authoring_layout_service(&paths),
+            scene_cache: SceneCache::new(),
             protocol_support: RiverProtocolSupport::default(),
             runtime_state,
             running: true,
@@ -423,7 +467,10 @@ impl RiverBackendState {
             next_output_serial: 0,
             next_window_serial: 0,
             next_seat_serial: 0,
-        }
+        };
+
+        state.prewarm_scene_cache();
+        state
     }
 
     fn next_output_id(&mut self) -> spiders_tree::OutputId {

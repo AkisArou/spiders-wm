@@ -1,7 +1,7 @@
 use thiserror::Error;
 
 use super::grid::*;
-use super::parse_values::{CssValue, ParsedDeclaration};
+use super::parse_values::*;
 
 use super::values::{
     AlignmentValue, BoxEdges, BoxSizingValue, ContentAlignmentValue, Display, FlexDirectionValue,
@@ -637,4 +637,139 @@ fn parse_box_edges_size_direct(
         property: property.into(),
         value: value.text.clone(),
     })
+}
+
+// ── Value utility helpers (used by grid and other css submodules) ──────────────
+
+pub(super) fn text_for_value(value: &CssValue) -> &str {
+    value.text.as_str()
+}
+
+pub(super) fn normalized_components(value: &CssValue) -> Vec<&CssValueToken> {
+    value
+        .components
+        .iter()
+        .filter(|component| !matches!(component, CssValueToken::Whitespace))
+        .collect()
+}
+
+pub(super) fn normalized_components_owned(value: &CssValue) -> Vec<CssValueToken> {
+    value
+        .components
+        .iter()
+        .filter(|component| !matches!(component, CssValueToken::Whitespace))
+        .cloned()
+        .collect()
+}
+
+pub(super) fn parse_length_percentage(
+    property: &str,
+    value: &CssValue,
+) -> Result<LengthPercentage, CssValueError> {
+    let components = normalized_components(value);
+    match components.as_slice() {
+        [CssValueToken::Integer(0)] => Ok(LengthPercentage::Px(0.0)),
+        [CssValueToken::Number(number)] if *number == 0.0 => Ok(LengthPercentage::Px(0.0)),
+        [CssValueToken::Dimension(dimension)] => {
+            parse_dimension_length_percentage(property, dimension)
+        }
+        [CssValueToken::Percentage(percent)] => Ok(LengthPercentage::Percent(*percent)),
+        _ => Err(invalid_value(property, text_for_value(value))),
+    }
+}
+
+pub(super) fn parse_dimension_length_percentage(
+    property: &str,
+    dimension: &CssDimension,
+) -> Result<LengthPercentage, CssValueError> {
+    if dimension.unit.eq_ignore_ascii_case("px") {
+        Ok(LengthPercentage::Px(dimension.value))
+    } else {
+        Err(invalid_value(
+            property,
+            &format!("{}{}", dimension.value, dimension.unit),
+        ))
+    }
+}
+
+pub(super) fn function_args_value(function: &CssFunction) -> CssValue {
+    CssValue {
+        text: components_to_text(&function.value),
+        components: function.value.clone(),
+    }
+}
+
+pub(super) fn split_function_args(function: &CssFunction) -> Vec<CssValue> {
+    let mut groups = Vec::new();
+    let mut current = Vec::new();
+
+    for component in &function.value {
+        if matches!(component, CssValueToken::Delimiter(CssDelimiter::Comma)) {
+            groups.push(CssValue {
+                text: components_to_text(&current),
+                components: std::mem::take(&mut current),
+            });
+            continue;
+        }
+        current.push(component.clone());
+    }
+
+    groups.push(CssValue {
+        text: components_to_text(&current),
+        components: current,
+    });
+    groups
+}
+
+pub(super) fn slice_to_value(components: &[&CssValueToken]) -> CssValue {
+    let owned = components
+        .iter()
+        .map(|component| (*component).clone())
+        .collect::<Vec<_>>();
+    CssValue {
+        text: components_to_text(&owned),
+        components: owned,
+    }
+}
+
+pub(super) fn components_to_text(components: &[CssValueToken]) -> String {
+    let mut output = String::new();
+    for component in components {
+        output.push_str(&component_text(component));
+    }
+    output.trim().to_owned()
+}
+
+pub(super) fn component_text(component: &CssValueToken) -> String {
+    match component {
+        CssValueToken::Ident(value) => value.clone(),
+        CssValueToken::String(value) => format!("\"{value}\""),
+        CssValueToken::Number(value) => value.to_string(),
+        CssValueToken::Integer(value) => value.to_string(),
+        CssValueToken::Dimension(value) => format!("{}{}", value.value, value.unit),
+        CssValueToken::Percentage(value) => format!("{value}%"),
+        CssValueToken::Function(function) => {
+            format!("{}({})", function.name, components_to_text(&function.value))
+        }
+        CssValueToken::SimpleBlock(block) => {
+            let (open, close) = match block.kind {
+                CssSimpleBlockKind::Bracket => ('[', ']'),
+                CssSimpleBlockKind::Parenthesis => ('(', ')'),
+                CssSimpleBlockKind::Brace => ('{', '}'),
+            };
+            format!("{open}{}{close}", components_to_text(&block.value))
+        }
+        CssValueToken::Delimiter(CssDelimiter::Comma) => ",".into(),
+        CssValueToken::Delimiter(CssDelimiter::Solidus) => "/".into(),
+        CssValueToken::Delimiter(CssDelimiter::Semicolon) => ";".into(),
+        CssValueToken::Whitespace => " ".into(),
+        CssValueToken::Unknown(value) => value.clone(),
+    }
+}
+
+pub(super) fn invalid_value(property: &str, value: &str) -> CssValueError {
+    CssValueError::UnsupportedValue {
+        property: property.to_owned(),
+        value: value.to_owned(),
+    }
 }

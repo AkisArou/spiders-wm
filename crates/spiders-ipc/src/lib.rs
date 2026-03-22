@@ -20,7 +20,3 @@ pub use transport::{
     IpcTransportError, bind_listener, connect, recv_request, recv_response, send_request,
     send_response,
 };
-
-pub fn crate_ready() -> bool {
-    true
-}

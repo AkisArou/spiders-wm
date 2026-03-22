@@ -12,9 +12,9 @@ use oxc::parser::Parser;
 use oxc::span::GetSpan;
 use oxc::span::SourceType;
 use oxc::transformer::{JsxRuntime, TransformOptions};
-use spiders_config::model::{JavaScriptModule, JavaScriptModuleGraph};
 
 use crate::graph::{ImportedModuleKind, ModuleGraph, ModuleId, ModuleKind};
+use crate::module_graph::{JavaScriptModule, JavaScriptModuleGraph};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AppBuildPlan {
