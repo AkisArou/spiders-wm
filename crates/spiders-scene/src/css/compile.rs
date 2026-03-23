@@ -5,7 +5,7 @@ use super::grid::*;
 use super::parse_values::*;
 
 use crate::style::{
-    AlignmentValue, AppearanceValue, BorderStyleValue, BoxEdges, BoxShadowValue,
+    AlignmentValue, AppearanceValue, BorderRadiusValue, BorderStyleValue, BoxEdges, BoxShadowValue,
     BoxSizingValue, ColorValue, ContentAlignmentValue, Display, FlexDirectionValue,
     FlexWrapValue, FontFamilyValue, FontWeightValue, GridAutoFlow, GridPlacementValue,
     GridTemplate, GridTemplateArea, GridTrackValue, LengthPercentage, Line, OverflowValue,
@@ -44,7 +44,7 @@ pub enum CompiledDeclaration {
     BorderColorSide(BoxSide, ColorValue),
     BorderStyle(BoxEdges<BorderStyleValue>),
     BorderStyleSide(BoxSide, BorderStyleValue),
-    BorderRadius(String),
+    BorderRadius(BorderRadiusValue),
     BoxShadow(Vec<BoxShadowValue>),
     BackdropFilter(String),
     Transform(String),
@@ -169,7 +169,7 @@ pub fn compile_declaration_from_value(
             BoxSide::Left,
             parse_color_direct(property, value)?,
         )),
-        "border-radius" => Ok(CompiledDeclaration::BorderRadius(parse_raw_text_direct(
+        "border-radius" => Ok(CompiledDeclaration::BorderRadius(parse_border_radius_direct(
             property, value,
         )?)),
         "box-shadow" => Ok(CompiledDeclaration::BoxShadow(parse_box_shadow_direct(
@@ -592,6 +592,68 @@ fn parse_font_family_direct(
     }
 
     Ok(families)
+}
+
+fn parse_border_radius_direct(
+    property: &str,
+    value: &CssValue,
+) -> Result<BorderRadiusValue, CssValueError> {
+    let text = value.text.trim();
+    let horizontal = text.split('/').next().unwrap_or(text);
+    let values = horizontal
+        .split_whitespace()
+        .map(parse_radius_px)
+        .collect::<Option<Vec<_>>>()
+        .ok_or_else(|| CssValueError::UnsupportedValue {
+            property: property.to_string(),
+            value: value.text.clone(),
+        })?;
+
+    let radius = match values.as_slice() {
+        [single] => BorderRadiusValue {
+            top_left: *single,
+            top_right: *single,
+            bottom_right: *single,
+            bottom_left: *single,
+        },
+        [top_left, top_right] => BorderRadiusValue {
+            top_left: *top_left,
+            top_right: *top_right,
+            bottom_right: *top_left,
+            bottom_left: *top_right,
+        },
+        [top_left, top_right, bottom_right] => BorderRadiusValue {
+            top_left: *top_left,
+            top_right: *top_right,
+            bottom_right: *bottom_right,
+            bottom_left: *top_right,
+        },
+        [top_left, top_right, bottom_right, bottom_left, ..] => BorderRadiusValue {
+            top_left: *top_left,
+            top_right: *top_right,
+            bottom_right: *bottom_right,
+            bottom_left: *bottom_left,
+        },
+        _ => {
+            return Err(CssValueError::UnsupportedValue {
+                property: property.to_string(),
+                value: value.text.clone(),
+            });
+        }
+    };
+
+    Ok(radius)
+}
+
+fn parse_radius_px(token: &str) -> Option<i32> {
+    match token.trim() {
+        "0" | "0.0" => Some(0),
+        value => value
+            .strip_suffix("px")
+            .and_then(|number| number.parse::<f32>().ok())
+            .map(|value| value.round() as i32)
+            .map(|value| value.max(0)),
+    }
 }
 
 fn split_font_family_list(font_family: &str) -> Vec<String> {

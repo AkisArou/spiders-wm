@@ -252,40 +252,18 @@ fn titlebar_padding(style: Option<&ComputedStyle>) -> (i32, i32, i32, i32) {
     )
 }
 
-fn parse_radius_px(raw: &str) -> Option<i32> {
-    match raw.trim() {
-        "0" | "0.0" => Some(0),
-        value => value
-            .strip_suffix("px")
-            .and_then(|number| number.parse::<f32>().ok())
-            .map(|value| value.round() as i32)
-            .map(|value| value.max(0)),
-    }
-}
-
 fn titlebar_corner_radii(
     titlebar_style: Option<&ComputedStyle>,
     window_style: Option<&ComputedStyle>,
 ) -> (i32, i32) {
-    let raw = titlebar_style
-        .and_then(|style| style.border_radius.as_deref())
-        .or_else(|| window_style.and_then(|style| style.border_radius.as_deref()));
-    let Some(raw) = raw else {
+    let radius = titlebar_style
+        .and_then(|style| style.border_radius)
+        .or_else(|| window_style.and_then(|style| style.border_radius));
+    let Some(radius) = radius else {
         return (0, 0);
     };
 
-    let horizontal = raw.split('/').next().unwrap_or(raw);
-    let values = horizontal
-        .split_whitespace()
-        .filter_map(parse_radius_px)
-        .collect::<Vec<_>>();
-
-    match values.as_slice() {
-        [single] => (*single, *single),
-        [top_left, top_right] => (*top_left, *top_right),
-        [top_left, top_right, ..] => (*top_left, *top_right),
-        _ => (0, 0),
-    }
+    (radius.top_left, radius.top_right)
 }
 
 fn titlebar_text(window: &crate::model::WindowState) -> String {
@@ -1460,11 +1438,21 @@ mod tests {
     #[test]
     fn titlebar_corner_radii_uses_titlebar_then_window_radius() {
         let titlebar_style = ComputedStyle {
-            border_radius: Some("12px 6px 0 0".into()),
+            border_radius: Some(spiders_scene::BorderRadiusValue {
+                top_left: 12,
+                top_right: 6,
+                bottom_right: 0,
+                bottom_left: 0,
+            }),
             ..ComputedStyle::default()
         };
         let window_style = ComputedStyle {
-            border_radius: Some("20px 18px".into()),
+            border_radius: Some(spiders_scene::BorderRadiusValue {
+                top_left: 20,
+                top_right: 18,
+                bottom_right: 20,
+                bottom_left: 18,
+            }),
             ..ComputedStyle::default()
         };
 

@@ -491,7 +491,16 @@ mod tests {
                         alpha: 255,
                     })
                 );
-                assert!(style.border_radius.is_some() || style.box_shadow.is_some() || style.animation.is_some());
+                assert_eq!(
+                    style.border_radius,
+                    Some(BorderRadiusValue {
+                        top_left: 14,
+                        top_right: 10,
+                        bottom_right: 18,
+                        bottom_left: 8,
+                    })
+                );
+                assert!(style.box_shadow.is_some() || style.animation.is_some());
         }
 
     #[test]
