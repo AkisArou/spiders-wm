@@ -1,4 +1,5 @@
 pub mod ast;
+pub mod motion;
 pub mod pipeline;
 pub mod scene;
 pub mod style;
@@ -10,5 +11,7 @@ mod matching;
 mod style_calc;
 mod style_tree;
 
+pub use css::{CompiledDeclaration, CompiledKeyframeStep, CompiledKeyframesRule, CompiledStyleSheet};
 pub use scene::{LayoutSnapshotNode, SceneNodeStyle, SceneRequest, SceneResponse};
+pub use motion::*;
 pub use style::*;

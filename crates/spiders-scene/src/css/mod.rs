@@ -10,6 +10,7 @@ mod taffy;
 mod tokenizer;
 
 pub use crate::style::*;
+pub use compile::CompiledDeclaration;
 pub use crate::style_calc::{compute_style, compute_style_for_pseudo};
 pub use compile::CssValueError;
 pub use compiled::*;
@@ -437,71 +438,129 @@ mod tests {
         assert_eq!(style.letter_spacing, Some(0.0));
     }
 
-        #[test]
-        fn parses_effect_properties_and_keyframes_used_by_root_stylesheet() {
-                let sheet = parse_stylesheet(
-                        r#"
-                        workspace {
-                            transition-property: transform, opacity;
-                            transition-duration: 220ms;
-                            transition-timing-function: cubic-bezier(0.46, 1, 0.29, 0.99);
-                        }
+    #[test]
+    fn parses_transform_into_typed_operations() {
+        let declaration = only_declaration(
+            "workspace { transform: translate(100%, 0%) scale(0.8, 1.2); }",
+        );
 
-                        workspace:enter-from-right {
-                            transform: translate(100%, 0%);
-                            opacity: 0.98;
-                        }
+        assert_eq!(
+            declaration,
+            CompiledDeclaration::Transform(TransformValue {
+                operations: vec![
+                    TransformOperationValue::Translate(TranslateTransformValue {
+                        x: LengthPercentage::Percent(100.0),
+                        y: LengthPercentage::Percent(0.0),
+                    }),
+                    TransformOperationValue::Scale(ScaleTransformValue { x: 0.8, y: 1.2 }),
+                ],
+            })
+        );
+    }
 
-                        window {
-                            border-width: 2px;
-                            border-color: #222222;
-                            opacity: 0.94;
-                            border-radius: 14px 10px 18px 8px / 14px 10px 18px 8px;
-                            box-shadow: 0 12px 28px 4px #00000066;
-                            backdrop-filter: blur(12px);
-                            animation: open-zoom 400ms cubic-bezier(0.46, 1, 0.29, 0.99) both;
-                            transition: opacity 140ms ease-in-out, box-shadow 220ms ease-out;
-                            appearance: none;
-                        }
+    #[test]
+    fn parses_transform_none_as_empty_operation_list() {
+        let declaration = only_declaration("workspace { transform: none; }");
 
-                        @keyframes open-zoom {
-                            from { opacity: 0.15; transform: translate(0px, 24px) scale(0.3); }
-                            to { opacity: 1; transform: translate(0px, 0px) scale(1); }
-                        }
+        assert_eq!(
+            declaration,
+            CompiledDeclaration::Transform(TransformValue {
+                operations: Vec::new(),
+            })
+        );
+    }
 
-                        window:closing {
-                            opacity: 0;
-                            transition: all 300ms cubic-bezier(0.46, 1.0, 0.29, 0.99);
-                        }
-                        "#,
+    #[test]
+    fn parses_effect_properties_and_keyframes_used_by_root_stylesheet() {
+        let sheet = parse_stylesheet(
+            r#"
+            workspace {
+                transition-property: transform, opacity;
+                transition-duration: 220ms;
+                transition-timing-function: cubic-bezier(0.46, 1, 0.29, 0.99);
+            }
+
+            workspace:enter-from-right {
+                transform: translate(100%, 0%);
+                opacity: 0.98;
+            }
+
+            window {
+                border-width: 2px;
+                border-color: #222222;
+                opacity: 0.94;
+                border-radius: 14px 10px 18px 8px / 14px 10px 18px 8px;
+                box-shadow: 0 12px 28px 4px #00000066;
+                backdrop-filter: blur(12px);
+                animation: open-zoom 400ms cubic-bezier(0.46, 1, 0.29, 0.99) both;
+                transition: opacity 140ms ease-in-out, box-shadow 220ms ease-out;
+                appearance: none;
+            }
+
+            @keyframes open-zoom {
+                from { opacity: 0.15; transform: translate(0px, 24px) scale(0.3); }
+                to { opacity: 1; transform: translate(0px, 0px) scale(1); }
+            }
+
+            window:closing {
+                opacity: 0;
+                transition: all 300ms cubic-bezier(0.46, 1.0, 0.29, 0.99);
+            }
+            "#,
+        )
+        .unwrap();
+
+        let node = runtime_window_with_meta(LayoutNodeMeta::default());
+        let style = compute_style(&sheet, &node).unwrap();
+
+        assert_eq!(style.appearance, Some(AppearanceValue::None));
+        assert_eq!(style.opacity, Some(0.94));
+        assert_eq!(
+            style.border_color,
+            Some(ColorValue {
+                red: 34,
+                green: 34,
+                blue: 34,
+                alpha: 255,
+            })
+        );
+        assert_eq!(
+            style.border_radius,
+            Some(BorderRadiusValue {
+                top_left: 14,
+                top_right: 10,
+                bottom_right: 18,
+                bottom_left: 8,
+            })
+        );
+        assert_eq!(style.animation_name, Some(vec!["open-zoom".into()]));
+        assert!(matches!(
+            style.transition_property.as_ref(),
+            Some(properties) if properties.len() == 2
+        ));
+        assert!(sheet.rules.iter().any(|rule| {
+            rule.declarations.iter().any(|declaration| {
+                matches!(
+                    declaration,
+                    CompiledDeclaration::Transform(TransformValue { operations })
+                    if operations.len() == 1
                 )
-                .unwrap();
-
-                let node = runtime_window_with_meta(LayoutNodeMeta::default());
-                let style = compute_style(&sheet, &node).unwrap();
-
-                assert_eq!(style.appearance, Some(AppearanceValue::None));
-                assert_eq!(style.opacity, Some(0.94));
-                assert_eq!(
-                    style.border_color,
-                    Some(ColorValue {
-                        red: 34,
-                        green: 34,
-                        blue: 34,
-                        alpha: 255,
-                    })
-                );
-                assert_eq!(
-                    style.border_radius,
-                    Some(BorderRadiusValue {
-                        top_left: 14,
-                        top_right: 10,
-                        bottom_right: 18,
-                        bottom_left: 8,
-                    })
-                );
-                assert!(style.box_shadow.is_some() || style.animation.is_some());
-        }
+            })
+        }));
+        assert_eq!(sheet.keyframes.len(), 1);
+        assert_eq!(sheet.keyframes[0].name, "open-zoom");
+        assert_eq!(sheet.keyframes[0].steps.len(), 2);
+        assert!(sheet.keyframes[0]
+            .steps
+            .iter()
+            .flat_map(|step| step.declarations.iter())
+            .any(|declaration| matches!(
+                declaration,
+                CompiledDeclaration::Transform(TransformValue { operations })
+                if operations.len() == 2
+            )));
+        assert!(style.box_shadow.is_some());
+    }
 
     #[test]
     fn supports_row_and_column_gap_overrides() {

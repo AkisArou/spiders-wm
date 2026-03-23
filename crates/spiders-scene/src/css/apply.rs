@@ -43,13 +43,24 @@ impl ApplyCompiledDeclaration for ComputedStyle {
             CompiledDeclaration::FontSize(value) => self.font_size = Some(value),
             CompiledDeclaration::FontWeight(value) => self.font_weight = Some(value),
             CompiledDeclaration::LetterSpacing(value) => self.letter_spacing = Some(value),
-            CompiledDeclaration::Animation(value) => self.animation = Some(value),
-            CompiledDeclaration::Transition(value) => self.transition = Some(value),
+            CompiledDeclaration::AnimationName(value) => self.animation_name = Some(value),
+            CompiledDeclaration::AnimationDuration(value) => self.animation_duration = Some(value),
+            CompiledDeclaration::AnimationTimingFunction(value) => {
+                self.animation_timing_function = Some(value)
+            }
+            CompiledDeclaration::AnimationDelay(value) => self.animation_delay = Some(value),
+            CompiledDeclaration::AnimationIterationCount(value) => {
+                self.animation_iteration_count = Some(value)
+            }
+            CompiledDeclaration::AnimationDirection(value) => self.animation_direction = Some(value),
+            CompiledDeclaration::AnimationFillMode(value) => self.animation_fill_mode = Some(value),
+            CompiledDeclaration::AnimationPlayState(value) => self.animation_play_state = Some(value),
             CompiledDeclaration::TransitionProperty(value) => self.transition_property = Some(value),
             CompiledDeclaration::TransitionDuration(value) => self.transition_duration = Some(value),
             CompiledDeclaration::TransitionTimingFunction(value) => {
                 self.transition_timing_function = Some(value)
             }
+            CompiledDeclaration::TransitionDelay(value) => self.transition_delay = Some(value),
             CompiledDeclaration::FlexDirection(value) => self.flex_direction = Some(value),
             CompiledDeclaration::FlexWrap(value) => self.flex_wrap = Some(value),
             CompiledDeclaration::FlexGrow(value) => self.flex_grow = Some(value),

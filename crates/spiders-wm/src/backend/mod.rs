@@ -50,6 +50,7 @@ use crate::runtime::registry::TitlebarRecord;
 
 mod apply;
 mod dispatch;
+mod motion;
 mod planner;
 mod plan;
 mod titlebar_renderer;
@@ -667,6 +668,7 @@ impl RiverBackendState {
         for (id, state_id, proxy, node) in removed {
             self.transient.window_pointer_move_requests.remove(&id);
             self.transient.window_pointer_resize_requests.remove(&id);
+            self.clear_window_motion_state(&state_id);
             self.registry.window_ids_by_state.remove(&state_id);
             for seat in self.registry.seats.values_mut() {
                 if self
@@ -1041,6 +1043,8 @@ impl RiverBackendState {
     }
 
     fn handle_render_start(&mut self) {
+        self.begin_motion_frame();
+
         if !self.has_active_pointer_op() {
             self.apply_tiled_render_layout();
         }
@@ -1051,8 +1055,13 @@ impl RiverBackendState {
         let plan = self.plan_pointer_render_ops();
         self.apply_pointer_render_plan(&plan);
 
+        let keep_animating = self.finish_motion_frame();
+
         if let Some(wm) = self.wm.as_ref() {
             wm.render_finish();
+            if keep_animating {
+                wm.manage_dirty();
+            }
         }
     }
 }

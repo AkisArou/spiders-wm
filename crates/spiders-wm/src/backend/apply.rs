@@ -233,7 +233,7 @@ impl RiverBackendState {
                 continue;
             };
 
-            titlebar.decoration.set_offset(0, -entry.height);
+            titlebar.decoration.set_offset(entry.offset_x, -entry.height + entry.offset_y);
             titlebar.decoration.sync_next_commit();
             titlebar.surface.attach(Some(&buffer.buffer), 0, 0);
             titlebar.surface.damage_buffer(0, 0, width, entry.height);

@@ -120,10 +120,10 @@ Current behavior:
 
 - `appearance`
 - `opacity` best-effort for compositor-drawn borders only
-- `border-radius` `(TODO)`
+- `border-radius` partial for titlebar top-corner fallback only
 - `box-shadow` `(TODO)`
 - `backdrop-filter` `(TODO)`
-- `transform` `(TODO)`
+- `transform` parsed and typed in `spiders-scene`; `spiders-wm` currently consumes translated offsets for compositor window positioning and titlebar decoration offsets, but does not yet apply scale visually
 
 ### Titlebar
 
@@ -145,12 +145,8 @@ Supported now:
 - `font-size` with `px` and `%`
 - `font-weight` with `normal`, `bold`, `400`, and `700`
 - `letter-spacing` with `px` values and `normal`
-- `box-shadow` best-effort, clipped to the compositor titlebar surface
+- `box-shadow` best-effort for multiple non-inset shadows
 - `border-radius` best-effort for rounded top corners on compositor titlebars
-
-Still TODO:
-
-- `border-radius` `(TODO)`
 
 Planned semantics:
 
@@ -166,18 +162,45 @@ Planned semantics:
 - `font-size` supports `px` and `%` values for compositor titlebar labels.
 - `font-weight` supports `normal`, `bold`, `400`, and `700` via regular and bold font selection when both are available.
 - `letter-spacing` supports `normal` and `px` values for compositor titlebar labels.
-- `box-shadow` currently renders a first-pass shadow approximation for the first declared shadow only, clipped to the compositor titlebar surface.
+- `box-shadow` currently renders a first-pass shadow approximation for all declared non-inset shadows.
+- titlebar shadows are drawn on a separate layer beneath the clipped titlebar body.
+- titlebar shadow geometry reuses the same rounded-top shape model as the compositor titlebar body.
 - `border-radius` currently rounds the top corners of compositor titlebars only; it does not clip client window content.
+- `window` `border-radius` currently acts as a fallback source for those titlebar top-corner radii when `window::titlebar` does not provide its own value.
 - `appearance: none` is currently implemented as a best-effort `use_ssd()` request for SSD-capable clients while omitting compositor titlebar surfaces.
 - clients that only support CSD can still show their own client-drawn decorations; river does not provide a stronger override for those windows.
 
 ### Motion
 
-- `transition-*` `(TODO)`
-- `transition` shorthand `(TODO)`
-- `animation-*` `(TODO)`
-- `animation` shorthand `(TODO)`
-- `@keyframes` `(TODO)`
+Supported now in `spiders-scene` parsing and computed styles:
+
+- `transition-property`
+- `transition-duration`
+- `transition-timing-function`
+- `transition-delay`
+- `transition` shorthand via Stylo expansion to the typed longhands above
+- `animation-name`
+- `animation-duration`
+- `animation-timing-function`
+- `animation-delay`
+- `animation-iteration-count`
+- `animation-direction`
+- `animation-fill-mode`
+- `animation-play-state`
+- `animation` shorthand via Stylo expansion to the typed longhands above
+- `@keyframes` retained in the compiled scene stylesheet
+
+Current behavior:
+
+- motion declarations are parsed into typed scene values instead of being kept as raw CSS strings
+- timing functions are available as structured easing values, including keyword easings, `cubic-bezier(...)`, `steps(...)`, and `linear(...)`
+- `spiders-scene` now preserves compiled keyframe blocks for later runtime use
+- `spiders-wm` now executes `opacity` transitions and keyframe animations over time for compositor-managed window borders and compositor titlebars
+- motion advancement currently uses `manage_dirty()` to request follow-up manage/render sequences while an opacity transition or animation remains active
+- `spiders-scene` now also resolves typed `transform` transitions and keyframe animations into sampled translation and scale values
+- `spiders-wm` currently applies the translation portion of those sampled transforms to compositor window positions and titlebar offsets
+- broader runtime transform support is still incomplete: scale is sampled but not yet visually applied by `spiders-wm`
+- workspace transition selectors are still parsed but are not yet driven by dedicated wm-side transition state
 
 ## Example
 

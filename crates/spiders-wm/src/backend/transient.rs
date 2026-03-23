@@ -1,5 +1,8 @@
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::time::Instant;
 
+use spiders_scene::MotionTrackState;
+use spiders_tree::WindowId;
 use wayland_backend::client::ObjectId;
 
 use crate::action_bridge::RiverCommand;
@@ -20,4 +23,13 @@ pub struct BackendTransientState {
     pub pending_xkb_keymap_context: HashMap<ObjectId, String>,
     pub xkb_keymap_proxies: HashMap<ObjectId, river_xkb_keymap_v1::RiverXkbKeymapV1>,
     pub pending_input_results: HashMap<ObjectId, String>,
+    pub motion_state: HashMap<WindowId, WindowMotionState>,
+    pub motion_frame_time: Option<Instant>,
+    pub motion_has_active_animations: bool,
+}
+
+#[derive(Debug, Default)]
+pub struct WindowMotionState {
+    pub layout: MotionTrackState,
+    pub titlebar: MotionTrackState,
 }

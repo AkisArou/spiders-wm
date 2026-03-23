@@ -1,6 +1,7 @@
 use crate::css::{parse_stylesheet, CssParseError, CssValueError, StyledLayoutTree};
 pub use crate::layout_calc::{LaidOutNode, LaidOutTree};
 use crate::scene::{SceneRequest, SceneResponse};
+use crate::CompiledKeyframesRule;
 use spiders_tree::ResolvedLayoutNode;
 use std::collections::HashMap;
 use tracing::debug;
@@ -69,6 +70,13 @@ impl SceneCache {
             .expect("scene cache entry must exist after successful precompile");
 
         compute_layout_from_request_with_sheet(request, sheet)
+    }
+
+    pub fn keyframes_for_layout(&self, layout_name: &str) -> Vec<CompiledKeyframesRule> {
+        self.stylesheets
+            .get(layout_name)
+            .map(|cached| cached.sheet.keyframes.clone())
+            .unwrap_or_default()
     }
 }
 

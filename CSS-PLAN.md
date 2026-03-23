@@ -12,7 +12,7 @@ This file tracks the CSS roadmap for spiders-wm.
 
 ### 1. CSS Doc Cleanup
 
-Status: in progress
+Status: mostly complete
 
 - Rewrite `docs/css.md` around a single CSS model.
 - Remove the old `layout CSS` vs `effects CSS` distinction.
@@ -22,7 +22,7 @@ Status: in progress
 
 ### 2. Scene Border Widths -> River Borders
 
-Status: in progress
+Status: complete
 
 - Read `border-width` values from `LayoutSnapshotNode` styles.
 - Apply those widths through river `set_borders`.
@@ -31,7 +31,7 @@ Status: in progress
 
 ### 3. Window State Selectors
 
-Status: in progress
+Status: complete
 
 - Support `window:focused`
 - Support `window:floating`
@@ -74,7 +74,7 @@ Status: in progress
   - `font-weight`
   - `letter-spacing`
   - `box-shadow` partial
-  - `border-radius` (top corners only)
+  - `border-radius` partial (top corners only)
 - `border-color` and `border-bottom-color` drive the rendered titlebar bottom border.
 - Keep `appearance: none` as the "no titlebar" contract once compositor titlebars exist.
 
@@ -85,19 +85,24 @@ Status: in progress
 - `border-color`
 - `border-radius` partial
 - `opacity` partial
-- `box-shadow` (TODO)
-- `transform` (TODO)
+- `box-shadow` partial
+- `transform` parsed and typed in `spiders-scene`; wm-side translation application landed, scale application still TODO
 - `backdrop-filter` (TODO)
 
 ### 7. Motion
 
-Status: TODO
+Status: in progress
 
-- `transition-*` (TODO)
-- `transition` shorthand (TODO)
-- `animation-*` (TODO)
-- `animation` shorthand (TODO)
-- `@keyframes` (TODO)
+- `transition-*` parsed and typed in `spiders-scene`
+- `transition` shorthand expands through Stylo and lands in typed longhands
+- `animation-*` parsed and typed in `spiders-scene`
+- `animation` shorthand expands through Stylo and lands in typed longhands
+- `@keyframes` compiled and retained in the scene stylesheet model
+- runtime transition and animation scheduling in `spiders-wm` for `opacity`
+- property interpolation and application in `spiders-wm` for `opacity` on compositor window borders and titlebars
+- shared transform transition and animation sampling in `spiders-scene`
+- wm-side translation consumption for window positions and titlebar offsets
+- broader property interpolation and application in `spiders-wm` (TODO)
 - Workspace transition selectors (TODO)
 
 ## Order

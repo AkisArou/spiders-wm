@@ -5,7 +5,9 @@ use super::stylo_adapter::{
 };
 
 use super::compile::{compile_declaration, compile_declaration_from_value, CssValueError};
-use super::compiled::{CompiledStyleRule, CompiledStyleSheet};
+use super::compiled::{
+    CompiledKeyframeStep, CompiledKeyframesRule, CompiledStyleRule, CompiledStyleSheet,
+};
 use super::grid::parse_grid_fallback_declarations;
 use super::parse_values::{CssValue, ParsedDeclaration};
 use super::tokenizer::parse_value_tokens;
@@ -140,7 +142,7 @@ pub(super) const SUPPORTED_PROPERTIES: &[&str] = &[
 struct LayoutCssRuleParser;
 
 pub fn parse_stylesheet(input: &str) -> Result<CompiledStyleSheet, CssParseError> {
-    let sanitized = strip_ignored_at_rules(input);
+    let (sanitized, keyframes) = extract_keyframes_and_strip(input)?;
     let mut input_buf = ParserInput::new(&sanitized);
     let mut parser_input = Parser::new(&mut input_buf);
     let mut parser = LayoutCssRuleParser;
@@ -162,7 +164,7 @@ pub fn parse_stylesheet(input: &str) -> Result<CompiledStyleSheet, CssParseError
         }
     }
 
-    Ok(CompiledStyleSheet { rules })
+    Ok(CompiledStyleSheet { rules, keyframes })
 }
 
 impl<'i> AtRuleParser<'i> for LayoutCssRuleParser {
@@ -233,91 +235,11 @@ impl<'i> QualifiedRuleParser<'i> for LayoutCssRuleParser {
             None,
             None,
         );
-
         let block_start = input.state();
-        let block = parse_property_declaration_list(&context, input, &[]);
-        let mut declarations = Vec::new();
-        for declaration in block.normal_declaration_iter() {
-            let property = declaration.id().to_css_string();
-            if !SUPPORTED_PROPERTIES.contains(&property.as_str()) {
-                if is_ignored_background_expansion(&property) {
-                    continue;
-                }
-                return Err(input.new_custom_error(CssParseError::UnsupportedProperty { property }));
-            }
-
-            if let Some(compiled) = super::stylo_compile::compile_stylo_declaration(declaration)
-                .map_err(|error| input.new_custom_error(error))?
-            {
-                declarations.push(compiled);
-                continue;
-            }
-
-            let mut value = String::new();
-            declaration.to_css(&mut value).map_err(|_| {
-                input.new_custom_error(CssParseError::InvalidSyntax { line: 1, column: 1 })
-            })?;
-
-            let parsed = ParsedDeclaration {
-                property,
-                value: CssValue {
-                    text: value.clone(),
-                    components: parse_value_tokens(&value)
-                        .map_err(|error| input.new_custom_error(error))?,
-                },
-            };
-            let compiled = compile_declaration(&parsed)
-                .map_err(|error| input.new_custom_error(CssParseError::CssValue(error)))?;
-            declarations.push(compiled);
-        }
-
+        let _ = parse_property_declaration_list(&context, input, &[]);
         let raw_block = input.slice_from(block_start.position()).trim().to_string();
-        if raw_block.contains("appearance:")
-            && !declarations
-                .iter()
-                .any(|declaration| matches!(declaration, super::compile::CompiledDeclaration::Appearance(_)))
-        {
-            let fallback = parse_grid_fallback_declarations(&raw_block)
-                .map_err(|error| input.new_custom_error(error))?;
-            declarations.extend(
-                fallback.into_iter().filter(|declaration| {
-                    matches!(declaration, super::compile::CompiledDeclaration::Appearance(_))
-                }),
-            );
-        }
-
-        if raw_block.contains("background:")
-            && !declarations
-                .iter()
-                .any(|declaration| matches!(declaration, super::compile::CompiledDeclaration::Background(_)))
-        {
-            let fallback = parse_grid_fallback_declarations(&raw_block)
-                .map_err(|error| input.new_custom_error(error))?;
-            declarations.extend(
-                fallback.into_iter().filter(|declaration| {
-                    matches!(declaration, super::compile::CompiledDeclaration::Background(_))
-                }),
-            );
-        }
-
-        if raw_block.contains("border-color:")
-            && !declarations
-                .iter()
-                .any(|declaration| matches!(declaration, super::compile::CompiledDeclaration::BorderColor(_)))
-        {
-            append_raw_property_fallbacks(&raw_block, &mut declarations, &["border-color"])
-                .map_err(|error| input.new_custom_error(error))?;
-        }
-
-        append_raw_property_fallbacks(&raw_block, &mut declarations, &["border-radius", "box-shadow", "animation", "transition"])
+        let declarations = compile_declarations_from_raw_block(&raw_block)
             .map_err(|error| input.new_custom_error(error))?;
-
-        if declarations.is_empty() {
-            if needs_grid_fallback(&raw_block) {
-                declarations = parse_grid_fallback_declarations(&raw_block)
-                    .map_err(|error| input.new_custom_error(error))?;
-            }
-        }
 
         let target_pseudo = selector_target_pseudo(&prelude.source);
         let pseudo_base_selectors = selector_base_selectors(&target_pseudo, &prelude.source)
@@ -332,37 +254,192 @@ impl<'i> QualifiedRuleParser<'i> for LayoutCssRuleParser {
     }
 }
 
-fn strip_ignored_at_rules(input: &str) -> String {
+fn extract_keyframes_and_strip(
+    input: &str,
+) -> Result<(String, Vec<CompiledKeyframesRule>), CssParseError> {
     let mut result = String::with_capacity(input.len());
+    let mut keyframes = Vec::new();
     let mut index = 0;
 
     while let Some(relative) = input[index..].find("@keyframes") {
         let start = index + relative;
         result.push_str(&input[index..start]);
 
-        let Some(open_brace_offset) = input[start..].find('{') else {
-            break;
-        };
-        let mut depth = 0i32;
-        let mut end = start + open_brace_offset;
-        for (offset, ch) in input[end..].char_indices() {
-            match ch {
-                '{' => depth += 1,
-                '}' => {
-                    depth -= 1;
-                    if depth == 0 {
-                        end += offset + ch.len_utf8();
-                        break;
-                    }
-                }
-                _ => {}
-            }
+        let open_brace_offset = input[start..]
+            .find('{')
+            .ok_or(CssParseError::InvalidSyntax { line: 1, column: 1 })?;
+        let open_brace = start + open_brace_offset;
+        let end = matching_brace_end(input, open_brace)
+            .ok_or(CssParseError::InvalidSyntax { line: 1, column: 1 })?;
+        let name = input[start + "@keyframes".len()..open_brace]
+            .trim()
+            .trim_matches('"')
+            .trim_matches('\'')
+            .to_string();
+        if name.is_empty() {
+            return Err(CssParseError::InvalidSyntax { line: 1, column: 1 });
         }
+        let body = &input[open_brace + 1..end - 1];
+        keyframes.push(parse_keyframes_rule(name, body)?);
         index = end;
     }
 
     result.push_str(&input[index..]);
-    result
+
+    Ok((result, keyframes))
+}
+
+fn compile_declarations_from_raw_block(
+    raw_block: &str,
+) -> Result<Vec<super::compile::CompiledDeclaration>, CssParseError> {
+    let url_data = UrlExtraData(url::Url::parse("about:blank").unwrap().into());
+    let context = ParserContext::new(
+        Origin::Author,
+        &url_data,
+        Some(CssRuleType::Style),
+        ParsingMode::DEFAULT,
+        style::context::QuirksMode::NoQuirks,
+        Default::default(),
+        None,
+        None,
+    );
+
+    let mut input_buf = ParserInput::new(raw_block);
+    let mut parser = Parser::new(&mut input_buf);
+    let block = parse_property_declaration_list(&context, &mut parser, &[]);
+    let mut declarations = Vec::new();
+    for declaration in block.normal_declaration_iter() {
+        let property = declaration.id().to_css_string();
+        if !SUPPORTED_PROPERTIES.contains(&property.as_str()) {
+            if is_ignored_background_expansion(&property) {
+                continue;
+            }
+            return Err(CssParseError::UnsupportedProperty { property });
+        }
+
+        if let Some(compiled) = super::stylo_compile::compile_stylo_declaration(declaration)? {
+            declarations.push(compiled);
+            continue;
+        }
+
+        let mut value = String::new();
+        declaration.to_css(&mut value).map_err(|_| CssParseError::InvalidSyntax {
+            line: 1,
+            column: 1,
+        })?;
+
+        let parsed = ParsedDeclaration {
+            property,
+            value: CssValue {
+                text: value.clone(),
+                components: parse_value_tokens(&value)?,
+            },
+        };
+        let compiled = compile_declaration(&parsed).map_err(CssParseError::CssValue)?;
+        declarations.push(compiled);
+    }
+
+    if raw_block.contains("appearance:")
+        && !declarations
+            .iter()
+            .any(|declaration| matches!(declaration, super::compile::CompiledDeclaration::Appearance(_)))
+    {
+        let fallback = parse_grid_fallback_declarations(raw_block)?;
+        declarations.extend(
+            fallback.into_iter().filter(|declaration| {
+                matches!(declaration, super::compile::CompiledDeclaration::Appearance(_))
+            }),
+        );
+    }
+
+    if raw_block.contains("background:")
+        && !declarations
+            .iter()
+            .any(|declaration| matches!(declaration, super::compile::CompiledDeclaration::Background(_)))
+    {
+        let fallback = parse_grid_fallback_declarations(raw_block)?;
+        declarations.extend(
+            fallback.into_iter().filter(|declaration| {
+                matches!(declaration, super::compile::CompiledDeclaration::Background(_))
+            }),
+        );
+    }
+
+    if raw_block.contains("border-color:")
+        && !declarations
+            .iter()
+            .any(|declaration| matches!(declaration, super::compile::CompiledDeclaration::BorderColor(_)))
+    {
+        append_raw_property_fallbacks(raw_block, &mut declarations, &["border-color"])?;
+    }
+
+    append_raw_property_fallbacks(raw_block, &mut declarations, &["border-radius", "box-shadow"])?;
+
+    if declarations.is_empty() && needs_grid_fallback(raw_block) {
+        declarations = parse_grid_fallback_declarations(raw_block)?;
+    }
+
+    Ok(declarations)
+}
+
+fn parse_keyframes_rule(
+    name: String,
+    body: &str,
+) -> Result<CompiledKeyframesRule, CssParseError> {
+    let mut steps = Vec::new();
+    let mut index = 0;
+
+    while let Some(relative) = body[index..].find('{') {
+        let block_start = index + relative;
+        let selector_text = body[index..block_start].trim();
+        let block_end = matching_brace_end(body, block_start)
+            .ok_or(CssParseError::InvalidSyntax { line: 1, column: 1 })?;
+        let declarations = compile_declarations_from_raw_block(&body[block_start + 1..block_end - 1])?;
+
+        for selector in selector_text.split(',').map(str::trim).filter(|selector| !selector.is_empty()) {
+            steps.push(CompiledKeyframeStep {
+                offset: parse_keyframe_offset(selector)?,
+                declarations: declarations.clone(),
+            });
+        }
+
+        index = block_end;
+    }
+
+    steps.sort_by(|left, right| left.offset.partial_cmp(&right.offset).unwrap_or(std::cmp::Ordering::Equal));
+
+    Ok(CompiledKeyframesRule { name, steps })
+}
+
+fn parse_keyframe_offset(selector: &str) -> Result<f32, CssParseError> {
+    match selector {
+        "from" => Ok(0.0),
+        "to" => Ok(1.0),
+        _ => selector
+            .strip_suffix('%')
+            .and_then(|value| value.trim().parse::<f32>().ok())
+            .map(|value| (value / 100.0).clamp(0.0, 1.0))
+            .ok_or(CssParseError::UnsupportedSelector {
+                selector: selector.to_string(),
+            }),
+    }
+}
+
+fn matching_brace_end(input: &str, open_brace: usize) -> Option<usize> {
+    let mut depth = 0i32;
+    for (offset, ch) in input[open_brace..].char_indices() {
+        match ch {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(open_brace + offset + ch.len_utf8());
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 fn selector_target_pseudo(selector: &str) -> Option<LayoutPseudoElement> {
@@ -425,8 +502,6 @@ fn append_raw_property_fallbacks(
             ("border-radius", super::compile::CompiledDeclaration::BorderRadius(_)) => true,
             ("border-color", super::compile::CompiledDeclaration::BorderColor(_)) => true,
             ("box-shadow", super::compile::CompiledDeclaration::BoxShadow(_)) => true,
-            ("animation", super::compile::CompiledDeclaration::Animation(_)) => true,
-            ("transition", super::compile::CompiledDeclaration::Transition(_)) => true,
             _ => false,
         });
         if already_present {

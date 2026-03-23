@@ -75,6 +75,107 @@ pub struct BoxShadowValue {
 
 pub type FontFamilyValue = Vec<String>;
 
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct TranslateTransformValue {
+    pub x: LengthPercentage,
+    pub y: LengthPercentage,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct ScaleTransformValue {
+    pub x: f32,
+    pub y: f32,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum TransformOperationValue {
+    Translate(TranslateTransformValue),
+    Scale(ScaleTransformValue),
+}
+
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct TransformValue {
+    pub operations: Vec<TransformOperationValue>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MotionPropertyValue {
+    All,
+    Named(String),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct MotionTimeValue(pub f32);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MotionEasingKeywordValue {
+    Linear,
+    Ease,
+    EaseIn,
+    EaseOut,
+    EaseInOut,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum StepPositionValue {
+    JumpStart,
+    JumpEnd,
+    JumpNone,
+    JumpBoth,
+    Start,
+    End,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct LinearStopValue {
+    pub input: f32,
+    pub output: f32,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum MotionEasingValue {
+    Keyword(MotionEasingKeywordValue),
+    CubicBezier {
+        x1: f32,
+        y1: f32,
+        x2: f32,
+        y2: f32,
+    },
+    Steps {
+        count: u16,
+        position: StepPositionValue,
+    },
+    LinearFunction(Vec<LinearStopValue>),
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum AnimationIterationCountValue {
+    Number(f32),
+    Infinite,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AnimationDirectionValue {
+    Normal,
+    Reverse,
+    Alternate,
+    AlternateReverse,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AnimationFillModeValue {
+    None,
+    Forwards,
+    Backwards,
+    Both,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AnimationPlayStateValue {
+    Running,
+    Paused,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BorderRadiusValue {
     pub top_left: i32,
@@ -258,18 +359,25 @@ pub struct ComputedStyle {
     pub border_radius: Option<BorderRadiusValue>,
     pub box_shadow: Option<Vec<BoxShadowValue>>,
     pub backdrop_filter: Option<String>,
-    pub transform: Option<String>,
+    pub transform: Option<TransformValue>,
     pub text_align: Option<TextAlignValue>,
     pub text_transform: Option<TextTransformValue>,
     pub font_family: Option<FontFamilyValue>,
     pub font_size: Option<LengthPercentage>,
     pub font_weight: Option<FontWeightValue>,
     pub letter_spacing: Option<f32>,
-    pub animation: Option<String>,
-    pub transition: Option<String>,
-    pub transition_property: Option<String>,
-    pub transition_duration: Option<String>,
-    pub transition_timing_function: Option<String>,
+    pub animation_name: Option<Vec<String>>,
+    pub animation_duration: Option<Vec<MotionTimeValue>>,
+    pub animation_timing_function: Option<Vec<MotionEasingValue>>,
+    pub animation_delay: Option<Vec<MotionTimeValue>>,
+    pub animation_iteration_count: Option<Vec<AnimationIterationCountValue>>,
+    pub animation_direction: Option<Vec<AnimationDirectionValue>>,
+    pub animation_fill_mode: Option<Vec<AnimationFillModeValue>>,
+    pub animation_play_state: Option<Vec<AnimationPlayStateValue>>,
+    pub transition_property: Option<Vec<MotionPropertyValue>>,
+    pub transition_duration: Option<Vec<MotionTimeValue>>,
+    pub transition_timing_function: Option<Vec<MotionEasingValue>>,
+    pub transition_delay: Option<Vec<MotionTimeValue>>,
     pub flex_direction: Option<FlexDirectionValue>,
     pub flex_wrap: Option<FlexWrapValue>,
     pub flex_grow: Option<f32>,

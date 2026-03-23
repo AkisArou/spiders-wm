@@ -425,6 +425,8 @@ mod tests {
             &TitlebarPlan {
                 window_id: spiders_tree::WindowId("1".to_string()),
                 height: 10,
+                offset_x: 0,
+                offset_y: 0,
                 background: spiders_scene::ColorValue {
                     red: 0,
                     green: 0,
@@ -505,6 +507,8 @@ mod tests {
             &TitlebarPlan {
                 window_id: spiders_tree::WindowId("1".to_string()),
                 height: 10,
+                offset_x: 0,
+                offset_y: 0,
                 background: spiders_scene::ColorValue {
                     red: 255,
                     green: 0,
@@ -554,6 +558,8 @@ mod tests {
             &TitlebarPlan {
                 window_id: spiders_tree::WindowId("1".to_string()),
                 height: 10,
+                offset_x: 0,
+                offset_y: 0,
                 background: spiders_scene::ColorValue {
                     red: 0,
                     green: 0,
@@ -616,6 +622,8 @@ mod tests {
             &TitlebarPlan {
                 window_id: spiders_tree::WindowId("1".to_string()),
                 height: 10,
+                offset_x: 0,
+                offset_y: 0,
                 background: spiders_scene::ColorValue {
                     red: 0,
                     green: 0,

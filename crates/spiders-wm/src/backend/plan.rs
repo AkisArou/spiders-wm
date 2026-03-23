@@ -62,6 +62,8 @@ pub struct AppearancePlan {
 pub struct TitlebarPlan {
     pub window_id: WindowId,
     pub height: i32,
+    pub offset_x: i32,
+    pub offset_y: i32,
     pub background: ColorValue,
     pub border_bottom_width: i32,
     pub border_bottom_color: ColorValue,

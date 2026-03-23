@@ -4,7 +4,7 @@ use std::sync::{Mutex, OnceLock};
 use spiders_config::authoring_layout::AuthoringLayoutService;
 use spiders_config::model::Config;
 use spiders_scene::ast::ValidatedLayoutTree;
-use spiders_scene::{LayoutSnapshotNode, SceneRequest};
+use spiders_scene::{CompiledKeyframesRule, LayoutSnapshotNode, SceneRequest};
 use spiders_scene::pipeline::SceneCache;
 use spiders_tree::{LayoutNodeMeta, RemainingTake, ResolvedLayoutNode, SlotTake, SourceLayoutNode, WindowId, WorkspaceId};
 use spiders_shared::runtime::prepared_layout::PreparedStylesheet;
@@ -14,6 +14,18 @@ use spiders_runtime_js::DefaultLayoutRuntime;
 use tracing::{debug, warn};
 
 use crate::model::WmState;
+
+#[derive(Debug, Clone)]
+pub struct ComputedLayoutSnapshot {
+    pub root: LayoutSnapshotNode,
+    pub keyframes: Vec<CompiledKeyframesRule>,
+}
+
+impl ComputedLayoutSnapshot {
+    pub fn find_by_window_id(&self, window_id: &WindowId) -> Option<&LayoutSnapshotNode> {
+        self.root.find_by_window_id(window_id)
+    }
+}
 
 const FALLBACK_HORIZONTAL_STYLESHEET: &str = "workspace { display: flex; flex-direction: row; width: 100%; height: 100%; } group { display: flex; flex-direction: row; width: 100%; height: 100%; } window { flex-grow: 1; flex-basis: 0; height: 100%; }";
 
@@ -165,7 +177,7 @@ pub fn compute_layout_snapshot(
     config: &Config,
     state: &WmState,
     window_ids: &[WindowId],
-) -> Option<LayoutSnapshotNode> {
+) -> Option<ComputedLayoutSnapshot> {
     let mut snapshot = state.as_state_snapshot();
     let selected_layout = selected_layout_name(config, &snapshot);
     let current_workspace_id = snapshot.current_workspace_id.clone();
@@ -284,6 +296,8 @@ pub fn compute_layout_snapshot(
         });
     }
 
+    let layout_name = request.layout_name.as_deref().unwrap_or("__default__").to_string();
+
     match scene_cache.compute_layout_from_request(&request) {
         Ok(response) => {
             debug!(
@@ -292,7 +306,10 @@ pub fn compute_layout_snapshot(
                 window_count = window_ids.len(),
                 "computed layout snapshot"
             );
-            Some(response.root)
+            Some(ComputedLayoutSnapshot {
+                root: response.root,
+                keyframes: scene_cache.keyframes_for_layout(&layout_name),
+            })
         }
         Err(error) => {
             warn!(
@@ -332,7 +349,10 @@ pub fn compute_layout_snapshot(
                             window_count = window_ids.len(),
                             "computed layout snapshot after dropping global stylesheet"
                         );
-                        response.root
+                        ComputedLayoutSnapshot {
+                            root: response.root,
+                            keyframes: scene_cache.keyframes_for_layout(&layout_name),
+                        }
                     })
                     .map_err(|fallback_error| {
                         warn!(

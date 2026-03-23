@@ -5,15 +5,33 @@ use super::grid::*;
 use super::parse_values::*;
 
 use crate::style::{
-    AlignmentValue, AppearanceValue, BorderRadiusValue, BorderStyleValue, BoxEdges, BoxShadowValue,
-    BoxSizingValue, ColorValue, ContentAlignmentValue, Display, FlexDirectionValue,
-    FlexWrapValue, FontFamilyValue, FontWeightValue, GridAutoFlow, GridPlacementValue,
-    GridTemplate, GridTemplateArea, GridTrackValue, LengthPercentage, Line, OverflowValue,
-    PositionValue, Size2, SizeValue, TextAlignValue, TextTransformValue,
+    AlignmentValue, AnimationDirectionValue, AnimationFillModeValue,
+    AnimationIterationCountValue, AnimationPlayStateValue, AppearanceValue, BorderRadiusValue,
+    BorderStyleValue, BoxEdges, BoxShadowValue, BoxSizingValue, ColorValue,
+    ContentAlignmentValue, Display, FlexDirectionValue, FlexWrapValue, FontFamilyValue,
+    FontWeightValue, GridAutoFlow, GridPlacementValue, GridTemplate, GridTemplateArea,
+    GridTrackValue, LengthPercentage, Line, LinearStopValue, MotionEasingKeywordValue,
+    MotionEasingValue, MotionPropertyValue, MotionTimeValue, OverflowValue, PositionValue,
+    ScaleTransformValue, Size2, SizeValue, StepPositionValue, TextAlignValue,
+    TextTransformValue, TransformOperationValue, TransformValue, TranslateTransformValue,
 };
 use style::parser::{Parse as StyloParse, ParserContext};
 use style::stylesheets::{CssRuleType, Origin, UrlExtraData};
+use style::values::computed::easing::TimingFunction as ComputedTimingFunction;
+use style::values::generics::easing::{StepPosition as StyloStepPosition, TimingKeyword};
+use style::values::specified::animation::{
+    AnimationDirection as StyloAnimationDirection,
+    AnimationDuration as StyloAnimationDuration,
+    AnimationFillMode as StyloAnimationFillMode,
+    AnimationIterationCount as StyloAnimationIterationCount,
+    AnimationName as StyloAnimationName,
+    AnimationPlayState as StyloAnimationPlayState,
+    TransitionProperty as StyloTransitionProperty,
+};
 use style::values::specified::effects::BoxShadow as StyloBoxShadow;
+use style::values::specified::easing::TimingFunction as StyloTimingFunction;
+use style::values::specified::Time as StyloTime;
+use style_traits::values::ToCss;
 use style_traits::ParsingMode;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -47,18 +65,25 @@ pub enum CompiledDeclaration {
     BorderRadius(BorderRadiusValue),
     BoxShadow(Vec<BoxShadowValue>),
     BackdropFilter(String),
-    Transform(String),
+    Transform(TransformValue),
     TextAlign(TextAlignValue),
     TextTransform(TextTransformValue),
     FontFamily(FontFamilyValue),
     FontSize(LengthPercentage),
     FontWeight(FontWeightValue),
     LetterSpacing(f32),
-    Animation(String),
-    Transition(String),
-    TransitionProperty(String),
-    TransitionDuration(String),
-    TransitionTimingFunction(String),
+    AnimationName(Vec<String>),
+    AnimationDuration(Vec<MotionTimeValue>),
+    AnimationTimingFunction(Vec<MotionEasingValue>),
+    AnimationDelay(Vec<MotionTimeValue>),
+    AnimationIterationCount(Vec<AnimationIterationCountValue>),
+    AnimationDirection(Vec<AnimationDirectionValue>),
+    AnimationFillMode(Vec<AnimationFillModeValue>),
+    AnimationPlayState(Vec<AnimationPlayStateValue>),
+    TransitionProperty(Vec<MotionPropertyValue>),
+    TransitionDuration(Vec<MotionTimeValue>),
+    TransitionTimingFunction(Vec<MotionEasingValue>),
+    TransitionDelay(Vec<MotionTimeValue>),
     FlexDirection(FlexDirectionValue),
     FlexWrap(FlexWrapValue),
     FlexGrow(f32),
@@ -178,7 +203,7 @@ pub fn compile_declaration_from_value(
         "backdrop-filter" => Ok(CompiledDeclaration::BackdropFilter(parse_raw_text_direct(
             property, value,
         )?)),
-        "transform" => Ok(CompiledDeclaration::Transform(parse_raw_text_direct(
+        "transform" => Ok(CompiledDeclaration::Transform(parse_transform_direct(
             property, value,
         )?)),
         "text-align" => Ok(CompiledDeclaration::TextAlign(parse_text_align_direct(
@@ -200,30 +225,45 @@ pub fn compile_declaration_from_value(
         "letter-spacing" => Ok(CompiledDeclaration::LetterSpacing(
             parse_letter_spacing_direct(property, value)?,
         )),
-        "animation" => Ok(CompiledDeclaration::Animation(parse_raw_text_direct(
+        "animation" => Ok(CompiledDeclaration::Ignored),
+        "animation-name" => Ok(CompiledDeclaration::AnimationName(parse_animation_name_direct(
             property, value,
         )?)),
-        "animation-name"
-        | "animation-duration"
-        | "animation-timing-function"
-        | "animation-delay"
-        | "animation-iteration-count"
-        | "animation-direction"
-        | "animation-fill-mode"
-        | "animation-play-state" => Ok(CompiledDeclaration::Ignored),
-        "transition" => Ok(CompiledDeclaration::Transition(parse_raw_text_direct(
+        "animation-duration" => Ok(CompiledDeclaration::AnimationDuration(
+            parse_animation_duration_direct(property, value)?,
+        )),
+        "animation-timing-function" => Ok(CompiledDeclaration::AnimationTimingFunction(
+            parse_timing_function_list_direct(property, value)?,
+        )),
+        "animation-delay" => Ok(CompiledDeclaration::AnimationDelay(parse_time_list_direct(
             property, value,
         )?)),
-        "transition-property" => Ok(CompiledDeclaration::TransitionProperty(parse_raw_text_direct(
+        "animation-iteration-count" => Ok(CompiledDeclaration::AnimationIterationCount(
+            parse_animation_iteration_count_direct(property, value)?,
+        )),
+        "animation-direction" => Ok(CompiledDeclaration::AnimationDirection(
+            parse_animation_direction_direct(property, value)?,
+        )),
+        "animation-fill-mode" => Ok(CompiledDeclaration::AnimationFillMode(
+            parse_animation_fill_mode_direct(property, value)?,
+        )),
+        "animation-play-state" => Ok(CompiledDeclaration::AnimationPlayState(
+            parse_animation_play_state_direct(property, value)?,
+        )),
+        "transition" => Ok(CompiledDeclaration::Ignored),
+        "transition-property" => Ok(CompiledDeclaration::TransitionProperty(
+            parse_transition_property_direct(property, value)?,
+        )),
+        "transition-duration" => Ok(CompiledDeclaration::TransitionDuration(
+            parse_non_negative_time_list_direct(property, value)?,
+        )),
+        "transition-timing-function" => Ok(CompiledDeclaration::TransitionTimingFunction(
+            parse_timing_function_list_direct(property, value)?,
+        )),
+        "transition-delay" => Ok(CompiledDeclaration::TransitionDelay(parse_time_list_direct(
             property, value,
         )?)),
-        "transition-duration" => Ok(CompiledDeclaration::TransitionDuration(parse_raw_text_direct(
-            property, value,
-        )?)),
-        "transition-timing-function" => Ok(CompiledDeclaration::TransitionTimingFunction(parse_raw_text_direct(
-            property, value,
-        )?)),
-        "transition-delay" | "transition-behavior" => Ok(CompiledDeclaration::Ignored),
+        "transition-behavior" => Ok(CompiledDeclaration::Ignored),
         "flex-direction" => Ok(CompiledDeclaration::FlexDirection(
             parse_flex_direction_direct(property, value)?,
         )),
@@ -557,6 +597,596 @@ fn parse_raw_text_direct(property: &str, value: &CssValue) -> Result<String, Css
     }
 }
 
+fn parse_transform_direct(property: &str, value: &CssValue) -> Result<TransformValue, CssValueError> {
+    let text = value.text.trim();
+    if text.is_empty() {
+        return Err(CssValueError::UnsupportedValue {
+            property: property.to_string(),
+            value: value.text.clone(),
+        });
+    }
+
+    if text.eq_ignore_ascii_case("none") {
+        return Ok(TransformValue {
+            operations: Vec::new(),
+        });
+    }
+
+    let mut operations = Vec::new();
+    for component in &value.components {
+        let CssValueToken::Function(function) = component else {
+            continue;
+        };
+
+        let args = non_whitespace_components(&function.value);
+        match function.name.to_ascii_lowercase().as_str() {
+            "translate" => operations.push(TransformOperationValue::Translate(
+                parse_translate_function_args(property, value, &args)?,
+            )),
+            "translatex" => operations.push(TransformOperationValue::Translate(
+                TranslateTransformValue {
+                    x: parse_transform_length_percentage_arg(property, value, args.first())?,
+                    y: LengthPercentage::Px(0.0),
+                },
+            )),
+            "translatey" => operations.push(TransformOperationValue::Translate(
+                TranslateTransformValue {
+                    x: LengthPercentage::Px(0.0),
+                    y: parse_transform_length_percentage_arg(property, value, args.first())?,
+                },
+            )),
+            "scale" => operations.push(TransformOperationValue::Scale(
+                parse_scale_function_args(property, value, &args)?,
+            )),
+            "scalex" => operations.push(TransformOperationValue::Scale(ScaleTransformValue {
+                x: parse_transform_number_arg(property, value, args.first())?,
+                y: 1.0,
+            })),
+            "scaley" => operations.push(TransformOperationValue::Scale(ScaleTransformValue {
+                x: 1.0,
+                y: parse_transform_number_arg(property, value, args.first())?,
+            })),
+            _ => {
+                return Err(CssValueError::UnsupportedValue {
+                    property: property.to_string(),
+                    value: value.text.clone(),
+                })
+            }
+        }
+    }
+
+    if operations.is_empty() {
+        return Err(CssValueError::UnsupportedValue {
+            property: property.to_string(),
+            value: value.text.clone(),
+        });
+    }
+
+    Ok(TransformValue { operations })
+}
+
+fn parse_translate_function_args(
+    property: &str,
+    value: &CssValue,
+    args: &[CssValueToken],
+) -> Result<TranslateTransformValue, CssValueError> {
+    let parts = split_transform_function_args(args);
+    if parts.is_empty() || parts.len() > 2 {
+        return Err(CssValueError::UnsupportedValue {
+            property: property.to_string(),
+            value: value.text.clone(),
+        });
+    }
+
+    let x = parse_transform_length_percentage_arg(
+        property,
+        value,
+        parts.first().and_then(|part| part.first()),
+    )?;
+    let y = match parts.get(1).and_then(|part| part.first()) {
+        Some(token) => parse_transform_length_percentage_arg(property, value, Some(token))?,
+        None => LengthPercentage::Px(0.0),
+    };
+
+    Ok(TranslateTransformValue { x, y })
+}
+
+fn parse_scale_function_args(
+    property: &str,
+    value: &CssValue,
+    args: &[CssValueToken],
+) -> Result<ScaleTransformValue, CssValueError> {
+    let parts = split_transform_function_args(args);
+    if parts.is_empty() || parts.len() > 2 {
+        return Err(CssValueError::UnsupportedValue {
+            property: property.to_string(),
+            value: value.text.clone(),
+        });
+    }
+
+    let x = parse_transform_number_arg(property, value, parts.first().and_then(|part| part.first()))?;
+    let y = match parts.get(1).and_then(|part| part.first()) {
+        Some(token) => parse_transform_number_arg(property, value, Some(token))?,
+        None => x,
+    };
+
+    Ok(ScaleTransformValue { x, y })
+}
+
+fn parse_transform_length_percentage_arg(
+    property: &str,
+    value: &CssValue,
+    token: Option<&CssValueToken>,
+) -> Result<LengthPercentage, CssValueError> {
+    match token {
+        Some(CssValueToken::Dimension(dimension)) if dimension.unit.eq_ignore_ascii_case("px") => {
+            Ok(LengthPercentage::Px(dimension.value))
+        }
+        Some(CssValueToken::Percentage(percent)) => Ok(LengthPercentage::Percent(*percent)),
+        Some(CssValueToken::Number(number)) if *number == 0.0 => Ok(LengthPercentage::Px(0.0)),
+        Some(CssValueToken::Integer(integer)) if *integer == 0 => Ok(LengthPercentage::Px(0.0)),
+        _ => Err(CssValueError::UnsupportedValue {
+            property: property.to_string(),
+            value: value.text.clone(),
+        }),
+    }
+}
+
+fn parse_transform_number_arg(
+    property: &str,
+    value: &CssValue,
+    token: Option<&CssValueToken>,
+) -> Result<f32, CssValueError> {
+    match token {
+        Some(CssValueToken::Number(number)) => Ok(*number),
+        Some(CssValueToken::Integer(integer)) => Ok(*integer as f32),
+        _ => Err(CssValueError::UnsupportedValue {
+            property: property.to_string(),
+            value: value.text.clone(),
+        }),
+    }
+}
+
+fn non_whitespace_components(tokens: &[CssValueToken]) -> Vec<CssValueToken> {
+    tokens
+        .iter()
+        .filter(|token| !matches!(token, CssValueToken::Whitespace))
+        .cloned()
+        .collect()
+}
+
+fn split_transform_function_args(tokens: &[CssValueToken]) -> Vec<Vec<CssValueToken>> {
+    let mut parts = Vec::new();
+    let mut current = Vec::new();
+
+    for token in tokens {
+        match token {
+            CssValueToken::Delimiter(CssDelimiter::Comma) => {
+                if !current.is_empty() {
+                    parts.push(std::mem::take(&mut current));
+                }
+            }
+            _ => current.push(token.clone()),
+        }
+    }
+
+    if !current.is_empty() {
+        parts.push(current);
+    }
+
+    parts
+}
+
+fn parse_transition_property_direct(
+    property: &str,
+    value: &CssValue,
+) -> Result<Vec<MotionPropertyValue>, CssValueError> {
+    let text = value.text.trim();
+    if text.is_empty() {
+        return Err(CssValueError::UnsupportedValue {
+            property: property.to_string(),
+            value: value.text.clone(),
+        });
+    }
+
+    let url_data = UrlExtraData(url::Url::parse("about:blank").unwrap().into());
+    let context = stylo_parser_context(&url_data);
+    let mut input = ParserInput::new(text);
+    let mut parser = Parser::new(&mut input);
+    let parsed = parser
+        .parse_comma_separated(|input| StyloTransitionProperty::parse(&context, input))
+        .map_err(|_| CssValueError::UnsupportedValue {
+            property: property.to_string(),
+            value: value.text.clone(),
+        })?;
+    parser.expect_exhausted().map_err(|_| CssValueError::UnsupportedValue {
+        property: property.to_string(),
+        value: value.text.clone(),
+    })?;
+
+    Ok(parsed
+        .into_iter()
+        .map(|item| {
+            if item.is_all() {
+                MotionPropertyValue::All
+            } else {
+                MotionPropertyValue::Named(item.to_css_string())
+            }
+        })
+        .collect())
+}
+
+fn parse_animation_name_direct(
+    property: &str,
+    value: &CssValue,
+) -> Result<Vec<String>, CssValueError> {
+    let text = value.text.trim();
+    if text.is_empty() {
+        return Err(CssValueError::UnsupportedValue {
+            property: property.to_string(),
+            value: value.text.clone(),
+        });
+    }
+
+    let url_data = UrlExtraData(url::Url::parse("about:blank").unwrap().into());
+    let context = stylo_parser_context(&url_data);
+    let mut input = ParserInput::new(text);
+    let mut parser = Parser::new(&mut input);
+    let parsed = parser
+        .parse_comma_separated(|input| StyloAnimationName::parse(&context, input))
+        .map_err(|_| CssValueError::UnsupportedValue {
+            property: property.to_string(),
+            value: value.text.clone(),
+        })?;
+    parser.expect_exhausted().map_err(|_| CssValueError::UnsupportedValue {
+        property: property.to_string(),
+        value: value.text.clone(),
+    })?;
+
+    Ok(parsed
+        .into_iter()
+        .map(|name| {
+            name.as_atom()
+                .map(|atom| atom.to_string())
+                .unwrap_or_else(|| "none".into())
+        })
+        .collect())
+}
+
+fn parse_animation_duration_direct(
+    property: &str,
+    value: &CssValue,
+) -> Result<Vec<MotionTimeValue>, CssValueError> {
+    let text = value.text.trim();
+    if text.is_empty() {
+        return Err(CssValueError::UnsupportedValue {
+            property: property.to_string(),
+            value: value.text.clone(),
+        });
+    }
+
+    let url_data = UrlExtraData(url::Url::parse("about:blank").unwrap().into());
+    let context = stylo_parser_context(&url_data);
+    let mut input = ParserInput::new(text);
+    let mut parser = Parser::new(&mut input);
+    let parsed = parser
+        .parse_comma_separated(|input| StyloAnimationDuration::parse(&context, input))
+        .map_err(|_| CssValueError::UnsupportedValue {
+            property: property.to_string(),
+            value: value.text.clone(),
+        })?;
+    parser.expect_exhausted().map_err(|_| CssValueError::UnsupportedValue {
+        property: property.to_string(),
+        value: value.text.clone(),
+    })?;
+
+    Ok(parsed
+        .into_iter()
+        .map(|item| match item {
+            StyloAnimationDuration::Auto => MotionTimeValue(0.0),
+            StyloAnimationDuration::Time(time) => motion_time_from_stylo(time),
+        })
+        .collect())
+}
+
+fn parse_timing_function_list_direct(
+    property: &str,
+    value: &CssValue,
+) -> Result<Vec<MotionEasingValue>, CssValueError> {
+    let text = value.text.trim();
+    if text.is_empty() {
+        return Err(CssValueError::UnsupportedValue {
+            property: property.to_string(),
+            value: value.text.clone(),
+        });
+    }
+
+    let url_data = UrlExtraData(url::Url::parse("about:blank").unwrap().into());
+    let context = stylo_parser_context(&url_data);
+    let mut input = ParserInput::new(text);
+    let mut parser = Parser::new(&mut input);
+    let parsed = parser
+        .parse_comma_separated(|input| StyloTimingFunction::parse(&context, input))
+        .map_err(|_| CssValueError::UnsupportedValue {
+            property: property.to_string(),
+            value: value.text.clone(),
+        })?;
+    parser.expect_exhausted().map_err(|_| CssValueError::UnsupportedValue {
+        property: property.to_string(),
+        value: value.text.clone(),
+    })?;
+
+    Ok(parsed
+        .into_iter()
+        .map(|item| timing_function_to_scene(&item.to_computed_value_without_context()))
+        .collect())
+}
+
+fn parse_non_negative_time_list_direct(
+    property: &str,
+    value: &CssValue,
+) -> Result<Vec<MotionTimeValue>, CssValueError> {
+    let text = value.text.trim();
+    if text.is_empty() {
+        return Err(CssValueError::UnsupportedValue {
+            property: property.to_string(),
+            value: value.text.clone(),
+        });
+    }
+
+    let url_data = UrlExtraData(url::Url::parse("about:blank").unwrap().into());
+    let context = stylo_parser_context(&url_data);
+    let mut input = ParserInput::new(text);
+    let mut parser = Parser::new(&mut input);
+    let parsed = parser
+        .parse_comma_separated(|input| StyloTime::parse_non_negative(&context, input))
+        .map_err(|_| CssValueError::UnsupportedValue {
+            property: property.to_string(),
+            value: value.text.clone(),
+        })?;
+    parser.expect_exhausted().map_err(|_| CssValueError::UnsupportedValue {
+        property: property.to_string(),
+        value: value.text.clone(),
+    })?;
+
+    Ok(parsed.into_iter().map(motion_time_from_stylo).collect())
+}
+
+fn parse_time_list_direct(
+    property: &str,
+    value: &CssValue,
+) -> Result<Vec<MotionTimeValue>, CssValueError> {
+    let text = value.text.trim();
+    if text.is_empty() {
+        return Err(CssValueError::UnsupportedValue {
+            property: property.to_string(),
+            value: value.text.clone(),
+        });
+    }
+
+    let url_data = UrlExtraData(url::Url::parse("about:blank").unwrap().into());
+    let context = stylo_parser_context(&url_data);
+    let mut input = ParserInput::new(text);
+    let mut parser = Parser::new(&mut input);
+    let parsed = parser
+        .parse_comma_separated(|input| StyloTime::parse(&context, input))
+        .map_err(|_| CssValueError::UnsupportedValue {
+            property: property.to_string(),
+            value: value.text.clone(),
+        })?;
+    parser.expect_exhausted().map_err(|_| CssValueError::UnsupportedValue {
+        property: property.to_string(),
+        value: value.text.clone(),
+    })?;
+
+    Ok(parsed.into_iter().map(motion_time_from_stylo).collect())
+}
+
+fn parse_animation_iteration_count_direct(
+    property: &str,
+    value: &CssValue,
+) -> Result<Vec<AnimationIterationCountValue>, CssValueError> {
+    let text = value.text.trim();
+    if text.is_empty() {
+        return Err(CssValueError::UnsupportedValue {
+            property: property.to_string(),
+            value: value.text.clone(),
+        });
+    }
+
+    let url_data = UrlExtraData(url::Url::parse("about:blank").unwrap().into());
+    let context = stylo_parser_context(&url_data);
+    let mut input = ParserInput::new(text);
+    let mut parser = Parser::new(&mut input);
+    let parsed = parser
+        .parse_comma_separated(|input| StyloAnimationIterationCount::parse(&context, input))
+        .map_err(|_| CssValueError::UnsupportedValue {
+            property: property.to_string(),
+            value: value.text.clone(),
+        })?;
+    parser.expect_exhausted().map_err(|_| CssValueError::UnsupportedValue {
+        property: property.to_string(),
+        value: value.text.clone(),
+    })?;
+
+    Ok(parsed
+        .into_iter()
+        .map(|item| match item {
+            StyloAnimationIterationCount::Number(number) => {
+                AnimationIterationCountValue::Number(number.get())
+            }
+            StyloAnimationIterationCount::Infinite => AnimationIterationCountValue::Infinite,
+        })
+        .collect())
+}
+
+fn parse_animation_direction_direct(
+    property: &str,
+    value: &CssValue,
+) -> Result<Vec<AnimationDirectionValue>, CssValueError> {
+    let text = value.text.trim();
+    if text.is_empty() {
+        return Err(CssValueError::UnsupportedValue {
+            property: property.to_string(),
+            value: value.text.clone(),
+        });
+    }
+
+    let mut input = ParserInput::new(text);
+    let mut parser = Parser::new(&mut input);
+    let parsed = parser
+        .parse_comma_separated(StyloAnimationDirection::parse)
+        .map_err(|_| CssValueError::UnsupportedValue {
+            property: property.to_string(),
+            value: value.text.clone(),
+        })?;
+    parser.expect_exhausted().map_err(|_| CssValueError::UnsupportedValue {
+        property: property.to_string(),
+        value: value.text.clone(),
+    })?;
+
+    Ok(parsed
+        .into_iter()
+        .map(|item| match item {
+            StyloAnimationDirection::Normal => AnimationDirectionValue::Normal,
+            StyloAnimationDirection::Reverse => AnimationDirectionValue::Reverse,
+            StyloAnimationDirection::Alternate => AnimationDirectionValue::Alternate,
+            StyloAnimationDirection::AlternateReverse => {
+                AnimationDirectionValue::AlternateReverse
+            }
+        })
+        .collect())
+}
+
+fn parse_animation_fill_mode_direct(
+    property: &str,
+    value: &CssValue,
+) -> Result<Vec<AnimationFillModeValue>, CssValueError> {
+    let text = value.text.trim();
+    if text.is_empty() {
+        return Err(CssValueError::UnsupportedValue {
+            property: property.to_string(),
+            value: value.text.clone(),
+        });
+    }
+
+    let mut input = ParserInput::new(text);
+    let mut parser = Parser::new(&mut input);
+    let parsed = parser
+        .parse_comma_separated(StyloAnimationFillMode::parse)
+        .map_err(|_| CssValueError::UnsupportedValue {
+            property: property.to_string(),
+            value: value.text.clone(),
+        })?;
+    parser.expect_exhausted().map_err(|_| CssValueError::UnsupportedValue {
+        property: property.to_string(),
+        value: value.text.clone(),
+    })?;
+
+    Ok(parsed
+        .into_iter()
+        .map(|item| match item {
+            StyloAnimationFillMode::None => AnimationFillModeValue::None,
+            StyloAnimationFillMode::Forwards => AnimationFillModeValue::Forwards,
+            StyloAnimationFillMode::Backwards => AnimationFillModeValue::Backwards,
+            StyloAnimationFillMode::Both => AnimationFillModeValue::Both,
+        })
+        .collect())
+}
+
+fn parse_animation_play_state_direct(
+    property: &str,
+    value: &CssValue,
+) -> Result<Vec<AnimationPlayStateValue>, CssValueError> {
+    let text = value.text.trim();
+    if text.is_empty() {
+        return Err(CssValueError::UnsupportedValue {
+            property: property.to_string(),
+            value: value.text.clone(),
+        });
+    }
+
+    let mut input = ParserInput::new(text);
+    let mut parser = Parser::new(&mut input);
+    let parsed = parser
+        .parse_comma_separated(StyloAnimationPlayState::parse)
+        .map_err(|_| CssValueError::UnsupportedValue {
+            property: property.to_string(),
+            value: value.text.clone(),
+        })?;
+    parser.expect_exhausted().map_err(|_| CssValueError::UnsupportedValue {
+        property: property.to_string(),
+        value: value.text.clone(),
+    })?;
+
+    Ok(parsed
+        .into_iter()
+        .map(|item| match item {
+            StyloAnimationPlayState::Running => AnimationPlayStateValue::Running,
+            StyloAnimationPlayState::Paused => AnimationPlayStateValue::Paused,
+        })
+        .collect())
+}
+
+fn stylo_parser_context<'a>(url_data: &'a UrlExtraData) -> ParserContext<'a> {
+    ParserContext::new(
+        Origin::Author,
+        url_data,
+        Some(CssRuleType::Style),
+        ParsingMode::DEFAULT,
+        style::context::QuirksMode::NoQuirks,
+        Default::default(),
+        None,
+        None,
+    )
+}
+
+fn motion_time_from_stylo(value: StyloTime) -> MotionTimeValue {
+    MotionTimeValue(value.seconds())
+}
+
+fn timing_function_to_scene(value: &ComputedTimingFunction) -> MotionEasingValue {
+    match value {
+        ComputedTimingFunction::Keyword(keyword) => MotionEasingValue::Keyword(match keyword {
+            TimingKeyword::Linear => MotionEasingKeywordValue::Linear,
+            TimingKeyword::Ease => MotionEasingKeywordValue::Ease,
+            TimingKeyword::EaseIn => MotionEasingKeywordValue::EaseIn,
+            TimingKeyword::EaseOut => MotionEasingKeywordValue::EaseOut,
+            TimingKeyword::EaseInOut => MotionEasingKeywordValue::EaseInOut,
+        }),
+        ComputedTimingFunction::CubicBezier { x1, y1, x2, y2 } => MotionEasingValue::CubicBezier {
+            x1: *x1,
+            y1: *y1,
+            x2: *x2,
+            y2: *y2,
+        },
+        ComputedTimingFunction::Steps(steps, position) => MotionEasingValue::Steps {
+            count: (*steps).max(1) as u16,
+            position: step_position_to_scene(*position),
+        },
+        ComputedTimingFunction::LinearFunction(function) => MotionEasingValue::LinearFunction(
+            function
+                .iter()
+                .map(|entry| LinearStopValue {
+                    input: entry.x,
+                    output: entry.y,
+                })
+                .collect(),
+        ),
+    }
+}
+
+fn step_position_to_scene(value: StyloStepPosition) -> StepPositionValue {
+    match value {
+        StyloStepPosition::JumpStart => StepPositionValue::JumpStart,
+        StyloStepPosition::JumpEnd => StepPositionValue::JumpEnd,
+        StyloStepPosition::JumpNone => StepPositionValue::JumpNone,
+        StyloStepPosition::JumpBoth => StepPositionValue::JumpBoth,
+        StyloStepPosition::Start => StepPositionValue::Start,
+        StyloStepPosition::End => StepPositionValue::End,
+    }
+}
+
 fn parse_box_shadow_direct(
     property: &str,
     value: &CssValue,
@@ -692,16 +1322,7 @@ fn split_font_family_list(font_family: &str) -> Vec<String> {
 
 fn parse_box_shadow_list(text: &str) -> Option<Vec<BoxShadowValue>> {
     let url_data = UrlExtraData(url::Url::parse("about:blank").ok()?.into());
-    let context = ParserContext::new(
-        Origin::Author,
-        &url_data,
-        Some(CssRuleType::Style),
-        ParsingMode::DEFAULT,
-        style::context::QuirksMode::NoQuirks,
-        Default::default(),
-        None,
-        None,
-    );
+    let context = stylo_parser_context(&url_data);
     let mut input = ParserInput::new(text);
     let mut parser = Parser::new(&mut input);
     let shadows = parser

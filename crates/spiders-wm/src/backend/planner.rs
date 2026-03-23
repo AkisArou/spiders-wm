@@ -1,4 +1,5 @@
 use super::*;
+use crate::backend::motion::MotionStyleScope;
 use spiders_scene::{
     AppearanceValue, BorderStyleValue, BoxEdges, ColorValue, ComputedStyle, LayoutSnapshotNode,
     FontWeightValue, LengthPercentage, SizeValue, TextAlignValue, TextTransformValue,
@@ -232,13 +233,6 @@ fn titlebar_box_shadow(style: Option<&ComputedStyle>) -> Option<Vec<spiders_scen
     .filter(|shadow| !shadow.is_empty())
 }
 
-fn style_opacity(style: Option<&ComputedStyle>) -> f32 {
-    style
-        .and_then(|style| style.opacity)
-        .unwrap_or(1.0)
-        .clamp(0.0, 1.0)
-}
-
 fn titlebar_padding(style: Option<&ComputedStyle>) -> (i32, i32, i32, i32) {
     let Some(padding) = style.and_then(|style| style.padding) else {
         return (0, 0, 0, 0);
@@ -455,10 +449,18 @@ impl RiverBackendState {
                 .filter_map(|window_id| {
                     snapshot.find_by_window_id(&window_id).map(|node| {
                         let rect = node.rect();
+                        let motion = self.resolve_motion(
+                            &window_id,
+                            MotionStyleScope::Layout,
+                            node.styles().map(|styles| &styles.layout),
+                            &snapshot.keyframes,
+                            rect.width,
+                            rect.height,
+                        );
                         RenderWindowPlan {
                             window_id,
-                            x: rect.x.round() as i32,
-                            y: rect.y.round() as i32,
+                            x: (rect.x + motion.transform.translate_x_px).round() as i32,
+                            y: (rect.y + motion.transform.translate_y_px).round() as i32,
                             width: rect.width.round() as i32,
                             height: rect.height.round() as i32,
                         }
@@ -542,11 +544,18 @@ impl RiverBackendState {
 
                 if let Some(snapshot) = snapshot.as_ref()
                     && let Some(node) = snapshot.find_by_window_id(&border.window_id)
-                    && let Some(opacity) = node.styles().and_then(|styles| styles.layout.opacity)
                 {
+                    let motion = self.resolve_motion(
+                        &border.window_id,
+                        MotionStyleScope::Layout,
+                        node.styles().map(|styles| &styles.layout),
+                        &snapshot.keyframes,
+                        0.0,
+                        0.0,
+                    );
                     let color = apply_opacity(
                         river_color_to_color_value(plan.red, plan.green, plan.blue, plan.alpha),
-                        opacity,
+                        motion.opacity,
                     );
                     (plan.red, plan.green, plan.blue, plan.alpha) =
                         river_border_color_from_color(color);
@@ -634,10 +643,29 @@ impl RiverBackendState {
                 let titlebar_style = node.styles().and_then(|styles| styles.titlebar.as_ref());
                 let window_style = node.styles().map(|styles| &styles.layout);
                 let focused = self.runtime_state.focused_window_id.as_ref() == Some(&window_id);
-                let window = self.runtime_state.windows.get(&window_id)?;
-                let opacity = style_opacity(titlebar_style);
-                let background = apply_opacity(titlebar_background(titlebar_style, focused), opacity);
-                let text_color = apply_opacity(titlebar_text_color(titlebar_style, focused), opacity);
+                let base_title = {
+                    let window = self.runtime_state.windows.get(&window_id)?;
+                    titlebar_text(window)
+                };
+                let window_width = self
+                    .runtime_state
+                    .windows
+                    .get(&window_id)
+                    .map(|window| window.width.max(1))
+                    .unwrap_or(1);
+                let titlebar_height = titlebar_height_to_px(titlebar_style);
+                let motion = self.resolve_motion(
+                    &window_id,
+                    MotionStyleScope::Titlebar,
+                    titlebar_style,
+                    &snapshot.keyframes,
+                    window_width as f32,
+                    titlebar_height as f32,
+                );
+                let background =
+                    apply_opacity(titlebar_background(titlebar_style, focused), motion.opacity);
+                let text_color =
+                    apply_opacity(titlebar_text_color(titlebar_style, focused), motion.opacity);
                 let text_align = titlebar_text_align(titlebar_style);
                 let font_family = titlebar_font_family(titlebar_style);
                 let font_size = titlebar_font_size(titlebar_style);
@@ -646,16 +674,18 @@ impl RiverBackendState {
                 let box_shadow = titlebar_box_shadow(titlebar_style);
                 let border_bottom_color = apply_opacity(
                     titlebar_bottom_border_color(titlebar_style, background),
-                    opacity,
+                    motion.opacity,
                 );
                 let (padding_top, padding_right, padding_bottom, padding_left) =
                     titlebar_padding(titlebar_style);
                 let (corner_radius_top_left, corner_radius_top_right) =
                     titlebar_corner_radii(titlebar_style, window_style);
-                let title = apply_titlebar_text_transform(titlebar_style, titlebar_text(window));
+                let title = apply_titlebar_text_transform(titlebar_style, base_title);
                 Some(TitlebarPlan {
                     window_id,
-                    height: titlebar_height_to_px(titlebar_style),
+                    height: titlebar_height,
+                    offset_x: motion.transform.translate_x_px.round() as i32,
+                    offset_y: motion.transform.translate_y_px.round() as i32,
                     background,
                     border_bottom_width: titlebar_bottom_border_width(titlebar_style),
                     border_bottom_color,
