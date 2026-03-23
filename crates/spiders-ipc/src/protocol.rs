@@ -253,6 +253,7 @@ mod tests {
                 mode: spiders_shared::types::WindowMode::Tiled,
                 focused: true,
                 urgent: false,
+                closing: false,
                 workspace_id: None,
                 output_id: Some(OutputId::from("out-1")),
                 workspaces: vec!["1".into()],

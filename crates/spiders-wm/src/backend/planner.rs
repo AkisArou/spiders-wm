@@ -5,14 +5,27 @@ use spiders_scene::{
     FontWeightValue, LengthPercentage, SizeValue, TextAlignValue, TextTransformValue,
 };
 use spiders_shared::types::WindowMode;
-use spiders_tree::LayoutRect;
+use spiders_tree::{LayoutRect, WindowId, WorkspaceId};
 use crate::backend::plan::TitlebarPlan;
 use crate::actions::{
     active_tiled_window_ids, compute_horizontal_tiled_edges, compute_pointer_render_positions,
     compute_window_borders, configured_mode_for_window, directional_neighbor_window_id,
     inactive_window_ids, top_window_id,
 };
-use crate::layout_adapter::compute_layout_snapshot;
+use crate::layout_adapter::{compute_layout_snapshot, compute_workspace_layout_snapshot};
+
+const NO_WORKSPACE_CLASSES: &[&str] = &[];
+const ENTER_FROM_LEFT_CLASSES: &[&str] = &["enter-from-left"];
+const ENTER_FROM_RIGHT_CLASSES: &[&str] = &["enter-from-right"];
+const EXIT_TO_LEFT_CLASSES: &[&str] = &["exit-to-left"];
+const EXIT_TO_RIGHT_CLASSES: &[&str] = &["exit-to-right"];
+
+#[derive(Debug, Clone)]
+struct WorkspaceRenderContext {
+    workspace_id: WorkspaceId,
+    window_ids: Vec<WindowId>,
+    workspace_classes: &'static [&'static str],
+}
 
 fn border_length_to_px(length: LengthPercentage) -> i32 {
     match length {
@@ -226,11 +239,15 @@ fn titlebar_letter_spacing(style: Option<&ComputedStyle>) -> i32 {
         .round() as i32
 }
 
-fn titlebar_box_shadow(style: Option<&ComputedStyle>) -> Option<Vec<spiders_scene::BoxShadowValue>> {
-    style
+fn titlebar_box_shadow(
+    titlebar_style: Option<&ComputedStyle>,
+    window_style: Option<&ComputedStyle>,
+) -> Option<Vec<spiders_scene::BoxShadowValue>> {
+    titlebar_style
         .and_then(|style| style.box_shadow.as_ref())
-    .cloned()
-    .filter(|shadow| !shadow.is_empty())
+        .or_else(|| window_style.and_then(|style| style.box_shadow.as_ref()))
+        .cloned()
+        .filter(|shadow| !shadow.is_empty())
 }
 
 fn titlebar_padding(style: Option<&ComputedStyle>) -> (i32, i32, i32, i32) {
@@ -357,92 +374,96 @@ fn decoration_mode_for_window(
 }
 
 impl RiverBackendState {
-    pub(super) fn plan_tiled_manage_layout(&mut self) -> Vec<ManageWindowPlan> {
-        let active_window_ids = self.active_workspace_window_ids();
-        if active_window_ids.is_empty() {
-            return Vec::new();
-        }
-
-        let active_state_ids = active_tiled_window_ids(
-            &self.runtime_state,
-            &active_window_ids
-                .iter()
-                .filter_map(|window_id| {
-                    self.registry
-                        .windows
-                        .get(window_id)
-                        .map(|window| window.state_id.clone())
+    fn workspace_window_state_ids(&self, workspace_id: &WorkspaceId) -> Vec<WindowId> {
+        self.runtime_state
+            .window_stack
+            .iter()
+            .filter(|window_id| {
+                self.runtime_state.windows.get(*window_id).is_some_and(|window| {
+                    window.workspace_ids.iter().any(|id| id == workspace_id)
                 })
-                .collect::<Vec<_>>(),
-        );
-        if active_state_ids.is_empty() {
-            return Vec::new();
-        }
-        let tiled_edges = compute_horizontal_tiled_edges(&active_state_ids);
-
-        if let Some(snapshot) = compute_layout_snapshot(
-            &mut self.layout_service,
-            &mut self.scene_cache,
-            &self.config,
-            &self.runtime_state,
-            &active_state_ids,
-        ) {
-            return tiled_edges
-                .into_iter()
-                .filter_map(|edges| {
-                    snapshot
-                        .find_by_window_id(&edges.window_id)
-                        .map(|node| ManageWindowPlan {
-                            window_id: edges.window_id,
-                            width: node.rect().width.round() as i32,
-                            height: node.rect().height.round() as i32,
-                            tiled_edges: edges.tiled_edges,
-                        })
-                })
-                .collect();
-        }
-
-        let (_, origin_y, total_width, total_height) = self.current_output_geometry();
-        compute_horizontal_tiles(&active_state_ids, 0, origin_y, total_width, total_height)
-            .into_iter()
-            .map(|tile| ManageWindowPlan {
-                window_id: tile.window_id,
-                width: tile.width,
-                height: tile.height,
-                tiled_edges: tile.tiled_edges,
             })
+            .cloned()
             .collect()
     }
 
-    pub(super) fn plan_tiled_render_layout(&mut self) -> Vec<RenderWindowPlan> {
-        let active_window_ids = self.active_workspace_window_ids();
-        if active_window_ids.is_empty() {
+    fn render_workspace_contexts(&self) -> Vec<WorkspaceRenderContext> {
+        let Some(current_workspace_id) = self.runtime_state.current_workspace_id.clone() else {
+            return Vec::new();
+        };
+
+        if let Some(transition) = self.transient.workspace_transition.as_ref()
+            && transition.to_workspace_id == current_workspace_id
+        {
+            let (incoming_classes, outgoing_classes) = match transition.direction {
+                crate::backend::transient::WorkspaceTransitionDirection::Left => {
+                    (ENTER_FROM_LEFT_CLASSES, EXIT_TO_RIGHT_CLASSES)
+                }
+                crate::backend::transient::WorkspaceTransitionDirection::Right => {
+                    (ENTER_FROM_RIGHT_CLASSES, EXIT_TO_LEFT_CLASSES)
+                }
+            };
+
+            let mut contexts = Vec::new();
+            let outgoing_window_ids = self.workspace_window_state_ids(&transition.from_workspace_id);
+            if !outgoing_window_ids.is_empty() {
+                contexts.push(WorkspaceRenderContext {
+                    workspace_id: transition.from_workspace_id.clone(),
+                    window_ids: outgoing_window_ids,
+                    workspace_classes: outgoing_classes,
+                });
+            }
+
+            let incoming_window_ids = self.workspace_window_state_ids(&transition.to_workspace_id);
+            if !incoming_window_ids.is_empty() {
+                contexts.push(WorkspaceRenderContext {
+                    workspace_id: transition.to_workspace_id.clone(),
+                    window_ids: incoming_window_ids,
+                    workspace_classes: incoming_classes,
+                });
+            }
+
+            if !contexts.is_empty() {
+                return contexts;
+            }
+        }
+
+        vec![WorkspaceRenderContext {
+            workspace_id: current_workspace_id.clone(),
+            window_ids: self.workspace_window_state_ids(&current_workspace_id),
+            workspace_classes: NO_WORKSPACE_CLASSES,
+        }]
+    }
+
+    fn render_visible_window_state_ids(&self) -> Vec<WindowId> {
+        self.render_workspace_contexts()
+            .into_iter()
+            .flat_map(|context| context.window_ids)
+            .collect()
+    }
+
+    fn plan_render_layout_for_context(
+        &mut self,
+        context: &WorkspaceRenderContext,
+    ) -> Vec<RenderWindowPlan> {
+        if context.window_ids.is_empty() {
             return Vec::new();
         }
 
         let (origin_x, origin_y, total_width, total_height) = self.current_output_geometry();
-        let active_state_ids = active_tiled_window_ids(
-            &self.runtime_state,
-            &active_window_ids
-                .iter()
-                .filter_map(|window_id| {
-                    self.registry
-                        .windows
-                        .get(window_id)
-                        .map(|window| window.state_id.clone())
-                })
-                .collect::<Vec<_>>(),
-        );
+        let active_state_ids = active_tiled_window_ids(&self.runtime_state, &context.window_ids);
         if active_state_ids.is_empty() {
             return Vec::new();
         }
 
-        if let Some(snapshot) = compute_layout_snapshot(
+        if let Some(snapshot) = compute_workspace_layout_snapshot(
             &mut self.layout_service,
             &mut self.scene_cache,
             &self.config,
             &self.runtime_state,
+            &context.workspace_id,
             &active_state_ids,
+            context.workspace_classes,
         ) {
             return active_state_ids
                 .into_iter()
@@ -487,26 +508,30 @@ impl RiverBackendState {
         .collect()
     }
 
-    pub(super) fn plan_window_borders(&mut self) -> Vec<BorderPlan> {
+    fn plan_window_borders_for_context(
+        &mut self,
+        context: &WorkspaceRenderContext,
+    ) -> Vec<BorderPlan> {
         let all_edges = river_window_v1::Edges::Top
             | river_window_v1::Edges::Bottom
             | river_window_v1::Edges::Left
             | river_window_v1::Edges::Right;
-        let active_workspace_window_ids = self.active_workspace_window_state_ids();
-        let active_tiled_state_ids = active_tiled_window_ids(&self.runtime_state, &active_workspace_window_ids);
+        let active_tiled_state_ids = active_tiled_window_ids(&self.runtime_state, &context.window_ids);
         let snapshot = if active_tiled_state_ids.is_empty() {
             None
         } else {
-            compute_layout_snapshot(
+            compute_workspace_layout_snapshot(
                 &mut self.layout_service,
                 &mut self.scene_cache,
                 &self.config,
                 &self.runtime_state,
+                &context.workspace_id,
                 &active_tiled_state_ids,
+                context.workspace_classes,
             )
         };
 
-        compute_window_borders(&self.runtime_state, &active_workspace_window_ids)
+        compute_window_borders(&self.runtime_state, &context.window_ids)
             .into_iter()
             .map(|border| {
                 let default_edges = if border.width > 0 {
@@ -566,29 +591,34 @@ impl RiverBackendState {
             .collect()
     }
 
-    pub(super) fn plan_window_appearance(&mut self) -> Vec<AppearancePlan> {
-        let active_window_ids = self.active_workspace_window_state_ids();
-        if active_window_ids.is_empty() {
+    fn plan_window_appearance_for_context(
+        &mut self,
+        context: &WorkspaceRenderContext,
+    ) -> Vec<AppearancePlan> {
+        if context.window_ids.is_empty() {
             return Vec::new();
         }
 
-        let Some(snapshot) = compute_layout_snapshot(
+        let Some(snapshot) = compute_workspace_layout_snapshot(
             &mut self.layout_service,
             &mut self.scene_cache,
             &self.config,
             &self.runtime_state,
-            &active_window_ids,
+            &context.workspace_id,
+            &context.window_ids,
+            context.workspace_classes,
         ) else {
             return Vec::new();
         };
 
-        active_window_ids
-            .into_iter()
+        context
+            .window_ids
+            .iter()
             .filter_map(|window_id| {
-                let node = snapshot.find_by_window_id(&window_id)?;
-                let object_id = self.window_object_id(&window_id)?;
+                let node = snapshot.find_by_window_id(window_id)?;
+                let object_id = self.window_object_id(window_id)?;
                 let window = self.registry.windows.get(&object_id)?;
-                let window_state = self.runtime_state.windows.get(&window_id)?;
+                let window_state = self.runtime_state.windows.get(window_id)?;
                 let appearance = node
                     .styles()
                     .and_then(|styles| styles.layout.appearance)
@@ -608,16 +638,19 @@ impl RiverBackendState {
                 );
 
                 Some(AppearancePlan {
-                    window_id,
+                    window_id: window_id.clone(),
                     decoration_mode,
                 })
             })
             .collect()
     }
 
-    pub(super) fn plan_window_titlebars(&mut self) -> Vec<TitlebarPlan> {
+    fn plan_window_titlebars_for_context(
+        &mut self,
+        context: &WorkspaceRenderContext,
+    ) -> Vec<TitlebarPlan> {
         let appearance = self
-            .plan_window_appearance()
+            .plan_window_appearance_for_context(context)
             .into_iter()
             .filter(|plan| matches!(plan.decoration_mode, DecorationMode::CompositorTitlebar))
             .map(|plan| plan.window_id)
@@ -626,12 +659,14 @@ impl RiverBackendState {
             return Vec::new();
         }
 
-        let Some(snapshot) = compute_layout_snapshot(
+        let Some(snapshot) = compute_workspace_layout_snapshot(
             &mut self.layout_service,
             &mut self.scene_cache,
             &self.config,
             &self.runtime_state,
+            &context.workspace_id,
             &appearance,
+            context.workspace_classes,
         ) else {
             return Vec::new();
         };
@@ -662,19 +697,25 @@ impl RiverBackendState {
                     window_width as f32,
                     titlebar_height as f32,
                 );
-                let background =
-                    apply_opacity(titlebar_background(titlebar_style, focused), motion.opacity);
-                let text_color =
-                    apply_opacity(titlebar_text_color(titlebar_style, focused), motion.opacity);
+                let effective_opacity =
+                    titlebar_style.and_then(|style| style.opacity).unwrap_or(1.0) * motion.opacity;
+                let background = apply_opacity(
+                    titlebar_background(titlebar_style, focused),
+                    effective_opacity,
+                );
+                let text_color = apply_opacity(
+                    titlebar_text_color(titlebar_style, focused),
+                    effective_opacity,
+                );
                 let text_align = titlebar_text_align(titlebar_style);
                 let font_family = titlebar_font_family(titlebar_style);
                 let font_size = titlebar_font_size(titlebar_style);
                 let font_weight = titlebar_font_weight(titlebar_style);
                 let letter_spacing = titlebar_letter_spacing(titlebar_style);
-                let box_shadow = titlebar_box_shadow(titlebar_style);
+                let box_shadow = titlebar_box_shadow(titlebar_style, window_style);
                 let border_bottom_color = apply_opacity(
                     titlebar_bottom_border_color(titlebar_style, background),
-                    motion.opacity,
+                    effective_opacity,
                 );
                 let (padding_top, padding_right, padding_bottom, padding_left) =
                     titlebar_padding(titlebar_style);
@@ -705,6 +746,91 @@ impl RiverBackendState {
                     corner_radius_top_right,
                 })
             })
+            .collect()
+    }
+
+    pub(super) fn plan_tiled_manage_layout(&mut self) -> Vec<ManageWindowPlan> {
+        let active_window_ids = self.active_workspace_window_ids();
+        if active_window_ids.is_empty() {
+            return Vec::new();
+        }
+
+        let active_state_ids = active_tiled_window_ids(
+            &self.runtime_state,
+            &active_window_ids
+                .iter()
+                .filter_map(|window_id| {
+                    self.registry
+                        .windows
+                        .get(window_id)
+                        .map(|window| window.state_id.clone())
+                })
+                .collect::<Vec<_>>(),
+        );
+        if active_state_ids.is_empty() {
+            return Vec::new();
+        }
+        let tiled_edges = compute_horizontal_tiled_edges(&active_state_ids);
+
+        if let Some(snapshot) = compute_layout_snapshot(
+            &mut self.layout_service,
+            &mut self.scene_cache,
+            &self.config,
+            &self.runtime_state,
+            &active_state_ids,
+        ) {
+            return tiled_edges
+                .into_iter()
+                .filter_map(|edges| {
+                    snapshot
+                        .find_by_window_id(&edges.window_id)
+                        .map(|node| ManageWindowPlan {
+                            window_id: edges.window_id,
+                            width: node.rect().width.round() as i32,
+                            height: node.rect().height.round() as i32,
+                            tiled_edges: edges.tiled_edges,
+                        })
+                })
+                .collect();
+        }
+
+        let (_, origin_y, total_width, total_height) = self.current_output_geometry();
+        compute_horizontal_tiles(&active_state_ids, 0, origin_y, total_width, total_height)
+            .into_iter()
+            .map(|tile| ManageWindowPlan {
+                window_id: tile.window_id,
+                width: tile.width,
+                height: tile.height,
+                tiled_edges: tile.tiled_edges,
+            })
+            .collect()
+    }
+
+    pub(super) fn plan_tiled_render_layout(&mut self) -> Vec<RenderWindowPlan> {
+        self.render_workspace_contexts()
+            .into_iter()
+            .flat_map(|context| self.plan_render_layout_for_context(&context))
+            .collect()
+    }
+
+    pub(super) fn plan_window_borders(&mut self) -> Vec<BorderPlan> {
+        self.render_workspace_contexts()
+            .into_iter()
+            .flat_map(|context| self.plan_window_borders_for_context(&context))
+            .collect()
+    }
+
+    pub(super) fn plan_window_appearance(&mut self) -> Vec<AppearancePlan> {
+        self.render_workspace_contexts()
+            .into_iter()
+            .flat_map(|context| self.plan_window_appearance_for_context(&context))
+            .collect()
+    }
+
+    pub(super) fn plan_window_titlebars(&mut self) -> Vec<TitlebarPlan> {
+        self.render_workspace_contexts()
+            .into_iter()
+            .flat_map(|context| self.plan_window_titlebars_for_context(&context))
             .collect()
     }
 
@@ -991,7 +1117,7 @@ impl RiverBackendState {
 
     pub(super) fn plan_offscreen_windows(&self) -> Vec<OffscreenWindowPlan> {
         inactive_window_ids(
-            &self.active_workspace_window_state_ids(),
+            &self.render_visible_window_state_ids(),
             &self
                 .runtime_state
                 .window_stack
@@ -1100,8 +1226,27 @@ impl RiverBackendState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use spiders_config::model::{Config, ConfigPaths};
     use spiders_scene::{AppearanceValue, ComputedStyle, SceneNodeStyle};
-    use spiders_tree::{LayoutNodeMeta, LayoutRect, WindowId};
+    use spiders_tree::{LayoutNodeMeta, LayoutRect, OutputId, WindowId};
+
+    fn test_backend_state(workspaces: &[&str]) -> RiverBackendState {
+        let config = Config {
+            workspaces: workspaces.iter().map(|name| (*name).to_owned()).collect(),
+            ..Config::default()
+        };
+        let mut runtime_state = WmState::from_config(&config);
+        let output_id = OutputId::from("out-1");
+        runtime_state.insert_output(output_id.clone(), "HDMI-A-1".into());
+        runtime_state.focus_output(&output_id);
+        runtime_state.set_output_dimensions(&output_id, 1920, 1080);
+
+        RiverBackendState::new(
+            ConfigPaths::new("/tmp/config.ts", "/tmp/config.js"),
+            config,
+            runtime_state,
+        )
+    }
 
     #[test]
     fn river_border_from_box_edges_maps_nonzero_edges_and_uses_max_width() {
@@ -1322,6 +1467,8 @@ mod tests {
             output_id: None,
             workspace_ids: Vec::new(),
             is_new: false,
+            closing: false,
+            close_sent: false,
             closed: false,
             mapped: true,
             mode: WindowMode::Tiled,
@@ -1411,8 +1558,33 @@ mod tests {
             Some(vec!["'DejaVu Sans'".into(), "sans-serif".into()])
         );
         assert_eq!(
-            titlebar_box_shadow(Some(&style)),
+            titlebar_box_shadow(Some(&style), None),
             style.box_shadow.clone()
+        );
+    }
+
+    #[test]
+    fn titlebar_box_shadow_falls_back_to_window_style() {
+        let window_style = ComputedStyle {
+            box_shadow: Some(vec![spiders_scene::BoxShadowValue {
+                color: Some(spiders_scene::ColorValue {
+                    red: 1,
+                    green: 2,
+                    blue: 3,
+                    alpha: 4,
+                }),
+                offset_x: 5,
+                offset_y: 6,
+                blur_radius: 7,
+                spread_radius: 8,
+                inset: false,
+            }]),
+            ..ComputedStyle::default()
+        };
+
+        assert_eq!(
+            titlebar_box_shadow(None, Some(&window_style)),
+            window_style.box_shadow.clone()
         );
     }
 
@@ -1509,6 +1681,66 @@ mod tests {
         };
 
         assert_eq!(titlebar_bottom_border_width(Some(&style)), 0);
+    }
+
+    #[test]
+    fn workspace_transition_contexts_follow_workspace_order_direction() {
+        let mut backend = test_backend_state(&["1", "2", "3"]);
+        backend.runtime_state.insert_window("win-1".into());
+        backend.runtime_state.set_window_workspace(&"win-1".into(), &"1".into());
+        backend.runtime_state.set_window_new(&"win-1".into(), false);
+
+        backend.runtime_state.insert_window("win-2".into());
+        backend.runtime_state.set_window_workspace(&"win-2".into(), &"2".into());
+        backend.runtime_state.set_window_new(&"win-2".into(), false);
+
+        backend.start_workspace_transition(&"2".into());
+        backend.runtime_state.current_workspace_id = Some("2".into());
+
+        let transition = backend
+            .transient
+            .workspace_transition
+            .as_ref()
+            .expect("workspace transition");
+        assert_eq!(transition.direction, crate::backend::transient::WorkspaceTransitionDirection::Right);
+
+        let contexts = backend.render_workspace_contexts();
+        assert_eq!(contexts.len(), 2);
+        assert_eq!(contexts[0].workspace_id, WorkspaceId::from("1"));
+        assert_eq!(contexts[0].workspace_classes, EXIT_TO_LEFT_CLASSES);
+        assert_eq!(contexts[1].workspace_id, WorkspaceId::from("2"));
+        assert_eq!(contexts[1].workspace_classes, ENTER_FROM_RIGHT_CLASSES);
+    }
+
+    #[test]
+    fn offscreen_plan_keeps_transition_workspaces_visible() {
+        let mut backend = test_backend_state(&["1", "2", "3"]);
+
+        backend.runtime_state.insert_window("win-1".into());
+        backend.runtime_state.set_window_workspace(&"win-1".into(), &"1".into());
+        backend.runtime_state.set_window_new(&"win-1".into(), false);
+
+        backend.runtime_state.insert_window("win-2".into());
+        backend.runtime_state.set_window_workspace(&"win-2".into(), &"2".into());
+        backend.runtime_state.set_window_new(&"win-2".into(), false);
+
+        backend.runtime_state.insert_window("win-3".into());
+        backend.runtime_state.set_window_workspace(&"win-3".into(), &"3".into());
+        backend.runtime_state.set_window_new(&"win-3".into(), false);
+
+        backend.transient.workspace_transition = Some(
+            crate::backend::transient::WorkspaceTransitionState {
+                from_workspace_id: "1".into(),
+                to_workspace_id: "2".into(),
+                direction: crate::backend::transient::WorkspaceTransitionDirection::Right,
+            },
+        );
+        backend.runtime_state.current_workspace_id = Some("2".into());
+
+        let plan = backend.plan_offscreen_windows();
+
+        assert_eq!(plan.len(), 1);
+        assert_eq!(plan[0].window_id, WindowId::from("win-3"));
     }
 
     #[test]

@@ -107,6 +107,16 @@ fn default_source_layout_tree() -> SourceLayoutNode {
     }
 }
 
+fn resolved_workspace_meta(workspace_classes: &[&str]) -> LayoutNodeMeta {
+    let mut class = vec!["river-workspace".into()];
+    class.extend(workspace_classes.iter().map(|class_name| (*class_name).to_owned()));
+
+    LayoutNodeMeta {
+        class,
+        ..LayoutNodeMeta::default()
+    }
+}
+
 fn visible_window_snapshots(state: &spiders_shared::snapshot::StateSnapshot, window_ids: &[WindowId]) -> Vec<WindowSnapshot> {
     let windows: Vec<WindowSnapshot> = window_ids
         .iter()
@@ -128,6 +138,7 @@ fn resolved_layout_root(
     source_tree: SourceLayoutNode,
     state: &spiders_shared::snapshot::StateSnapshot,
     window_ids: &[WindowId],
+    workspace_classes: &[&str],
 ) -> ResolvedLayoutNode {
     let windows = visible_window_snapshots(state, window_ids);
 
@@ -153,11 +164,22 @@ fn resolved_layout_root(
         }
     };
 
+    let resolved = resolved.map(|mut root| {
+        if let ResolvedLayoutNode::Workspace { meta, .. } = &mut root {
+            meta.class.retain(|class_name| class_name != "river-workspace");
+            meta.class.insert(0, "river-workspace".into());
+            meta.class.extend(
+                workspace_classes
+                    .iter()
+                    .map(|class_name| (*class_name).to_owned()),
+            );
+        }
+
+        root
+    });
+
     resolved.unwrap_or_else(|| ResolvedLayoutNode::Workspace {
-            meta: LayoutNodeMeta {
-                class: vec!["river-workspace".into()],
-                ..LayoutNodeMeta::default()
-            },
+            meta: resolved_workspace_meta(workspace_classes),
             children: window_ids
                 .iter()
                 .map(|window_id| ResolvedLayoutNode::Window {
@@ -171,14 +193,24 @@ fn resolved_layout_root(
         })
 }
 
-pub fn compute_layout_snapshot(
+pub fn compute_workspace_layout_snapshot(
     layout_service: &mut AuthoringLayoutService<DefaultLayoutRuntime>,
     scene_cache: &mut SceneCache,
     config: &Config,
     state: &WmState,
+    workspace_id: &WorkspaceId,
     window_ids: &[WindowId],
+    workspace_classes: &[&str],
 ) -> Option<ComputedLayoutSnapshot> {
     let mut snapshot = state.as_state_snapshot();
+    snapshot.current_workspace_id = Some(workspace_id.clone());
+    snapshot.current_output_id = snapshot
+        .workspaces
+        .iter()
+        .find(|workspace| workspace.id == *workspace_id)
+        .and_then(|workspace| workspace.output_id.clone());
+    snapshot.visible_window_ids = window_ids.to_vec();
+
     let selected_layout = selected_layout_name(config, &snapshot);
     let current_workspace_id = snapshot.current_workspace_id.clone();
 
@@ -234,7 +266,7 @@ pub fn compute_layout_snapshot(
 
     let request_result = config.build_scene_request_from_state(
         &snapshot,
-        resolved_layout_root(source_tree, &snapshot, window_ids),
+        resolved_layout_root(source_tree, &snapshot, window_ids, workspace_classes),
         &evaluation.artifact,
     );
 
@@ -371,6 +403,27 @@ pub fn compute_layout_snapshot(
     }
 }
 
+
+pub fn compute_layout_snapshot(
+    layout_service: &mut AuthoringLayoutService<DefaultLayoutRuntime>,
+    scene_cache: &mut SceneCache,
+    config: &Config,
+    state: &WmState,
+    window_ids: &[WindowId],
+) -> Option<ComputedLayoutSnapshot> {
+    let workspace_id = state.current_workspace_id.as_ref()?;
+
+    compute_workspace_layout_snapshot(
+        layout_service,
+        scene_cache,
+        config,
+        state,
+        workspace_id,
+        window_ids,
+        &[],
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -439,7 +492,12 @@ mod tests {
             ],
         };
 
-        let resolved = resolved_layout_root(source_tree, &state, &["w1".into(), "w2".into(), "w3".into()]);
+        let resolved = resolved_layout_root(
+            source_tree,
+            &state,
+            &["w1".into(), "w2".into(), "w3".into()],
+            &[],
+        );
 
         let ResolvedLayoutNode::Workspace { children, .. } = resolved else {
             panic!("expected workspace root");
@@ -489,7 +547,12 @@ mod tests {
             }],
         };
 
-        let resolved = resolved_layout_root(source_tree, &state, &["w1".into(), "w2".into(), "w3".into()]);
+        let resolved = resolved_layout_root(
+            source_tree,
+            &state,
+            &["w1".into(), "w2".into(), "w3".into()],
+            &[],
+        );
 
         let ResolvedLayoutNode::Workspace { children, .. } = resolved else {
             panic!("expected workspace root");
@@ -499,5 +562,23 @@ mod tests {
             &children[0],
             ResolvedLayoutNode::Window { window_id: Some(id), .. } if id == &WindowId::from("w2")
         ));
+    }
+
+    #[test]
+    fn resolved_layout_root_adds_workspace_transition_classes() {
+        let state = fixture_state();
+        let resolved = resolved_layout_root(
+            default_source_layout_tree(),
+            &state,
+            &["w1".into()],
+            &["enter-from-left"],
+        );
+
+        let ResolvedLayoutNode::Workspace { meta, .. } = resolved else {
+            panic!("expected workspace root");
+        };
+
+        assert!(meta.class.iter().any(|class_name| class_name == "river-workspace"));
+        assert!(meta.class.iter().any(|class_name| class_name == "enter-from-left"));
     }
 }

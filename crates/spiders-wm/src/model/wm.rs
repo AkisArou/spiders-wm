@@ -64,6 +64,14 @@ impl WmState {
             .collect()
     }
 
+    pub fn workspace_order_index(&self, workspace_id: &WorkspaceId) -> Option<usize> {
+        let mut workspaces = self.workspaces.values().collect::<Vec<_>>();
+        workspaces.sort_by_key(|workspace| workspace.tag_mask);
+        workspaces
+            .iter()
+            .position(|workspace| &workspace.id == workspace_id)
+    }
+
     pub fn current_workspace_name(&self) -> Option<&str> {
         let current = self.current_workspace_id.as_ref()?;
         self.workspaces
@@ -222,6 +230,8 @@ impl WmState {
                 output_id: self.current_output_id.clone(),
                 workspace_ids: self.current_workspace_id.iter().cloned().collect(),
                 is_new: true,
+                closing: false,
+                close_sent: false,
                 closed: false,
                 mapped: true,
                 mode: WindowMode::Tiled,
@@ -337,6 +347,19 @@ impl WmState {
     pub fn set_window_closed(&mut self, window_id: &WindowId, closed: bool) {
         if let Some(window) = self.windows.get_mut(window_id) {
             window.closed = closed;
+        }
+    }
+
+    pub fn request_window_close(&mut self, window_id: &WindowId) {
+        if let Some(window) = self.windows.get_mut(window_id) {
+            window.closing = true;
+            window.close_sent = false;
+        }
+    }
+
+    pub fn set_window_close_sent(&mut self, window_id: &WindowId, close_sent: bool) {
+        if let Some(window) = self.windows.get_mut(window_id) {
+            window.close_sent = close_sent;
         }
     }
 
@@ -477,6 +500,7 @@ impl WmState {
                 mode: window.mode,
                 focused: window.focused,
                 urgent: false,
+                closing: window.closing,
                 output_id: window.output_id,
                 workspace_id: window.workspace_ids.first().cloned(),
                 workspaces: window

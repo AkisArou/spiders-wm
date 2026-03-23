@@ -63,7 +63,9 @@ use self::plan::{
     MoveFocusedWindowToWorkspacePlan, MoveWindowToTopPlan, MoveWindowInWorkspacePlan,
     OffscreenWindowPlan, PointerRenderPlan, RenderWindowPlan, ResizeWindowPlan, WindowModePlan,
 };
-use self::transient::BackendTransientState;
+use self::transient::{
+    BackendTransientState, WorkspaceTransitionDirection, WorkspaceTransitionState,
+};
 
 #[derive(Debug)]
 pub struct RiverConnection {
@@ -706,6 +708,29 @@ impl RiverBackendState {
         }
     }
 
+    fn request_pending_window_closes(&mut self) {
+        let pending = self
+            .runtime_state
+            .windows
+            .values()
+            .filter(|window| window.closing && !window.close_sent)
+            .filter(|window| !self.transient.motion_active_windows.contains(&window.id))
+            .map(|window| window.id.clone())
+            .collect::<Vec<_>>();
+
+        for window_id in pending {
+            let Some(object_id) = self.window_object_id(&window_id) else {
+                continue;
+            };
+            let Some(window) = self.registry.windows.get(&object_id) else {
+                continue;
+            };
+
+            window.proxy.close();
+            self.runtime_state.set_window_close_sent(&window_id, true);
+        }
+    }
+
     fn remove_seats(&mut self) {
         let removed = self
             .registry
@@ -922,12 +947,58 @@ impl RiverBackendState {
             .unwrap_or((0, 0, 1024, 768))
     }
 
+    fn start_workspace_transition(&mut self, workspace_id: &spiders_tree::WorkspaceId) {
+        let Some(previous_workspace_id) = self.runtime_state.current_workspace_id.clone() else {
+            return;
+        };
+
+        if previous_workspace_id == *workspace_id {
+            return;
+        }
+
+        let direction = match (
+            self.runtime_state.workspace_order_index(&previous_workspace_id),
+            self.runtime_state.workspace_order_index(workspace_id),
+        ) {
+            (Some(previous_index), Some(next_index)) if next_index < previous_index => {
+                WorkspaceTransitionDirection::Left
+            }
+            _ => WorkspaceTransitionDirection::Right,
+        };
+
+        self.transient.workspace_transition = Some(WorkspaceTransitionState {
+            from_workspace_id: previous_workspace_id,
+            to_workspace_id: workspace_id.clone(),
+            direction,
+        });
+    }
+
+    fn refresh_workspace_transition(&mut self) {
+        let Some(transition) = self.transient.workspace_transition.as_ref() else {
+            return;
+        };
+
+        let transition_is_active = self.transient.motion_active_windows.iter().any(|window_id| {
+            self.runtime_state.windows.get(window_id).is_some_and(|window| {
+                window.workspace_ids.iter().any(|workspace_id| {
+                    workspace_id == &transition.from_workspace_id
+                        || workspace_id == &transition.to_workspace_id
+                })
+            })
+        });
+
+        if !transition_is_active {
+            self.transient.workspace_transition = None;
+        }
+    }
+
     fn execute_command_plan(&mut self, seat_id: &ObjectId, plan: CommandPlan) {
         match plan {
             CommandPlan::Spawn { command } => {
                 let _ = Command::new("sh").arg("-lc").arg(command).spawn();
             }
             CommandPlan::ActivateWorkspace(plan) => {
+                self.start_workspace_transition(&plan.workspace_id);
                 activate_workspace(&mut self.runtime_state, &plan.workspace_id);
                 self.apply_focus_plan(seat_id, &plan.focus);
             }
@@ -1051,10 +1122,12 @@ impl RiverBackendState {
 
         self.apply_window_borders();
         self.apply_window_titlebars();
+        self.request_pending_window_closes();
 
         let plan = self.plan_pointer_render_ops();
         self.apply_pointer_render_plan(&plan);
 
+        self.refresh_workspace_transition();
         let keep_animating = self.finish_motion_frame();
 
         if let Some(wm) = self.wm.as_ref() {
@@ -1213,6 +1286,8 @@ impl RiverBackendState {
             output_id: None,
             workspace_ids: vec!["1".into()],
             is_new: false,
+            closing: false,
+            close_sent: false,
             closed: false,
             mapped: true,
             mode: spiders_shared::types::WindowMode::Tiled,
@@ -1253,6 +1328,8 @@ impl RiverBackendState {
             output_id: None,
             workspace_ids: vec!["1".into()],
             is_new: false,
+            closing: false,
+            close_sent: false,
             closed: false,
             mapped: true,
             mode: spiders_shared::types::WindowMode::Tiled,

@@ -21,6 +21,7 @@ fn window(id: &str, app_id: &str, title: &str) -> WindowSnapshot {
         mode: WindowMode::Tiled,
         focused: false,
         urgent: false,
+        closing: false,
         output_id: None,
         workspace_id: None,
         workspaces: vec![],

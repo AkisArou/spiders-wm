@@ -312,14 +312,7 @@ impl RiverBackendState {
     }
 
     pub(super) fn apply_close_window_plan(&mut self, plan: &CloseWindowPlan) {
-        let Some(object_id) = self.window_object_id(&plan.window_id) else {
-            return;
-        };
-        let Some(window) = self.registry.windows.get(&object_id) else {
-            return;
-        };
-
-        window.proxy.close();
+        self.runtime_state.request_window_close(&plan.window_id);
     }
 
     pub(super) fn apply_move_focused_window_to_workspace_plan(

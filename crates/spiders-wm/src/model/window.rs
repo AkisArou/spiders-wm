@@ -18,6 +18,8 @@ pub struct WindowState {
     pub output_id: Option<OutputId>,
     pub workspace_ids: Vec<WorkspaceId>,
     pub is_new: bool,
+    pub closing: bool,
+    pub close_sent: bool,
     pub closed: bool,
     pub mapped: bool,
     pub mode: WindowMode,

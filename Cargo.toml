@@ -6,6 +6,7 @@ members = [
   "crates/spiders-ipc",
   "crates/spiders-logging",
   "crates/spiders-wm",
+  "crates/spiders-wm2",
   "crates/spiders-scene",
   "crates/spiders-tree",
   "crates/runtimes/js",

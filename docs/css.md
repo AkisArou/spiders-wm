@@ -22,7 +22,7 @@ silently ignored.
 
 ## Selectors
 
-### Supported Now
+### Workspace Transitions
 
 - `workspace`
 - `group`
@@ -36,13 +36,12 @@ silently ignored.
 - `window:urgent`
 - runtime window state class aliases: `.focused`, `.floating`, `.fullscreen`, `.urgent`
 
-### Planned
+### Supported Now
 
-- `window:closing` `(TODO)`
-- `workspace:enter-from-left` `(TODO)`
-- `workspace:enter-from-right` `(TODO)`
-- `workspace:exit-to-left` `(TODO)`
-- `workspace:exit-to-right` `(TODO)`
+- `workspace:enter-from-left`
+- `workspace:enter-from-right`
+- `workspace:exit-to-left`
+- `workspace:exit-to-right`
 
 ### Notes
 
@@ -119,9 +118,9 @@ Current behavior:
 ### Window Presentation
 
 - `appearance`
-- `opacity` best-effort for compositor-drawn borders only
+- `opacity` partial for compositor-drawn borders only
 - `border-radius` partial for titlebar top-corner fallback only
-- `box-shadow` `(TODO)`
+- `box-shadow` partial for compositor titlebar shadow fallback only
 - `backdrop-filter` `(TODO)`
 - `transform` parsed and typed in `spiders-scene`; `spiders-wm` currently consumes translated offsets for compositor window positioning and titlebar decoration offsets, but does not yet apply scale visually
 
@@ -165,6 +164,7 @@ Planned semantics:
 - `box-shadow` currently renders a first-pass shadow approximation for all declared non-inset shadows.
 - titlebar shadows are drawn on a separate layer beneath the clipped titlebar body.
 - titlebar shadow geometry reuses the same rounded-top shape model as the compositor titlebar body.
+- `window` `box-shadow` now acts as a fallback source for compositor titlebar shadows when `window::titlebar` does not provide its own shadow value.
 - `border-radius` currently rounds the top corners of compositor titlebars only; it does not clip client window content.
 - `window` `border-radius` currently acts as a fallback source for those titlebar top-corner radii when `window::titlebar` does not provide its own value.
 - `appearance: none` is currently implemented as a best-effort `use_ssd()` request for SSD-capable clients while omitting compositor titlebar surfaces.
@@ -199,8 +199,10 @@ Current behavior:
 - motion advancement currently uses `manage_dirty()` to request follow-up manage/render sequences while an opacity transition or animation remains active
 - `spiders-scene` now also resolves typed `transform` transitions and keyframe animations into sampled translation and scale values
 - `spiders-wm` currently applies the translation portion of those sampled transforms to compositor window positions and titlebar offsets
-- broader runtime transform support is still incomplete: scale is sampled but not yet visually applied by `spiders-wm`
-- workspace transition selectors are still parsed but are not yet driven by dedicated wm-side transition state
+- broader runtime transform support is still incomplete: scale is sampled but not yet visually applied by `spiders-wm` `(TODO)`
+- `window:closing` now resolves for user-initiated close commands: the wm marks the window as closing, lets closing motion run while the window remains present, and sends the actual close request once that window no longer has active motion
+- workspace transition selectors now resolve during workspace activation: the outgoing workspace gets `:exit-to-left` or `:exit-to-right`, and the incoming workspace gets the matching `:enter-from-right` or `:enter-from-left`
+- externally initiated closes still cannot drive `window:closing`; river currently only reports the terminal `Closed` event, not a pre-close hook the wm could animate against
 
 ## Example
 

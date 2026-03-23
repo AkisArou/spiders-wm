@@ -80,6 +80,7 @@ fn resolved_window_meta(meta: &LayoutNodeMeta, window: Option<&WindowSnapshot>) 
 
     add_state_class("focused", window.focused);
     add_state_class("urgent", window.urgent);
+    add_state_class("closing", window.closing);
     add_state_class("floating", window.mode.is_floating());
     add_state_class("fullscreen", window.mode.is_fullscreen());
 

@@ -1,0 +1,19 @@
+[package]
+name = "spiders-wm2"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["env-filter", "fmt", "ansi"] }
+
+[dependencies.smithay]
+path = "../../../smithay"
+default-features = false
+features = [
+    "backend_winit",
+    "desktop",
+    "wayland_frontend",
+]

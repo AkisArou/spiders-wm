@@ -550,6 +550,7 @@ fn synthetic_bootstrap_state() -> spiders_shared::snapshot::StateSnapshot {
             mode: spiders_shared::types::WindowMode::Tiled,
             focused: true,
             urgent: false,
+            closing: false,
             output_id: Some(OutputId::from("bootstrap-output")),
             workspace_id: Some(WorkspaceId::from("bootstrap-workspace")),
             workspaces: vec!["bootstrap".into()],

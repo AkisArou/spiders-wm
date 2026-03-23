@@ -676,6 +676,7 @@ mod tests {
         assert_eq!(pixels[0].to_le_bytes()[3], 0);
         assert!(pixels[4].to_le_bytes()[0] > 0);
     }
+
 }
 
 fn load_font_from_paths(paths: &[&str]) -> Option<FontArc> {

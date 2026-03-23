@@ -160,6 +160,7 @@ mod tests {
             mode: spiders_shared::types::WindowMode::Tiled,
             focused: false,
             urgent: false,
+            closing: false,
             output_id: Some(OutputId::from("HDMI-A-1")),
             workspace_id: Some(WorkspaceId::from("1")),
             workspaces: vec!["1".into()],

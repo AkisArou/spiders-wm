@@ -84,8 +84,8 @@ Status: in progress
 
 - `border-color`
 - `border-radius` partial
-- `opacity` partial
-- `box-shadow` partial
+- `opacity` partial for compositor-drawn borders; full window-content opacity remains blocked by current river rendering controls
+- `box-shadow` partial, including window-level fallback into compositor titlebar shadows
 - `transform` parsed and typed in `spiders-scene`; wm-side translation application landed, scale application still TODO
 - `backdrop-filter` (TODO)
 
@@ -102,8 +102,11 @@ Status: in progress
 - property interpolation and application in `spiders-wm` for `opacity` on compositor window borders and titlebars
 - shared transform transition and animation sampling in `spiders-scene`
 - wm-side translation consumption for window positions and titlebar offsets
+- `window:closing` selector state for user-initiated close commands
+- workspace transition selectors during workspace activation
+- broader transform scale application in `spiders-wm` (TODO)
 - broader property interpolation and application in `spiders-wm` (TODO)
-- Workspace transition selectors (TODO)
+- externally initiated `window:closing` remains blocked on protocol lifecycle hooks (TODO)
 
 ## Order
 

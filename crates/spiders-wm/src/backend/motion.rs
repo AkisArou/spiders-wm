@@ -19,6 +19,7 @@ impl RiverBackendState {
     pub(super) fn begin_motion_frame(&mut self) {
         self.transient.motion_frame_time = Some(Instant::now());
         self.transient.motion_has_active_animations = false;
+        self.transient.motion_active_windows.clear();
     }
 
     pub(super) fn finish_motion_frame(&mut self) -> bool {
@@ -71,6 +72,7 @@ impl RiverBackendState {
         let active = animation.active.any() || transition.active.any();
         if active {
             self.transient.motion_has_active_animations = true;
+            self.transient.motion_active_windows.insert(window_id.clone());
         }
         motion
     }
