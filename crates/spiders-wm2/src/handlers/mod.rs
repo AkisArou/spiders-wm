@@ -13,9 +13,9 @@ use smithay::wayland::dmabuf::{DmabufGlobal, DmabufHandler, DmabufState, ImportN
 use smithay::wayland::selection::data_device::{WaylandDndGrabHandler, set_data_device_focus};
 use smithay::{delegate_data_device, delegate_dmabuf, delegate_output, delegate_seat};
 
-use crate::state::SpidersWm2;
+use crate::state::SpidersWm;
 
-impl SeatHandler for SpidersWm2 {
+impl SeatHandler for SpidersWm {
     type KeyboardFocus = WlSurface;
     type PointerFocus = WlSurface;
     type TouchFocus = WlSurface;
@@ -37,9 +37,9 @@ impl SeatHandler for SpidersWm2 {
     }
 }
 
-impl DndGrabHandler for SpidersWm2 {}
+impl DndGrabHandler for SpidersWm {}
 
-impl WaylandDndGrabHandler for SpidersWm2 {
+impl WaylandDndGrabHandler for SpidersWm {
     fn dnd_requested<S: Source>(
         &mut self,
         source: S,
@@ -62,7 +62,7 @@ impl WaylandDndGrabHandler for SpidersWm2 {
     }
 }
 
-impl DmabufHandler for SpidersWm2 {
+impl DmabufHandler for SpidersWm {
     fn dmabuf_state(&mut self) -> &mut DmabufState {
         &mut self.dmabuf_state
     }
@@ -79,14 +79,14 @@ impl DmabufHandler for SpidersWm2 {
         };
 
         if backend.renderer().import_dmabuf(&dmabuf, None).is_ok() {
-            let _ = notifier.successful::<SpidersWm2>();
+            let _ = notifier.successful::<SpidersWm>();
         } else {
             notifier.failed();
         }
     }
 }
 
-delegate_seat!(SpidersWm2);
-delegate_data_device!(SpidersWm2);
-delegate_dmabuf!(SpidersWm2);
-delegate_output!(SpidersWm2);
+delegate_seat!(SpidersWm);
+delegate_data_device!(SpidersWm);
+delegate_dmabuf!(SpidersWm);
+delegate_output!(SpidersWm);

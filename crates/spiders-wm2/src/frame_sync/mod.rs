@@ -31,5 +31,5 @@ mod transaction;
 pub use planner::{plan_tiled_slot, plan_tiled_slots};
 pub use runtime::{FrameSyncState, WindowFrameSyncState};
 pub use close_path::ClosePathQueue;
-pub use snapshots::{ClosingWindow, ResizingWindow, WindowSnapshot, Wm2RenderElements};
+pub use snapshots::{ClosingWindow, RenderElements, ResizingWindow, WindowSnapshot};
 pub use transaction::Transaction;

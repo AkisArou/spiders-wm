@@ -1,19 +1,21 @@
+mod actions;
+mod compositor;
 mod frame_sync;
 mod handlers;
-mod input;
+mod model;
 mod state;
 mod winit;
 
 use smithay::reexports::{calloop::EventLoop, wayland_server::Display};
-use state::SpidersWm2;
+use state::SpidersWm;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     init_logging();
 
-    let mut event_loop: EventLoop<'static, SpidersWm2> = EventLoop::try_new()?;
-    let display: Display<SpidersWm2> = Display::new()?;
+    let mut event_loop: EventLoop<'static, SpidersWm> = EventLoop::try_new()?;
+    let display: Display<SpidersWm> = Display::new()?;
 
-    let mut state = SpidersWm2::new(&mut event_loop, display);
+    let mut state = SpidersWm::new(&mut event_loop, display);
     winit::init_winit(&mut event_loop, &mut state)?;
 
     // Child processes should connect to the nested compositor socket.

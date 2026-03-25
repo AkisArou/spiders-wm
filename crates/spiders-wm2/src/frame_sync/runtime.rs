@@ -2,7 +2,7 @@
 //!
 //! This file is the behavioral contract that future layout systems should preserve.
 //! The current tiling planner is temporary, but the frame-sync rules here are intended
-//! to remain stable as spiders-wm2 moves to CSS-driven layout.
+//! to remain stable as this compositor moves to CSS-driven layout.
 //!
 //! # Frozen Responsibilities
 //!
@@ -36,7 +36,7 @@ use smithay::desktop::{Space, Window};
 use smithay::utils::{Logical, Point, Serial, Size};
 use tracing::warn;
 
-use super::{ClosePathQueue, ClosingWindow, ResizingWindow, Transaction, WindowSnapshot, Wm2RenderElements};
+use super::{ClosePathQueue, ClosingWindow, RenderElements, ResizingWindow, Transaction, WindowSnapshot};
 
 /// Result of processing a surface commit against frame-sync state.
 ///
@@ -394,11 +394,11 @@ impl FrameSyncState {
     }
 
     /// Builds transition render elements for resize and close overlays.
-    pub fn render_elements<'a, I>(&self, window_states: I) -> Vec<Wm2RenderElements>
+    pub fn render_elements<'a, I>(&self, window_states: I) -> Vec<RenderElements>
     where
         I: IntoIterator<Item = &'a WindowFrameSyncState>,
     {
-        let mut elements: Vec<Wm2RenderElements> = window_states
+        let mut elements: Vec<RenderElements> = window_states
             .into_iter()
             .filter_map(WindowFrameSyncState::resize_overlay)
             .map(ResizingWindow::render_element)

@@ -18,7 +18,7 @@ use smithay::utils::{Logical, Point, Rectangle, Scale, Size, Transform};
 use super::transaction::TransactionMonitor;
 
 render_elements! {
-    pub Wm2RenderElements<=GlesRenderer>;
+    pub RenderElements<=GlesRenderer>;
     Snapshot=TextureRenderElement<GlesTexture>,
 }
 
@@ -137,8 +137,8 @@ impl ClosingWindow {
         self.monitor.is_released()
     }
 
-    pub fn render_element(&self) -> Wm2RenderElements {
-        Wm2RenderElements::from(TextureRenderElement::from_texture_buffer(
+    pub fn render_element(&self) -> RenderElements {
+        RenderElements::from(TextureRenderElement::from_texture_buffer(
             self.location.to_f64().to_physical_precise_round(Scale::from(1.0)),
             &self.buffer,
             Some(1.0),
@@ -155,8 +155,8 @@ impl ResizingWindow {
         self.monitor.is_released()
     }
 
-    pub fn render_element(&self) -> Wm2RenderElements {
-        Wm2RenderElements::from(TextureRenderElement::from_texture_buffer(
+    pub fn render_element(&self) -> RenderElements {
+        RenderElements::from(TextureRenderElement::from_texture_buffer(
             self.location.to_f64().to_physical_precise_round(Scale::from(1.0)),
             &self.buffer,
             Some(1.0),

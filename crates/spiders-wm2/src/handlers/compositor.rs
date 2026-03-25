@@ -9,11 +9,11 @@ use smithay::wayland::compositor::{
 };
 use smithay::wayland::shm::{ShmHandler, ShmState};
 
-use crate::state::{ClientState, SpidersWm2};
+use crate::state::{ClientState, SpidersWm};
 
 use super::xdg_shell;
 
-impl CompositorHandler for SpidersWm2 {
+impl CompositorHandler for SpidersWm {
     fn compositor_state(&mut self) -> &mut CompositorState {
         &mut self.compositor_state
     }
@@ -49,15 +49,15 @@ impl CompositorHandler for SpidersWm2 {
     }
 }
 
-impl BufferHandler for SpidersWm2 {
+impl BufferHandler for SpidersWm {
     fn buffer_destroyed(&mut self, _buffer: &wl_buffer::WlBuffer) {}
 }
 
-impl ShmHandler for SpidersWm2 {
+impl ShmHandler for SpidersWm {
     fn shm_state(&self) -> &ShmState {
         &self.shm_state
     }
 }
 
-delegate_compositor!(SpidersWm2);
-delegate_shm!(SpidersWm2);
+delegate_compositor!(SpidersWm);
+delegate_shm!(SpidersWm);

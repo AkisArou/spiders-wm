@@ -9,7 +9,7 @@ use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::utils::SERIAL_COUNTER;
 use tracing::{debug, info};
 
-use crate::state::SpidersWm2;
+use crate::state::SpidersWm;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KeyAction {
@@ -18,7 +18,7 @@ pub enum KeyAction {
     CloseFocusedWindow,
 }
 
-impl SpidersWm2 {
+impl SpidersWm {
     pub fn process_input_event<I: InputBackend>(&mut self, event: InputEvent<I>) {
         match event {
             InputEvent::Keyboard { event, .. } => {

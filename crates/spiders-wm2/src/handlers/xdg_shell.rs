@@ -3,16 +3,17 @@ use smithay::desktop::{PopupKind, Window};
 use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel;
 use smithay::reexports::wayland_server::Resource;
 use smithay::reexports::wayland_server::protocol::{wl_seat, wl_surface::WlSurface};
-use smithay::utils::{Rectangle, Serial};
+use smithay::utils::Serial;
 use smithay::wayland::compositor::{HookId, add_blocker, add_pre_commit_hook, with_states};
 use smithay::wayland::shell::xdg::{PopupConfigureError, XdgShellState};
 use smithay::wayland::shell::xdg::{
     PopupSurface, PositionerState, ToplevelSurface, XdgShellHandler, XdgToplevelSurfaceData,
 };
 
-use crate::state::SpidersWm2;
+use crate::actions::window;
+use crate::state::SpidersWm;
 
-impl XdgShellHandler for SpidersWm2 {
+impl XdgShellHandler for SpidersWm {
     fn xdg_shell_state(&mut self) -> &mut XdgShellState {
         &mut self.xdg_shell_state
     }
@@ -56,15 +57,23 @@ impl XdgShellHandler for SpidersWm2 {
 
     fn grab(&mut self, _surface: PopupSurface, _seat: wl_seat::WlSeat, _serial: Serial) {}
 
+    fn app_id_changed(&mut self, surface: ToplevelSurface) {
+        sync_toplevel_identity(self, surface.wl_surface());
+    }
+
+    fn title_changed(&mut self, surface: ToplevelSurface) {
+        sync_toplevel_identity(self, surface.wl_surface());
+    }
+
     fn toplevel_destroyed(&mut self, surface: ToplevelSurface) {
         self.handle_window_close(surface.wl_surface());
     }
 }
 
-delegate_xdg_shell!(SpidersWm2);
+delegate_xdg_shell!(SpidersWm);
 
 fn add_transaction_pre_commit_hook(surface: &WlSurface) -> HookId {
-    add_pre_commit_hook::<SpidersWm2, _>(surface, move |state, _display_handle, wl_surface| {
+    add_pre_commit_hook::<SpidersWm, _>(surface, move |state, _display_handle, wl_surface| {
         let commit_serial = with_states(wl_surface, |states| {
             states
                 .data_map
@@ -96,7 +105,9 @@ fn add_transaction_pre_commit_hook(surface: &WlSurface) -> HookId {
     })
 }
 
-pub fn handle_commit(state: &mut SpidersWm2, surface: &WlSurface) {
+pub fn handle_commit(state: &mut SpidersWm, surface: &WlSurface) {
+    sync_toplevel_identity(state, surface);
+
     let initial_configure_sent = with_states(surface, |states| {
         states
             .data_map
@@ -135,40 +146,24 @@ pub fn handle_commit(state: &mut SpidersWm2, surface: &WlSurface) {
     }
 }
 
-impl SpidersWm2 {
-    fn unconstrain_popup(&self, popup: &PopupSurface) {
-        let Ok(root) = smithay::desktop::find_popup_root_surface(&PopupKind::Xdg(popup.clone()))
-        else {
-            return;
-        };
-        let Some(window) = self.space.elements().find(|window| {
-            window
-                .toplevel()
-                .is_some_and(|toplevel| toplevel.wl_surface() == &root)
-        }) else {
-            return;
-        };
+fn sync_toplevel_identity(state: &mut SpidersWm, surface: &WlSurface) {
+    let Some(window_id) = state
+        .managed_windows
+        .iter()
+        .find(|record| record.wl_surface() == *surface)
+        .map(|record| record.id)
+    else {
+        return;
+    };
 
-        let output = self
-            .space
-            .outputs()
-            .next()
-            .expect("output missing for popup");
-        let output_geo = self
-            .space
-            .output_geometry(output)
-            .expect("output geometry missing");
-        let window_geo = self
-            .space
-            .element_geometry(window)
-            .unwrap_or(Rectangle::new((0, 0).into(), (0, 0).into()));
+    let (title, app_id) = with_states(surface, |states| {
+        states
+            .data_map
+            .get::<XdgToplevelSurfaceData>()
+            .and_then(|data| data.lock().ok())
+            .map(|role| (role.title.clone(), role.app_id.clone()))
+            .unwrap_or((None, None))
+    });
 
-        let mut target = output_geo;
-        target.loc -= smithay::desktop::get_popup_toplevel_coords(&PopupKind::Xdg(popup.clone()));
-        target.loc -= window_geo.loc;
-
-        popup.with_pending_state(|state| {
-            state.geometry = state.positioner.get_unconstrained_geometry(target);
-        });
-    }
+    let _ = window::sync_window_identity(&mut state.model, window_id, title, app_id);
 }

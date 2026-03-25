@@ -5,16 +5,16 @@ use smithay::backend::renderer::gles::GlesRenderer;
 use smithay::backend::winit::{self, WinitEvent};
 use smithay::output::{Mode, Output, PhysicalProperties, Subpixel};
 use smithay::reexports::calloop::EventLoop;
-use smithay::utils::{Rectangle, Transform};
+use smithay::utils::Transform;
 use smithay::wayland::dmabuf::DmabufFeedbackBuilder;
 use tracing::warn;
 
-use crate::frame_sync::Wm2RenderElements;
-use crate::state::SpidersWm2;
+use crate::actions::output;
+use crate::state::SpidersWm;
 
 pub fn init_winit(
-    event_loop: &mut EventLoop<'static, SpidersWm2>,
-    state: &mut SpidersWm2,
+    event_loop: &mut EventLoop<'static, SpidersWm>,
+    state: &mut SpidersWm,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let (mut backend, winit) = winit::init::<GlesRenderer>()?;
 
@@ -46,7 +46,7 @@ pub fn init_winit(
         Some(
             state
                 .dmabuf_state
-                .create_global_with_default_feedback::<SpidersWm2>(
+                .create_global_with_default_feedback::<SpidersWm>(
                     &state.display_handle,
                     default_feedback,
                 ),
@@ -57,7 +57,7 @@ pub fn init_winit(
             Some(
                 state
                     .dmabuf_state
-                    .create_global::<SpidersWm2>(&state.display_handle, dmabuf_formats),
+                    .create_global::<SpidersWm>(&state.display_handle, dmabuf_formats),
             )
         } else {
             None
@@ -85,7 +85,7 @@ pub fn init_winit(
             serial_number: "Unknown".into(),
         },
     );
-    let _global = output.create_global::<SpidersWm2>(&state.display_handle);
+    let _global = output.create_global::<SpidersWm>(&state.display_handle);
     output.change_current_state(
         Some(mode),
         Some(Transform::Flipped180),
@@ -94,6 +94,7 @@ pub fn init_winit(
     );
     output.set_preferred(mode);
     state.space.map_output(&output, (0, 0));
+    output::sync_output(&mut state.model, "winit", "winit", mode.size.w as u32, mode.size.h as u32);
 
     let mut damage_tracker = OutputDamageTracker::from_output(&output);
 
@@ -110,57 +111,11 @@ pub fn init_winit(
                     None,
                     None,
                 );
+                output::sync_output(&mut state.model, "winit", "winit", size.w as u32, size.h as u32);
                 state.schedule_relayout();
             }
             WinitEvent::Input(event) => state.process_input_event(event),
-            WinitEvent::Redraw => {
-                state.notify_blocker_cleared();
-                state.advance_closing_windows();
-                state.advance_resize_overlays();
-
-                let mut backend = state
-                    .backend
-                    .take()
-                    .expect("winit backend missing during redraw");
-                let size = backend.window_size();
-                let damage = Rectangle::from_size(size);
-
-                {
-                    let (renderer, mut framebuffer) =
-                        backend.bind().expect("failed to bind winit backend");
-                    state.refresh_window_snapshots(renderer);
-                    let transition_elements = state.transition_render_elements();
-                    smithay::desktop::space::render_output::<
-                        _,
-                        Wm2RenderElements,
-                        _,
-                        _,
-                    >(
-                        &output,
-                        renderer,
-                        &mut framebuffer,
-                        1.0,
-                        0,
-                        [&state.space],
-                        &transition_elements,
-                        &mut damage_tracker,
-                        [0.08, 0.08, 0.1, 1.0],
-                    )
-                    .expect("failed to render output");
-                }
-
-                backend
-                    .submit(Some(&[damage]))
-                    .expect("failed to submit frame");
-
-                state.send_frames_for_windows(&output);
-
-                state.space.refresh();
-                state.popups.cleanup();
-                let _ = state.display_handle.flush_clients();
-                backend.window().request_redraw();
-                state.backend = Some(backend);
-            }
+            WinitEvent::Redraw => state.render_output_frame(&output, &mut damage_tracker),
             WinitEvent::CloseRequested => state.loop_signal.stop(),
             _ => {}
         })?;
