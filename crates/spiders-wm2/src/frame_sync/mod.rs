@@ -27,7 +27,7 @@ mod runtime;
 mod snapshots;
 mod transaction;
 
-pub use runtime::FrameSyncState;
+pub use runtime::{FrameSyncState, WindowFrameSyncState};
 pub use close_path::ClosePathQueue;
 pub use snapshots::{ClosingWindow, ResizingWindow, WindowSnapshot, Wm2RenderElements};
 pub use transaction::Transaction;

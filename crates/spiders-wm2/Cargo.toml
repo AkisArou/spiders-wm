@@ -13,6 +13,7 @@ tracing-subscriber = { workspace = true, features = ["env-filter", "fmt", "ansi"
 path = "../../../smithay"
 default-features = false
 features = [
+    "backend_drm",
     "backend_winit",
     "desktop",
     "wayland_frontend",

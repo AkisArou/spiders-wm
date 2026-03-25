@@ -1,3 +1,4 @@
+use smithay::backend::egl::EGLDevice;
 use smithay::backend::renderer::damage::OutputDamageTracker;
 use smithay::backend::renderer::{ImportDma, ImportMemWl};
 use smithay::backend::renderer::gles::GlesRenderer;
@@ -5,6 +6,8 @@ use smithay::backend::winit::{self, WinitEvent};
 use smithay::output::{Mode, Output, PhysicalProperties, Subpixel};
 use smithay::reexports::calloop::EventLoop;
 use smithay::utils::{Rectangle, Transform};
+use smithay::wayland::dmabuf::DmabufFeedbackBuilder;
+use tracing::warn;
 
 use crate::frame_sync::Wm2RenderElements;
 use crate::state::SpidersWm2;
@@ -17,13 +20,49 @@ pub fn init_winit(
 
     state.shm_state.update_formats(backend.renderer().shm_formats());
 
-    let dmabuf_formats = backend.renderer().dmabuf_formats();
-    if dmabuf_formats.iter().next().is_some() {
-        let dmabuf_global = state
-            .dmabuf_state
-            .create_global::<SpidersWm2>(&state.display_handle, dmabuf_formats);
-        state.dmabuf_global = Some(dmabuf_global);
+    let render_node = EGLDevice::device_for_display(backend.renderer().egl_context().display())
+        .and_then(|device| device.try_get_render_node());
+
+    let dmabuf_default_feedback = match render_node {
+        Ok(Some(node)) => {
+            let dmabuf_formats = backend.renderer().dmabuf_formats();
+            DmabufFeedbackBuilder::new(node.dev_id(), dmabuf_formats)
+                .build()
+                .map(Some)
+                .map_err(|err| err.to_string())
+        }
+        Ok(None) => {
+            warn!("failed to query render node, dmabuf will use v3");
+            Ok(None)
+        }
+        Err(err) => {
+            warn!(?err, "failed to query EGL render node, dmabuf will use v3");
+            Ok(None)
+        }
     }
+    .expect("failed to build dmabuf feedback");
+
+    state.dmabuf_global = if let Some(default_feedback) = dmabuf_default_feedback.as_ref() {
+        Some(
+            state
+                .dmabuf_state
+                .create_global_with_default_feedback::<SpidersWm2>(
+                    &state.display_handle,
+                    default_feedback,
+                ),
+        )
+    } else {
+        let dmabuf_formats = backend.renderer().dmabuf_formats();
+        if dmabuf_formats.iter().next().is_some() {
+            Some(
+                state
+                    .dmabuf_state
+                    .create_global::<SpidersWm2>(&state.display_handle, dmabuf_formats),
+            )
+        } else {
+            None
+        }
+    };
 
     state.backend = Some(backend);
 

@@ -24,9 +24,9 @@ use smithay::wayland::selection::data_device::DataDeviceState;
 use smithay::wayland::shell::xdg::XdgShellState;
 use smithay::wayland::shm::ShmState;
 use smithay::wayland::socket::ListeningSocketSource;
-use tracing::{error, info, trace, warn};
+use tracing::{error, info, trace};
 
-use crate::frame_sync::{FrameSyncState, ResizingWindow, Transaction, WindowSnapshot, Wm2RenderElements};
+use crate::frame_sync::{FrameSyncState, Transaction, WindowFrameSyncState, Wm2RenderElements};
 
 pub struct SpidersWm2 {
     pub start_time: std::time::Instant,
@@ -58,13 +58,7 @@ pub struct SpidersWm2 {
 pub(crate) struct ManagedWindow {
     pub(crate) window: Window,
     pub(crate) mapped: bool,
-    pub(crate) pending_location: Option<Point<i32, Logical>>,
-    pub(crate) matched_configure_commit: bool,
-    pub(crate) snapshot: Option<WindowSnapshot>,
-    pub(crate) resize_overlay: Option<ResizingWindow>,
-    pub(crate) snapshot_dirty: bool,
-    pub(crate) transaction_for_next_configure: Option<Transaction>,
-    pub(crate) pending_transactions: Vec<(Serial, Transaction)>,
+    pub(crate) frame_sync: WindowFrameSyncState,
 }
 
 impl SpidersWm2 {
@@ -247,22 +241,12 @@ impl SpidersWm2 {
         self.managed_windows.push(ManagedWindow {
             window,
             mapped: false,
-            pending_location: None,
-            matched_configure_commit: false,
-            snapshot: None,
-            resize_overlay: None,
-            snapshot_dirty: true,
-            transaction_for_next_configure: None,
-            pending_transactions: Vec::new(),
+            frame_sync: WindowFrameSyncState::default(),
         });
     }
 
     fn has_active_frame_sync(&self) -> bool {
-        self.frame_sync.has_active_closing()
-            || self
-                .managed_windows
-                .iter()
-                .any(|record| record.resize_overlay.is_some())
+        self.frame_sync.has_active_transitions(&self.managed_windows)
     }
 
     fn flush_queued_relayout(&mut self) {
@@ -316,7 +300,7 @@ impl SpidersWm2 {
 
         if record.mapped {
             if let (Some(snapshot), Some(element_location)) = (
-                record.snapshot,
+                record.frame_sync.snapshot_owned(),
                 self.space.element_location(&record.window),
             ) {
                 self.frame_sync.push_closing_window(snapshot.into_closing_window(
@@ -355,24 +339,13 @@ impl SpidersWm2 {
 
     pub fn handle_window_commit(&mut self, surface: &WlSurface) {
         let window_update = if let Some(record) = self.find_window_mut(surface) {
-            let first_map = !record.mapped && record.pending_location.is_none();
-            let matched_configure_commit = record.matched_configure_commit;
-            record.matched_configure_commit = false;
-            let pending_location = if first_map || matched_configure_commit {
-                record.pending_location.take()
-            } else {
-                record.pending_location
-            };
-
-            if matched_configure_commit {
-                record.resize_overlay = None;
-            }
-            if !record.mapped && pending_location.is_some() {
+            let update = record.frame_sync.consume_commit_update(record.mapped);
+            if !record.mapped && update.pending_location.is_some() {
                 record.mapped = true;
-                record.snapshot_dirty = true;
+                record.frame_sync.mark_snapshot_dirty();
             }
 
-            Some((record.window.clone(), pending_location, first_map))
+            Some((record.window.clone(), update.pending_location, update.first_map))
         } else {
             None
         };
@@ -385,10 +358,10 @@ impl SpidersWm2 {
                 self.set_focus(Some(surface.clone()), SERIAL_COUNTER.next_serial());
 
                 if let Some(record) = self.find_window_mut(surface) {
-                    let pending_location = record.pending_location.take();
+                    let pending_location = record.frame_sync.take_pending_location();
                     if pending_location.is_some() {
                         record.mapped = true;
-                        record.snapshot_dirty = true;
+                        record.frame_sync.mark_snapshot_dirty();
                     }
 
                     if let Some(location) = pending_location {
@@ -401,7 +374,7 @@ impl SpidersWm2 {
 
             let location = pending_location.or_else(|| {
                 self.find_window_mut(surface)
-                    .and_then(|record| record.pending_location)
+                    .and_then(|record| record.frame_sync.pending_location())
             });
 
             if let Some(location) = location {
@@ -420,28 +393,8 @@ impl SpidersWm2 {
     }
 
     pub fn refresh_window_snapshots(&mut self, renderer: &mut GlesRenderer) {
-        for index in 0..self.managed_windows.len() {
-            let needs_snapshot = {
-                let record = &self.managed_windows[index];
-                record.mapped && record.snapshot_dirty
-            };
-            if !needs_snapshot {
-                continue;
-            }
-
-            let window = self.managed_windows[index].window.clone();
-            match WindowSnapshot::capture(renderer, &window) {
-                Ok(Some(snapshot)) => {
-                    let record = &mut self.managed_windows[index];
-                    record.snapshot = Some(snapshot);
-                    record.snapshot_dirty = false;
-                }
-                Ok(None) => {}
-                Err(err) => {
-                    warn!(%err, "failed to refresh window snapshot");
-                }
-            }
-        }
+        self.frame_sync
+            .refresh_window_snapshots(renderer, &mut self.managed_windows);
     }
 
     pub fn advance_closing_windows(&mut self) {
@@ -450,33 +403,13 @@ impl SpidersWm2 {
     }
 
     pub fn advance_resize_overlays(&mut self) {
-        for record in &mut self.managed_windows {
-            let finished = record
-                .resize_overlay
-                .as_ref()
-                .is_some_and(ResizingWindow::is_finished);
-            if !finished {
-                continue;
-            }
-
-            record.resize_overlay = None;
-            if let Some(location) = record.pending_location {
-                self.space.map_element(record.window.clone(), location, false);
-            }
-        }
-
+        self.frame_sync
+            .advance_resize_overlays(&mut self.space, &mut self.managed_windows);
         self.flush_queued_relayout();
     }
 
     pub fn transition_render_elements(&self) -> Vec<Wm2RenderElements> {
-        let mut elements: Vec<Wm2RenderElements> = self
-            .managed_windows
-            .iter()
-            .filter_map(|record| record.resize_overlay.as_ref())
-            .map(ResizingWindow::render_element)
-            .collect();
-        elements.extend(self.frame_sync.render_elements());
-        elements
+        self.frame_sync.render_elements(&self.managed_windows)
     }
 
     pub fn schedule_relayout(&mut self) {
@@ -562,36 +495,33 @@ impl SpidersWm2 {
 
                 if needs_configure {
                     if record.mapped {
-                        if let (Some(snapshot), Some(_current_location)) =
-                            (record.snapshot.as_ref(), current_location)
-                        {
-                            record.resize_overlay = Some(snapshot.into_resizing_window(
-                                location,
-                                record.window.geometry().loc,
-                                record.window.geometry().size,
-                                size,
-                                transaction.monitor(),
-                            ));
+                        if record.frame_sync.maybe_prepare_resize_overlay(
+                            &record.window,
+                            current_location,
+                            location,
+                            size,
+                            &transaction,
+                        ) {
                             self.space.unmap_elem(&record.window);
                         }
                     }
-                    record.pending_location = Some(location);
-                    record.transaction_for_next_configure = Some(transaction.clone());
+                    record.frame_sync.set_pending_location(location);
+                    record
+                        .frame_sync
+                        .queue_transaction_for_next_configure(transaction.clone());
                     let serial = toplevel.send_configure();
-                    if let Some(transaction) = record.transaction_for_next_configure.take() {
-                        record.pending_transactions.push((serial, transaction));
-                    }
+                    record.frame_sync.push_pending_configure_transaction(serial);
                 } else {
-                    record.resize_overlay = None;
-                    record.pending_location = Some(location);
+                    record.frame_sync.clear_resize_overlay();
+                    record.frame_sync.set_pending_location(location);
                 }
             }
 
             let record = &mut self.managed_windows[index];
-            if record.mapped && record.resize_overlay.is_none() {
+            if record.mapped && !record.frame_sync.has_resize_overlay() {
                 self.space.map_element(record.window.clone(), location, false);
             } else {
-                record.pending_location = Some(location);
+                record.frame_sync.set_pending_location(location);
             }
 
             x += width;
@@ -602,7 +532,7 @@ impl SpidersWm2 {
 
     pub fn send_frames_for_windows(&self, output: &smithay::output::Output) {
         for record in &self.managed_windows {
-            if !(record.mapped || record.pending_location.is_some()) {
+            if !(record.mapped || record.frame_sync.pending_location().is_some()) {
                 continue;
             }
 
@@ -624,20 +554,6 @@ impl ManagedWindow {
             .wl_surface()
             .clone()
     }
-
-    pub fn take_pending_transaction(&mut self, commit_serial: Serial) -> Option<Transaction> {
-        let mut transaction = None;
-        while let Some((serial, _)) = self.pending_transactions.first() {
-            if commit_serial.is_no_older_than(serial) {
-                let (_, pending) = self.pending_transactions.remove(0);
-                transaction = Some(pending);
-            } else {
-                break;
-            }
-        }
-        transaction
-    }
-
     pub fn toplevel(&self) -> Option<&smithay::wayland::shell::xdg::ToplevelSurface> {
         self.window.toplevel()
     }
