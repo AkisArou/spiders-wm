@@ -48,6 +48,10 @@ impl WindowFrameSyncState {
         self.pending_location
     }
 
+    pub fn needs_frame_callback(&self, mapped: bool) -> bool {
+        mapped || self.pending_location.is_some()
+    }
+
     pub fn set_pending_location(&mut self, location: Point<i32, Logical>) {
         self.pending_location = Some(location);
     }
@@ -230,6 +234,25 @@ impl FrameSyncState {
         self.closing_windows.push(window);
     }
 
+    pub fn should_defer_relayout<'a, I>(&mut self, window_states: I) -> bool
+    where
+        I: IntoIterator<Item = &'a WindowFrameSyncState>,
+    {
+        if self.has_active_transitions(window_states) {
+            self.queue_relayout();
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn take_ready_relayout<'a, I>(&mut self, window_states: I) -> bool
+    where
+        I: IntoIterator<Item = &'a WindowFrameSyncState>,
+    {
+        !self.has_active_transitions(window_states) && self.take_queued_relayout()
+    }
+
     pub fn has_active_transitions<'a, I>(&self, window_states: I) -> bool
     where
         I: IntoIterator<Item = &'a WindowFrameSyncState>,
@@ -358,6 +381,28 @@ mod tests {
             .expect("expected matching transaction");
         assert!(!matched_second.is_completed());
         assert!(frame_sync.take_pending_transaction(serial2).is_none());
+    }
+
+    #[test]
+    fn frame_callback_needed_when_window_is_pending_map() {
+        let mut frame_sync = WindowFrameSyncState::default();
+        assert!(!frame_sync.needs_frame_callback(false));
+
+        frame_sync.set_pending_location(Point::from((12, 34)));
+        assert!(frame_sync.needs_frame_callback(false));
+        assert!(frame_sync.needs_frame_callback(true));
+    }
+
+    #[test]
+    fn queued_relayout_only_releases_once_transitions_are_idle() {
+        let mut runtime = FrameSyncState::default();
+        let window = WindowFrameSyncState::default();
+
+        assert!(!runtime.should_defer_relayout([&window]));
+
+        runtime.queue_relayout();
+        assert!(runtime.take_ready_relayout([&window]));
+        assert!(!runtime.take_ready_relayout([&window]));
     }
 
 }

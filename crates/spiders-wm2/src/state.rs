@@ -245,13 +245,11 @@ impl SpidersWm2 {
         });
     }
 
-    fn has_active_frame_sync(&self) -> bool {
-        self.frame_sync
-            .has_active_transitions(self.managed_windows.iter().map(|record| &record.frame_sync))
-    }
-
     fn flush_queued_relayout(&mut self) {
-        if self.has_active_frame_sync() || !self.frame_sync.take_queued_relayout() {
+        if !self
+            .frame_sync
+            .take_ready_relayout(self.managed_windows.iter().map(|record| &record.frame_sync))
+        {
             return;
         }
 
@@ -427,8 +425,11 @@ impl SpidersWm2 {
     }
 
     pub fn schedule_relayout_with_transaction(&mut self, transaction: Option<Transaction>) {
-        if transaction.is_none() && self.has_active_frame_sync() {
-            self.frame_sync.queue_relayout();
+        if transaction.is_none()
+            && self
+                .frame_sync
+                .should_defer_relayout(self.managed_windows.iter().map(|record| &record.frame_sync))
+        {
             return;
         }
 
@@ -513,7 +514,7 @@ impl SpidersWm2 {
 
     pub fn send_frames_for_windows(&self, output: &smithay::output::Output) {
         for record in &self.managed_windows {
-            if !(record.mapped || record.frame_sync.pending_location().is_some()) {
+            if !record.frame_sync.needs_frame_callback(record.mapped) {
                 continue;
             }
 
