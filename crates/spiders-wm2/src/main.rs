@@ -3,6 +3,7 @@ mod compositor;
 mod frame_sync;
 mod handlers;
 mod model;
+mod runtime;
 mod state;
 mod winit;
 

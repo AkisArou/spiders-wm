@@ -9,7 +9,6 @@ use smithay::utils::Transform;
 use smithay::wayland::dmabuf::DmabufFeedbackBuilder;
 use tracing::warn;
 
-use crate::actions::output;
 use crate::state::SpidersWm;
 
 pub fn init_winit(
@@ -94,7 +93,7 @@ pub fn init_winit(
     );
     output.set_preferred(mode);
     state.space.map_output(&output, (0, 0));
-    output::sync_output(&mut state.model, "winit", "winit", mode.size.w as u32, mode.size.h as u32);
+    state.runtime().sync_output("winit", "winit", mode.size.w as u32, mode.size.h as u32);
 
     let mut damage_tracker = OutputDamageTracker::from_output(&output);
 
@@ -111,7 +110,7 @@ pub fn init_winit(
                     None,
                     None,
                 );
-                output::sync_output(&mut state.model, "winit", "winit", size.w as u32, size.h as u32);
+                state.runtime().sync_output("winit", "winit", size.w as u32, size.h as u32);
                 state.schedule_relayout();
             }
             WinitEvent::Input(event) => state.process_input_event(event),

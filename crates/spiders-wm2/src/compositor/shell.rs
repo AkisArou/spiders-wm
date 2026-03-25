@@ -3,26 +3,20 @@ use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::utils::{Rectangle, SERIAL_COUNTER, Serial};
 use smithay::wayland::shell::xdg::PopupSurface;
 
-use crate::actions::focus::{self, FocusUpdate};
-use crate::actions::window;
-use crate::actions::workspace;
+use crate::actions::focus::FocusUpdate;
 use crate::frame_sync::{Transaction, WindowFrameSyncState};
 use crate::model::WindowId;
 use crate::state::{ManagedWindow, SpidersWm};
 
 impl SpidersWm {
     pub fn close_focused_window(&mut self) {
-        let Some(focused_surface) = self.focused_surface.as_ref() else {
+        let Some(focused_surface) = self.focused_surface.clone() else {
             return;
         };
 
-        let _ = window::mark_focused_window_closing(&mut self.model);
+        let _ = self.runtime().mark_focused_window_closing();
 
-        if let Some(record) = self
-            .managed_windows
-            .iter()
-            .find(|record| record.wl_surface() == *focused_surface)
-        {
+        if let Some(record) = self.managed_window_for_surface(&focused_surface) {
             if let Some(toplevel) = record.window.toplevel() {
                 toplevel.send_close();
             }
@@ -30,27 +24,32 @@ impl SpidersWm {
     }
 
     pub fn set_focus(&mut self, surface: Option<WlSurface>, serial: Serial) {
+        let focused_window_id = self.resolve_focus_window_id(surface.as_ref());
+        let focused_window_id = self.update_modeled_focus(focused_window_id);
+        let focused_surface = focused_window_id.and_then(|window_id| self.surface_for_window_id(window_id));
+
+        self.apply_backend_focus(focused_surface.clone(), serial);
+        self.apply_window_activation(focused_surface.as_ref());
+    }
+
+    fn resolve_focus_window_id(&self, surface: Option<&WlSurface>) -> Option<WindowId> {
+        surface.and_then(|surface| self.window_id_for_surface(surface))
+    }
+
+    fn update_modeled_focus(&mut self, focused_window_id: Option<WindowId>) -> Option<WindowId> {
+        self.runtime().sync_focus("winit", focused_window_id)
+    }
+
+    fn apply_backend_focus(&mut self, surface: Option<WlSurface>, serial: Serial) {
         self.focused_surface = surface.clone();
         if let Some(keyboard) = self.seat.get_keyboard() {
             keyboard.set_focus(self, surface, serial);
         }
+    }
 
-        let focused_window_id = self
-            .focused_surface
-            .as_ref()
-            .and_then(|focused| {
-                self.managed_windows
-                    .iter()
-                    .find(|record| record.wl_surface() == *focused)
-                    .map(|record| record.id)
-            });
-        focus::set_focused_window(&mut self.model, focused_window_id);
-
+    fn apply_window_activation(&self, focused_surface: Option<&WlSurface>) {
         for record in &self.managed_windows {
-            let active = self
-                .focused_surface
-                .as_ref()
-                .is_some_and(|focused| record.wl_surface() == *focused);
+            let active = focused_surface.is_some_and(|focused| record.wl_surface() == *focused);
             record.window.set_activated(active);
             if let Some(toplevel) = record.window.toplevel() {
                 let _ = toplevel.send_pending_configure();
@@ -61,7 +60,7 @@ impl SpidersWm {
     pub fn add_window(&mut self, window: Window) {
         let window_id = WindowId(self.next_window_id);
         self.next_window_id += 1;
-        workspace::place_new_window(&mut self.model, window_id);
+        self.runtime().place_new_window(window_id);
 
         self.managed_windows.push(ManagedWindow {
             id: window_id,
@@ -72,16 +71,12 @@ impl SpidersWm {
     }
 
     pub fn handle_window_close(&mut self, surface: &WlSurface) {
-        let Some(position) = self
-            .managed_windows
-            .iter()
-            .position(|record| record.wl_surface() == *surface)
-        else {
+        let Some(position) = self.managed_window_position_for_surface(surface) else {
             return;
         };
 
         let record = self.managed_windows.remove(position);
-        let focus_update = focus::remove_window(&mut self.model, record.id);
+        let focus_update = self.runtime().remove_window(record.id);
         let transaction = Transaction::new();
         let monitor = transaction.monitor();
 
@@ -100,12 +95,7 @@ impl SpidersWm {
         }
 
         if let FocusUpdate::Set(next_focus_window_id) = focus_update {
-            let next_focus = next_focus_window_id.and_then(|window_id| {
-                self.managed_windows
-                    .iter()
-                    .find(|candidate| candidate.id == window_id)
-                    .map(ManagedWindow::wl_surface)
-            });
+            let next_focus = next_focus_window_id.and_then(|window_id| self.surface_for_window_id(window_id));
             self.set_focus(next_focus, SERIAL_COUNTER.next_serial());
         }
 
@@ -113,15 +103,11 @@ impl SpidersWm {
     }
 
     pub fn find_window_mut(&mut self, surface: &WlSurface) -> Option<&mut ManagedWindow> {
-        self.managed_windows
-            .iter_mut()
-            .find(|record| record.wl_surface() == *surface)
+        self.managed_window_mut_for_surface(surface)
     }
 
     pub fn is_known_window_mapped(&self, surface: &WlSurface) -> bool {
-        self.managed_windows
-            .iter()
-            .find(|record| record.wl_surface() == *surface)
+        self.managed_window_for_surface(surface)
             .is_some_and(|record| record.mapped)
     }
 
@@ -141,7 +127,7 @@ impl SpidersWm {
         };
 
         if let Some(window_id) = mapped_window_id {
-            self.model.set_window_mapped(window_id, true);
+            let _ = self.runtime().sync_window_mapped(window_id, true);
         }
 
         if let Some((window_id, window, pending_location, first_map)) = window_update {
@@ -166,7 +152,7 @@ impl SpidersWm {
                 }
 
                 if let Some(window_id) = mapped_window_id {
-                    self.model.set_window_mapped(window_id, true);
+                    let _ = self.runtime().sync_window_mapped(window_id, true);
                 }
 
                 return;
@@ -179,7 +165,7 @@ impl SpidersWm {
 
             if let Some(location) = location {
                 self.space.map_element(window, location, false);
-                self.model.set_window_mapped(window_id, true);
+                let _ = self.runtime().sync_window_mapped(window_id, true);
             }
         }
     }

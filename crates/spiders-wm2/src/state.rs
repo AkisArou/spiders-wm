@@ -27,8 +27,8 @@ use smithay::wayland::socket::ListeningSocketSource;
 use tracing::{error, info, trace};
 
 use crate::frame_sync::{FrameSyncState, Transaction, WindowFrameSyncState, plan_tiled_slot, plan_tiled_slots};
-use crate::actions::workspace;
 use crate::model::{WindowId, wm::WmModel};
+use crate::runtime::WmRuntime;
 
 pub struct SpidersWm {
     pub start_time: std::time::Instant,
@@ -88,7 +88,11 @@ impl SpidersWm {
 
         let socket_name = Self::init_wayland_listener(display, event_loop);
         let mut model = WmModel::default();
-        workspace::ensure_default_workspace(&mut model, "1");
+        {
+            let mut runtime = WmRuntime::new(&mut model);
+            runtime.ensure_default_workspace("1");
+            runtime.ensure_seat("winit");
+        }
 
         Self {
             start_time,
@@ -164,6 +168,42 @@ impl SpidersWm {
                     .surface_under(pos - location.to_f64(), WindowSurfaceType::ALL)
                     .map(|(surface, point)| (surface, (point + location).to_f64()))
             })
+    }
+
+    pub fn window_id_for_surface(&self, surface: &WlSurface) -> Option<WindowId> {
+        self.managed_window_for_surface(surface).map(|record| record.id)
+    }
+
+    pub fn managed_window_for_surface(&self, surface: &WlSurface) -> Option<&ManagedWindow> {
+        self.managed_windows
+            .iter()
+            .find(|record| record.wl_surface() == *surface)
+    }
+
+    pub fn managed_window_mut_for_surface(&mut self, surface: &WlSurface) -> Option<&mut ManagedWindow> {
+        self.managed_windows
+            .iter_mut()
+            .find(|record| record.wl_surface() == *surface)
+    }
+
+    pub fn managed_window_position_for_surface(&self, surface: &WlSurface) -> Option<usize> {
+        self.managed_windows
+            .iter()
+            .position(|record| record.wl_surface() == *surface)
+    }
+
+    pub fn surface_for_window_id(&self, window_id: WindowId) -> Option<WlSurface> {
+        self.managed_windows
+            .iter()
+            .find(|record| record.id == window_id)
+            .map(ManagedWindow::wl_surface)
+    }
+
+    pub fn window_id_under(&self, pos: Point<f64, Logical>) -> Option<WindowId> {
+        self.space
+            .element_under(pos)
+            .and_then(|(window, _)| window.toplevel().map(|toplevel| toplevel.wl_surface().clone()))
+            .and_then(|surface| self.window_id_for_surface(&surface))
     }
 
     pub fn spawn_foot(&self) {

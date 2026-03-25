@@ -23,6 +23,13 @@ pub struct WmModel {
 }
 
 impl WmModel {
+    pub fn upsert_seat(&mut self, seat_id: SeatId) {
+        self.seats.entry(seat_id.clone()).or_insert_with(|| SeatModel {
+            id: seat_id,
+            ..SeatModel::default()
+        });
+    }
+
     pub fn upsert_workspace(&mut self, workspace_id: WorkspaceId, name: String) {
         self.workspaces
             .entry(workspace_id.clone())
@@ -90,6 +97,24 @@ impl WmModel {
 
     pub fn set_current_output(&mut self, output_id: OutputId) {
         self.current_output_id = Some(output_id);
+    }
+
+    pub fn set_seat_focused_window(&mut self, seat_id: SeatId, focused_window_id: Option<WindowId>) {
+        if let Some(seat) = self.seats.get_mut(&seat_id) {
+            seat.focused_window_id = focused_window_id;
+        }
+    }
+
+    pub fn set_seat_hovered_window(&mut self, seat_id: SeatId, hovered_window_id: Option<WindowId>) {
+        if let Some(seat) = self.seats.get_mut(&seat_id) {
+            seat.hovered_window_id = hovered_window_id;
+        }
+    }
+
+    pub fn set_seat_interacted_window(&mut self, seat_id: SeatId, interacted_window_id: Option<WindowId>) {
+        if let Some(seat) = self.seats.get_mut(&seat_id) {
+            seat.interacted_window_id = interacted_window_id;
+        }
     }
 
     pub fn insert_window(
@@ -178,6 +203,32 @@ mod tests {
             model.workspaces.get(&WorkspaceId("2".to_string())).map(|workspace| workspace.visible),
             Some(true)
         );
+    }
+
+    #[test]
+    fn setting_seat_focused_window_updates_that_seat() {
+        let mut model = WmModel::default();
+        model.upsert_seat(SeatId("winit".to_string()));
+
+        model.set_seat_focused_window(SeatId("winit".to_string()), Some(WindowId(7)));
+
+        assert_eq!(
+            model.seats.get(&SeatId("winit".to_string())).and_then(|seat| seat.focused_window_id),
+            Some(WindowId(7))
+        );
+    }
+
+    #[test]
+    fn setting_seat_hovered_and_interacted_window_updates_that_seat() {
+        let mut model = WmModel::default();
+        model.upsert_seat(SeatId("winit".to_string()));
+
+        model.set_seat_hovered_window(SeatId("winit".to_string()), Some(WindowId(3)));
+        model.set_seat_interacted_window(SeatId("winit".to_string()), Some(WindowId(4)));
+
+        let seat = model.seats.get(&SeatId("winit".to_string())).expect("seat missing");
+        assert_eq!(seat.hovered_window_id, Some(WindowId(3)));
+        assert_eq!(seat.interacted_window_id, Some(WindowId(4)));
     }
 
     #[test]

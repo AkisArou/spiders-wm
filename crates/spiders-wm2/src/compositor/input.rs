@@ -77,6 +77,8 @@ impl SpidersWm {
 
                 let serial = SERIAL_COUNTER.next_serial();
                 let pointer = self.seat.get_pointer().expect("pointer missing");
+                let hovered_window_id = self.window_id_under(location);
+                self.runtime().sync_hovered_window("winit", hovered_window_id);
                 let under = self.surface_under(location);
 
                 pointer.motion(
@@ -93,9 +95,10 @@ impl SpidersWm {
             InputEvent::PointerButton { event, .. } => {
                 let serial = SERIAL_COUNTER.next_serial();
                 let pointer = self.seat.get_pointer().expect("pointer missing");
-                let keyboard = self.seat.get_keyboard().expect("keyboard missing");
 
                 if event.state() == ButtonState::Pressed && !pointer.is_grabbed() {
+                    let interacted_window_id = self.window_id_under(pointer.current_location());
+                    self.runtime().sync_interacted_window("winit", interacted_window_id);
                     if let Some((window, _)) = self.space.element_under(pointer.current_location())
                     {
                         let window = window.clone();
@@ -105,11 +108,9 @@ impl SpidersWm {
                             .wl_surface()
                             .clone();
                         self.space.raise_element(&window, true);
-                        keyboard.set_focus(self, Some(surface.clone()), serial);
-                        self.focused_surface = Some(surface);
+                        self.set_focus(Some(surface), serial);
                     } else {
-                        keyboard.set_focus(self, Option::<WlSurface>::None, serial);
-                        self.focused_surface = None;
+                        self.set_focus(Option::<WlSurface>::None, serial);
                     }
                 }
 

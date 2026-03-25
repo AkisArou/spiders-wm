@@ -10,7 +10,6 @@ use smithay::wayland::shell::xdg::{
     PopupSurface, PositionerState, ToplevelSurface, XdgShellHandler, XdgToplevelSurfaceData,
 };
 
-use crate::actions::window;
 use crate::state::SpidersWm;
 
 impl XdgShellHandler for SpidersWm {
@@ -147,12 +146,7 @@ pub fn handle_commit(state: &mut SpidersWm, surface: &WlSurface) {
 }
 
 fn sync_toplevel_identity(state: &mut SpidersWm, surface: &WlSurface) {
-    let Some(window_id) = state
-        .managed_windows
-        .iter()
-        .find(|record| record.wl_surface() == *surface)
-        .map(|record| record.id)
-    else {
+    let Some(window_id) = state.window_id_for_surface(surface) else {
         return;
     };
 
@@ -165,5 +159,5 @@ fn sync_toplevel_identity(state: &mut SpidersWm, surface: &WlSurface) {
             .unwrap_or((None, None))
     });
 
-    let _ = window::sync_window_identity(&mut state.model, window_id, title, app_id);
+    let _ = state.runtime().sync_window_identity(window_id, title, app_id);
 }
