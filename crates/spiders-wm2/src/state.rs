@@ -246,7 +246,8 @@ impl SpidersWm2 {
     }
 
     fn has_active_frame_sync(&self) -> bool {
-        self.frame_sync.has_active_transitions(&self.managed_windows)
+        self.frame_sync
+            .has_active_transitions(self.managed_windows.iter().map(|record| &record.frame_sync))
     }
 
     fn flush_queued_relayout(&mut self) {
@@ -393,8 +394,12 @@ impl SpidersWm2 {
     }
 
     pub fn refresh_window_snapshots(&mut self, renderer: &mut GlesRenderer) {
-        self.frame_sync
-            .refresh_window_snapshots(renderer, &mut self.managed_windows);
+        self.frame_sync.refresh_window_snapshots(
+            renderer,
+            self.managed_windows
+                .iter_mut()
+                .map(|record| (&record.window, record.mapped, &mut record.frame_sync)),
+        );
     }
 
     pub fn advance_closing_windows(&mut self) {
@@ -403,13 +408,18 @@ impl SpidersWm2 {
     }
 
     pub fn advance_resize_overlays(&mut self) {
-        self.frame_sync
-            .advance_resize_overlays(&mut self.space, &mut self.managed_windows);
+        let remaps = self.frame_sync.finished_resize_overlay_mappings(
+            self.managed_windows
+                .iter_mut()
+                .map(|record| (&record.window, &mut record.frame_sync)),
+        );
+        self.frame_sync.advance_resize_overlays(&mut self.space, remaps);
         self.flush_queued_relayout();
     }
 
     pub fn transition_render_elements(&self) -> Vec<Wm2RenderElements> {
-        self.frame_sync.render_elements(&self.managed_windows)
+        self.frame_sync
+            .render_elements(self.managed_windows.iter().map(|record| &record.frame_sync))
     }
 
     pub fn schedule_relayout(&mut self) {

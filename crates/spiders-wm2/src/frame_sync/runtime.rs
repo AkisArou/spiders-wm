@@ -4,7 +4,6 @@ use smithay::utils::{Logical, Point, Serial, Size};
 use tracing::warn;
 
 use super::{ClosePathQueue, ClosingWindow, ResizingWindow, Transaction, WindowSnapshot, Wm2RenderElements};
-use crate::state::ManagedWindow;
 
 pub struct WindowCommitUpdate {
     pub first_map: bool,
@@ -188,11 +187,12 @@ impl FrameSyncState {
         self.closing_windows.push(window);
     }
 
-    pub fn has_active_transitions(&self, managed_windows: &[ManagedWindow]) -> bool {
+    pub fn has_active_transitions<'a, I>(&self, window_states: I) -> bool
+    where
+        I: IntoIterator<Item = &'a WindowFrameSyncState>,
+    {
         !self.closing_windows.is_empty()
-            || managed_windows
-                .iter()
-                .any(|record| record.frame_sync.has_resize_overlay())
+            || window_states.into_iter().any(WindowFrameSyncState::has_resize_overlay)
     }
 
     pub fn queue_relayout(&mut self) {
@@ -210,31 +210,47 @@ impl FrameSyncState {
     pub fn advance_resize_overlays(
         &mut self,
         space: &mut Space<Window>,
-        managed_windows: &mut [ManagedWindow],
+        windows: impl IntoIterator<Item = (Window, Point<i32, Logical>)>,
     ) {
-        for record in managed_windows {
-            if let Some(location) = record.frame_sync.maybe_finish_resize_overlay() {
-                space.map_element(record.window.clone(), location, false);
-            }
+        for (window, location) in windows {
+            space.map_element(window, location, false);
         }
     }
 
-    pub fn refresh_window_snapshots(
+    pub fn finished_resize_overlay_mappings<'a, I>(&mut self, windows: I) -> Vec<(Window, Point<i32, Logical>)>
+    where
+        I: IntoIterator<Item = (&'a Window, &'a mut WindowFrameSyncState)>,
+    {
+        windows
+            .into_iter()
+            .filter_map(|(window, frame_sync)| {
+                frame_sync
+                    .maybe_finish_resize_overlay()
+                    .map(|location| (window.clone(), location))
+            })
+            .collect()
+    }
+
+    pub fn refresh_window_snapshots<'a, I>(
         &mut self,
         renderer: &mut GlesRenderer,
-        managed_windows: &mut [ManagedWindow],
-    ) {
-        for record in managed_windows {
-            record
-                .frame_sync
-                .refresh_snapshot(renderer, &record.window, record.mapped);
+        windows: I,
+    )
+    where
+        I: IntoIterator<Item = (&'a Window, bool, &'a mut WindowFrameSyncState)>,
+    {
+        for (window, mapped, frame_sync) in windows {
+            frame_sync.refresh_snapshot(renderer, window, mapped);
         }
     }
 
-    pub fn render_elements(&self, managed_windows: &[ManagedWindow]) -> Vec<Wm2RenderElements> {
-        let mut elements: Vec<Wm2RenderElements> = managed_windows
-            .iter()
-            .filter_map(|record| record.frame_sync.resize_overlay())
+    pub fn render_elements<'a, I>(&self, window_states: I) -> Vec<Wm2RenderElements>
+    where
+        I: IntoIterator<Item = &'a WindowFrameSyncState>,
+    {
+        let mut elements: Vec<Wm2RenderElements> = window_states
+            .into_iter()
+            .filter_map(WindowFrameSyncState::resize_overlay)
             .map(ResizingWindow::render_element)
             .collect();
 
@@ -244,5 +260,60 @@ impl FrameSyncState {
             .map(ClosingWindow::render_element)
         );
         elements
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn first_commit_without_pending_layout_requests_initial_map() {
+        let mut frame_sync = WindowFrameSyncState::default();
+
+        let update = frame_sync.consume_commit_update(false);
+
+        assert!(update.first_map);
+        assert!(update.pending_location.is_none());
+    }
+
+    #[test]
+    fn matched_configure_commit_consumes_pending_location_once() {
+        let mut frame_sync = WindowFrameSyncState::default();
+        let pending = Point::from((320, 24));
+        frame_sync.set_pending_location(pending);
+        frame_sync.note_matched_configure_commit();
+
+        let update = frame_sync.consume_commit_update(true);
+        assert!(!update.first_map);
+        assert_eq!(update.pending_location, Some(pending));
+
+        let second_update = frame_sync.consume_commit_update(true);
+        assert!(second_update.pending_location.is_none());
+    }
+
+    #[test]
+    fn pending_transactions_match_latest_acked_configure() {
+        let mut frame_sync = WindowFrameSyncState::default();
+        let first = Transaction::new();
+        let second = Transaction::new();
+        let serial1 = Serial::from(5_u32);
+        let serial2 = Serial::from(7_u32);
+
+        frame_sync.queue_transaction_for_next_configure(first.clone());
+        frame_sync.push_pending_configure_transaction(serial1);
+        frame_sync.queue_transaction_for_next_configure(second.clone());
+        frame_sync.push_pending_configure_transaction(serial2);
+
+        let matched_first = frame_sync
+            .take_pending_transaction(serial1)
+            .expect("expected matching transaction");
+        assert!(!matched_first.is_completed());
+
+        let matched_second = frame_sync
+            .take_pending_transaction(serial2)
+            .expect("expected matching transaction");
+        assert!(!matched_second.is_completed());
+        assert!(frame_sync.take_pending_transaction(serial2).is_none());
     }
 }
