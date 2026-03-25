@@ -84,7 +84,7 @@ fn add_transaction_pre_commit_hook(surface: &WlSurface) -> HookId {
         if let Some(transaction) = record.take_pending_transaction(commit_serial) {
             record.matched_configure_commit = true;
             if !transaction.is_completed() {
-                transaction.register_deadline_timer(&state.event_loop);
+                transaction.register_deadline(&state.event_loop);
 
                 if !transaction.is_last() {
                     if let Some(client) = wl_surface.client() {

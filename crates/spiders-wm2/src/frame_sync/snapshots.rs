@@ -1,4 +1,7 @@
-use std::time::Instant;
+//! Window snapshots and transition overlays for frame-perfect animations.
+//!
+//! Snapshots capture a window's visual state at a specific point in time and are used to
+//! maintain visual continuity during transitions like closes and relayouts.
 
 use smithay::backend::allocator::Fourcc;
 use smithay::backend::renderer::element::render_elements;
@@ -12,35 +15,42 @@ use smithay::backend::renderer::{
 use smithay::desktop::Window;
 use smithay::utils::{Logical, Point, Rectangle, Scale, Size, Transform};
 
-use crate::transaction::TransactionMonitor;
+use super::transaction::TransactionMonitor;
 
 render_elements! {
     pub Wm2RenderElements<=GlesRenderer>;
-    Closing=TextureRenderElement<GlesTexture>,
+    Snapshot=TextureRenderElement<GlesTexture>,
 }
 
+/// A snapshot of a window's visual state at a specific point in time.
 #[derive(Clone)]
 pub struct WindowSnapshot {
     buffer: TextureBuffer<GlesTexture>,
     bbox: Rectangle<i32, Logical>,
 }
 
+/// Animated window during close operations.
 pub struct ClosingWindow {
-    buffer: TextureBuffer<GlesTexture>,
-    location: Point<i32, Logical>,
-    size: Size<i32, Logical>,
-    monitor: TransactionMonitor,
+    pub(crate) buffer: TextureBuffer<GlesTexture>,
+    pub(crate) location: Point<i32, Logical>,
+    pub(crate) size: Size<i32, Logical>,
+    pub(crate) monitor: TransactionMonitor,
 }
 
+/// Animated window during resize/relayout operations.
 pub struct ResizingWindow {
-    buffer: TextureBuffer<GlesTexture>,
-    location: Point<i32, Logical>,
-    size: Size<i32, Logical>,
-    monitor: TransactionMonitor,
+    pub(crate) buffer: TextureBuffer<GlesTexture>,
+    pub(crate) location: Point<i32, Logical>,
+    pub(crate) size: Size<i32, Logical>,
+    pub(crate) monitor: TransactionMonitor,
 }
 
 impl WindowSnapshot {
-    pub fn capture(renderer: &mut GlesRenderer, window: &Window) -> Result<Option<Self>, smithay::backend::renderer::gles::GlesError> {
+    /// Captures a window's current visual state (content + decorations + popups).
+    pub fn capture(
+        renderer: &mut GlesRenderer,
+        window: &Window,
+    ) -> Result<Option<Self>, smithay::backend::renderer::gles::GlesError> {
         let bbox = window.bbox_with_popups();
         if bbox.size.w <= 0 || bbox.size.h <= 0 {
             return Ok(None);
@@ -79,6 +89,7 @@ impl WindowSnapshot {
         }))
     }
 
+    /// Converts this snapshot into a closing window overlay.
     pub fn into_closing_window(
         self,
         element_location: Point<i32, Logical>,
@@ -93,6 +104,7 @@ impl WindowSnapshot {
         }
     }
 
+    /// Converts this snapshot into a resizing window overlay.
     pub fn into_resizing_window(
         &self,
         target_location: Point<i32, Logical>,
@@ -120,14 +132,12 @@ impl WindowSnapshot {
 }
 
 impl ClosingWindow {
-    pub fn advance(&mut self, _now: Instant) {
-    }
-
-    pub fn is_finished(&self, _now: Instant) -> bool {
+    /// Checks if this window has finished its close animation.
+    pub fn is_finished(&self) -> bool {
         self.monitor.is_released()
     }
 
-    pub fn render_element(&self, _now: Instant) -> Wm2RenderElements {
+    pub fn render_element(&self) -> Wm2RenderElements {
         Wm2RenderElements::from(TextureRenderElement::from_texture_buffer(
             self.location.to_f64().to_physical_precise_round(Scale::from(1.0)),
             &self.buffer,
@@ -140,6 +150,7 @@ impl ClosingWindow {
 }
 
 impl ResizingWindow {
+    /// Checks if this resize overlay has finished.
     pub fn is_finished(&self) -> bool {
         self.monitor.is_released()
     }

@@ -1,8 +1,7 @@
-mod closing;
+mod frame_sync;
 mod handlers;
 mod input;
 mod state;
-mod transaction;
 mod winit;
 
 use smithay::reexports::{calloop::EventLoop, wayland_server::Display};

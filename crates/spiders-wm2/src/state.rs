@@ -4,6 +4,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::Arc;
 
 use smithay::backend::renderer::gles::GlesRenderer;
+use smithay::backend::winit::WinitGraphicsBackend;
 use smithay::desktop::{PopupManager, Space, Window, WindowSurfaceType};
 use smithay::input::{Seat, SeatState};
 use smithay::reexports::calloop::{
@@ -15,6 +16,7 @@ use smithay::reexports::wayland_server::{Client, Display, DisplayHandle};
 use smithay::utils::{Logical, Point, SERIAL_COUNTER, Serial, Size};
 use smithay::wayland::compositor::{CompositorClientState, CompositorHandler, CompositorState};
 use smithay::wayland::output::OutputHandler;
+use smithay::wayland::dmabuf::{DmabufGlobal, DmabufState};
 use smithay::wayland::output::OutputManagerState;
 use smithay::wayland::selection::SelectionHandler;
 use smithay::wayland::selection::data_device::DataDeviceHandler;
@@ -24,8 +26,7 @@ use smithay::wayland::shm::ShmState;
 use smithay::wayland::socket::ListeningSocketSource;
 use tracing::{error, info, trace, warn};
 
-use crate::closing::{ClosingWindow, ResizingWindow, WindowSnapshot, Wm2RenderElements};
-use crate::transaction::Transaction;
+use crate::frame_sync::{FrameSyncState, ResizingWindow, Transaction, WindowSnapshot, Wm2RenderElements};
 
 pub struct SpidersWm2 {
     pub start_time: std::time::Instant,
@@ -41,14 +42,17 @@ pub struct SpidersWm2 {
     pub compositor_state: CompositorState,
     pub xdg_shell_state: XdgShellState,
     pub shm_state: ShmState,
+    pub dmabuf_state: DmabufState,
+    pub dmabuf_global: Option<DmabufGlobal>,
     pub seat_state: SeatState<Self>,
     pub data_device_state: DataDeviceState,
     pub seat: Seat<Self>,
+    pub backend: Option<WinitGraphicsBackend<GlesRenderer>>,
 
     pub focused_surface: Option<WlSurface>,
 
     managed_windows: Vec<ManagedWindow>,
-    closing_windows: Vec<ClosingWindow>,
+    frame_sync: FrameSyncState,
 }
 
 pub(crate) struct ManagedWindow {
@@ -70,6 +74,7 @@ impl SpidersWm2 {
         let compositor_state = CompositorState::new::<Self>(&display_handle);
         let xdg_shell_state = XdgShellState::new::<Self>(&display_handle);
         let shm_state = ShmState::new::<Self>(&display_handle, vec![]);
+        let dmabuf_state = DmabufState::new();
         let _output_manager_state =
             OutputManagerState::new_with_xdg_output::<Self>(&display_handle);
         let data_device_state = DataDeviceState::new::<Self>(&display_handle);
@@ -97,12 +102,15 @@ impl SpidersWm2 {
             compositor_state,
             xdg_shell_state,
             shm_state,
+            dmabuf_state,
+            dmabuf_global: None,
             seat_state,
             data_device_state,
             seat,
+            backend: None,
             focused_surface: None,
             managed_windows: Vec::new(),
-            closing_windows: Vec::new(),
+            frame_sync: FrameSyncState::default(),
         }
     }
 
@@ -249,6 +257,50 @@ impl SpidersWm2 {
         });
     }
 
+    fn has_active_frame_sync(&self) -> bool {
+        self.frame_sync.has_active_closing()
+            || self
+                .managed_windows
+                .iter()
+                .any(|record| record.resize_overlay.is_some())
+    }
+
+    fn flush_queued_relayout(&mut self) {
+        if self.has_active_frame_sync() || !self.frame_sync.take_queued_relayout() {
+            return;
+        }
+
+        self.start_relayout(None);
+    }
+
+    /// Handles window close events with frame-perfect relayout coordination.
+    ///
+    /// # Close-Relayout Coordination
+    ///
+    /// When a window closes, we need to ensure:
+    /// 1. The closing window's snapshot remains visible during close animation
+    /// 2. Remaining windows relayout to new positions atomically
+    /// 3. New layout doesn't appear until close animation finishes
+    ///
+    /// This is achieved through a transactional close-then-relayout flow:
+    /// - **Close Transaction**: Lifetime from close until snapshot disappears
+    /// - **Relayout Transaction**: Started when close completes
+    /// - Both transactions block commits until complete
+    /// - Overlays ensure visual continuity through the transition
+    ///
+    /// # Implementation
+    ///
+    /// - Capture window snapshot before unmapping (for close animation)
+    /// - Create close transaction (monitors snapshot overlay)
+    /// - Unmap window and update focus
+    /// - Queue relayout to execute after close completes
+    /// - Frame loop handles snapshot advance and overlay cleanup
+    ///
+    /// # Edge Cases
+    ///
+    /// - Multiple rapid closes: Each gets a transaction; relayout queues and deduplicates
+    /// - Close during relayout: New close transaction created; relayout re-queued after
+    /// - Last window closes: Relayout handles empty managed_windows gracefully
     pub fn handle_window_close(&mut self, surface: &WlSurface) {
         let Some(position) = self
             .managed_windows
@@ -267,7 +319,7 @@ impl SpidersWm2 {
                 record.snapshot,
                 self.space.element_location(&record.window),
             ) {
-                self.closing_windows.push(snapshot.into_closing_window(
+                self.frame_sync.push_closing_window(snapshot.into_closing_window(
                     element_location,
                     record.window.geometry().loc,
                     monitor,
@@ -393,11 +445,8 @@ impl SpidersWm2 {
     }
 
     pub fn advance_closing_windows(&mut self) {
-        let now = std::time::Instant::now();
-        for window in &mut self.closing_windows {
-            window.advance(now);
-        }
-        self.closing_windows.retain(|window| !window.is_finished(now));
+        self.frame_sync.advance_closing_windows();
+        self.flush_queued_relayout();
     }
 
     pub fn advance_resize_overlays(&mut self) {
@@ -415,21 +464,18 @@ impl SpidersWm2 {
                 self.space.map_element(record.window.clone(), location, false);
             }
         }
+
+        self.flush_queued_relayout();
     }
 
     pub fn transition_render_elements(&self) -> Vec<Wm2RenderElements> {
-        let now = std::time::Instant::now();
         let mut elements: Vec<Wm2RenderElements> = self
             .managed_windows
             .iter()
             .filter_map(|record| record.resize_overlay.as_ref())
             .map(ResizingWindow::render_element)
             .collect();
-        elements.extend(
-            self.closing_windows
-                .iter()
-                .map(|window| window.render_element(now)),
-        );
+        elements.extend(self.frame_sync.render_elements());
         elements
     }
 
@@ -438,6 +484,11 @@ impl SpidersWm2 {
     }
 
     pub fn schedule_relayout_with_transaction(&mut self, transaction: Option<Transaction>) {
+        if transaction.is_none() && self.has_active_frame_sync() {
+            self.frame_sync.queue_relayout();
+            return;
+        }
+
         self.start_relayout(transaction);
     }
 
