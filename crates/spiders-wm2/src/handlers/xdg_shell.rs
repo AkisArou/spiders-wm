@@ -81,8 +81,7 @@ fn add_transaction_pre_commit_hook(surface: &WlSurface) -> HookId {
             return;
         };
 
-        if let Some(transaction) = record.frame_sync.take_pending_transaction(commit_serial) {
-            record.frame_sync.note_matched_configure_commit();
+        if let Some(transaction) = record.frame_sync.match_configure_commit(commit_serial) {
             if !transaction.is_completed() {
                 transaction.register_deadline(&state.event_loop);
 

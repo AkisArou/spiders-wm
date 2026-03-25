@@ -161,7 +161,7 @@ impl WindowFrameSyncState {
 
         if needs_configure {
             self.set_pending_location(target_location);
-            self.queue_transaction_for_next_configure(transaction.clone());
+            self.stash_transaction_for_next_configure(transaction.clone());
         } else {
             self.clear_resize_overlay();
             self.set_pending_location(target_location);
@@ -175,17 +175,25 @@ impl WindowFrameSyncState {
         }
     }
 
-    pub fn queue_transaction_for_next_configure(&mut self, transaction: Transaction) {
-        self.transaction_for_next_configure = Some(transaction);
-    }
-
-    pub fn push_pending_configure_transaction(&mut self, serial: Serial) {
+    pub fn register_sent_configure(&mut self, serial: Serial) {
         if let Some(transaction) = self.transaction_for_next_configure.take() {
             self.pending_transactions.push((serial, transaction));
         }
     }
 
-    pub fn take_pending_transaction(&mut self, commit_serial: Serial) -> Option<Transaction> {
+    pub fn match_configure_commit(&mut self, commit_serial: Serial) -> Option<Transaction> {
+        let transaction = self.take_pending_transaction(commit_serial);
+        if transaction.is_some() {
+            self.note_matched_configure_commit();
+        }
+        transaction
+    }
+
+    fn stash_transaction_for_next_configure(&mut self, transaction: Transaction) {
+        self.transaction_for_next_configure = Some(transaction);
+    }
+
+    fn take_pending_transaction(&mut self, commit_serial: Serial) -> Option<Transaction> {
         let mut transaction = None;
         while let Some((serial, _)) = self.pending_transactions.first() {
             if commit_serial.is_no_older_than(serial) {
@@ -198,7 +206,7 @@ impl WindowFrameSyncState {
         transaction
     }
 
-    pub fn note_matched_configure_commit(&mut self) {
+    fn note_matched_configure_commit(&mut self) {
         self.matched_configure_commit = true;
     }
 
@@ -366,21 +374,21 @@ mod tests {
         let serial1 = Serial::from(5_u32);
         let serial2 = Serial::from(7_u32);
 
-        frame_sync.queue_transaction_for_next_configure(first.clone());
-        frame_sync.push_pending_configure_transaction(serial1);
-        frame_sync.queue_transaction_for_next_configure(second.clone());
-        frame_sync.push_pending_configure_transaction(serial2);
+        frame_sync.stash_transaction_for_next_configure(first.clone());
+        frame_sync.register_sent_configure(serial1);
+        frame_sync.stash_transaction_for_next_configure(second.clone());
+        frame_sync.register_sent_configure(serial2);
 
         let matched_first = frame_sync
-            .take_pending_transaction(serial1)
+            .match_configure_commit(serial1)
             .expect("expected matching transaction");
         assert!(!matched_first.is_completed());
 
         let matched_second = frame_sync
-            .take_pending_transaction(serial2)
+            .match_configure_commit(serial2)
             .expect("expected matching transaction");
         assert!(!matched_second.is_completed());
-        assert!(frame_sync.take_pending_transaction(serial2).is_none());
+        assert!(frame_sync.match_configure_commit(serial2).is_none());
     }
 
     #[test]

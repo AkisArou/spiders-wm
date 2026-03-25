@@ -500,7 +500,7 @@ impl SpidersWm2 {
                         self.space.unmap_elem(&record.window);
                     }
                     let serial = toplevel.send_configure();
-                    record.frame_sync.push_pending_configure_transaction(serial);
+                    record.frame_sync.register_sent_configure(serial);
                 }
 
                 if let Some(location) = action.map_now {
