@@ -1,3 +1,36 @@
+//! Runtime frame-sync state and policy.
+//!
+//! This file is the behavioral contract that future layout systems should preserve.
+//! The current tiling planner is temporary, but the frame-sync rules here are intended
+//! to remain stable as spiders-wm2 moves to CSS-driven layout.
+//!
+//! # Frozen Responsibilities
+//!
+//! `WindowFrameSyncState` owns per-window transition state:
+//! - pending target location for the next visible state
+//! - configure-to-commit transaction matching
+//! - cached snapshots used for static close/resize continuity
+//! - resize overlay lifecycle
+//! - frame callback eligibility during transitional states
+//!
+//! `FrameSyncState` owns global transition policy:
+//! - closing window overlays
+//! - deduplicated relayout queueing
+//! - relayout deferral until transitions are idle
+//! - snapshot refresh and overlay retirement orchestration
+//!
+//! # Invariants
+//!
+//! - A relayout that needs a configure must not become visible until the matching
+//!   configure commit releases its transaction.
+//! - A mapped window may be temporarily unmapped while a resize overlay holds the
+//!   previous visible content on screen.
+//! - A window with either visible content or a pending map target must still receive
+//!   frame callbacks.
+//! - Deferred relayouts must run exactly once after active transitions drain.
+//! - Callers outside `frame_sync` should use the highest-level API available rather
+//!   than manipulating pending transaction queues or matched-commit flags directly.
+
 use smithay::backend::renderer::gles::GlesRenderer;
 use smithay::desktop::{Space, Window};
 use smithay::utils::{Logical, Point, Serial, Size};
@@ -5,16 +38,29 @@ use tracing::warn;
 
 use super::{ClosePathQueue, ClosingWindow, ResizingWindow, Transaction, WindowSnapshot, Wm2RenderElements};
 
+/// Result of processing a surface commit against frame-sync state.
+///
+/// `first_map` indicates the first real commit for a new window. In that case the
+/// compositor may need to trigger a follow-up relayout and focus update.
 pub struct WindowCommitUpdate {
     pub first_map: bool,
     pub pending_location: Option<Point<i32, Logical>>,
 }
 
+/// Frame-sync decision for a single relayout step.
+///
+/// The caller still performs Smithay-facing operations such as `map_element`,
+/// `unmap_elem`, and `send_configure`, but the decision of whether those actions
+/// are required lives here.
 pub struct WindowRelayoutAction {
     pub unmap_window: bool,
     pub map_now: Option<Point<i32, Logical>>,
 }
 
+/// Per-window frame-sync state.
+///
+/// This is the primary boundary that the rest of the compositor should interact with
+/// when a window enters or leaves a transitional state.
 pub struct WindowFrameSyncState {
     pending_location: Option<Point<i32, Logical>>,
     matched_configure_commit: bool,
@@ -32,6 +78,7 @@ impl Default for WindowFrameSyncState {
 }
 
 impl WindowFrameSyncState {
+    /// Creates empty frame-sync state for a newly tracked window.
     pub fn new() -> Self {
         Self {
             pending_location: None,
@@ -48,6 +95,10 @@ impl WindowFrameSyncState {
         self.pending_location
     }
 
+    /// Returns whether the window should still receive a frame callback.
+    ///
+    /// This stays true for mapped windows and for windows that are waiting for a
+    /// pending location to become visible.
     pub fn needs_frame_callback(&self, mapped: bool) -> bool {
         mapped || self.pending_location.is_some()
     }
@@ -93,6 +144,7 @@ impl WindowFrameSyncState {
         self.pending_location
     }
 
+    /// Captures a fresh snapshot after the visible content changes.
     pub fn refresh_snapshot(
         &mut self,
         renderer: &mut GlesRenderer,
@@ -137,6 +189,11 @@ impl WindowFrameSyncState {
         true
     }
 
+    /// Computes the frame-sync side effects of a relayout for one window.
+    ///
+    /// This does not mutate Smithay objects directly. It only updates frame-sync
+    /// bookkeeping and reports whether the caller must unmap the real window or may
+    /// map it immediately.
     pub fn plan_relayout(
         &mut self,
         window: &Window,
@@ -175,12 +232,20 @@ impl WindowFrameSyncState {
         }
     }
 
+    /// Records the serial for a configure that has just been sent.
+    ///
+    /// The transaction previously staged by `plan_relayout` becomes associated with
+    /// this serial until the matching commit arrives.
     pub fn register_sent_configure(&mut self, serial: Serial) {
         if let Some(transaction) = self.transaction_for_next_configure.take() {
             self.pending_transactions.push((serial, transaction));
         }
     }
 
+    /// Matches an acked configure commit to its pending transaction.
+    ///
+    /// If a transaction is returned, the commit is considered the one that should
+    /// release the blocked relayout when the transaction completes.
     pub fn match_configure_commit(&mut self, commit_serial: Serial) -> Option<Transaction> {
         let transaction = self.take_pending_transaction(commit_serial);
         if transaction.is_some() {
@@ -210,6 +275,8 @@ impl WindowFrameSyncState {
         self.matched_configure_commit = true;
     }
 
+    /// Consumes transient commit bookkeeping and reports how the compositor should
+    /// handle the committed surface.
     pub fn consume_commit_update(&mut self, mapped: bool) -> WindowCommitUpdate {
         let first_map = !mapped && self.pending_location.is_none();
         let matched_configure_commit = self.matched_configure_commit;
@@ -232,16 +299,19 @@ impl WindowFrameSyncState {
 }
 
 #[derive(Default)]
+/// Global frame-sync runtime state shared across all managed windows.
 pub struct FrameSyncState {
     closing_windows: Vec<ClosingWindow>,
     close_path_queue: ClosePathQueue,
 }
 
 impl FrameSyncState {
+    /// Queues a closing snapshot overlay that remains visible until its transaction releases.
     pub fn push_closing_window(&mut self, window: ClosingWindow) {
         self.closing_windows.push(window);
     }
 
+    /// Returns whether a relayout should be deferred and queues it if necessary.
     pub fn should_defer_relayout<'a, I>(&mut self, window_states: I) -> bool
     where
         I: IntoIterator<Item = &'a WindowFrameSyncState>,
@@ -254,6 +324,7 @@ impl FrameSyncState {
         }
     }
 
+    /// Returns whether a previously queued relayout may run now.
     pub fn take_ready_relayout<'a, I>(&mut self, window_states: I) -> bool
     where
         I: IntoIterator<Item = &'a WindowFrameSyncState>,
@@ -261,6 +332,7 @@ impl FrameSyncState {
         !self.has_active_transitions(window_states) && self.take_queued_relayout()
     }
 
+    /// Reports whether any active transition is still preventing an immediate relayout.
     pub fn has_active_transitions<'a, I>(&self, window_states: I) -> bool
     where
         I: IntoIterator<Item = &'a WindowFrameSyncState>,
@@ -281,6 +353,7 @@ impl FrameSyncState {
         self.closing_windows.retain(|window| !window.is_finished());
     }
 
+    /// Applies completed resize-overlay remaps to the compositor space.
     pub fn advance_resize_overlays(
         &mut self,
         space: &mut Space<Window>,
@@ -291,6 +364,7 @@ impl FrameSyncState {
         }
     }
 
+    /// Collects windows whose resize overlays finished and are ready to be remapped.
     pub fn finished_resize_overlay_mappings<'a, I>(&mut self, windows: I) -> Vec<(Window, Point<i32, Logical>)>
     where
         I: IntoIterator<Item = (&'a Window, &'a mut WindowFrameSyncState)>,
@@ -305,6 +379,7 @@ impl FrameSyncState {
             .collect()
     }
 
+    /// Refreshes cached snapshots for windows whose visible content changed.
     pub fn refresh_window_snapshots<'a, I>(
         &mut self,
         renderer: &mut GlesRenderer,
@@ -318,6 +393,7 @@ impl FrameSyncState {
         }
     }
 
+    /// Builds transition render elements for resize and close overlays.
     pub fn render_elements<'a, I>(&self, window_states: I) -> Vec<Wm2RenderElements>
     where
         I: IntoIterator<Item = &'a WindowFrameSyncState>,
