@@ -26,7 +26,7 @@ use smithay::wayland::shm::ShmState;
 use smithay::wayland::socket::ListeningSocketSource;
 use tracing::{error, info, trace};
 
-use crate::frame_sync::{FrameSyncState, Transaction, WindowFrameSyncState, Wm2RenderElements};
+use crate::frame_sync::{FrameSyncState, Transaction, WindowFrameSyncState, Wm2RenderElements, plan_tiled_slot, plan_tiled_slots};
 
 pub struct SpidersWm2 {
     pub start_time: std::time::Instant,
@@ -441,24 +441,13 @@ impl SpidersWm2 {
     ) -> Option<(Point<i32, Logical>, Size<i32, Logical>)> {
         let output = self.space.outputs().next()?;
         let output_geometry = self.space.output_geometry(output)?;
-        let count = self.managed_windows.len() as i32;
-        if count <= 0 {
-            return None;
-        }
-
         let index = self
             .managed_windows
             .iter()
-            .position(|record| record.wl_surface() == *surface)? as i32;
+            .position(|record| record.wl_surface() == *surface)?;
 
-        let base_width = (output_geometry.size.w / count).max(1);
-        let remainder = output_geometry.size.w.rem_euclid(count);
-
-        let width = (base_width + i32::from(index < remainder)).max(1);
-        let x = output_geometry.loc.x + index * base_width + remainder.min(index);
-        let location = Point::from((x, output_geometry.loc.y));
-        let size = Size::from((width, output_geometry.size.h.max(1)));
-        Some((location, size))
+        let slot = plan_tiled_slot(output_geometry, self.managed_windows.len(), index)?;
+        Some((slot.location, slot.size))
     }
 
     fn start_relayout(&mut self, transaction: Option<Transaction>) {
@@ -476,18 +465,10 @@ impl SpidersWm2 {
             .output_geometry(output)
             .expect("output geometry missing during relayout");
 
-        let count = self.managed_windows.len() as i32;
-        let base_width = (output_geometry.size.w / count).max(1);
-        let remainder = output_geometry.size.w.rem_euclid(count);
-
         let transaction = transaction.unwrap_or_else(Transaction::new);
-        let mut x = output_geometry.loc.x;
+        let slots = plan_tiled_slots(output_geometry, self.managed_windows.len());
 
-        for index in 0..self.managed_windows.len() {
-            let extra = if (index as i32) < remainder { 1 } else { 0 };
-            let width = (base_width + extra).max(1);
-            let size = Size::from((width, output_geometry.size.h.max(1)));
-            let location = Point::from((x, output_geometry.loc.y));
+        for (index, slot) in slots.into_iter().enumerate() {
             let current_location = self
                 .space
                 .element_location(&self.managed_windows[index].window);
@@ -497,44 +478,34 @@ impl SpidersWm2 {
                 let record = &mut self.managed_windows[index];
                 let mut needs_configure = !record.mapped;
                 toplevel.with_pending_state(|state| {
-                    if state.size != Some(size) {
+                    if state.size != Some(slot.size) {
                         needs_configure = true;
                     }
-                    state.size = Some(size);
+                    state.size = Some(slot.size);
                 });
 
+                let action = record.frame_sync.plan_relayout(
+                    &record.window,
+                    record.mapped,
+                    current_location,
+                    slot.location,
+                    slot.size,
+                    needs_configure,
+                    &transaction,
+                );
+
                 if needs_configure {
-                    if record.mapped {
-                        if record.frame_sync.maybe_prepare_resize_overlay(
-                            &record.window,
-                            current_location,
-                            location,
-                            size,
-                            &transaction,
-                        ) {
-                            self.space.unmap_elem(&record.window);
-                        }
+                    if action.unmap_window {
+                        self.space.unmap_elem(&record.window);
                     }
-                    record.frame_sync.set_pending_location(location);
-                    record
-                        .frame_sync
-                        .queue_transaction_for_next_configure(transaction.clone());
                     let serial = toplevel.send_configure();
                     record.frame_sync.push_pending_configure_transaction(serial);
-                } else {
-                    record.frame_sync.clear_resize_overlay();
-                    record.frame_sync.set_pending_location(location);
+                }
+
+                if let Some(location) = action.map_now {
+                    self.space.map_element(record.window.clone(), location, false);
                 }
             }
-
-            let record = &mut self.managed_windows[index];
-            if record.mapped && !record.frame_sync.has_resize_overlay() {
-                self.space.map_element(record.window.clone(), location, false);
-            } else {
-                record.frame_sync.set_pending_location(location);
-            }
-
-            x += width;
         }
 
         drop(transaction);

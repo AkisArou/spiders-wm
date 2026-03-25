@@ -10,6 +10,11 @@ pub struct WindowCommitUpdate {
     pub pending_location: Option<Point<i32, Logical>>,
 }
 
+pub struct WindowRelayoutAction {
+    pub unmap_window: bool,
+    pub map_now: Option<Point<i32, Logical>>,
+}
+
 pub struct WindowFrameSyncState {
     pending_location: Option<Point<i32, Logical>>,
     matched_configure_commit: bool,
@@ -126,6 +131,44 @@ impl WindowFrameSyncState {
             transaction.monitor(),
         ));
         true
+    }
+
+    pub fn plan_relayout(
+        &mut self,
+        window: &Window,
+        mapped: bool,
+        current_location: Option<Point<i32, Logical>>,
+        target_location: Point<i32, Logical>,
+        target_size: Size<i32, Logical>,
+        needs_configure: bool,
+        transaction: &Transaction,
+    ) -> WindowRelayoutAction {
+        let unmap_window = if needs_configure && mapped {
+            self.maybe_prepare_resize_overlay(
+                window,
+                current_location,
+                target_location,
+                target_size,
+                transaction,
+            )
+        } else {
+            false
+        };
+
+        if needs_configure {
+            self.set_pending_location(target_location);
+            self.queue_transaction_for_next_configure(transaction.clone());
+        } else {
+            self.clear_resize_overlay();
+            self.set_pending_location(target_location);
+        }
+
+        let map_now = (mapped && !self.has_resize_overlay()).then_some(target_location);
+
+        WindowRelayoutAction {
+            unmap_window,
+            map_now,
+        }
     }
 
     pub fn queue_transaction_for_next_configure(&mut self, transaction: Transaction) {
@@ -316,4 +359,5 @@ mod tests {
         assert!(!matched_second.is_completed());
         assert!(frame_sync.take_pending_transaction(serial2).is_none());
     }
+
 }

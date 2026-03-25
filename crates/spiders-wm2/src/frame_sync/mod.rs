@@ -23,10 +23,12 @@
 //! The rest of the compositor interacts with frame_sync only through these public types.
 
 mod close_path;
+mod planner;
 mod runtime;
 mod snapshots;
 mod transaction;
 
+pub use planner::{plan_tiled_slot, plan_tiled_slots};
 pub use runtime::{FrameSyncState, WindowFrameSyncState};
 pub use close_path::ClosePathQueue;
 pub use snapshots::{ClosingWindow, ResizingWindow, WindowSnapshot, Wm2RenderElements};
