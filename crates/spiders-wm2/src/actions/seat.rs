@@ -14,7 +14,7 @@ pub fn sync_focused_window(
 ) -> Option<WindowId> {
     let seat_id = ensure_seat(model, seat_id);
     let focused_window_id = focused_window_id.filter(|window_id| model.windows.contains_key(window_id));
-    model.set_seat_focused_window(seat_id, focused_window_id);
+    model.set_seat_focused_window(seat_id, focused_window_id.clone());
     focused_window_id
 }
 
@@ -25,7 +25,7 @@ pub fn sync_hovered_window(
 ) -> Option<WindowId> {
     let seat_id = ensure_seat(model, seat_id);
     let hovered_window_id = hovered_window_id.filter(|window_id| model.windows.contains_key(window_id));
-    model.set_seat_hovered_window(seat_id, hovered_window_id);
+    model.set_seat_hovered_window(seat_id, hovered_window_id.clone());
     hovered_window_id
 }
 
@@ -36,13 +36,14 @@ pub fn sync_interacted_window(
 ) -> Option<WindowId> {
     let seat_id = ensure_seat(model, seat_id);
     let interacted_window_id = interacted_window_id.filter(|window_id| model.windows.contains_key(window_id));
-    model.set_seat_interacted_window(seat_id, interacted_window_id);
+    model.set_seat_interacted_window(seat_id, interacted_window_id.clone());
     interacted_window_id
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::window_id;
 
     #[test]
     fn ensuring_seat_creates_once() {
@@ -59,14 +60,14 @@ mod tests {
     #[test]
     fn syncing_seat_focus_tracks_known_window() {
         let mut model = WmModel::default();
-        model.insert_window(WindowId(1), None, None);
+        model.insert_window(window_id(1), None, None);
 
-        let focused = sync_focused_window(&mut model, "winit", Some(WindowId(1)));
+        let focused = sync_focused_window(&mut model, "winit", Some(window_id(1)));
 
-        assert_eq!(focused, Some(WindowId(1)));
+        assert_eq!(focused, Some(window_id(1)));
         assert_eq!(
-            model.seats.get(&SeatId("winit".to_string())).and_then(|seat| seat.focused_window_id),
-            Some(WindowId(1))
+            model.seats.get(&SeatId("winit".to_string())).and_then(|seat| seat.focused_window_id.clone()),
+            Some(window_id(1))
         );
     }
 
@@ -74,11 +75,11 @@ mod tests {
     fn syncing_seat_focus_clears_unknown_window() {
         let mut model = WmModel::default();
 
-        let focused = sync_focused_window(&mut model, "winit", Some(WindowId(9)));
+        let focused = sync_focused_window(&mut model, "winit", Some(window_id(9)));
 
         assert_eq!(focused, None);
         assert_eq!(
-            model.seats.get(&SeatId("winit".to_string())).and_then(|seat| seat.focused_window_id),
+            model.seats.get(&SeatId("winit".to_string())).and_then(|seat| seat.focused_window_id.clone()),
             None
         );
     }
@@ -86,14 +87,14 @@ mod tests {
     #[test]
     fn syncing_hovered_window_tracks_known_window() {
         let mut model = WmModel::default();
-        model.insert_window(WindowId(2), None, None);
+        model.insert_window(window_id(2), None, None);
 
-        let hovered = sync_hovered_window(&mut model, "winit", Some(WindowId(2)));
+        let hovered = sync_hovered_window(&mut model, "winit", Some(window_id(2)));
 
-        assert_eq!(hovered, Some(WindowId(2)));
+        assert_eq!(hovered, Some(window_id(2)));
         assert_eq!(
-            model.seats.get(&SeatId("winit".to_string())).and_then(|seat| seat.hovered_window_id),
-            Some(WindowId(2))
+            model.seats.get(&SeatId("winit".to_string())).and_then(|seat| seat.hovered_window_id.clone()),
+            Some(window_id(2))
         );
     }
 
@@ -101,11 +102,11 @@ mod tests {
     fn syncing_interacted_window_clears_unknown_window() {
         let mut model = WmModel::default();
 
-        let interacted = sync_interacted_window(&mut model, "winit", Some(WindowId(8)));
+        let interacted = sync_interacted_window(&mut model, "winit", Some(window_id(8)));
 
         assert_eq!(interacted, None);
         assert_eq!(
-            model.seats.get(&SeatId("winit".to_string())).and_then(|seat| seat.interacted_window_id),
+            model.seats.get(&SeatId("winit".to_string())).and_then(|seat| seat.interacted_window_id.clone()),
             None
         );
     }

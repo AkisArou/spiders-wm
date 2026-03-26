@@ -1,7 +1,7 @@
 use crate::model::wm::WmModel;
 use crate::model::{WindowId, WorkspaceId};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CloseSelection {
     pub closing_window_id: Option<WindowId>,
 }
@@ -9,14 +9,15 @@ pub struct CloseSelection {
 pub fn mark_focused_window_closing(model: &mut WmModel) -> Option<WindowId> {
     let focused_id = model
         .focused_window_id
+        .clone()
         .filter(|window_id| model.windows.contains_key(window_id));
 
     if focused_id != model.focused_window_id {
         model.set_window_focused(None);
     }
 
-    if let Some(window_id) = focused_id {
-        model.set_window_closing(window_id, true);
+    if let Some(window_id) = focused_id.as_ref() {
+        model.set_window_closing(window_id.clone(), true);
     }
 
     focused_id
@@ -38,7 +39,7 @@ pub fn sync_window_identity(
         return None;
     }
 
-    model.set_window_identity(window_id, title, app_id);
+    model.set_window_identity(window_id.clone(), title, app_id);
     Some(window_id)
 }
 
@@ -52,25 +53,38 @@ where
 {
     let focused_window_id = model
         .focused_window_id
+        .clone()
         .filter(|window_id| model.windows.contains_key(window_id));
     let Some(focused_window_id) = focused_window_id else {
-        return model.focused_window_id;
+        return model.focused_window_id.clone();
     };
 
-    model.set_window_workspace(focused_window_id, Some(workspace_id.clone()));
+    model.set_window_workspace(focused_window_id.clone(), Some(workspace_id.clone()));
 
     let next_focused_window_id = if model.current_workspace_id.as_ref() == Some(&workspace_id) {
         Some(focused_window_id)
     } else {
         model.preferred_focus_window_on_current_workspace(window_order)
     };
-    model.set_window_focused(next_focused_window_id);
+    model.set_window_focused(next_focused_window_id.clone());
     next_focused_window_id
+}
+
+pub fn toggle_assign_focused_window_to_workspace<I>(
+    model: &mut WmModel,
+    workspace_id: WorkspaceId,
+    window_order: I,
+) -> Option<WindowId>
+where
+    I: IntoIterator<Item = WindowId>,
+{
+    assign_focused_window_to_workspace(model, workspace_id, window_order)
 }
 
 pub fn toggle_focused_window_floating(model: &mut WmModel) -> Option<WindowId> {
     let focused_window_id = model
         .focused_window_id
+        .clone()
         .filter(|window_id| model.windows.contains_key(window_id));
     let Some(focused_window_id) = focused_window_id else {
         return None;
@@ -81,13 +95,14 @@ pub fn toggle_focused_window_floating(model: &mut WmModel) -> Option<WindowId> {
         .get(&focused_window_id)
         .map(|window| !window.floating)
         .unwrap_or(false);
-    model.set_window_floating(focused_window_id, next_floating);
+    model.set_window_floating(focused_window_id.clone(), next_floating);
     Some(focused_window_id)
 }
 
 pub fn toggle_focused_window_fullscreen(model: &mut WmModel) -> Option<WindowId> {
     let focused_window_id = model
         .focused_window_id
+        .clone()
         .filter(|window_id| model.windows.contains_key(window_id));
     let Some(focused_window_id) = focused_window_id else {
         return None;
@@ -99,11 +114,11 @@ pub fn toggle_focused_window_fullscreen(model: &mut WmModel) -> Option<WindowId>
         .map(|window| !window.fullscreen)
         .unwrap_or(false);
 
-    let window_ids = model.windows.keys().copied().collect::<Vec<_>>();
+    let window_ids = model.windows.keys().cloned().collect::<Vec<_>>();
     for window_id in window_ids {
         model.set_window_fullscreen(window_id, false);
     }
-    model.set_window_fullscreen(focused_window_id, next_fullscreen);
+    model.set_window_fullscreen(focused_window_id.clone(), next_fullscreen);
 
     Some(focused_window_id)
 }
@@ -111,34 +126,35 @@ pub fn toggle_focused_window_fullscreen(model: &mut WmModel) -> Option<WindowId>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::window_id;
 
     #[test]
     fn marks_focused_window_closing() {
         let mut model = WmModel::default();
-        model.insert_window(WindowId(1), None, None);
-        model.insert_window(WindowId(2), None, None);
-        model.set_window_focused(Some(WindowId(2)));
+        model.insert_window(window_id(1), None, None);
+        model.insert_window(window_id(2), None, None);
+        model.set_window_focused(Some(window_id(2)));
 
         let closing_id = mark_focused_window_closing(&mut model);
 
-        assert_eq!(closing_id, Some(WindowId(2)));
-        assert_eq!(model.windows.get(&WindowId(1)).map(|window| window.closing), Some(false));
-        assert_eq!(model.windows.get(&WindowId(2)).map(|window| window.closing), Some(true));
-        assert_eq!(model.focused_window_id, Some(WindowId(2)));
+        assert_eq!(closing_id, Some(window_id(2)));
+        assert_eq!(model.windows.get(&window_id(1)).map(|window| window.closing), Some(false));
+        assert_eq!(model.windows.get(&window_id(2)).map(|window| window.closing), Some(true));
+        assert_eq!(model.focused_window_id, Some(window_id(2)));
     }
 
     #[test]
     fn request_close_focused_window_returns_selection() {
         let mut model = WmModel::default();
-        model.insert_window(WindowId(4), None, None);
-        model.set_window_focused(Some(WindowId(4)));
+        model.insert_window(window_id(4), None, None);
+        model.set_window_focused(Some(window_id(4)));
 
         let selection = request_close_focused_window(&mut model);
 
         assert_eq!(
             selection,
             CloseSelection {
-                closing_window_id: Some(WindowId(4)),
+                closing_window_id: Some(window_id(4)),
             }
         );
     }
@@ -146,18 +162,18 @@ mod tests {
     #[test]
     fn no_focused_window_means_no_closing_change() {
         let mut model = WmModel::default();
-        model.insert_window(WindowId(1), None, None);
+        model.insert_window(window_id(1), None, None);
 
         let closing_id = mark_focused_window_closing(&mut model);
 
         assert_eq!(closing_id, None);
-        assert_eq!(model.windows.get(&WindowId(1)).map(|window| window.closing), Some(false));
+        assert_eq!(model.windows.get(&window_id(1)).map(|window| window.closing), Some(false));
     }
 
     #[test]
     fn stale_focused_window_is_cleared() {
         let mut model = WmModel::default();
-        model.focused_window_id = Some(WindowId(99));
+        model.focused_window_id = Some(window_id(99));
 
         let closing_id = mark_focused_window_closing(&mut model);
 
@@ -168,17 +184,17 @@ mod tests {
     #[test]
     fn syncs_window_identity_for_known_window() {
         let mut model = WmModel::default();
-        model.insert_window(WindowId(7), None, None);
+        model.insert_window(window_id(7), None, None);
 
         let updated = sync_window_identity(
             &mut model,
-            WindowId(7),
+            window_id(7),
             Some("Notes".to_string()),
             Some("org.example.notes".to_string()),
         );
 
-        assert_eq!(updated, Some(WindowId(7)));
-        let window = model.windows.get(&WindowId(7)).expect("window missing");
+        assert_eq!(updated, Some(window_id(7)));
+        let window = model.windows.get(&window_id(7)).expect("window missing");
         assert_eq!(window.title.as_deref(), Some("Notes"));
         assert_eq!(window.app_id.as_deref(), Some("org.example.notes"));
     }
@@ -189,7 +205,7 @@ mod tests {
 
         let updated = sync_window_identity(
             &mut model,
-            WindowId(77),
+            window_id(77),
             Some("Ghost".to_string()),
             Some("ghost.app".to_string()),
         );
@@ -203,22 +219,22 @@ mod tests {
         model.upsert_workspace(WorkspaceId("1".to_string()), "1".to_string());
         model.upsert_workspace(WorkspaceId("2".to_string()), "2".to_string());
         model.set_current_workspace(WorkspaceId("1".to_string()));
-        model.insert_window(WindowId(1), Some(WorkspaceId("1".to_string())), None);
-        model.insert_window(WindowId(2), Some(WorkspaceId("1".to_string())), None);
-        model.set_window_focused(Some(WindowId(2)));
+        model.insert_window(window_id(1), Some(WorkspaceId("1".to_string())), None);
+        model.insert_window(window_id(2), Some(WorkspaceId("1".to_string())), None);
+        model.set_window_focused(Some(window_id(2)));
 
         let next_focus = assign_focused_window_to_workspace(
             &mut model,
             WorkspaceId("2".to_string()),
-            [WindowId(1), WindowId(2)],
+            [window_id(1), window_id(2)],
         );
 
         assert_eq!(
-            model.windows.get(&WindowId(2)).and_then(|window| window.workspace_id.clone()),
+            model.windows.get(&window_id(2)).and_then(|window| window.workspace_id.clone()),
             Some(WorkspaceId("2".to_string()))
         );
-        assert_eq!(next_focus, Some(WindowId(1)));
-        assert_eq!(model.focused_window_id, Some(WindowId(1)));
+        assert_eq!(next_focus, Some(window_id(1)));
+        assert_eq!(model.focused_window_id, Some(window_id(1)));
     }
 
     #[test]
@@ -226,36 +242,36 @@ mod tests {
         let mut model = WmModel::default();
         model.upsert_workspace(WorkspaceId("1".to_string()), "1".to_string());
         model.set_current_workspace(WorkspaceId("1".to_string()));
-        model.insert_window(WindowId(4), Some(WorkspaceId("1".to_string())), None);
-        model.set_window_focused(Some(WindowId(4)));
+        model.insert_window(window_id(4), Some(WorkspaceId("1".to_string())), None);
+        model.set_window_focused(Some(window_id(4)));
 
         let next_focus = assign_focused_window_to_workspace(
             &mut model,
             WorkspaceId("1".to_string()),
-            [WindowId(4)],
+            [window_id(4)],
         );
 
-        assert_eq!(next_focus, Some(WindowId(4)));
-        assert_eq!(model.focused_window_id, Some(WindowId(4)));
+        assert_eq!(next_focus, Some(window_id(4)));
+        assert_eq!(model.focused_window_id, Some(window_id(4)));
     }
 
     #[test]
     fn toggling_focused_window_floating_flips_the_flag() {
         let mut model = WmModel::default();
-        model.insert_window(WindowId(12), None, None);
-        model.set_window_focused(Some(WindowId(12)));
+        model.insert_window(window_id(12), None, None);
+        model.set_window_focused(Some(window_id(12)));
 
         let toggled = toggle_focused_window_floating(&mut model);
-        assert_eq!(toggled, Some(WindowId(12)));
+        assert_eq!(toggled, Some(window_id(12)));
         assert_eq!(
-            model.windows.get(&WindowId(12)).map(|window| window.floating),
+            model.windows.get(&window_id(12)).map(|window| window.floating),
             Some(true)
         );
 
         let toggled_again = toggle_focused_window_floating(&mut model);
-        assert_eq!(toggled_again, Some(WindowId(12)));
+        assert_eq!(toggled_again, Some(window_id(12)));
         assert_eq!(
-            model.windows.get(&WindowId(12)).map(|window| window.floating),
+            model.windows.get(&window_id(12)).map(|window| window.floating),
             Some(false)
         );
     }
@@ -263,13 +279,13 @@ mod tests {
     #[test]
     fn toggling_focused_window_floating_without_focus_is_noop() {
         let mut model = WmModel::default();
-        model.insert_window(WindowId(13), None, None);
+        model.insert_window(window_id(13), None, None);
 
         let toggled = toggle_focused_window_floating(&mut model);
 
         assert_eq!(toggled, None);
         assert_eq!(
-            model.windows.get(&WindowId(13)).map(|window| window.floating),
+            model.windows.get(&window_id(13)).map(|window| window.floating),
             Some(false)
         );
     }
@@ -277,14 +293,14 @@ mod tests {
     #[test]
     fn toggling_focused_window_fullscreen_flips_the_flag() {
         let mut model = WmModel::default();
-        model.insert_window(WindowId(14), None, None);
-        model.set_window_focused(Some(WindowId(14)));
+        model.insert_window(window_id(14), None, None);
+        model.set_window_focused(Some(window_id(14)));
 
         let toggled = toggle_focused_window_fullscreen(&mut model);
 
-        assert_eq!(toggled, Some(WindowId(14)));
+        assert_eq!(toggled, Some(window_id(14)));
         assert_eq!(
-            model.windows.get(&WindowId(14)).map(|window| window.fullscreen),
+            model.windows.get(&window_id(14)).map(|window| window.fullscreen),
             Some(true)
         );
     }
@@ -292,20 +308,20 @@ mod tests {
     #[test]
     fn toggling_focused_window_fullscreen_clears_other_fullscreen_windows() {
         let mut model = WmModel::default();
-        model.insert_window(WindowId(14), None, None);
-        model.insert_window(WindowId(15), None, None);
-        model.set_window_fullscreen(WindowId(14), true);
-        model.set_window_focused(Some(WindowId(15)));
+        model.insert_window(window_id(14), None, None);
+        model.insert_window(window_id(15), None, None);
+        model.set_window_fullscreen(window_id(14), true);
+        model.set_window_focused(Some(window_id(15)));
 
         let toggled = toggle_focused_window_fullscreen(&mut model);
 
-        assert_eq!(toggled, Some(WindowId(15)));
+        assert_eq!(toggled, Some(window_id(15)));
         assert_eq!(
-            model.windows.get(&WindowId(14)).map(|window| window.fullscreen),
+            model.windows.get(&window_id(14)).map(|window| window.fullscreen),
             Some(false)
         );
         assert_eq!(
-            model.windows.get(&WindowId(15)).map(|window| window.fullscreen),
+            model.windows.get(&window_id(15)).map(|window| window.fullscreen),
             Some(true)
         );
     }
@@ -313,13 +329,13 @@ mod tests {
     #[test]
     fn toggling_focused_window_fullscreen_without_focus_is_noop() {
         let mut model = WmModel::default();
-        model.insert_window(WindowId(16), None, None);
+        model.insert_window(window_id(16), None, None);
 
         let toggled = toggle_focused_window_fullscreen(&mut model);
 
         assert_eq!(toggled, None);
         assert_eq!(
-            model.windows.get(&WindowId(16)).map(|window| window.fullscreen),
+            model.windows.get(&window_id(16)).map(|window| window.fullscreen),
             Some(false)
         );
     }

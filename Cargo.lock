@@ -3092,6 +3092,7 @@ dependencies = [
  "spiders-config",
  "spiders-runtime-js",
  "spiders-shared",
+ "spiders-tree",
  "tracing",
  "tracing-subscriber",
 ]

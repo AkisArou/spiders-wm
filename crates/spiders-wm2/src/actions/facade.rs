@@ -134,6 +134,23 @@ impl<'a> WmActions<'a> {
         }
     }
 
+    pub fn toggle_assign_focused_window_to_workspace<I>(
+        &mut self,
+        workspace_id: WorkspaceId,
+        window_ids: I,
+    ) -> FocusSelection
+    where
+        I: IntoIterator<Item = WindowId>,
+    {
+        FocusSelection {
+            focused_window_id: window::toggle_assign_focused_window_to_workspace(
+                self.model,
+                workspace_id,
+                window_ids,
+            ),
+        }
+    }
+
     pub fn toggle_focused_window_floating(&mut self) -> Option<WindowId> {
         window::toggle_focused_window_floating(self.model)
     }
@@ -156,7 +173,7 @@ impl<'a> WmActions<'a> {
             return None;
         }
 
-        self.model.set_window_mapped(window_id, mapped);
+        self.model.set_window_mapped(window_id.clone(), mapped);
         Some(window_id)
     }
 }
@@ -164,6 +181,7 @@ impl<'a> WmActions<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::window_id;
 
     #[test]
     fn facade_composes_workspace_output_window_and_focus_actions() {
@@ -173,19 +191,19 @@ mod tests {
         actions.ensure_default_workspace("1");
         actions.ensure_seat("winit");
         actions.sync_output("winit", "winit", 1280, 720);
-        actions.place_new_window(WindowId(5));
-        let focused = actions.request_focus_window_selection("winit", Some(WindowId(5)));
-        let mapped = actions.sync_window_mapped(WindowId(5), true);
+        actions.place_new_window(window_id(5));
+        let focused = actions.request_focus_window_selection("winit", Some(window_id(5)));
+        let mapped = actions.sync_window_mapped(window_id(5), true);
 
-        assert_eq!(focused.focused_window_id, Some(WindowId(5)));
-        assert_eq!(mapped, Some(WindowId(5)));
+        assert_eq!(focused.focused_window_id, Some(window_id(5)));
+        assert_eq!(mapped, Some(window_id(5)));
         assert_eq!(model.current_workspace_id, Some(WorkspaceId("1".to_string())));
         assert_eq!(model.current_output_id, Some(OutputId("winit".to_string())));
-        assert_eq!(model.focused_window_id, Some(WindowId(5)));
-        assert_eq!(model.windows.get(&WindowId(5)).map(|window| window.mapped), Some(true));
+        assert_eq!(model.focused_window_id, Some(window_id(5)));
+        assert_eq!(model.windows.get(&window_id(5)).map(|window| window.mapped), Some(true));
         assert_eq!(
-            model.seats.get(&SeatId("winit".to_string())).and_then(|seat| seat.focused_window_id),
-            Some(WindowId(5))
+            model.seats.get(&SeatId("winit".to_string())).and_then(|seat| seat.focused_window_id.clone()),
+            Some(window_id(5))
         );
     }
 }

@@ -23,6 +23,9 @@ impl SpidersWm {
             WmCommand::AssignFocusedWindowToWorkspace { workspace } => {
                 self.assign_focused_window_to_workspace(workspace, serial)
             }
+            WmCommand::ToggleAssignFocusedWindowToWorkspace { workspace } => {
+                self.toggle_assign_focused_window_to_workspace(workspace, serial)
+            }
             WmCommand::SpawnTerminal => self.spawn_foot(),
             WmCommand::FocusNextWindow => self.focus_next_window(serial),
             WmCommand::FocusPreviousWindow => self.focus_previous_window(serial),
@@ -51,6 +54,9 @@ impl SpidersWm {
             }
             WmCommand::FocusDirection { direction } => {
                 self.focus_direction_window(direction, serial)
+            }
+            WmCommand::FocusWindow { window_id } => {
+                self.focus_window_by_id(window_id, serial)
             }
             WmCommand::SwapDirection { direction } => {
                 self.swap_focused_window_direction(direction)

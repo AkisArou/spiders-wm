@@ -183,7 +183,7 @@ impl SpidersWm {
     }
 
     pub fn window_id_for_surface(&self, surface: &WlSurface) -> Option<WindowId> {
-        self.managed_window_for_surface(surface).map(|record| record.id)
+        self.managed_window_for_surface(surface).map(|record| record.id.clone())
     }
 
     pub fn managed_window_for_surface(&self, surface: &WlSurface) -> Option<&ManagedWindow> {
@@ -221,7 +221,7 @@ impl SpidersWm {
     pub fn visible_managed_window_positions(&self) -> Vec<usize> {
         let visible_window_ids = self
             .model
-            .window_ids_on_current_workspace(self.managed_windows.iter().map(|record| record.id));
+            .window_ids_on_current_workspace(self.managed_windows.iter().map(|record| record.id.clone()));
 
         self.managed_windows
             .iter()
@@ -403,11 +403,11 @@ impl SpidersWm {
         let fullscreen_window_id = self.model.fullscreen_window_on_current_workspace(
             visible_positions
                 .iter()
-                .map(|managed_index| self.managed_windows[*managed_index].id),
+                .map(|managed_index| self.managed_windows[*managed_index].id.clone()),
         );
         for record in &self.managed_windows {
-            if !self.model.window_is_on_current_workspace(record.id)
-                || fullscreen_window_id.is_some_and(|window_id| window_id != record.id)
+            if !self.model.window_is_on_current_workspace(record.id.clone())
+                || fullscreen_window_id.as_ref().is_some_and(|window_id| *window_id != record.id)
             {
                 self.space.unmap_elem(&record.window);
             }
@@ -418,10 +418,10 @@ impl SpidersWm {
         }
 
         let relayout_positions = match fullscreen_window_id {
-            Some(fullscreen_window_id) => visible_positions
+            Some(ref fullscreen_window_id) => visible_positions
                 .iter()
                 .copied()
-                .filter(|managed_index| self.managed_windows[*managed_index].id == fullscreen_window_id)
+                .filter(|managed_index| self.managed_windows[*managed_index].id == *fullscreen_window_id)
                 .collect::<Vec<_>>(),
             None => visible_positions,
         };
@@ -452,7 +452,7 @@ impl SpidersWm {
 
             if let Some(toplevel) = toplevel {
                 let record = &mut self.managed_windows[managed_index];
-                let fullscreen = fullscreen_window_id == Some(record.id);
+                let fullscreen = fullscreen_window_id.as_ref() == Some(&record.id);
                 let fullscreen_output = fullscreen
                     .then(|| fullscreen_output_for_toplevel(&output, &toplevel))
                     .flatten();
@@ -542,6 +542,46 @@ impl ManagedWindow {
     pub fn toplevel(&self) -> Option<&smithay::wayland::shell::xdg::ToplevelSurface> {
         self.window.toplevel()
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sync_pending_fullscreen_state_sets_fullscreen_flag() {
+        let mut state = smithay::wayland::shell::xdg::ToplevelState::default();
+
+        let changed = sync_pending_fullscreen_state(&mut state, true, None);
+
+        assert!(changed);
+        assert!(state.states.contains(xdg_toplevel::State::Fullscreen));
+        assert_eq!(state.fullscreen_output, None);
+    }
+
+    #[test]
+    fn sync_pending_fullscreen_state_clears_fullscreen_flag() {
+        let mut state = smithay::wayland::shell::xdg::ToplevelState::default();
+        state.states.set(xdg_toplevel::State::Fullscreen);
+
+        let changed = sync_pending_fullscreen_state(&mut state, false, None);
+
+        assert!(changed);
+        assert!(!state.states.contains(xdg_toplevel::State::Fullscreen));
+        assert_eq!(state.fullscreen_output, None);
+    }
+
+    #[test]
+    fn sync_pending_fullscreen_state_is_stable_when_unchanged() {
+        let mut state = smithay::wayland::shell::xdg::ToplevelState::default();
+
+        let changed = sync_pending_fullscreen_state(&mut state, false, None);
+
+        assert!(!changed);
+        assert!(!state.states.contains(xdg_toplevel::State::Fullscreen));
+        assert_eq!(state.fullscreen_output, None);
+    }
+
 }
 
 #[derive(Default)]

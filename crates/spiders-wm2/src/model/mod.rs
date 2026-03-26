@@ -12,8 +12,7 @@ pub(crate) mod window;
 pub(crate) mod wm;
 pub(crate) mod workspace;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
-pub struct WindowId(pub u64);
+pub use spiders_tree::WindowId;
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub struct WorkspaceId(pub String);
@@ -40,4 +39,8 @@ impl From<&str> for SeatId {
     fn from(value: &str) -> Self {
         Self(value.to_string())
     }
+}
+
+pub fn window_id(value: impl std::fmt::Display) -> WindowId {
+    WindowId(value.to_string())
 }

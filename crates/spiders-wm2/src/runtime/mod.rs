@@ -52,6 +52,10 @@ pub enum RuntimeCommand {
         workspace_id: WorkspaceId,
         window_order: Vec<WindowId>,
     },
+    ToggleAssignFocusedWindowToWorkspace {
+        workspace_id: WorkspaceId,
+        window_order: Vec<WindowId>,
+    },
     ToggleFocusedWindowFloating,
     ToggleFocusedWindowFullscreen,
     SyncWindowIdentity {
@@ -146,6 +150,12 @@ impl<'a> WmRuntime<'a> {
                 window_order,
             } => RuntimeResult::FocusSelection(
                 self.assign_focused_window_to_workspace(workspace_id, window_order),
+            ),
+            RuntimeCommand::ToggleAssignFocusedWindowToWorkspace {
+                workspace_id,
+                window_order,
+            } => RuntimeResult::FocusSelection(
+                self.toggle_assign_focused_window_to_workspace(workspace_id, window_order),
             ),
             RuntimeCommand::ToggleFocusedWindowFloating => {
                 RuntimeResult::Window(self.toggle_focused_window_floating())
@@ -278,6 +288,18 @@ impl<'a> WmRuntime<'a> {
             .assign_focused_window_to_workspace(workspace_id, window_order)
     }
 
+    pub fn toggle_assign_focused_window_to_workspace<I>(
+        &mut self,
+        workspace_id: WorkspaceId,
+        window_order: I,
+    ) -> FocusSelection
+    where
+        I: IntoIterator<Item = WindowId>,
+    {
+        self.actions
+            .toggle_assign_focused_window_to_workspace(workspace_id, window_order)
+    }
+
     pub fn toggle_focused_window_floating(&mut self) -> Option<WindowId> {
         self.actions.toggle_focused_window_floating()
     }
@@ -309,6 +331,7 @@ impl SpidersWm {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::window_id;
 
     #[test]
     fn runtime_composes_action_surface() {
@@ -319,14 +342,14 @@ mod tests {
         runtime.request_select_next_workspace(Vec::new());
         runtime.ensure_seat("winit");
         runtime.sync_output("winit", "winit", 1280, 720);
-        runtime.place_new_window(WindowId(1));
-        runtime.request_focus_window_selection("winit", Some(WindowId(1)));
-        runtime.sync_window_mapped(WindowId(1), true);
+        runtime.place_new_window(window_id(1));
+        runtime.request_focus_window_selection("winit", Some(window_id(1)));
+        runtime.sync_window_mapped(window_id(1), true);
 
         assert_eq!(model.current_workspace_id, Some(WorkspaceId("1".to_string())));
         assert_eq!(model.current_output_id, Some(OutputId("winit".to_string())));
-        assert_eq!(model.focused_window_id, Some(WindowId(1)));
-        assert_eq!(model.windows.get(&WindowId(1)).map(|window| window.mapped), Some(true));
+        assert_eq!(model.focused_window_id, Some(window_id(1)));
+        assert_eq!(model.windows.get(&window_id(1)).map(|window| window.mapped), Some(true));
     }
 
     #[test]
@@ -425,12 +448,12 @@ mod tests {
 
         runtime.ensure_default_workspace("1");
         runtime.ensure_seat("winit");
-        runtime.place_new_window(WindowId(3));
-        runtime.place_new_window(WindowId(4));
+        runtime.place_new_window(window_id(3));
+        runtime.place_new_window(window_id(4));
 
         let focused = runtime.execute(RuntimeCommand::RequestFocusWindowSelection {
             seat_id: SeatId("winit".to_string()),
-            window_id: Some(WindowId(3)),
+            window_id: Some(window_id(3)),
         });
         let next_focused = runtime.execute(RuntimeCommand::RequestFocusNextWindowSelection {
             seat_id: SeatId("winit".to_string()),
@@ -443,29 +466,29 @@ mod tests {
         assert_eq!(
             focused,
             RuntimeResult::FocusSelection(FocusSelection {
-                focused_window_id: Some(WindowId(3)),
+                focused_window_id: Some(window_id(3)),
             })
         );
         assert_eq!(
             next_focused,
             RuntimeResult::FocusSelection(FocusSelection {
-                focused_window_id: Some(WindowId(4)),
+                focused_window_id: Some(window_id(4)),
             })
         );
         assert_eq!(
             previous_focused,
             RuntimeResult::FocusSelection(FocusSelection {
-                focused_window_id: Some(WindowId(3)),
+                focused_window_id: Some(window_id(3)),
             })
         );
         assert_eq!(
             closing,
             RuntimeResult::CloseSelection(CloseSelection {
-                closing_window_id: Some(WindowId(3)),
+                closing_window_id: Some(window_id(3)),
             })
         );
-        assert_eq!(model.focused_window_id, Some(WindowId(3)));
-        assert_eq!(model.windows.get(&WindowId(3)).map(|window| window.closing), Some(true));
+        assert_eq!(model.focused_window_id, Some(window_id(3)));
+        assert_eq!(model.windows.get(&window_id(3)).map(|window| window.closing), Some(true));
     }
 
     #[test]
@@ -476,26 +499,55 @@ mod tests {
         runtime.ensure_default_workspace("1");
         runtime.ensure_workspace("2");
         runtime.ensure_seat("winit");
-        runtime.place_new_window(WindowId(1));
-        runtime.place_new_window(WindowId(2));
-        runtime.request_focus_window_selection("winit", Some(WindowId(2)));
+        runtime.place_new_window(window_id(1));
+        runtime.place_new_window(window_id(2));
+        runtime.request_focus_window_selection("winit", Some(window_id(2)));
 
         let assigned = runtime.execute(RuntimeCommand::AssignFocusedWindowToWorkspace {
             workspace_id: WorkspaceId("2".to_string()),
-            window_order: vec![WindowId(1), WindowId(2)],
+            window_order: vec![window_id(1), window_id(2)],
         });
 
         assert_eq!(
             assigned,
             RuntimeResult::FocusSelection(FocusSelection {
-                focused_window_id: Some(WindowId(1)),
+                focused_window_id: Some(window_id(1)),
             })
         );
         assert_eq!(
-            model.windows.get(&WindowId(2)).and_then(|window| window.workspace_id.clone()),
+            model.windows.get(&window_id(2)).and_then(|window| window.workspace_id.clone()),
             Some(WorkspaceId("2".to_string()))
         );
-        assert_eq!(model.focused_window_id, Some(WindowId(1)));
+        assert_eq!(model.focused_window_id, Some(window_id(1)));
+    }
+
+    #[test]
+    fn runtime_toggle_assign_uses_same_workspace_move_path() {
+        let mut model = WmModel::default();
+        let mut runtime = WmRuntime::new(&mut model);
+
+        runtime.ensure_default_workspace("1");
+        runtime.ensure_workspace("2");
+        runtime.ensure_seat("winit");
+        runtime.place_new_window(window_id(1));
+        runtime.place_new_window(window_id(2));
+        runtime.request_focus_window_selection("winit", Some(window_id(2)));
+
+        let assigned = runtime.execute(RuntimeCommand::ToggleAssignFocusedWindowToWorkspace {
+            workspace_id: WorkspaceId("2".to_string()),
+            window_order: vec![window_id(1), window_id(2)],
+        });
+
+        assert_eq!(
+            assigned,
+            RuntimeResult::FocusSelection(FocusSelection {
+                focused_window_id: Some(window_id(1)),
+            })
+        );
+        assert_eq!(
+            model.windows.get(&window_id(2)).and_then(|window| window.workspace_id.clone()),
+            Some(WorkspaceId("2".to_string()))
+        );
     }
 
     #[test]
@@ -504,14 +556,14 @@ mod tests {
         let mut runtime = WmRuntime::new(&mut model);
 
         runtime.ensure_default_workspace("1");
-        runtime.place_new_window(WindowId(6));
-        runtime.request_focus_window_selection("winit", Some(WindowId(6)));
+        runtime.place_new_window(window_id(6));
+        runtime.request_focus_window_selection("winit", Some(window_id(6)));
 
         let toggled = runtime.execute(RuntimeCommand::ToggleFocusedWindowFloating);
 
-        assert_eq!(toggled, RuntimeResult::Window(Some(WindowId(6))));
+        assert_eq!(toggled, RuntimeResult::Window(Some(window_id(6))));
         assert_eq!(
-            model.windows.get(&WindowId(6)).map(|window| window.floating),
+            model.windows.get(&window_id(6)).map(|window| window.floating),
             Some(true)
         );
     }
@@ -522,14 +574,14 @@ mod tests {
         let mut runtime = WmRuntime::new(&mut model);
 
         runtime.ensure_default_workspace("1");
-        runtime.place_new_window(WindowId(7));
-        runtime.request_focus_window_selection("winit", Some(WindowId(7)));
+        runtime.place_new_window(window_id(7));
+        runtime.request_focus_window_selection("winit", Some(window_id(7)));
 
         let toggled = runtime.execute(RuntimeCommand::ToggleFocusedWindowFullscreen);
 
-        assert_eq!(toggled, RuntimeResult::Window(Some(WindowId(7))));
+        assert_eq!(toggled, RuntimeResult::Window(Some(window_id(7))));
         assert_eq!(
-            model.windows.get(&WindowId(7)).map(|window| window.fullscreen),
+            model.windows.get(&window_id(7)).map(|window| window.fullscreen),
             Some(true)
         );
     }

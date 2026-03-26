@@ -17,7 +17,7 @@ pub fn ensure_workspace(model: &mut WmModel, name: impl Into<String>) -> Workspa
 pub fn ensure_default_workspace(model: &mut WmModel, name: impl Into<String>) -> WorkspaceId {
     let workspace_id = ensure_workspace(model, name);
     if model.current_workspace_id.is_none() {
-        let window_ids: Vec<_> = model.windows.keys().copied().collect();
+        let window_ids: Vec<_> = model.windows.keys().cloned().collect();
         let _ = request_select_workspace(model, workspace_id.clone(), window_ids);
     }
     workspace_id
@@ -88,14 +88,14 @@ where
 pub fn place_new_window(model: &mut WmModel, window_id: WindowId) -> WindowId {
     let workspace_id = model.current_workspace_id.clone();
     let output_id = model.current_output_id.clone();
-    model.insert_window(window_id, workspace_id, output_id);
+    model.insert_window(window_id.clone(), workspace_id, output_id);
     window_id
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{OutputId, WorkspaceId};
+    use crate::model::{OutputId, WorkspaceId, window_id};
 
     #[test]
     fn ensuring_default_workspace_creates_and_selects_it() {
@@ -201,22 +201,22 @@ mod tests {
         let mut model = WmModel::default();
         ensure_workspace(&mut model, "1");
         ensure_workspace(&mut model, "2");
-        model.insert_window(WindowId(1), Some(WorkspaceId("1".to_string())), None);
-        model.insert_window(WindowId(2), Some(WorkspaceId("2".to_string())), None);
-        model.insert_window(WindowId(3), Some(WorkspaceId("2".to_string())), None);
-        model.set_window_focused(Some(WindowId(1)));
+        model.insert_window(window_id(1), Some(WorkspaceId("1".to_string())), None);
+        model.insert_window(window_id(2), Some(WorkspaceId("2".to_string())), None);
+        model.insert_window(window_id(3), Some(WorkspaceId("2".to_string())), None);
+        model.set_window_focused(Some(window_id(1)));
 
         let selection = request_select_workspace(
             &mut model,
             WorkspaceId("2".to_string()),
-            [WindowId(1), WindowId(2), WindowId(3)],
+            [window_id(1), window_id(2), window_id(3)],
         );
 
         assert_eq!(
             selection,
             Some(WorkspaceSelection {
                 workspace_id: WorkspaceId("2".to_string()),
-                focused_window_id: Some(WindowId(3)),
+                focused_window_id: Some(window_id(3)),
             })
         );
     }
@@ -227,10 +227,10 @@ mod tests {
         ensure_default_workspace(&mut model, "1");
         model.current_output_id = Some(OutputId("winit".to_string()));
 
-        let window_id = place_new_window(&mut model, WindowId(5));
+        let placed_window_id = place_new_window(&mut model, window_id(5));
 
-        assert_eq!(window_id, WindowId(5));
-        let window = model.windows.get(&WindowId(5)).expect("window missing");
+        assert_eq!(placed_window_id, window_id(5));
+        let window = model.windows.get(&window_id(5)).expect("window missing");
         assert_eq!(window.workspace_id, Some(WorkspaceId("1".to_string())));
         assert_eq!(window.output_id, Some(OutputId("winit".to_string())));
     }
@@ -239,10 +239,10 @@ mod tests {
     fn places_new_window_even_without_current_workspace_or_output() {
         let mut model = WmModel::default();
 
-        let window_id = place_new_window(&mut model, WindowId(6));
+        let placed_window_id = place_new_window(&mut model, window_id(6));
 
-        assert_eq!(window_id, WindowId(6));
-        let window = model.windows.get(&WindowId(6)).expect("window missing");
+        assert_eq!(placed_window_id, window_id(6));
+        let window = model.windows.get(&window_id(6)).expect("window missing");
         assert_eq!(window.workspace_id, None);
         assert_eq!(window.output_id, None);
     }
