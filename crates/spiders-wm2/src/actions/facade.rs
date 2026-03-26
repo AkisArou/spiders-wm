@@ -15,6 +15,17 @@ impl<'a> WmActions<'a> {
         workspace::ensure_default_workspace(self.model, name)
     }
 
+    pub fn select_workspace(&mut self, workspace_id: WorkspaceId) -> Option<WorkspaceId> {
+        workspace::select_workspace(self.model, workspace_id)
+    }
+        pub fn ensure_workspace(&mut self, name: impl Into<String>) -> WorkspaceId {
+            workspace::ensure_workspace(self.model, name)
+        }
+
+    pub fn select_next_workspace(&mut self) -> Option<WorkspaceId> {
+        workspace::select_next_workspace(self.model)
+    }
+
     pub fn ensure_seat(&mut self, seat_id: impl Into<SeatId>) -> SeatId {
         seat::ensure_seat(self.model, seat_id)
     }
@@ -42,6 +53,19 @@ impl<'a> WmActions<'a> {
         seat::sync_focused_window(self.model, seat_id, focused_window_id)
     }
 
+    pub fn request_focus_window(
+        &mut self,
+        seat_id: impl Into<SeatId>,
+        window_id: Option<WindowId>,
+    ) -> Option<WindowId> {
+        self.sync_focus(seat_id, window_id)
+    }
+
+    pub fn request_focus_next_window(&mut self, seat_id: impl Into<SeatId>) -> Option<WindowId> {
+        let focused_window_id = focus::focus_next_window(self.model);
+        seat::sync_focused_window(self.model, seat_id, focused_window_id)
+    }
+
     pub fn sync_hovered_window(
         &mut self,
         seat_id: impl Into<SeatId>,
@@ -64,6 +88,10 @@ impl<'a> WmActions<'a> {
 
     pub fn mark_focused_window_closing(&mut self) -> Option<WindowId> {
         window::mark_focused_window_closing(self.model)
+    }
+
+    pub fn request_close_focused_window(&mut self) -> Option<WindowId> {
+        self.mark_focused_window_closing()
     }
 
     pub fn sync_window_identity(

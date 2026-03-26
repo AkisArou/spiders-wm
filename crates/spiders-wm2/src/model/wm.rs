@@ -134,6 +134,17 @@ impl WmModel {
         );
     }
 
+    pub fn window_is_on_current_workspace(&self, id: WindowId) -> bool {
+        let Some(window) = self.windows.get(&id) else {
+            return false;
+        };
+
+        match self.current_workspace_id.as_ref() {
+            Some(current_workspace_id) => window.workspace_id.as_ref() == Some(current_workspace_id),
+            None => true,
+        }
+    }
+
     pub fn set_window_mapped(&mut self, id: WindowId, mapped: bool) {
         if let Some(window) = self.windows.get_mut(&id) {
             window.mapped = mapped;
@@ -318,5 +329,27 @@ mod tests {
         let window = model.windows.get(&WindowId(3)).expect("window missing");
         assert_eq!(window.title.as_deref(), Some("Terminal"));
         assert_eq!(window.app_id.as_deref(), Some("foot"));
+    }
+
+    #[test]
+    fn current_workspace_window_membership_is_explicit() {
+        let mut model = WmModel::default();
+        model.upsert_workspace(WorkspaceId("1".to_string()), "1".to_string());
+        model.upsert_workspace(WorkspaceId("2".to_string()), "2".to_string());
+        model.set_current_workspace(WorkspaceId("2".to_string()));
+        model.insert_window(
+            WindowId(1),
+            Some(WorkspaceId("1".to_string())),
+            Some(OutputId("winit".to_string())),
+        );
+        model.insert_window(
+            WindowId(2),
+            Some(WorkspaceId("2".to_string())),
+            Some(OutputId("winit".to_string())),
+        );
+
+        assert!(!model.window_is_on_current_workspace(WindowId(1)));
+        assert!(model.window_is_on_current_workspace(WindowId(2)));
+        assert!(!model.window_is_on_current_workspace(WindowId(99)));
     }
 }

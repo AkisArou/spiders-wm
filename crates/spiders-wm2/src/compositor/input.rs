@@ -9,12 +9,16 @@ use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::utils::SERIAL_COUNTER;
 use tracing::{debug, info};
 
+use crate::runtime::RuntimeCommand;
 use crate::state::SpidersWm;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KeyAction {
     None,
     SpawnFoot,
+    FocusNextWindow,
+    SelectNextWorkspace,
+    SelectWorkspace(u8),
     CloseFocusedWindow,
 }
 
@@ -62,6 +66,11 @@ impl SpidersWm {
                         info!("Alt+Enter matched; spawning terminal");
                         self.spawn_foot()
                     }
+                    KeyAction::FocusNextWindow => self.focus_next_window(serial),
+                    KeyAction::SelectNextWorkspace => self.select_next_workspace(serial),
+                    KeyAction::SelectWorkspace(index) => {
+                        self.ensure_and_select_workspace(index.to_string(), serial)
+                    }
                     KeyAction::CloseFocusedWindow => self.close_focused_window(),
                 }
             }
@@ -78,7 +87,10 @@ impl SpidersWm {
                 let serial = SERIAL_COUNTER.next_serial();
                 let pointer = self.seat.get_pointer().expect("pointer missing");
                 let hovered_window_id = self.window_id_under(location);
-                self.runtime().sync_hovered_window("winit", hovered_window_id);
+                let _ = self.runtime().execute(RuntimeCommand::SyncHoveredWindow {
+                    seat_id: "winit".into(),
+                    hovered_window_id,
+                });
                 let under = self.surface_under(location);
 
                 pointer.motion(
@@ -98,7 +110,10 @@ impl SpidersWm {
 
                 if event.state() == ButtonState::Pressed && !pointer.is_grabbed() {
                     let interacted_window_id = self.window_id_under(pointer.current_location());
-                    self.runtime().sync_interacted_window("winit", interacted_window_id);
+                    let _ = self.runtime().execute(RuntimeCommand::SyncInteractedWindow {
+                        seat_id: "winit".into(),
+                        interacted_window_id,
+                    });
                     if let Some((window, _)) = self.space.element_under(pointer.current_location())
                     {
                         let window = window.clone();
@@ -162,6 +177,12 @@ impl SpidersWm {
 fn shortcut_action(modifiers: ModifiersState, keysym: Keysym) -> Option<KeyAction> {
     if modifiers.alt && matches!(keysym.raw(), xkb::KEY_Return | xkb::KEY_KP_Enter) {
         Some(KeyAction::SpawnFoot)
+    } else if modifiers.alt && keysym.raw() == xkb::KEY_Tab {
+        Some(KeyAction::FocusNextWindow)
+    } else if modifiers.alt && (keysym == Keysym::w || keysym.raw() == xkb::KEY_w) {
+        Some(KeyAction::SelectNextWorkspace)
+    } else if modifiers.alt && matches!(keysym.raw(), xkb::KEY_1..=xkb::KEY_9) {
+        Some(KeyAction::SelectWorkspace((keysym.raw() - xkb::KEY_0) as u8))
     } else if modifiers.alt && (keysym == Keysym::q || keysym.raw() == xkb::KEY_q) {
         Some(KeyAction::CloseFocusedWindow)
     } else {

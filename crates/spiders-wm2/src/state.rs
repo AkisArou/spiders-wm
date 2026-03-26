@@ -28,7 +28,7 @@ use tracing::{error, info, trace};
 
 use crate::frame_sync::{FrameSyncState, Transaction, WindowFrameSyncState, plan_tiled_slot, plan_tiled_slots};
 use crate::model::{WindowId, wm::WmModel};
-use crate::runtime::WmRuntime;
+use crate::runtime::{RuntimeCommand, WmRuntime};
 
 pub struct SpidersWm {
     pub start_time: std::time::Instant,
@@ -90,8 +90,16 @@ impl SpidersWm {
         let mut model = WmModel::default();
         {
             let mut runtime = WmRuntime::new(&mut model);
-            runtime.ensure_default_workspace("1");
-            runtime.ensure_seat("winit");
+            let _ = runtime.execute(RuntimeCommand::EnsureDefaultWorkspace {
+                name: "1".to_string(),
+            });
+            let _ = runtime.execute(RuntimeCommand::SelectWorkspace {
+                workspace_id: "1".into(),
+            });
+            let _ = runtime.execute(RuntimeCommand::SelectNextWorkspace);
+            let _ = runtime.execute(RuntimeCommand::EnsureSeat {
+                seat_id: "winit".into(),
+            });
         }
 
         Self {
@@ -206,6 +214,18 @@ impl SpidersWm {
             .and_then(|surface| self.window_id_for_surface(&surface))
     }
 
+    pub fn visible_managed_window_positions(&self) -> Vec<usize> {
+        self.managed_windows
+            .iter()
+            .enumerate()
+            .filter_map(|(index, record)| {
+                self.model
+                    .window_is_on_current_workspace(record.id)
+                    .then_some(index)
+            })
+            .collect()
+    }
+
     pub fn spawn_foot(&self) {
             const FALLBACK_TERMINALS: &[&str] = &[
                 "foot",
@@ -296,20 +316,16 @@ impl SpidersWm {
     ) -> Option<(Point<i32, Logical>, Size<i32, Logical>)> {
         let output = self.space.outputs().next()?;
         let output_geometry = self.space.output_geometry(output)?;
-        let index = self
-            .managed_windows
+        let visible_positions = self.visible_managed_window_positions();
+        let index = visible_positions
             .iter()
-            .position(|record| record.wl_surface() == *surface)?;
+            .position(|managed_index| self.managed_windows[*managed_index].wl_surface() == *surface)?;
 
-        let slot = plan_tiled_slot(output_geometry, self.managed_windows.len(), index)?;
+        let slot = plan_tiled_slot(output_geometry, visible_positions.len(), index)?;
         Some((slot.location, slot.size))
     }
 
     fn start_relayout(&mut self, transaction: Option<Transaction>) {
-        if self.managed_windows.is_empty() {
-            return;
-        }
-
         let output = self
             .space
             .outputs()
@@ -320,17 +336,29 @@ impl SpidersWm {
             .output_geometry(output)
             .expect("output geometry missing during relayout");
 
-        let transaction = transaction.unwrap_or_else(Transaction::new);
-        let slots = plan_tiled_slots(output_geometry, self.managed_windows.len());
+        let visible_positions = self.visible_managed_window_positions();
+        for record in &self.managed_windows {
+            if !self.model.window_is_on_current_workspace(record.id) {
+                self.space.unmap_elem(&record.window);
+            }
+        }
 
-        for (index, slot) in slots.into_iter().enumerate() {
+        if visible_positions.is_empty() {
+            return;
+        }
+
+        let transaction = transaction.unwrap_or_else(Transaction::new);
+        let slots = plan_tiled_slots(output_geometry, visible_positions.len());
+
+        for (slot_index, managed_index) in visible_positions.into_iter().enumerate() {
+            let slot = slots[slot_index];
             let current_location = self
                 .space
-                .element_location(&self.managed_windows[index].window);
-            let toplevel = self.managed_windows[index].window.toplevel().cloned();
+                .element_location(&self.managed_windows[managed_index].window);
+            let toplevel = self.managed_windows[managed_index].window.toplevel().cloned();
 
             if let Some(toplevel) = toplevel {
-                let record = &mut self.managed_windows[index];
+                let record = &mut self.managed_windows[managed_index];
                 let mut needs_configure = !record.mapped;
                 toplevel.with_pending_state(|state| {
                     if state.size != Some(slot.size) {

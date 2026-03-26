@@ -25,6 +25,20 @@ pub fn select_workspace(model: &mut WmModel, workspace_id: WorkspaceId) -> Optio
     Some(workspace_id)
 }
 
+pub fn select_next_workspace(model: &mut WmModel) -> Option<WorkspaceId> {
+    let next_workspace_id = match model.current_workspace_id.as_ref() {
+        Some(current_id) => model
+            .workspaces
+            .keys()
+            .find(|workspace_id| *workspace_id > current_id)
+            .cloned()
+            .or_else(|| model.workspaces.keys().next().cloned()),
+        None => model.workspaces.keys().next().cloned(),
+    }?;
+
+    select_workspace(model, next_workspace_id)
+}
+
 pub fn place_new_window(model: &mut WmModel, window_id: WindowId) -> WindowId {
     let workspace_id = model.current_workspace_id.clone();
     let output_id = model.current_output_id.clone();
@@ -70,6 +84,21 @@ mod tests {
             model.workspaces.get(&WorkspaceId("2".to_string())).map(|workspace| workspace.visible),
             Some(true)
         );
+    }
+
+    #[test]
+    fn selecting_next_workspace_advances_and_wraps() {
+        let mut model = WmModel::default();
+        ensure_workspace(&mut model, "1");
+        ensure_workspace(&mut model, "2");
+        ensure_workspace(&mut model, "3");
+        ensure_default_workspace(&mut model, "2");
+
+        let next = select_next_workspace(&mut model);
+        assert_eq!(next, Some(WorkspaceId("3".to_string())));
+
+        let wrapped = select_next_workspace(&mut model);
+        assert_eq!(wrapped, Some(WorkspaceId("1".to_string())));
     }
 
     #[test]

@@ -2,19 +2,84 @@ use smithay::desktop::{PopupKind, Window};
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::utils::{Rectangle, SERIAL_COUNTER, Serial};
 use smithay::wayland::shell::xdg::PopupSurface;
+use tracing::info;
 
 use crate::actions::focus::FocusUpdate;
 use crate::frame_sync::{Transaction, WindowFrameSyncState};
 use crate::model::WindowId;
+use crate::runtime::{RuntimeCommand, RuntimeResult};
 use crate::state::{ManagedWindow, SpidersWm};
 
 impl SpidersWm {
+    pub fn ensure_and_select_workspace(&mut self, name: impl Into<String>, serial: Serial) {
+        let workspace_id = match self.runtime().execute(RuntimeCommand::EnsureWorkspace { name: name.into() }) {
+            RuntimeResult::Workspace(workspace_id) => workspace_id,
+            _ => return,
+        };
+
+        let _ = self.runtime().execute(RuntimeCommand::SelectWorkspace {
+            workspace_id: workspace_id.clone(),
+        });
+        info!(workspace = %workspace_id.0, "selected workspace");
+        self.apply_workspace_selection(serial);
+    }
+
+    pub fn select_next_workspace(&mut self, serial: Serial) {
+        let workspace_id = match self.runtime().execute(RuntimeCommand::SelectNextWorkspace) {
+            RuntimeResult::Workspace(workspace_id) => workspace_id,
+            _ => return,
+        };
+        info!(workspace = %workspace_id.0, "selected workspace");
+        self.apply_workspace_selection(serial);
+    }
+
+    pub fn focus_next_window(&mut self, serial: Serial) {
+        let next_focus_window_id = match self.runtime().execute(RuntimeCommand::RequestFocusNextWindow {
+            seat_id: "winit".into(),
+        }) {
+            RuntimeResult::Window(window_id) => window_id,
+            _ => None,
+        };
+        let next_surface = next_focus_window_id.and_then(|window_id| self.surface_for_window_id(window_id));
+
+        self.apply_backend_focus(next_surface.clone(), serial);
+        self.apply_window_activation(next_surface.as_ref());
+    }
+
+    fn apply_workspace_selection(&mut self, serial: Serial) {
+        self.schedule_relayout();
+        let focused_surface = self.focus_surface_for_current_workspace();
+        self.set_focus(focused_surface, serial);
+    }
+
+    fn focus_surface_for_current_workspace(&self) -> Option<WlSurface> {
+        let current_workspace_id = self.model.current_workspace_id.as_ref()?;
+
+        if let Some(focused_window_id) = self.model.focused_window_id {
+            let focused_is_visible = self
+                .model
+                .windows
+                .get(&focused_window_id)
+                .and_then(|window| window.workspace_id.as_ref())
+                == Some(current_workspace_id);
+            if focused_is_visible {
+                return self.surface_for_window_id(focused_window_id);
+            }
+        }
+
+        self.managed_windows
+            .iter()
+            .rev()
+            .find(|record| self.model.window_is_on_current_workspace(record.id))
+            .map(ManagedWindow::wl_surface)
+    }
+
     pub fn close_focused_window(&mut self) {
         let Some(focused_surface) = self.focused_surface.clone() else {
             return;
         };
 
-        let _ = self.runtime().mark_focused_window_closing();
+        let _ = self.runtime().execute(RuntimeCommand::RequestCloseFocusedWindow);
 
         if let Some(record) = self.managed_window_for_surface(&focused_surface) {
             if let Some(toplevel) = record.window.toplevel() {
@@ -37,7 +102,13 @@ impl SpidersWm {
     }
 
     fn update_modeled_focus(&mut self, focused_window_id: Option<WindowId>) -> Option<WindowId> {
-        self.runtime().sync_focus("winit", focused_window_id)
+        match self.runtime().execute(RuntimeCommand::RequestFocusWindow {
+            seat_id: "winit".into(),
+            window_id: focused_window_id,
+        }) {
+            RuntimeResult::Window(focused_window_id) => focused_window_id,
+            _ => None,
+        }
     }
 
     fn apply_backend_focus(&mut self, surface: Option<WlSurface>, serial: Serial) {
@@ -60,7 +131,7 @@ impl SpidersWm {
     pub fn add_window(&mut self, window: Window) {
         let window_id = WindowId(self.next_window_id);
         self.next_window_id += 1;
-        self.runtime().place_new_window(window_id);
+        let _ = self.runtime().execute(RuntimeCommand::PlaceNewWindow { window_id });
 
         self.managed_windows.push(ManagedWindow {
             id: window_id,
@@ -76,7 +147,12 @@ impl SpidersWm {
         };
 
         let record = self.managed_windows.remove(position);
-        let focus_update = self.runtime().remove_window(record.id);
+        let focus_update = match self.runtime().execute(RuntimeCommand::RemoveWindow {
+            window_id: record.id,
+        }) {
+            RuntimeResult::FocusUpdate(focus_update) => focus_update,
+            _ => FocusUpdate::Unchanged,
+        };
         let transaction = Transaction::new();
         let monitor = transaction.monitor();
 
@@ -127,7 +203,10 @@ impl SpidersWm {
         };
 
         if let Some(window_id) = mapped_window_id {
-            let _ = self.runtime().sync_window_mapped(window_id, true);
+            let _ = self.runtime().execute(RuntimeCommand::SyncWindowMapped {
+                window_id,
+                mapped: true,
+            });
         }
 
         if let Some((window_id, window, pending_location, first_map)) = window_update {
@@ -152,7 +231,10 @@ impl SpidersWm {
                 }
 
                 if let Some(window_id) = mapped_window_id {
-                    let _ = self.runtime().sync_window_mapped(window_id, true);
+                    let _ = self.runtime().execute(RuntimeCommand::SyncWindowMapped {
+                        window_id,
+                        mapped: true,
+                    });
                 }
 
                 return;
@@ -165,7 +247,10 @@ impl SpidersWm {
 
             if let Some(location) = location {
                 self.space.map_element(window, location, false);
-                let _ = self.runtime().sync_window_mapped(window_id, true);
+                let _ = self.runtime().execute(RuntimeCommand::SyncWindowMapped {
+                    window_id,
+                    mapped: true,
+                });
             }
         }
     }

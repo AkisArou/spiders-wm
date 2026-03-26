@@ -13,6 +13,20 @@ pub fn set_focused_window(model: &mut WmModel, focused_id: Option<WindowId>) -> 
     focused_id
 }
 
+pub fn focus_next_window(model: &mut WmModel) -> Option<WindowId> {
+    let next_focus = match model.focused_window_id {
+        Some(current_id) => model
+            .windows
+            .keys()
+            .copied()
+            .find(|window_id| *window_id > current_id)
+            .or_else(|| model.windows.keys().next().copied()),
+        None => model.windows.keys().next().copied(),
+    };
+
+    set_focused_window(model, next_focus)
+}
+
 pub fn remove_window(model: &mut WmModel, removed_id: WindowId) -> FocusUpdate {
     let removed_was_focused = model.focused_window_id == Some(removed_id);
     model.remove_window(removed_id);
@@ -98,5 +112,20 @@ mod tests {
         assert_eq!(update, FocusUpdate::Set(None));
         assert_eq!(model.focused_window_id, None);
         assert!(model.windows.is_empty());
+    }
+
+    #[test]
+    fn focusing_next_window_advances_and_wraps() {
+        let mut model = WmModel::default();
+        model.insert_window(WindowId(1), None, None);
+        model.insert_window(WindowId(3), None, None);
+        model.insert_window(WindowId(8), None, None);
+        model.set_window_focused(Some(WindowId(3)));
+
+        let next = focus_next_window(&mut model);
+        assert_eq!(next, Some(WindowId(8)));
+
+        let wrapped = focus_next_window(&mut model);
+        assert_eq!(wrapped, Some(WindowId(1)));
     }
 }
