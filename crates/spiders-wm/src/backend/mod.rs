@@ -795,7 +795,7 @@ impl RiverBackendState {
                                 trigger = %binding.trigger,
                                 keysym,
                                 modifiers = ?binding.modifiers,
-                                action = ?binding.action,
+                                command = ?binding.command,
                                 "registering key binding"
                             );
                             let proxy = xkb_bindings.get_xkb_binding(
@@ -811,7 +811,7 @@ impl RiverBackendState {
                                 XkbBindingRecord {
                                     proxy,
                                     trigger: binding.trigger.clone(),
-                                    action: binding.action.clone(),
+                                        command: binding.command.clone(),
                                 },
                             );
                         }
@@ -823,7 +823,7 @@ impl RiverBackendState {
                                 trigger = %binding.trigger,
                                 button,
                                 modifiers = ?binding.modifiers,
-                                action = ?binding.action,
+                                command = ?binding.command,
                                 "registering pointer binding"
                             );
                             let proxy = seat.proxy.get_pointer_binding(
@@ -838,7 +838,7 @@ impl RiverBackendState {
                                 PointerBindingRecord {
                                     proxy,
                                     trigger: binding.trigger.clone(),
-                                    action: binding.action.clone(),
+                                        command: binding.command.clone(),
                                 },
                             );
                         }
@@ -1170,7 +1170,7 @@ impl RiverBackendState {
         let config = Config {
             bindings: vec![Binding {
                 trigger: "Alt+Enter".into(),
-                action: WmCommand::Spawn {
+                command: WmCommand::Spawn {
                     command: "alacritty".into(),
                 },
             }],
@@ -1199,7 +1199,7 @@ impl RiverBackendState {
         let config = Config {
             bindings: vec![Binding {
                 trigger: "Weird+Thing+Unsupported".into(),
-                action: WmCommand::Spawn {
+                command: WmCommand::Spawn {
                     command: "foo".into(),
                 },
             }],
@@ -1250,7 +1250,7 @@ impl RiverBackendState {
             },
             bindings: vec![Binding {
                 trigger: "Alt+Ctrl+1".into(),
-                action: WmCommand::AssignFocusedWindowToWorkspace { workspace: 1 },
+                command: WmCommand::AssignFocusedWindowToWorkspace { workspace: 1 },
             }],
             ..Config::default()
         };

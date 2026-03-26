@@ -172,29 +172,29 @@ rules: [
 
 ## Bindings Object
 
-Bindings are declarative entries with a trigger and an action descriptor.
+Bindings are declarative entries with a trigger and a command descriptor.
 
 ```ts
-import * as actions from "spiders-wm/actions";
+import * as commands from "spiders-wm/commands";
 import type { BindingsConfig } from "spiders-wm/config";
 
 export const bindings = {
   mod: "super",
   entries: [
-    { bind: ["mod", "Return"], action: actions.spawn("foot") },
-    { bind: ["mod", "h"], action: actions.focus_dir("left") },
-    { bind: ["mod", "space"], action: actions.cycle_layout() },
-    { bind: ["mod", "1"], action: actions.view_workspace(1) },
-    { bind: ["mod", "shift", "1"], action: actions.assign_workspace(1) },
+    { bind: ["mod", "Return"], command: commands.spawn("foot") },
+    { bind: ["mod", "h"], command: commands.focus_dir("left") },
+    { bind: ["mod", "space"], command: commands.cycle_layout() },
+    { bind: ["mod", "1"], command: commands.view_workspace(1) },
+    { bind: ["mod", "shift", "1"], command: commands.assign_workspace(1) },
   ],
 } satisfies BindingsConfig;
 ```
 
 Binding keys use XKB keysym names. `mod` is an alias resolved from `bindings.mod`.
 
-## Supported Actions
+## Supported Commands
 
-`spiders-wm/actions` currently exposes:
+`spiders-wm/commands` currently exposes:
 
 - `spawn(command)`
 - `reload_config()`

@@ -13,6 +13,16 @@ impl SpidersWm {
 
     pub fn execute_wm_command_with_serial(&mut self, command: WmCommand, serial: Serial) {
         match command {
+            WmCommand::Spawn { command } => self.spawn_command(&command),
+            WmCommand::ViewWorkspace { workspace } => {
+                self.ensure_and_select_workspace(workspace.to_string(), serial)
+            }
+            WmCommand::ActivateWorkspace { workspace_id } => {
+                self.ensure_and_select_workspace(workspace_id.0, serial)
+            }
+            WmCommand::AssignFocusedWindowToWorkspace { workspace } => {
+                self.assign_focused_window_to_workspace(workspace, serial)
+            }
             WmCommand::SpawnTerminal => self.spawn_foot(),
             WmCommand::FocusNextWindow => self.focus_next_window(serial),
             WmCommand::FocusPreviousWindow => self.focus_previous_window(serial),
@@ -22,6 +32,32 @@ impl SpidersWm {
                 self.ensure_and_select_workspace(workspace_id.0, serial)
             }
             WmCommand::CloseFocusedWindow => self.close_focused_window(),
+            WmCommand::ResizeDirection { direction }
+            | WmCommand::ResizeTiledDirection { direction } => {
+                warn!(?direction, "resize wm command is intentionally stubbed for now")
+            }
+            WmCommand::ReloadConfig => self.reload_config(),
+            WmCommand::SetLayout { name } => {
+                warn!(layout = %name, "set-layout wm command is not implemented yet")
+            }
+            WmCommand::CycleLayout { direction } => {
+                warn!(?direction, "cycle-layout wm command is not implemented yet")
+            }
+            WmCommand::ToggleFullscreen => {
+                self.toggle_focused_window_fullscreen()
+            }
+            WmCommand::ToggleFloating => {
+                self.toggle_focused_window_floating()
+            }
+            WmCommand::FocusDirection { direction } => {
+                self.focus_direction_window(direction, serial)
+            }
+            WmCommand::SwapDirection { direction } => {
+                self.swap_focused_window_direction(direction)
+            }
+            WmCommand::MoveDirection { direction } => {
+                warn!(?direction, "move-direction wm command is not implemented yet")
+            }
             unsupported => {
                 warn!(?unsupported, "ignoring unsupported wm command");
             }

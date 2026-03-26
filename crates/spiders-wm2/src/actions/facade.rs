@@ -117,6 +117,31 @@ impl<'a> WmActions<'a> {
         window::request_close_focused_window(self.model)
     }
 
+    pub fn assign_focused_window_to_workspace<I>(
+        &mut self,
+        workspace_id: WorkspaceId,
+        window_ids: I,
+    ) -> FocusSelection
+    where
+        I: IntoIterator<Item = WindowId>,
+    {
+        FocusSelection {
+            focused_window_id: window::assign_focused_window_to_workspace(
+                self.model,
+                workspace_id,
+                window_ids,
+            ),
+        }
+    }
+
+    pub fn toggle_focused_window_floating(&mut self) -> Option<WindowId> {
+        window::toggle_focused_window_floating(self.model)
+    }
+
+    pub fn toggle_focused_window_fullscreen(&mut self) -> Option<WindowId> {
+        window::toggle_focused_window_fullscreen(self.model)
+    }
+
     pub fn sync_window_identity(
         &mut self,
         window_id: WindowId,

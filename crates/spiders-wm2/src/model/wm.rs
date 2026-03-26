@@ -155,6 +155,19 @@ impl WmModel {
             .collect()
     }
 
+    pub fn fullscreen_window_on_current_workspace<I>(&self, window_ids: I) -> Option<WindowId>
+    where
+        I: IntoIterator<Item = WindowId>,
+    {
+        self.window_ids_on_current_workspace(window_ids)
+            .into_iter()
+            .find(|window_id| {
+                self.windows
+                    .get(window_id)
+                    .is_some_and(|window| window.fullscreen)
+            })
+    }
+
     pub fn preferred_focus_window_on_current_workspace<I>(&self, window_ids: I) -> Option<WindowId>
     where
         I: IntoIterator<Item = WindowId>,
@@ -173,6 +186,24 @@ impl WmModel {
     pub fn set_window_mapped(&mut self, id: WindowId, mapped: bool) {
         if let Some(window) = self.windows.get_mut(&id) {
             window.mapped = mapped;
+        }
+    }
+
+    pub fn set_window_workspace(&mut self, id: WindowId, workspace_id: Option<WorkspaceId>) {
+        if let Some(window) = self.windows.get_mut(&id) {
+            window.workspace_id = workspace_id;
+        }
+    }
+
+    pub fn set_window_floating(&mut self, id: WindowId, floating: bool) {
+        if let Some(window) = self.windows.get_mut(&id) {
+            window.floating = floating;
+        }
+    }
+
+    pub fn set_window_fullscreen(&mut self, id: WindowId, fullscreen: bool) {
+        if let Some(window) = self.windows.get_mut(&id) {
+            window.fullscreen = fullscreen;
         }
     }
 
@@ -238,6 +269,62 @@ mod tests {
         assert_eq!(
             model.workspaces.get(&WorkspaceId("2".to_string())).map(|workspace| workspace.visible),
             Some(true)
+        );
+    }
+
+    #[test]
+    fn setting_window_workspace_updates_that_window() {
+        let mut model = WmModel::default();
+        model.insert_window(WindowId(9), Some(WorkspaceId("1".to_string())), None);
+
+        model.set_window_workspace(WindowId(9), Some(WorkspaceId("2".to_string())));
+
+        assert_eq!(
+            model.windows.get(&WindowId(9)).and_then(|window| window.workspace_id.clone()),
+            Some(WorkspaceId("2".to_string()))
+        );
+    }
+
+    #[test]
+    fn setting_window_floating_updates_that_window() {
+        let mut model = WmModel::default();
+        model.insert_window(WindowId(10), None, None);
+
+        model.set_window_floating(WindowId(10), true);
+
+        assert_eq!(
+            model.windows.get(&WindowId(10)).map(|window| window.floating),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn setting_window_fullscreen_updates_that_window() {
+        let mut model = WmModel::default();
+        model.insert_window(WindowId(11), None, None);
+
+        model.set_window_fullscreen(WindowId(11), true);
+
+        assert_eq!(
+            model.windows.get(&WindowId(11)).map(|window| window.fullscreen),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn fullscreen_window_on_current_workspace_returns_matching_visible_window() {
+        let mut model = WmModel::default();
+        model.upsert_workspace(WorkspaceId("1".to_string()), "1".to_string());
+        model.upsert_workspace(WorkspaceId("2".to_string()), "2".to_string());
+        model.set_current_workspace(WorkspaceId("1".to_string()));
+        model.insert_window(WindowId(1), Some(WorkspaceId("1".to_string())), None);
+        model.insert_window(WindowId(2), Some(WorkspaceId("2".to_string())), None);
+        model.set_window_fullscreen(WindowId(1), true);
+        model.set_window_fullscreen(WindowId(2), true);
+
+        assert_eq!(
+            model.fullscreen_window_on_current_workspace([WindowId(1), WindowId(2)]),
+            Some(WindowId(1))
         );
     }
 

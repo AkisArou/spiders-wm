@@ -14,5 +14,6 @@ pub struct WindowModel {
     pub mapped: bool,
     pub focused: bool,
     pub floating: bool,
+    pub fullscreen: bool,
     pub closing: bool,
 }

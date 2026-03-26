@@ -1,20 +1,108 @@
-import type { ActionDescriptor } from "./actions";
+import type { CommandDescriptor } from "./commands";
 
 export type AttachDirection = "after" | "before";
 export type Direction = "left" | "right" | "up" | "down";
 /** Modifier names accepted by spiders-wm and mapped to wlroots modifier bits. */
-export type ModifierName = "super" | "logo" | "mod4" | "shift" | "ctrl" | "control" | "alt" | "mod1";
+export type ModifierName =
+  | "super"
+  | "logo"
+  | "mod4"
+  | "shift"
+  | "ctrl"
+  | "control"
+  | "alt"
+  | "mod1";
 export type ModifierToken = ModifierName | "mod";
 export type LetterKey =
-  | "a" | "b" | "c" | "d" | "e" | "f" | "g" | "h" | "i" | "j" | "k" | "l" | "m"
-  | "n" | "o" | "p" | "q" | "r" | "s" | "t" | "u" | "v" | "w" | "x" | "y" | "z"
-  | "A" | "B" | "C" | "D" | "E" | "F" | "G" | "H" | "I" | "J" | "K" | "L" | "M"
-  | "N" | "O" | "P" | "Q" | "R" | "S" | "T" | "U" | "V" | "W" | "X" | "Y" | "Z";
-export type DigitKey = "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9";
+  | "a"
+  | "b"
+  | "c"
+  | "d"
+  | "e"
+  | "f"
+  | "g"
+  | "h"
+  | "i"
+  | "j"
+  | "k"
+  | "l"
+  | "m"
+  | "n"
+  | "o"
+  | "p"
+  | "q"
+  | "r"
+  | "s"
+  | "t"
+  | "u"
+  | "v"
+  | "w"
+  | "x"
+  | "y"
+  | "z"
+  | "A"
+  | "B"
+  | "C"
+  | "D"
+  | "E"
+  | "F"
+  | "G"
+  | "H"
+  | "I"
+  | "J"
+  | "K"
+  | "L"
+  | "M"
+  | "N"
+  | "O"
+  | "P"
+  | "Q"
+  | "R"
+  | "S"
+  | "T"
+  | "U"
+  | "V"
+  | "W"
+  | "X"
+  | "Y"
+  | "Z";
+export type DigitKey =
+  | "0"
+  | "1"
+  | "2"
+  | "3"
+  | "4"
+  | "5"
+  | "6"
+  | "7"
+  | "8"
+  | "9";
 export type ArrowKey = "Left" | "Right" | "Up" | "Down";
 export type FunctionKey =
-  | "F1" | "F2" | "F3" | "F4" | "F5" | "F6" | "F7" | "F8" | "F9" | "F10" | "F11" | "F12"
-  | "F13" | "F14" | "F15" | "F16" | "F17" | "F18" | "F19" | "F20" | "F21" | "F22" | "F23" | "F24";
+  | "F1"
+  | "F2"
+  | "F3"
+  | "F4"
+  | "F5"
+  | "F6"
+  | "F7"
+  | "F8"
+  | "F9"
+  | "F10"
+  | "F11"
+  | "F12"
+  | "F13"
+  | "F14"
+  | "F15"
+  | "F16"
+  | "F17"
+  | "F18"
+  | "F19"
+  | "F20"
+  | "F21"
+  | "F22"
+  | "F23"
+  | "F24";
 export type NamedKey =
   | LetterKey
   | DigitKey
@@ -120,7 +208,7 @@ export type RulesConfig = RuleConfig[];
 
 export interface BindingEntry {
   bind: Binding;
-  action: ActionDescriptor;
+  command: CommandDescriptor;
 }
 
 export interface BindingsConfig {

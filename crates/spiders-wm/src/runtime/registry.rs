@@ -79,14 +79,14 @@ pub struct TitlebarBufferRecord {
 pub struct XkbBindingRecord {
     pub proxy: river_xkb_binding_v1::RiverXkbBindingV1,
     pub trigger: String,
-    pub action: WmCommand,
+    pub command: WmCommand,
 }
 
 #[derive(Debug, Clone)]
 pub struct PointerBindingRecord {
     pub proxy: river_pointer_binding_v1::RiverPointerBindingV1,
     pub trigger: String,
-    pub action: WmCommand,
+    pub command: WmCommand,
 }
 
 #[derive(Debug, Clone)]
@@ -148,5 +148,5 @@ pub struct ParsedBinding {
     pub modifiers: river_seat_v1::Modifiers,
     pub key: Option<u32>,
     pub button: Option<u32>,
-    pub action: WmCommand,
+    pub command: WmCommand,
 }

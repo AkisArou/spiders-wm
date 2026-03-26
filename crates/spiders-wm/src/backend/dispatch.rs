@@ -555,22 +555,22 @@ impl Dispatch<river_xkb_binding_v1::RiverXkbBindingV1, ObjectId> for RiverBacken
             return;
         };
 
-        let action = binding.action.clone();
+        let command = binding.command.clone();
         let trigger = binding.trigger.clone();
 
         match event {
             river_xkb_binding_v1::Event::Pressed => {
-                let command = bridge_action(&action);
+                let river_command = bridge_action(&command);
                 tracing::debug!(
                     trigger = %trigger,
-                    action = ?action,
                     command = ?command,
+                    river_command = ?river_command,
                     "received keybinding press"
                 );
-                if let RiverCommand::Unsupported { action } = &command {
-                    tracing::warn!(action = *action, "received keybinding for unsupported action");
+                if let RiverCommand::Unsupported { action } = &river_command {
+                    tracing::warn!(action = *action, "received keybinding for unsupported command");
                 }
-                state.queue_seat_command(seat_id, command);
+                state.queue_seat_command(seat_id, river_command);
             }
             river_xkb_binding_v1::Event::Released | river_xkb_binding_v1::Event::StopRepeat => {}
         }
@@ -593,22 +593,22 @@ impl Dispatch<river_pointer_binding_v1::RiverPointerBindingV1, ObjectId> for Riv
             return;
         };
 
-        let action = binding.action.clone();
+        let command = binding.command.clone();
         let trigger = binding.trigger.clone();
 
         match event {
             river_pointer_binding_v1::Event::Pressed => {
-                let command = bridge_action(&action);
+                let river_command = bridge_action(&command);
                 tracing::debug!(
                     trigger = %trigger,
-                    action = ?action,
                     command = ?command,
+                    river_command = ?river_command,
                     "received pointer binding press"
                 );
-                if let RiverCommand::Unsupported { action } = &command {
-                    tracing::warn!(action = *action, "received pointer binding for unsupported action");
+                if let RiverCommand::Unsupported { action } = &river_command {
+                    tracing::warn!(action = *action, "received pointer binding for unsupported command");
                 }
-                state.queue_seat_command(seat_id, command);
+                state.queue_seat_command(seat_id, river_command);
             }
             river_pointer_binding_v1::Event::Released => {}
         }

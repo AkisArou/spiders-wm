@@ -901,25 +901,25 @@ fn decode_bindings(value: Option<&Value>, path: &Path) -> Result<Vec<Binding>, L
             })
             .collect::<Result<Vec<_>, LayoutConfigError>>()?
             .join("+");
-        let action = decode_action_descriptor(
-            required(object, "action", path, "binding.action")?,
+        let command = decode_command_descriptor(
+            required(object, "command", path, "binding.command")?,
             path,
-            &format!("root.bindings.entries[{index}].action"),
+            &format!("root.bindings.entries[{index}].command"),
         )?;
-        bindings.push(Binding { trigger, action });
+        bindings.push(Binding { trigger, command });
     }
     Ok(bindings)
 }
 
-fn decode_action_descriptor(
+fn decode_command_descriptor(
     value: &Value,
     path: &Path,
     field: &str,
 ) -> Result<WmCommand, LayoutConfigError> {
     let object = expect_object(path, value, field)?;
-    let action = expect_string(path, required(object, "_action", path, field)?, field)?;
+    let command = expect_string(path, required(object, "_command", path, field)?, field)?;
     let arg = object.get("_arg").unwrap_or(&Value::Null);
-    match action {
+    match command {
         "spawn" => Ok(WmCommand::Spawn {
             command: expect_string(path, arg, field)?.to_owned(),
         }),
@@ -973,7 +973,7 @@ fn decode_action_descriptor(
         "kill_client" => Ok(WmCommand::CloseFocusedWindow),
         other => Err(LayoutConfigError::DecodeAuthoredConfig {
             path: path.to_path_buf(),
-            message: format!("unsupported action descriptor `{other}` at {field}"),
+            message: format!("unsupported command descriptor `{other}` at {field}"),
         }),
     }
 }
@@ -1254,18 +1254,18 @@ mod tests {
         fs::write(
             root.join("config/bindings.ts"),
             r#"
-                import * as actions from "spiders-wm/actions";
+                import * as commands from "spiders-wm/commands";
                 export const bindings = {
                   mod: "alt",
                   entries: [
-                    { bind: ["mod", "Return"], action: actions.spawn("foot") },
-                    { bind: ["mod", "h"], action: actions.focus_dir("left") },
-                    { bind: ["mod", "shift", "h"], action: actions.swap_dir("left") },
-                    { bind: ["mod", "ctrl", "h"], action: actions.resize_dir("left") },
-                    { bind: ["mod", "ctrl", "shift", "h"], action: actions.resize_tiled("left") },
-                    { bind: ["mod", "comma"], action: actions.focus_mon_left() },
-                    { bind: ["mod", "period"], action: actions.focus_mon_right() },
-                    { bind: ["mod", "f"], action: actions.toggle_fullscreen() },
+                    { bind: ["mod", "Return"], command: commands.spawn("foot") },
+                    { bind: ["mod", "h"], command: commands.focus_dir("left") },
+                    { bind: ["mod", "shift", "h"], command: commands.swap_dir("left") },
+                    { bind: ["mod", "ctrl", "h"], command: commands.resize_dir("left") },
+                    { bind: ["mod", "ctrl", "shift", "h"], command: commands.resize_tiled("left") },
+                    { bind: ["mod", "comma"], command: commands.focus_mon_left() },
+                    { bind: ["mod", "period"], command: commands.focus_mon_right() },
+                    { bind: ["mod", "f"], command: commands.toggle_fullscreen() },
                   ],
                 };
             "#,
@@ -1310,38 +1310,38 @@ mod tests {
         assert_eq!(config.bindings.len(), 8);
         assert_eq!(config.bindings[0].trigger, "alt+Return");
         assert_eq!(
-            config.bindings[0].action,
+            config.bindings[0].command,
             WmCommand::Spawn {
                 command: "foot".into(),
             }
         );
         assert_eq!(
-            config.bindings[1].action,
+            config.bindings[1].command,
             WmCommand::FocusDirection {
                 direction: FocusDirection::Left,
             }
         );
         assert_eq!(
-            config.bindings[2].action,
+            config.bindings[2].command,
             WmCommand::SwapDirection {
                 direction: FocusDirection::Left,
             }
         );
         assert_eq!(
-            config.bindings[3].action,
+            config.bindings[3].command,
             WmCommand::ResizeDirection {
                 direction: FocusDirection::Left,
             }
         );
         assert_eq!(
-            config.bindings[4].action,
+            config.bindings[4].command,
             WmCommand::ResizeTiledDirection {
                 direction: FocusDirection::Left,
             }
         );
-        assert_eq!(config.bindings[5].action, WmCommand::FocusMonitorLeft);
-        assert_eq!(config.bindings[6].action, WmCommand::FocusMonitorRight);
-        assert_eq!(config.bindings[7].action, WmCommand::ToggleFullscreen);
+        assert_eq!(config.bindings[5].command, WmCommand::FocusMonitorLeft);
+        assert_eq!(config.bindings[6].command, WmCommand::FocusMonitorRight);
+        assert_eq!(config.bindings[7].command, WmCommand::ToggleFullscreen);
         assert_eq!(config.inputs.len(), 1);
         assert_eq!(
             config.layout_selection.default.as_deref(),
@@ -1408,8 +1408,8 @@ mod tests {
     }
 
     #[test]
-    fn load_prepared_config_preserves_virtual_actions_imports() {
-        let root = unique_root("prepared-virtual-actions");
+    fn load_prepared_config_preserves_virtual_commands_imports() {
+        let root = unique_root("prepared-virtual-commands");
         let cache_root = root.join("runtime-cache");
         fs::create_dir_all(root.join("config")).unwrap();
         fs::create_dir_all(root.join("layouts/master-stack")).unwrap();
@@ -1429,11 +1429,11 @@ mod tests {
         fs::write(
             root.join("config/bindings.ts"),
             r#"
-                import * as actions from "spiders-wm/actions";
+                                import * as commands from "spiders-wm/commands";
 
                 export const bindings = {
                   mod: "alt",
-                  entries: [{ bind: ["mod", "Return"], action: actions.spawn("foot") }],
+                                    entries: [{ bind: ["mod", "Return"], command: commands.spawn("foot") }],
                 };
             "#,
         )
@@ -1452,12 +1452,12 @@ mod tests {
         rebuild_prepared_config(root.join("config.ts"), &runtime_entry).unwrap();
 
         let prepared_bindings = fs::read_to_string(cache_root.join("config/bindings.js")).unwrap();
-        assert!(prepared_bindings.contains("\"spiders-wm/actions\""));
+        assert!(prepared_bindings.contains("\"spiders-wm/commands\""));
 
         let config = load_prepared_config(&runtime_entry).unwrap();
         assert_eq!(config.bindings.len(), 1);
         assert_eq!(
-            config.bindings[0].action,
+            config.bindings[0].command,
             WmCommand::Spawn {
                 command: "foot".into(),
             }

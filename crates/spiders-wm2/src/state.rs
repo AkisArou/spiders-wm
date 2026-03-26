@@ -3,6 +3,8 @@ use std::process::Command;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::Arc;
 
+use spiders_config::model::{Config, ConfigDiscoveryOptions, ConfigPaths};
+
 use smithay::backend::renderer::gles::GlesRenderer;
 use smithay::backend::winit::WinitGraphicsBackend;
 use smithay::desktop::{PopupManager, Space, Window, WindowSurfaceType};
@@ -10,9 +12,10 @@ use smithay::input::{Seat, SeatState};
 use smithay::reexports::calloop::{
     EventLoop, Interest, LoopHandle, LoopSignal, Mode, PostAction, generic::Generic,
 };
+use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel;
 use smithay::reexports::wayland_server::backend::{ClientData, ClientId, DisconnectReason};
-use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
-use smithay::reexports::wayland_server::{Client, Display, DisplayHandle};
+use smithay::reexports::wayland_server::protocol::{wl_output::WlOutput, wl_surface::WlSurface};
+use smithay::reexports::wayland_server::{Client, Display, DisplayHandle, Resource};
 use smithay::utils::{Logical, Point, Size};
 use smithay::wayland::compositor::{CompositorClientState, CompositorHandler, CompositorState};
 use smithay::wayland::output::OutputHandler;
@@ -24,7 +27,7 @@ use smithay::wayland::selection::data_device::DataDeviceState;
 use smithay::wayland::shell::xdg::XdgShellState;
 use smithay::wayland::shm::ShmState;
 use smithay::wayland::socket::ListeningSocketSource;
-use tracing::{error, info, trace};
+use tracing::{error, info, trace, warn};
 
 use crate::frame_sync::{FrameSyncState, Transaction, WindowFrameSyncState, plan_tiled_slot, plan_tiled_slots};
 use crate::model::{WindowId, wm::WmModel};
@@ -52,6 +55,8 @@ pub struct SpidersWm {
     pub backend: Option<WinitGraphicsBackend<GlesRenderer>>,
 
     pub focused_surface: Option<WlSurface>,
+    pub(crate) config_paths: Option<ConfigPaths>,
+    pub(crate) config: Config,
 
     pub(crate) managed_windows: Vec<ManagedWindow>,
     pub(crate) frame_sync: FrameSyncState,
@@ -97,6 +102,7 @@ impl SpidersWm {
                 seat_id: "winit".into(),
             });
         }
+        let (config_paths, config) = Self::load_wm_config();
 
         Self {
             start_time,
@@ -118,6 +124,8 @@ impl SpidersWm {
             seat,
             backend: None,
             focused_surface: None,
+            config_paths,
+            config,
             managed_windows: Vec::new(),
             frame_sync: FrameSyncState::default(),
             model,
@@ -270,6 +278,62 @@ impl SpidersWm {
             );
     }
 
+    pub fn spawn_command(&self, command_line: &str) {
+        let mut command = Command::new("sh");
+        command.arg("-lc").arg(command_line);
+        command.env("WAYLAND_DISPLAY", &self.socket_name);
+
+        match command.spawn() {
+            Ok(_) => info!(command = command_line, "spawned wm command"),
+            Err(err) => error!(command = command_line, %err, "failed to spawn wm command"),
+        }
+    }
+
+    pub fn reload_config(&mut self) {
+        let (config_paths, config) = Self::load_wm_config_with_paths(self.config_paths.clone());
+        self.config_paths = config_paths;
+        self.config = config;
+    }
+
+    fn load_wm_config() -> (Option<ConfigPaths>, Config) {
+        Self::load_wm_config_with_paths(None)
+    }
+
+    fn load_wm_config_with_paths(existing_paths: Option<ConfigPaths>) -> (Option<ConfigPaths>, Config) {
+        let paths = match existing_paths {
+            Some(paths) => paths,
+            None => match ConfigPaths::discover(ConfigDiscoveryOptions::from_env()) {
+                Ok(paths) => paths,
+                Err(error) => {
+                    warn!(%error, "wm2 could not discover config paths; using empty config");
+                    return (None, Config::default());
+                }
+            },
+        };
+
+        let service = spiders_runtime_js::build_authoring_layout_service(&paths);
+        match service.load_config(&paths) {
+            Ok(config) => {
+                info!(
+                    authored_config = %paths.authored_config.display(),
+                    prepared_config = %paths.prepared_config.display(),
+                    binding_count = config.bindings.len(),
+                    "loaded wm2 config"
+                );
+                (Some(paths), config)
+            }
+            Err(error) => {
+                warn!(
+                    authored_config = %paths.authored_config.display(),
+                    prepared_config = %paths.prepared_config.display(),
+                    %error,
+                    "wm2 failed to load config; using empty config"
+                );
+                (Some(paths), Config::default())
+            }
+        }
+    }
+
     pub(crate) fn flush_queued_relayout(&mut self) {
         if !self
             .frame_sync
@@ -328,15 +392,23 @@ impl SpidersWm {
             .space
             .outputs()
             .next()
+            .cloned()
             .expect("output must exist before relayout");
         let output_geometry = self
             .space
-            .output_geometry(output)
+            .output_geometry(&output)
             .expect("output geometry missing during relayout");
 
         let visible_positions = self.visible_managed_window_positions();
+        let fullscreen_window_id = self.model.fullscreen_window_on_current_workspace(
+            visible_positions
+                .iter()
+                .map(|managed_index| self.managed_windows[*managed_index].id),
+        );
         for record in &self.managed_windows {
-            if !self.model.window_is_on_current_workspace(record.id) {
+            if !self.model.window_is_on_current_workspace(record.id)
+                || fullscreen_window_id.is_some_and(|window_id| window_id != record.id)
+            {
                 self.space.unmap_elem(&record.window);
             }
         }
@@ -345,10 +417,33 @@ impl SpidersWm {
             return;
         }
 
-        let transaction = transaction.unwrap_or_else(Transaction::new);
-        let slots = plan_tiled_slots(output_geometry, visible_positions.len());
+        let relayout_positions = match fullscreen_window_id {
+            Some(fullscreen_window_id) => visible_positions
+                .iter()
+                .copied()
+                .filter(|managed_index| self.managed_windows[*managed_index].id == fullscreen_window_id)
+                .collect::<Vec<_>>(),
+            None => visible_positions,
+        };
 
-        for (slot_index, managed_index) in visible_positions.into_iter().enumerate() {
+        if fullscreen_window_id.is_some() {
+            for managed_index in self
+                .visible_managed_window_positions()
+                .into_iter()
+                .filter(|managed_index| !relayout_positions.contains(managed_index))
+            {
+                if let Some(toplevel) = self.managed_windows[managed_index].window.toplevel().cloned() {
+                    if sync_toplevel_fullscreen_state(&toplevel, false, None) {
+                        let _ = toplevel.send_configure();
+                    }
+                }
+            }
+        }
+
+        let transaction = transaction.unwrap_or_else(Transaction::new);
+        let slots = plan_tiled_slots(output_geometry, relayout_positions.len());
+
+        for (slot_index, managed_index) in relayout_positions.into_iter().enumerate() {
             let slot = slots[slot_index];
             let current_location = self
                 .space
@@ -357,9 +452,16 @@ impl SpidersWm {
 
             if let Some(toplevel) = toplevel {
                 let record = &mut self.managed_windows[managed_index];
+                let fullscreen = fullscreen_window_id == Some(record.id);
+                let fullscreen_output = fullscreen
+                    .then(|| fullscreen_output_for_toplevel(&output, &toplevel))
+                    .flatten();
                 let mut needs_configure = !record.mapped;
                 toplevel.with_pending_state(|state| {
                     if state.size != Some(slot.size) {
+                        needs_configure = true;
+                    }
+                    if sync_pending_fullscreen_state(state, fullscreen, fullscreen_output.clone()) {
                         needs_configure = true;
                     }
                     state.size = Some(slot.size);
@@ -392,6 +494,41 @@ impl SpidersWm {
         drop(transaction);
     }
 
+}
+
+fn sync_toplevel_fullscreen_state(
+    toplevel: &smithay::wayland::shell::xdg::ToplevelSurface,
+    fullscreen: bool,
+    fullscreen_output: Option<WlOutput>,
+) -> bool {
+    let mut changed = false;
+    toplevel.with_pending_state(|state| {
+        changed = sync_pending_fullscreen_state(state, fullscreen, fullscreen_output.clone());
+    });
+    changed
+}
+
+fn sync_pending_fullscreen_state(
+    state: &mut smithay::wayland::shell::xdg::ToplevelState,
+    fullscreen: bool,
+    fullscreen_output: Option<WlOutput>,
+) -> bool {
+    let output_changed = state.fullscreen_output != fullscreen_output;
+    state.fullscreen_output = fullscreen_output;
+
+    if fullscreen {
+        state.states.set(xdg_toplevel::State::Fullscreen) || output_changed
+    } else {
+        state.states.unset(xdg_toplevel::State::Fullscreen) || output_changed
+    }
+}
+
+fn fullscreen_output_for_toplevel(
+    output: &smithay::output::Output,
+    toplevel: &smithay::wayland::shell::xdg::ToplevelSurface,
+) -> Option<WlOutput> {
+    let client = toplevel.wl_surface().client()?;
+    output.client_outputs(&client).next()
 }
 
 impl ManagedWindow {

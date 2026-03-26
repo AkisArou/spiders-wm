@@ -332,7 +332,7 @@ fn strip_stylesheet_imports(path: &Path, source: &str) -> Result<String, Compile
 
 fn read_virtual_module_source(specifier: &str) -> Result<String, CompileError> {
     let relative_path = match specifier {
-        "spiders-wm/actions" => PathBuf::from("sdk/actions.js"),
+        "spiders-wm/commands" => PathBuf::from("sdk/commands.js"),
         "spiders-wm/config" => PathBuf::from("src/virtual/config.js"),
         "spiders-wm/jsx-runtime" => PathBuf::from("sdk/jsx-runtime.js"),
         "spiders-wm/layout" => PathBuf::from("src/virtual/layout.js"),
@@ -451,13 +451,13 @@ mod tests {
     }
 
     #[test]
-    fn compile_app_materializes_actions_virtual_module() {
-        let root = unique_root("virtual-actions");
+    fn compile_app_materializes_commands_virtual_module() {
+        let root = unique_root("virtual-commands");
         fs::create_dir_all(&root).unwrap();
         fs::write(
             root.join("config.ts"),
             r#"
-                import { spawn } from "spiders-wm/actions";
+                import { spawn } from "spiders-wm/commands";
                 export default { binding: spawn("foot") };
             "#,
         )
@@ -471,7 +471,7 @@ mod tests {
         let compiled = compile_app(&plan).unwrap();
 
         assert_eq!(compiled.virtual_modules.len(), 1);
-        assert_eq!(compiled.virtual_modules[0].specifier, "spiders-wm/actions");
+        assert_eq!(compiled.virtual_modules[0].specifier, "spiders-wm/commands");
         assert!(
             compiled.virtual_modules[0]
                 .code
@@ -520,8 +520,8 @@ mod tests {
         fs::write(
             root.join("config/bindings.ts"),
             r#"
-                import { spawn } from "spiders-wm/actions";
-                export const bindings = { action: spawn("foot") };
+                import { spawn } from "spiders-wm/commands";
+                export const bindings = { command: spawn("foot") };
             "#,
         )
         .unwrap();
@@ -545,7 +545,7 @@ mod tests {
             module_graph
                 .modules
                 .iter()
-                .any(|module| module.specifier == "spiders-wm/actions")
+                .any(|module| module.specifier == "spiders-wm/commands")
         );
         let config_module = module_graph
             .modules

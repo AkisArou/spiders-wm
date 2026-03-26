@@ -1,0 +1,26 @@
+const c = (name) => (arg) => ({ _command: name, _arg: arg });
+
+export const spawn = c("spawn");
+export const quit = c("quit");
+export const reload_config = c("reload_config");
+export const focus_next = c("focus_next");
+export const focus_prev = c("focus_prev");
+export const focus_dir = c("focus_dir");
+export const swap_dir = c("swap_dir");
+export const resize_dir = c("resize_dir");
+export const resize_tiled = c("resize_tiled");
+export const focus_mon_left = c("focus_mon_left");
+export const focus_mon_right = c("focus_mon_right");
+export const send_mon_left = c("send_mon_left");
+export const send_mon_right = c("send_mon_right");
+export const view_workspace = c("view_workspace");
+export const toggle_view_workspace = c("toggle_view_workspace");
+export const assign_workspace = c("assign_workspace");
+export const toggle_workspace = c("toggle_workspace");
+export const toggle_floating = c("toggle_floating");
+export const toggle_fullscreen = c("toggle_fullscreen");
+export const set_layout = c("set_layout");
+export const cycle_layout = c("cycle_layout");
+export const move = c("move");
+export const resize = c("resize");
+export const kill_client = c("kill_client");

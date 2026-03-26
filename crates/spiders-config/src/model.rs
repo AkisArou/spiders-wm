@@ -106,7 +106,7 @@ pub struct WindowRule {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Binding {
     pub trigger: String,
-    pub action: WmCommand,
+    pub command: WmCommand,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
