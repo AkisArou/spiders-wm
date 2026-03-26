@@ -1,4 +1,5 @@
-use spiders_shared::api::{CompositorEvent, QueryRequest, QueryResponse, WmAction};
+use spiders_shared::api::{CompositorEvent, QueryRequest, QueryResponse};
+use spiders_shared::command::WmCommand;
 use tracing::debug;
 
 use crate::protocol::{
@@ -17,9 +18,9 @@ pub enum IpcSessionHandleResult {
         request_id: Option<String>,
         query: QueryRequest,
     },
-    Action {
+    Command {
         request_id: Option<String>,
-        action: WmAction,
+        command: WmCommand,
     },
     Response(IpcResponse),
 }
@@ -39,9 +40,9 @@ impl IpcSession {
                 request_id: request.request_id,
                 query,
             },
-            IpcClientMessage::Action(action) => IpcSessionHandleResult::Action {
+            IpcClientMessage::Command(command) => IpcSessionHandleResult::Command {
                 request_id: request.request_id,
-                action,
+                command,
             },
             IpcClientMessage::Subscribe { topics } => {
                 self.subscription_topics =
@@ -78,10 +79,10 @@ impl IpcSession {
         }
     }
 
-    pub fn action_accepted(&self, request_id: Option<String>) -> IpcResponse {
+    pub fn command_accepted(&self, request_id: Option<String>) -> IpcResponse {
         IpcEnvelope {
             request_id,
-            message: IpcServerMessage::ActionAccepted,
+            message: IpcServerMessage::CommandAccepted,
         }
     }
 
@@ -155,19 +156,19 @@ mod tests {
     }
 
     #[test]
-    fn session_forwards_action_requests_with_request_id() {
+    fn session_forwards_command_requests_with_request_id() {
         let mut session = IpcSession::new();
 
         let result = session.handle_request(
-            IpcEnvelope::new(IpcClientMessage::Action(WmAction::ReloadConfig))
+            IpcEnvelope::new(IpcClientMessage::Command(WmCommand::CloseFocusedWindow))
                 .with_request_id("req-2"),
         );
 
         assert_eq!(
             result,
-            IpcSessionHandleResult::Action {
+            IpcSessionHandleResult::Command {
                 request_id: Some("req-2".into()),
-                action: WmAction::ReloadConfig,
+                command: WmCommand::CloseFocusedWindow,
             }
         );
     }
@@ -278,7 +279,7 @@ mod tests {
     }
 
     #[test]
-    fn session_builds_query_action_and_error_responses() {
+    fn session_builds_query_command_and_error_responses() {
         let session = IpcSession::new();
 
         assert_eq!(
@@ -292,8 +293,8 @@ mod tests {
             .with_request_id("req-3")
         );
         assert_eq!(
-            session.action_accepted(Some("req-4".into())),
-            IpcEnvelope::new(IpcServerMessage::ActionAccepted).with_request_id("req-4")
+            session.command_accepted(Some("req-4".into())),
+            IpcEnvelope::new(IpcServerMessage::CommandAccepted).with_request_id("req-4")
         );
         assert_eq!(
             session.error_response(Some("req-5".into()), "nope"),

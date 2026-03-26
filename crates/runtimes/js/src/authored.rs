@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use oxc::span::SourceType;
 use serde_json::Value;
-use spiders_shared::api::{FocusDirection, WmAction};
+use spiders_shared::command::{FocusDirection, WmCommand};
 use tracing::debug;
 
 use crate::compile::{AppBuildPlan, compile_app, compiled_app_to_module_graph};
@@ -915,62 +915,62 @@ fn decode_action_descriptor(
     value: &Value,
     path: &Path,
     field: &str,
-) -> Result<WmAction, LayoutConfigError> {
+) -> Result<WmCommand, LayoutConfigError> {
     let object = expect_object(path, value, field)?;
     let action = expect_string(path, required(object, "_action", path, field)?, field)?;
     let arg = object.get("_arg").unwrap_or(&Value::Null);
     match action {
-        "spawn" => Ok(WmAction::Spawn {
+        "spawn" => Ok(WmCommand::Spawn {
             command: expect_string(path, arg, field)?.to_owned(),
         }),
-        "reload_config" => Ok(WmAction::ReloadConfig),
-        "focus_next" => Ok(WmAction::FocusDirection {
+        "reload_config" => Ok(WmCommand::ReloadConfig),
+        "focus_next" => Ok(WmCommand::FocusDirection {
             direction: FocusDirection::Right,
         }),
-        "focus_prev" => Ok(WmAction::FocusDirection {
+        "focus_prev" => Ok(WmCommand::FocusDirection {
             direction: FocusDirection::Left,
         }),
-        "set_layout" => Ok(WmAction::SetLayout {
+        "set_layout" => Ok(WmCommand::SetLayout {
             name: expect_string(path, arg, field)?.to_owned(),
         }),
-        "cycle_layout" => Ok(WmAction::CycleLayout { direction: None }),
-        "view_workspace" => Ok(WmAction::ViewWorkspace {
+        "cycle_layout" => Ok(WmCommand::CycleLayout { direction: None }),
+        "view_workspace" => Ok(WmCommand::ViewWorkspace {
             workspace: decode_workspace_shortcut(path, arg, field)?,
         }),
-        "toggle_view_workspace" => Ok(WmAction::ToggleViewWorkspace {
+        "toggle_view_workspace" => Ok(WmCommand::ToggleViewWorkspace {
             workspace: decode_workspace_shortcut(path, arg, field)?,
         }),
-        "focus_mon_left" => Ok(WmAction::FocusMonitorLeft),
-        "focus_mon_right" => Ok(WmAction::FocusMonitorRight),
-        "send_mon_left" => Ok(WmAction::SendMonitorLeft),
-        "send_mon_right" => Ok(WmAction::SendMonitorRight),
-        "toggle_floating" => Ok(WmAction::ToggleFloating),
-        "toggle_fullscreen" => Ok(WmAction::ToggleFullscreen),
-        "focus_dir" => Ok(WmAction::FocusDirection {
+        "focus_mon_left" => Ok(WmCommand::FocusMonitorLeft),
+        "focus_mon_right" => Ok(WmCommand::FocusMonitorRight),
+        "send_mon_left" => Ok(WmCommand::SendMonitorLeft),
+        "send_mon_right" => Ok(WmCommand::SendMonitorRight),
+        "toggle_floating" => Ok(WmCommand::ToggleFloating),
+        "toggle_fullscreen" => Ok(WmCommand::ToggleFullscreen),
+        "focus_dir" => Ok(WmCommand::FocusDirection {
             direction: decode_focus_direction(path, arg, field)?,
         }),
-        "swap_dir" => Ok(WmAction::SwapDirection {
+        "swap_dir" => Ok(WmCommand::SwapDirection {
             direction: decode_focus_direction(path, arg, field)?,
         }),
-        "resize_dir" => Ok(WmAction::ResizeDirection {
+        "resize_dir" => Ok(WmCommand::ResizeDirection {
             direction: decode_focus_direction(path, arg, field)?,
         }),
-        "resize_tiled" => Ok(WmAction::ResizeTiledDirection {
+        "resize_tiled" => Ok(WmCommand::ResizeTiledDirection {
             direction: decode_focus_direction(path, arg, field)?,
         }),
-        "move" => Ok(WmAction::MoveDirection {
+        "move" => Ok(WmCommand::MoveDirection {
             direction: decode_focus_direction(path, arg, field)?,
         }),
-        "resize" => Ok(WmAction::ResizeDirection {
+        "resize" => Ok(WmCommand::ResizeDirection {
             direction: decode_focus_direction(path, arg, field)?,
         }),
-        "assign_workspace" => Ok(WmAction::AssignFocusedWindowToWorkspace {
+        "assign_workspace" => Ok(WmCommand::AssignFocusedWindowToWorkspace {
             workspace: decode_workspace_shortcut(path, arg, field)?,
         }),
-        "toggle_workspace" => Ok(WmAction::ToggleAssignFocusedWindowToWorkspace {
+        "toggle_workspace" => Ok(WmCommand::ToggleAssignFocusedWindowToWorkspace {
             workspace: decode_workspace_shortcut(path, arg, field)?,
         }),
-        "kill_client" => Ok(WmAction::CloseFocusedWindow),
+        "kill_client" => Ok(WmCommand::CloseFocusedWindow),
         other => Err(LayoutConfigError::DecodeAuthoredConfig {
             path: path.to_path_buf(),
             message: format!("unsupported action descriptor `{other}` at {field}"),
@@ -1311,37 +1311,37 @@ mod tests {
         assert_eq!(config.bindings[0].trigger, "alt+Return");
         assert_eq!(
             config.bindings[0].action,
-            WmAction::Spawn {
+            WmCommand::Spawn {
                 command: "foot".into(),
             }
         );
         assert_eq!(
             config.bindings[1].action,
-            WmAction::FocusDirection {
+            WmCommand::FocusDirection {
                 direction: FocusDirection::Left,
             }
         );
         assert_eq!(
             config.bindings[2].action,
-            WmAction::SwapDirection {
+            WmCommand::SwapDirection {
                 direction: FocusDirection::Left,
             }
         );
         assert_eq!(
             config.bindings[3].action,
-            WmAction::ResizeDirection {
+            WmCommand::ResizeDirection {
                 direction: FocusDirection::Left,
             }
         );
         assert_eq!(
             config.bindings[4].action,
-            WmAction::ResizeTiledDirection {
+            WmCommand::ResizeTiledDirection {
                 direction: FocusDirection::Left,
             }
         );
-        assert_eq!(config.bindings[5].action, WmAction::FocusMonitorLeft);
-        assert_eq!(config.bindings[6].action, WmAction::FocusMonitorRight);
-        assert_eq!(config.bindings[7].action, WmAction::ToggleFullscreen);
+        assert_eq!(config.bindings[5].action, WmCommand::FocusMonitorLeft);
+        assert_eq!(config.bindings[6].action, WmCommand::FocusMonitorRight);
+        assert_eq!(config.bindings[7].action, WmCommand::ToggleFullscreen);
         assert_eq!(config.inputs.len(), 1);
         assert_eq!(
             config.layout_selection.default.as_deref(),
@@ -1458,7 +1458,7 @@ mod tests {
         assert_eq!(config.bindings.len(), 1);
         assert_eq!(
             config.bindings[0].action,
-            WmAction::Spawn {
+            WmCommand::Spawn {
                 command: "foot".into(),
             }
         );

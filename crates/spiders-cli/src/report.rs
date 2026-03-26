@@ -1,5 +1,6 @@
 use serde::Serialize;
-use spiders_shared::api::{CompositorEvent, QueryRequest, QueryResponse, WmAction};
+use spiders_shared::api::{CompositorEvent, QueryRequest, QueryResponse};
+use spiders_shared::command::WmCommand;
 use spiders_shared::runtime::runtime_error::RuntimeRefreshSummary;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -67,11 +68,11 @@ pub struct IpcQueryReport {
 }
 
 #[derive(Debug, Serialize, PartialEq)]
-pub struct IpcActionReport {
+pub struct IpcCommandReport {
     pub status: &'static str,
     pub socket_path: String,
     pub request_id: String,
-    pub action: WmAction,
+    pub command: WmCommand,
     pub response_kind: &'static str,
 }
 

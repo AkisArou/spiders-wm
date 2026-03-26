@@ -1,17 +1,9 @@
+pub use spiders_shared::command::WmCommand;
+
 use smithay::utils::{SERIAL_COUNTER, Serial};
+use tracing::warn;
 
 use crate::state::SpidersWm;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum WmCommand {
-    SpawnTerminal,
-    FocusNextWindow,
-    FocusPreviousWindow,
-    SelectNextWorkspace,
-    SelectPreviousWorkspace,
-    SelectWorkspaceNamed(String),
-    CloseFocusedWindow,
-}
 
 impl SpidersWm {
     #[allow(dead_code)]
@@ -26,8 +18,13 @@ impl SpidersWm {
             WmCommand::FocusPreviousWindow => self.focus_previous_window(serial),
             WmCommand::SelectNextWorkspace => self.select_next_workspace(serial),
             WmCommand::SelectPreviousWorkspace => self.select_previous_workspace(serial),
-            WmCommand::SelectWorkspaceNamed(name) => self.ensure_and_select_workspace(name, serial),
+            WmCommand::SelectWorkspace { workspace_id } => {
+                self.ensure_and_select_workspace(workspace_id.0, serial)
+            }
             WmCommand::CloseFocusedWindow => self.close_focused_window(),
+            unsupported => {
+                warn!(?unsupported, "ignoring unsupported wm command");
+            }
         }
     }
 }
@@ -39,8 +36,12 @@ mod tests {
     #[test]
     fn workspace_selection_command_keeps_workspace_name() {
         assert_eq!(
-            WmCommand::SelectWorkspaceNamed("3".to_string()),
-            WmCommand::SelectWorkspaceNamed("3".to_string())
+            WmCommand::SelectWorkspace {
+                workspace_id: "3".into(),
+            },
+            WmCommand::SelectWorkspace {
+                workspace_id: "3".into(),
+            }
         );
     }
 }

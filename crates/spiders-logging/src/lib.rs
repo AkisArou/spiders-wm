@@ -29,6 +29,7 @@ pub fn init(process_name: &str) {
             .with_env_filter(filter)
             .with_target(true)
             .with_ansi(ansi_enabled)
+            .with_writer(std::io::stderr)
             .compact()
             .finish();
 

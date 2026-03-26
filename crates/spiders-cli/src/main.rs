@@ -3,7 +3,7 @@ mod report;
 
 use bootstrap::CliBootstrap;
 use report::{
-    BuildConfigReport, DiscoveryReport, ErrorReport, IpcActionReport, IpcMonitorReport,
+    BuildConfigReport, DiscoveryReport, ErrorReport, IpcCommandReport, IpcMonitorReport,
     IpcQueryReport, IpcSmokeReport, OutputMode, SuccessCheckReport, emit,
 };
 use tracing::info;
@@ -33,7 +33,7 @@ fn main() -> std::process::ExitCode {
     let build_config = args.iter().any(|arg| arg == "build-config");
     let ipc_smoke = args.iter().any(|arg| arg == "ipc-smoke");
     let ipc_query = args.iter().any(|arg| arg == "ipc-query");
-    let ipc_action = args.iter().any(|arg| arg == "ipc-action");
+    let ipc_command = args.iter().any(|arg| arg == "ipc-command");
     let ipc_monitor = args.iter().any(|arg| arg == "ipc-monitor");
     let output_mode = if args.iter().any(|arg| arg == "--json") {
         OutputMode::Json
@@ -44,7 +44,7 @@ fn main() -> std::process::ExitCode {
         .map(std::path::PathBuf::from)
         .or_else(default_ipc_socket_path);
     let query_name = arg_value(&args, "--query");
-    let action_name = arg_value(&args, "--action");
+    let command_name = arg_value(&args, "--command");
     let topic_names = arg_values(&args, "--topic");
 
     let cli = CliContext::new();
@@ -53,8 +53,8 @@ fn main() -> std::process::ExitCode {
         "ipc-smoke"
     } else if ipc_query {
         "ipc-query"
-    } else if ipc_action {
-        "ipc-action"
+    } else if ipc_command {
+        "ipc-command"
     } else if ipc_monitor {
         "ipc-monitor"
     } else if build_config {
@@ -74,8 +74,8 @@ fn main() -> std::process::ExitCode {
         ipc_smoke_command(output_mode)
     } else if ipc_query {
         ipc_query_command(output_mode, socket_path, query_name)
-    } else if ipc_action {
-        ipc_action_command(output_mode, socket_path, action_name)
+    } else if ipc_command {
+        ipc_command_command(output_mode, socket_path, command_name)
     } else if ipc_monitor {
         ipc_monitor_command(output_mode, socket_path, topic_names)
     } else if build_config {
@@ -155,18 +155,18 @@ fn ipc_query_command(
     }
 }
 
-fn ipc_action_command(
+fn ipc_command_command(
     output_mode: OutputMode,
     socket_path: Option<std::path::PathBuf>,
-    action_name: Option<&str>,
+    command_name: Option<&str>,
 ) -> std::process::ExitCode {
-    match run_ipc_action(socket_path, action_name.unwrap_or("reload-config")) {
+    match run_ipc_command(socket_path, command_name.unwrap_or("close-focused-window")) {
         Ok(report) => {
             emit(output_mode, &report, || {
                 format!(
-                    "ipc action ok (socket: {}, action: {}, request: {})",
+                    "ipc command ok (socket: {}, command: {}, request: {})",
                     report.socket_path,
-                    action_label(&report.action),
+                    command_label(&report.command),
                     report.request_id
                 )
             });
@@ -177,12 +177,12 @@ fn ipc_action_command(
                 output_mode,
                 &ErrorReport {
                     status: "error",
-                    phase: "ipc-action",
+                    phase: "ipc-command",
                     prepared_config: None,
                     errors: None,
                     message: Some(error),
                 },
-                || "ipc action error".into(),
+                || "ipc command error".into(),
             );
             std::process::ExitCode::from(1)
         }
@@ -586,8 +586,8 @@ fn run_ipc_smoke() -> Result<IpcSmokeReport, String> {
         } => server
             .query_response(client_id, request_id, fallback_query_response(query))
             .map_err(|error| error.to_string())?,
-        IpcServerHandleResult::Action { request_id, .. } => server
-            .action_accepted(client_id, request_id)
+        IpcServerHandleResult::Command { request_id, .. } => server
+            .command_accepted(client_id, request_id)
             .map_err(|error| error.to_string())?,
     };
 
@@ -610,7 +610,7 @@ fn run_ipc_smoke() -> Result<IpcSmokeReport, String> {
         response_kind: match response.message {
             spiders_ipc::IpcServerMessage::Subscribed { .. } => "subscribed",
             spiders_ipc::IpcServerMessage::Query(_) => "query",
-            spiders_ipc::IpcServerMessage::ActionAccepted => "action-accepted",
+            spiders_ipc::IpcServerMessage::CommandAccepted => "command-accepted",
             spiders_ipc::IpcServerMessage::Event { .. } => "event",
             spiders_ipc::IpcServerMessage::Unsubscribed { .. } => "unsubscribed",
             spiders_ipc::IpcServerMessage::Error { .. } => "error",
@@ -650,17 +650,17 @@ fn run_ipc_query(
     }
 }
 
-fn run_ipc_action(
+fn run_ipc_command(
     socket_path: Option<std::path::PathBuf>,
-    action_name: &str,
-) -> Result<IpcActionReport, String> {
+    command_name: &str,
+) -> Result<IpcCommandReport, String> {
     use spiders_ipc::{IpcClientMessage, IpcEnvelope, connect, recv_response, send_request};
 
     let socket_path = socket_path.ok_or_else(|| "missing IPC socket path".to_string())?;
-    let action = parse_action_request(action_name)?;
-    let request_id = "cli-action-1".to_string();
+    let command = parse_command_request(command_name)?;
+    let request_id = "cli-command-1".to_string();
     let request =
-        IpcEnvelope::new(IpcClientMessage::Action(action.clone())).with_request_id(&request_id);
+        IpcEnvelope::new(IpcClientMessage::Command(command.clone())).with_request_id(&request_id);
     let mut stream = connect(&socket_path).map_err(|error| error.to_string())?;
 
     send_request(&mut stream, &request).map_err(|error| error.to_string())?;
@@ -669,14 +669,14 @@ fn run_ipc_action(
         .map_err(|error| error.to_string())?
         .message
     {
-        spiders_ipc::IpcServerMessage::ActionAccepted => Ok(IpcActionReport {
+        spiders_ipc::IpcServerMessage::CommandAccepted => Ok(IpcCommandReport {
             status: "ok",
             socket_path: socket_path.display().to_string(),
             request_id,
-            action,
-            response_kind: "action-accepted",
+            command,
+            response_kind: "command-accepted",
         }),
-        message => Err(format!("unexpected IPC action response: {message:?}")),
+        message => Err(format!("unexpected IPC command response: {message:?}")),
     }
 }
 
@@ -773,82 +773,56 @@ fn parse_query_request(name: &str) -> Result<spiders_shared::api::QueryRequest, 
     }
 }
 
-fn parse_action_request(name: &str) -> Result<spiders_shared::api::WmAction, String> {
-    use spiders_shared::api::WmAction;
+fn parse_command_request(name: &str) -> Result<spiders_shared::command::WmCommand, String> {
+    use spiders_shared::command::{FocusDirection, LayoutCycleDirection, WmCommand};
 
-    if let Some(value) = name.strip_prefix("set-layout:") {
-        return Ok(WmAction::SetLayout {
-            name: value.to_string(),
-        });
-    }
-    if let Some(value) = name.strip_prefix("view-workspace:") {
-        return Ok(WmAction::ViewWorkspace {
-            workspace: parse_workspace_shortcut(value, "view-workspace")?,
-        });
-    }
-    if let Some(value) = name.strip_prefix("toggle-view-workspace:") {
-        return Ok(WmAction::ToggleViewWorkspace {
-            workspace: parse_workspace_shortcut(value, "toggle-view-workspace")?,
-        });
-    }
-    if let Some(value) = name.strip_prefix("activate-workspace:") {
-        return Ok(WmAction::ActivateWorkspace {
-            workspace_id: value.into(),
-        });
-    }
-    if let Some(value) = name.strip_prefix("assign-workspace:") {
-        let (workspace_id, output_id) = value
-            .split_once('@')
-            .ok_or_else(|| "assign-workspace expects <workspace-id>@<output-id>".to_string())?;
-        return Ok(WmAction::AssignWorkspace {
-            workspace_id: workspace_id.into(),
-            output_id: output_id.into(),
-        });
-    }
     if let Some(value) = name.strip_prefix("spawn:") {
-        return Ok(WmAction::Spawn {
+        return Ok(WmCommand::Spawn {
             command: value.to_string(),
         });
     }
 
-    match name {
-        "reload-config" => Ok(WmAction::ReloadConfig),
-        "cycle-layout-next" => Ok(WmAction::CycleLayout {
-            direction: Some(spiders_shared::api::LayoutCycleDirection::Next),
-        }),
-        "cycle-layout-previous" => Ok(WmAction::CycleLayout {
-            direction: Some(spiders_shared::api::LayoutCycleDirection::Previous),
-        }),
-        "toggle-floating" => Ok(WmAction::ToggleFloating),
-        "toggle-fullscreen" => Ok(WmAction::ToggleFullscreen),
-        "focus-left" => Ok(WmAction::FocusDirection {
-            direction: spiders_shared::api::FocusDirection::Left,
-        }),
-        "focus-right" => Ok(WmAction::FocusDirection {
-            direction: spiders_shared::api::FocusDirection::Right,
-        }),
-        "focus-up" => Ok(WmAction::FocusDirection {
-            direction: spiders_shared::api::FocusDirection::Up,
-        }),
-        "focus-down" => Ok(WmAction::FocusDirection {
-            direction: spiders_shared::api::FocusDirection::Down,
-        }),
-        "close-focused-window" => Ok(WmAction::CloseFocusedWindow),
-        _ => Err(format!("unsupported IPC action '{name}'")),
+    if let Some(value) = name.strip_prefix("set-layout:") {
+        return Ok(WmCommand::SetLayout {
+            name: value.to_string(),
+        });
     }
-}
 
-fn parse_workspace_shortcut(value: &str, action_name: &str) -> Result<u8, String> {
-    let workspace = value
-        .parse::<u8>()
-        .map_err(|_| format!("{action_name} expects a workspace number between 1 and 9"))?;
+    if let Some(value) = name.strip_prefix("select-workspace:") {
+        return Ok(WmCommand::SelectWorkspace {
+            workspace_id: value.into(),
+        });
+    }
 
-    if (1..=9).contains(&workspace) {
-        Ok(workspace)
-    } else {
-        Err(format!(
-            "{action_name} expects a workspace number between 1 and 9"
-        ))
+    match name {
+        "spawn-terminal" => Ok(WmCommand::SpawnTerminal),
+        "focus-next-window" => Ok(WmCommand::FocusNextWindow),
+        "focus-previous-window" => Ok(WmCommand::FocusPreviousWindow),
+        "select-next-workspace" => Ok(WmCommand::SelectNextWorkspace),
+        "select-previous-workspace" => Ok(WmCommand::SelectPreviousWorkspace),
+        "reload-config" => Ok(WmCommand::ReloadConfig),
+        "cycle-layout-next" => Ok(WmCommand::CycleLayout {
+            direction: Some(LayoutCycleDirection::Next),
+        }),
+        "cycle-layout-previous" => Ok(WmCommand::CycleLayout {
+            direction: Some(LayoutCycleDirection::Previous),
+        }),
+        "toggle-floating" => Ok(WmCommand::ToggleFloating),
+        "toggle-fullscreen" => Ok(WmCommand::ToggleFullscreen),
+        "focus-left" => Ok(WmCommand::FocusDirection {
+            direction: FocusDirection::Left,
+        }),
+        "focus-right" => Ok(WmCommand::FocusDirection {
+            direction: FocusDirection::Right,
+        }),
+        "focus-up" => Ok(WmCommand::FocusDirection {
+            direction: FocusDirection::Up,
+        }),
+        "focus-down" => Ok(WmCommand::FocusDirection {
+            direction: FocusDirection::Down,
+        }),
+        "close-focused-window" => Ok(WmCommand::CloseFocusedWindow),
+        _ => Err(format!("unsupported IPC command '{name}'")),
     }
 }
 
@@ -890,36 +864,42 @@ fn query_label(query: &spiders_shared::api::QueryRequest) -> &'static str {
     }
 }
 
-fn action_label(action: &spiders_shared::api::WmAction) -> &'static str {
-    use spiders_shared::api::WmAction;
+fn command_label(action: &spiders_shared::command::WmCommand) -> &'static str {
+    use spiders_shared::command::WmCommand;
 
     match action {
-        WmAction::ReloadConfig => "reload-config",
-        WmAction::ToggleFloating => "toggle-floating",
-        WmAction::ToggleFullscreen => "toggle-fullscreen",
-        WmAction::CloseFocusedWindow => "close-focused-window",
-        WmAction::Spawn { .. } => "spawn",
-        WmAction::SetLayout { .. } => "set-layout",
-        WmAction::CycleLayout { .. } => "cycle-layout",
-        WmAction::ViewWorkspace { .. } => "view-workspace",
-        WmAction::ToggleViewWorkspace { .. } => "toggle-view-workspace",
-        WmAction::ActivateWorkspace { .. } => "activate-workspace",
-        WmAction::AssignWorkspace { .. } => "assign-workspace",
-        WmAction::FocusMonitorLeft => "focus-monitor-left",
-        WmAction::FocusMonitorRight => "focus-monitor-right",
-        WmAction::SendMonitorLeft => "send-monitor-left",
-        WmAction::SendMonitorRight => "send-monitor-right",
-        WmAction::AssignFocusedWindowToWorkspace { .. } => "assign-focused-window-to-workspace",
-        WmAction::ToggleAssignFocusedWindowToWorkspace { .. } => {
+        WmCommand::Spawn { .. } => "spawn",
+        WmCommand::ReloadConfig => "reload-config",
+        WmCommand::SetLayout { .. } => "set-layout",
+        WmCommand::CycleLayout { .. } => "cycle-layout",
+        WmCommand::ViewWorkspace { .. } => "view-workspace",
+        WmCommand::ToggleViewWorkspace { .. } => "toggle-view-workspace",
+        WmCommand::ActivateWorkspace { .. } => "activate-workspace",
+        WmCommand::AssignWorkspace { .. } => "assign-workspace",
+        WmCommand::FocusMonitorLeft => "focus-monitor-left",
+        WmCommand::FocusMonitorRight => "focus-monitor-right",
+        WmCommand::SendMonitorLeft => "send-monitor-left",
+        WmCommand::SendMonitorRight => "send-monitor-right",
+        WmCommand::ToggleFloating => "toggle-floating",
+        WmCommand::ToggleFullscreen => "toggle-fullscreen",
+        WmCommand::AssignFocusedWindowToWorkspace { .. } => "assign-focused-window-to-workspace",
+        WmCommand::ToggleAssignFocusedWindowToWorkspace { .. } => {
             "toggle-assign-focused-window-to-workspace"
         }
-        WmAction::FocusWindow { .. } => "focus-window",
-        WmAction::SetFloatingWindowGeometry { .. } => "set-floating-window-geometry",
-        WmAction::FocusDirection { .. } => "focus-direction",
-        WmAction::SwapDirection { .. } => "swap-direction",
-        WmAction::ResizeDirection { .. } => "resize-direction",
-        WmAction::ResizeTiledDirection { .. } => "resize-tiled-direction",
-        WmAction::MoveDirection { .. } => "move-direction",
+        WmCommand::FocusWindow { .. } => "focus-window",
+        WmCommand::SetFloatingWindowGeometry { .. } => "set-floating-window-geometry",
+        WmCommand::FocusDirection { .. } => "focus-direction",
+        WmCommand::SwapDirection { .. } => "swap-direction",
+        WmCommand::ResizeDirection { .. } => "resize-direction",
+        WmCommand::ResizeTiledDirection { .. } => "resize-tiled-direction",
+        WmCommand::MoveDirection { .. } => "move-direction",
+        WmCommand::SpawnTerminal => "spawn-terminal",
+        WmCommand::FocusNextWindow => "focus-next-window",
+        WmCommand::FocusPreviousWindow => "focus-previous-window",
+        WmCommand::SelectNextWorkspace => "select-next-workspace",
+        WmCommand::SelectPreviousWorkspace => "select-previous-workspace",
+        WmCommand::SelectWorkspace { .. } => "select-workspace",
+        WmCommand::CloseFocusedWindow => "close-focused-window",
     }
 }
 
@@ -1022,8 +1002,8 @@ mod tests {
     }
 
     #[test]
-    fn ipc_action_uses_real_socket_transport() {
-        let socket_path = unique_socket_path("ipc-action");
+    fn ipc_command_uses_real_socket_transport() {
+        let socket_path = unique_socket_path("ipc-command");
         let listener = UnixListener::bind(&socket_path).unwrap();
 
         let handle = std::thread::spawn({
@@ -1035,7 +1015,7 @@ mod tests {
                 use std::io::BufRead;
                 reader.read_line(&mut request).unwrap();
                 let line =
-                    encode_response_line(&IpcEnvelope::new(IpcServerMessage::ActionAccepted))
+                    encode_response_line(&IpcEnvelope::new(IpcServerMessage::CommandAccepted))
                         .unwrap();
                 stream.write_all(line.as_bytes()).unwrap();
                 drop(stream);
@@ -1043,37 +1023,22 @@ mod tests {
             }
         });
 
-        let report = run_ipc_action(Some(socket_path.clone()), "reload-config").unwrap();
+        let report = run_ipc_command(Some(socket_path.clone()), "close-focused-window").unwrap();
 
-        assert_eq!(report.action, spiders_shared::api::WmAction::ReloadConfig);
-        assert_eq!(report.response_kind, "action-accepted");
+        assert_eq!(report.command, spiders_shared::command::WmCommand::CloseFocusedWindow);
+        assert_eq!(report.response_kind, "command-accepted");
 
         let path = handle.join().unwrap();
         let _ = std::fs::remove_file(path);
     }
 
     #[test]
-    fn parse_ipc_action_supports_workspace_activate_and_assign() {
+    fn parse_ipc_command_supports_workspace_selection() {
         assert_eq!(
-            parse_action_request("activate-workspace:ws-2").unwrap(),
-            spiders_shared::api::WmAction::ActivateWorkspace {
+            parse_command_request("select-workspace:ws-2").unwrap(),
+            spiders_shared::command::WmCommand::SelectWorkspace {
                 workspace_id: "ws-2".into(),
             }
-        );
-        assert_eq!(
-            parse_action_request("assign-workspace:ws-2@out-2").unwrap(),
-            spiders_shared::api::WmAction::AssignWorkspace {
-                workspace_id: "ws-2".into(),
-                output_id: "out-2".into(),
-            }
-        );
-    }
-
-    #[test]
-    fn parse_ipc_action_rejects_invalid_workspace_assign_format() {
-        assert_eq!(
-            parse_action_request("assign-workspace:ws-2"),
-            Err("assign-workspace expects <workspace-id>@<output-id>".into())
         );
     }
 

@@ -3089,6 +3089,7 @@ name = "spiders-wm2"
 version = "0.1.0"
 dependencies = [
  "smithay",
+ "spiders-shared",
  "tracing",
  "tracing-subscriber",
 ]

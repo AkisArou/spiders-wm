@@ -178,9 +178,9 @@ impl KeyAction {
             KeyAction::FocusPreviousWindow => Some(WmCommand::FocusPreviousWindow),
             KeyAction::SelectNextWorkspace => Some(WmCommand::SelectNextWorkspace),
             KeyAction::SelectPreviousWorkspace => Some(WmCommand::SelectPreviousWorkspace),
-            KeyAction::SelectWorkspace(index) => {
-                Some(WmCommand::SelectWorkspaceNamed(index.to_string()))
-            }
+            KeyAction::SelectWorkspace(index) => Some(WmCommand::SelectWorkspace {
+                workspace_id: index.to_string().into(),
+            }),
             KeyAction::CloseFocusedWindow => Some(WmCommand::CloseFocusedWindow),
         }
     }
@@ -231,7 +231,9 @@ mod tests {
         assert_eq!(KeyAction::FocusNextWindow.into_wm_command(), Some(WmCommand::FocusNextWindow));
         assert_eq!(
             KeyAction::SelectWorkspace(4).into_wm_command(),
-            Some(WmCommand::SelectWorkspaceNamed("4".to_string()))
+            Some(WmCommand::SelectWorkspace {
+                workspace_id: "4".into(),
+            })
         );
     }
 }

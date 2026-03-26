@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::fs::File;
 
-use spiders_shared::api::WmAction;
+use spiders_shared::command::WmCommand;
 use spiders_scene::{BoxShadowValue, ColorValue, FontFamilyValue, FontWeightValue, TextAlignValue};
 use spiders_tree::{OutputId, WindowId};
 use wayland_backend::client::ObjectId;
@@ -79,14 +79,14 @@ pub struct TitlebarBufferRecord {
 pub struct XkbBindingRecord {
     pub proxy: river_xkb_binding_v1::RiverXkbBindingV1,
     pub trigger: String,
-    pub action: WmAction,
+    pub action: WmCommand,
 }
 
 #[derive(Debug, Clone)]
 pub struct PointerBindingRecord {
     pub proxy: river_pointer_binding_v1::RiverPointerBindingV1,
     pub trigger: String,
-    pub action: WmAction,
+    pub action: WmCommand,
 }
 
 #[derive(Debug, Clone)]
@@ -148,5 +148,5 @@ pub struct ParsedBinding {
     pub modifiers: river_seat_v1::Modifiers,
     pub key: Option<u32>,
     pub button: Option<u32>,
-    pub action: WmAction,
+    pub action: WmCommand,
 }

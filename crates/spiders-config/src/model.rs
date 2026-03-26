@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use spiders_shared::api::WmAction;
+use spiders_shared::command::WmCommand;
 use spiders_shared::runtime::prepared_layout::{PreparedLayout, SelectedLayout};
 use spiders_shared::snapshot::{
     OutputSnapshot, StateSnapshot, WorkspaceSnapshot,
@@ -106,7 +106,7 @@ pub struct WindowRule {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Binding {
     pub trigger: String,
-    pub action: WmAction,
+    pub action: WmCommand,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

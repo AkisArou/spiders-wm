@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
-use spiders_shared::api::{CompositorEvent, QueryRequest, QueryResponse, WmAction};
+use spiders_shared::api::{CompositorEvent, QueryRequest, QueryResponse};
+use spiders_shared::command::WmCommand;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -38,7 +39,7 @@ impl<T> IpcEnvelope<T> {
 #[serde(tag = "type", content = "payload", rename_all = "kebab-case")]
 pub enum IpcClientMessage {
     Query(QueryRequest),
-    Action(WmAction),
+    Command(WmCommand),
     Subscribe {
         #[serde(default)]
         topics: Vec<IpcSubscriptionTopic>,
@@ -58,7 +59,7 @@ pub enum IpcServerMessage {
         topics: Vec<IpcSubscriptionTopic>,
         event: CompositorEvent,
     },
-    ActionAccepted,
+    CommandAccepted,
     Subscribed {
         #[serde(default)]
         topics: Vec<IpcSubscriptionTopic>,

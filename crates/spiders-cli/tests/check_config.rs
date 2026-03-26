@@ -207,8 +207,8 @@ fn cli_ipc_query_reports_socket_response_in_json_mode() {
 }
 
 #[test]
-fn cli_ipc_action_reports_socket_response_in_json_mode() {
-    let socket_path = unique_socket_path("cli-ipc-action");
+fn cli_ipc_command_reports_socket_response_in_json_mode() {
+    let socket_path = unique_socket_path("cli-ipc-command");
     let listener = UnixListener::bind(&socket_path).unwrap();
 
     let handle = std::thread::spawn({
@@ -220,19 +220,19 @@ fn cli_ipc_action_reports_socket_response_in_json_mode() {
             use std::io::BufRead;
             reader.read_line(&mut request).unwrap();
             let line =
-                encode_response_line(&IpcEnvelope::new(IpcServerMessage::ActionAccepted)).unwrap();
+                encode_response_line(&IpcEnvelope::new(IpcServerMessage::CommandAccepted)).unwrap();
             stream.write_all(line.as_bytes()).unwrap();
             socket_path
         }
     });
 
     let output = Command::new(cli_bin())
-        .arg("ipc-action")
+        .arg("ipc-command")
         .arg("--json")
         .arg("--socket")
         .arg(&socket_path)
-        .arg("--action")
-        .arg("reload-config")
+        .arg("--command")
+        .arg("close-focused-window")
         .output()
         .unwrap();
 
@@ -241,8 +241,8 @@ fn cli_ipc_action_reports_socket_response_in_json_mode() {
     let stdout = String::from_utf8(output.stdout).unwrap();
     let json: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
     assert_eq!(json["status"], "ok");
-    assert_eq!(json["action"]["type"], "reload-config");
-    assert_eq!(json["response_kind"], "action-accepted");
+    assert_eq!(json["command"]["type"], "close-focused-window");
+    assert_eq!(json["response_kind"], "command-accepted");
 
     let path = handle.join().unwrap();
     let _ = std::fs::remove_file(path);

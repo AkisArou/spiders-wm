@@ -517,7 +517,7 @@ pub(super) fn parse_binding(binding: &Binding) -> Option<ParsedBinding> {
 
 fn workspace_assign_prefix(config: &Config, mod_key: &str) -> String {
     for binding in &config.bindings {
-        let WmAction::AssignFocusedWindowToWorkspace { .. } = binding.action else {
+        let WmCommand::AssignFocusedWindowToWorkspace { .. } = binding.action else {
             continue;
         };
 
@@ -550,23 +550,23 @@ fn milestone_bindings_with_mod_key(config: &Config, mod_key: &str) -> Vec<Bindin
     let mut bindings = vec![
         Binding {
             trigger: format!("{mod_key}+Enter"),
-            action: WmAction::Spawn {
+            action: WmCommand::Spawn {
                 command: "foot".into(),
             },
         },
         Binding {
             trigger: format!("{mod_key}+q"),
-            action: WmAction::CloseFocusedWindow,
+            action: WmCommand::CloseFocusedWindow,
         },
         Binding {
             trigger: format!("{mod_key}+h"),
-            action: WmAction::FocusDirection {
+            action: WmCommand::FocusDirection {
                 direction: FocusDirection::Left,
             },
         },
         Binding {
             trigger: format!("{mod_key}+l"),
-            action: WmAction::FocusDirection {
+            action: WmCommand::FocusDirection {
                 direction: FocusDirection::Right,
             },
         },
@@ -574,38 +574,38 @@ fn milestone_bindings_with_mod_key(config: &Config, mod_key: &str) -> Vec<Bindin
 
     bindings.extend((1..=9).map(|workspace| Binding {
         trigger: format!("{mod_key}+{workspace}"),
-        action: WmAction::ActivateWorkspace {
+        action: WmCommand::ActivateWorkspace {
             workspace_id: workspace.to_string().into(),
         },
     }));
 
     bindings.extend((1..=9).map(|workspace| Binding {
         trigger: format!("{assign_prefix}+{workspace}"),
-        action: WmAction::AssignFocusedWindowToWorkspace { workspace },
+        action: WmCommand::AssignFocusedWindowToWorkspace { workspace },
     }));
 
     bindings.extend([
         Binding {
             trigger: format!("{mod_key}+Shift+h"),
-            action: WmAction::MoveDirection {
+            action: WmCommand::MoveDirection {
                 direction: FocusDirection::Left,
             },
         },
         Binding {
             trigger: format!("{mod_key}+Shift+j"),
-            action: WmAction::MoveDirection {
+            action: WmCommand::MoveDirection {
                 direction: FocusDirection::Down,
             },
         },
         Binding {
             trigger: format!("{mod_key}+Shift+k"),
-            action: WmAction::MoveDirection {
+            action: WmCommand::MoveDirection {
                 direction: FocusDirection::Up,
             },
         },
         Binding {
             trigger: format!("{mod_key}+Shift+l"),
-            action: WmAction::MoveDirection {
+            action: WmCommand::MoveDirection {
                 direction: FocusDirection::Right,
             },
         },

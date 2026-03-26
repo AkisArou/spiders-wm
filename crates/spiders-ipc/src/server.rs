@@ -1,7 +1,8 @@
 use std::collections::BTreeMap;
 use std::os::unix::net::UnixStream;
 
-use spiders_shared::api::{CompositorEvent, QueryRequest, QueryResponse, WmAction};
+use spiders_shared::api::{CompositorEvent, QueryRequest, QueryResponse};
+use spiders_shared::command::WmCommand;
 use tracing::{debug, warn};
 
 use crate::{
@@ -24,10 +25,10 @@ pub enum IpcServerHandleResult {
         request_id: Option<String>,
         query: QueryRequest,
     },
-    Action {
+    Command {
         client_id: IpcClientId,
         request_id: Option<String>,
-        action: WmAction,
+        command: WmCommand,
     },
     Response {
         client_id: IpcClientId,
@@ -90,7 +91,7 @@ impl IpcServerState {
     ) -> Result<IpcServerHandleResult, UnknownClientError> {
         let request_type = match &request.message {
             crate::protocol::IpcClientMessage::Query(_) => "query",
-            crate::protocol::IpcClientMessage::Action(_) => "action",
+            crate::protocol::IpcClientMessage::Command(_) => "command",
             crate::protocol::IpcClientMessage::Subscribe { .. } => "subscribe",
             crate::protocol::IpcClientMessage::Unsubscribe { .. } => "unsubscribe",
         };
@@ -107,11 +108,11 @@ impl IpcServerState {
                 request_id,
                 query,
             },
-            IpcSessionHandleResult::Action { request_id, action } => {
-                IpcServerHandleResult::Action {
+            IpcSessionHandleResult::Command { request_id, command } => {
+                IpcServerHandleResult::Command {
                     client_id,
                     request_id,
-                    action,
+                    command,
                 }
             }
             IpcSessionHandleResult::Response(response) => IpcServerHandleResult::Response {
@@ -133,14 +134,14 @@ impl IpcServerState {
             .ok_or(UnknownClientError { client_id })
     }
 
-    pub fn action_accepted(
+    pub fn command_accepted(
         &self,
         client_id: IpcClientId,
         request_id: Option<String>,
     ) -> Result<IpcResponse, UnknownClientError> {
         self.sessions
             .get(&client_id)
-            .map(|session| session.action_accepted(request_id))
+            .map(|session| session.command_accepted(request_id))
             .ok_or(UnknownClientError { client_id })
     }
 
@@ -244,22 +245,22 @@ mod tests {
     }
 
     #[test]
-    fn server_routes_action_requests_to_compositor_layer() {
+    fn server_routes_command_requests_to_compositor_layer() {
         let mut server = IpcServerState::new();
         let client_id = server.add_client();
 
         let result = server.handle_request(
             client_id,
-            IpcEnvelope::new(IpcClientMessage::Action(WmAction::ReloadConfig))
+            IpcEnvelope::new(IpcClientMessage::Command(WmCommand::CloseFocusedWindow))
                 .with_request_id("req-2"),
         );
 
         assert_eq!(
             result,
-            Ok(IpcServerHandleResult::Action {
+            Ok(IpcServerHandleResult::Command {
                 client_id,
                 request_id: Some("req-2".into()),
-                action: WmAction::ReloadConfig,
+                command: WmCommand::CloseFocusedWindow,
             })
         );
     }
@@ -286,7 +287,7 @@ mod tests {
     }
 
     #[test]
-    fn server_builds_query_and_action_responses_for_known_clients() {
+    fn server_builds_query_and_command_responses_for_known_clients() {
         let mut server = IpcServerState::new();
         let client_id = server.add_client();
 
@@ -304,8 +305,8 @@ mod tests {
             )
         );
         assert_eq!(
-            server.action_accepted(client_id, Some("req-4".into())),
-            Ok(IpcEnvelope::new(IpcServerMessage::ActionAccepted).with_request_id("req-4"))
+            server.command_accepted(client_id, Some("req-4".into())),
+            Ok(IpcEnvelope::new(IpcServerMessage::CommandAccepted).with_request_id("req-4"))
         );
     }
 
@@ -454,8 +455,8 @@ mod tests {
     }
 
     #[test]
-    fn server_serve_stream_uses_responder_for_action_requests() {
-        let path = unique_socket_path("serve-action");
+    fn server_serve_stream_uses_responder_for_command_requests() {
+        let path = unique_socket_path("serve-command");
         let listener = UnixListener::bind(&path).unwrap();
         let mut client = UnixStream::connect(&path).unwrap();
         let (mut server_stream, _) = listener.accept().unwrap();
@@ -465,7 +466,7 @@ mod tests {
 
         crate::send_request(
             &mut client,
-            &IpcEnvelope::new(IpcClientMessage::Action(WmAction::ReloadConfig))
+            &IpcEnvelope::new(IpcClientMessage::Command(WmCommand::CloseFocusedWindow))
                 .with_request_id("req-11"),
         )
         .unwrap();
@@ -474,12 +475,12 @@ mod tests {
             server
                 .serve_stream::<_, IpcServeError>(client_id, &mut server_stream, |result| {
                     match result {
-                        IpcServerHandleResult::Action {
+                        IpcServerHandleResult::Command {
                             request_id,
-                            action: WmAction::ReloadConfig,
+                            command: WmCommand::CloseFocusedWindow,
                             ..
                         } => Ok::<IpcResponse, IpcServeError>(
-                            IpcEnvelope::new(IpcServerMessage::ActionAccepted)
+                            IpcEnvelope::new(IpcServerMessage::CommandAccepted)
                                 .with_request_id(request_id.unwrap_or_default()),
                         ),
                         other => panic!("unexpected serve result: {other:?}"),
@@ -489,7 +490,7 @@ mod tests {
 
         assert_eq!(
             response,
-            IpcEnvelope::new(IpcServerMessage::ActionAccepted).with_request_id("req-11")
+            IpcEnvelope::new(IpcServerMessage::CommandAccepted).with_request_id("req-11")
         );
 
         let decoded = crate::recv_response(&client).unwrap();

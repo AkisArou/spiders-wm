@@ -1,4 +1,4 @@
-use spiders_shared::api::{FocusDirection, WmAction};
+use spiders_shared::command::{FocusDirection, LayoutCycleDirection, WmCommand};
 use spiders_tree::{OutputId, WindowId, WorkspaceId};
 use spiders_tree::LayoutRect;
 
@@ -43,79 +43,87 @@ pub enum RiverCommand {
     },
 }
 
-pub fn bridge_action(action: &WmAction) -> RiverCommand {
+pub fn bridge_action(action: &WmCommand) -> RiverCommand {
     match action {
-        WmAction::Spawn { command } => RiverCommand::Spawn {
+        WmCommand::Spawn { command } => RiverCommand::Spawn {
             command: command.clone(),
         },
-        WmAction::ReloadConfig => RiverCommand::ReloadConfig,
-        WmAction::SetLayout { name } => RiverCommand::SetLayout { name: name.clone() },
-        WmAction::CycleLayout { direction } => match direction {
-            Some(spiders_shared::api::LayoutCycleDirection::Previous) => {
+        WmCommand::ReloadConfig => RiverCommand::ReloadConfig,
+        WmCommand::SetLayout { name } => RiverCommand::SetLayout { name: name.clone() },
+        WmCommand::CycleLayout { direction } => match direction {
+            Some(LayoutCycleDirection::Previous) => {
                 RiverCommand::CycleLayoutPrevious
             }
-            None | Some(spiders_shared::api::LayoutCycleDirection::Next) => {
+            None | Some(LayoutCycleDirection::Next) => {
                 RiverCommand::CycleLayoutNext
             }
         },
-        WmAction::ActivateWorkspace { workspace_id } => RiverCommand::ActivateWorkspace {
+        WmCommand::ActivateWorkspace { workspace_id } => RiverCommand::ActivateWorkspace {
             workspace_id: workspace_id.clone(),
         },
-        WmAction::FocusWindow { window_id } => RiverCommand::FocusWindow {
+        WmCommand::FocusWindow { window_id } => RiverCommand::FocusWindow {
             window_id: window_id.clone(),
         },
-        WmAction::CloseFocusedWindow => RiverCommand::CloseFocusedWindow,
-        WmAction::ToggleFloating => RiverCommand::ToggleFloating,
-        WmAction::ToggleFullscreen => RiverCommand::ToggleFullscreen,
-        WmAction::FocusDirection { direction } => RiverCommand::FocusDirection {
+        WmCommand::CloseFocusedWindow => RiverCommand::CloseFocusedWindow,
+        WmCommand::ToggleFloating => RiverCommand::ToggleFloating,
+        WmCommand::ToggleFullscreen => RiverCommand::ToggleFullscreen,
+        WmCommand::FocusDirection { direction } => RiverCommand::FocusDirection {
             direction: *direction,
         },
-        WmAction::SetFloatingWindowGeometry { window_id, rect } => {
+        WmCommand::SetFloatingWindowGeometry { window_id, rect } => {
             RiverCommand::SetFloatingWindowGeometry {
                 window_id: window_id.clone(),
                 rect: *rect,
             }
         }
-        WmAction::ViewWorkspace { workspace } => RiverCommand::ActivateWorkspace {
+        WmCommand::ViewWorkspace { workspace } => RiverCommand::ActivateWorkspace {
             workspace_id: workspace.to_string().into(),
         },
-        WmAction::ToggleViewWorkspace { workspace } => RiverCommand::ActivateWorkspace {
+        WmCommand::ToggleViewWorkspace { workspace } => RiverCommand::ActivateWorkspace {
             workspace_id: workspace.to_string().into(),
         },
-        WmAction::AssignWorkspace { output_id, .. } => RiverCommand::FocusOutput {
+        WmCommand::AssignWorkspace { output_id, .. } => RiverCommand::FocusOutput {
             output_id: output_id.clone(),
         },
-        WmAction::FocusMonitorLeft => RiverCommand::Unsupported {
+        WmCommand::FocusMonitorLeft => RiverCommand::Unsupported {
             action: "focus-monitor-left",
         },
-        WmAction::FocusMonitorRight => RiverCommand::Unsupported {
+        WmCommand::FocusMonitorRight => RiverCommand::Unsupported {
             action: "focus-monitor-right",
         },
-        WmAction::SendMonitorLeft => RiverCommand::Unsupported {
+        WmCommand::SendMonitorLeft => RiverCommand::Unsupported {
             action: "send-monitor-left",
         },
-        WmAction::SendMonitorRight => RiverCommand::Unsupported {
+        WmCommand::SendMonitorRight => RiverCommand::Unsupported {
             action: "send-monitor-right",
         },
-        WmAction::AssignFocusedWindowToWorkspace { workspace } => {
+        WmCommand::AssignFocusedWindowToWorkspace { workspace } => {
             RiverCommand::AssignFocusedWindowToWorkspace {
                 workspace_id: workspace.to_string().into(),
             }
         }
-        WmAction::ToggleAssignFocusedWindowToWorkspace { .. } => RiverCommand::Unsupported {
+        WmCommand::ToggleAssignFocusedWindowToWorkspace { .. } => RiverCommand::Unsupported {
             action: "toggle-assign-focused-window-to-workspace",
         },
-        WmAction::SwapDirection { direction } => RiverCommand::MoveDirection {
+        WmCommand::SwapDirection { direction } => RiverCommand::MoveDirection {
             direction: *direction,
         },
-        WmAction::ResizeDirection { .. } => RiverCommand::Unsupported {
+        WmCommand::ResizeDirection { .. } => RiverCommand::Unsupported {
             action: "resize-direction",
         },
-        WmAction::ResizeTiledDirection { .. } => RiverCommand::Unsupported {
+        WmCommand::ResizeTiledDirection { .. } => RiverCommand::Unsupported {
             action: "resize-tiled-direction",
         },
-        WmAction::MoveDirection { direction } => RiverCommand::MoveDirection {
+        WmCommand::MoveDirection { direction } => RiverCommand::MoveDirection {
             direction: *direction,
+        },
+        WmCommand::SpawnTerminal
+        | WmCommand::FocusNextWindow
+        | WmCommand::FocusPreviousWindow
+        | WmCommand::SelectNextWorkspace
+        | WmCommand::SelectPreviousWorkspace
+        | WmCommand::SelectWorkspace { .. } => RiverCommand::Unsupported {
+            action: "wm2-only-command",
         },
     }
 }
@@ -127,7 +135,7 @@ mod tests {
     #[test]
     fn spawn_action_bridges_directly() {
         assert_eq!(
-            bridge_action(&WmAction::Spawn {
+            bridge_action(&WmCommand::Spawn {
                 command: "foot".into(),
             }),
             RiverCommand::Spawn {
@@ -139,7 +147,7 @@ mod tests {
     #[test]
     fn view_workspace_bridges_to_activate_workspace() {
         assert_eq!(
-            bridge_action(&WmAction::ViewWorkspace { workspace: 3 }),
+            bridge_action(&WmCommand::ViewWorkspace { workspace: 3 }),
             RiverCommand::ActivateWorkspace {
                 workspace_id: "3".into(),
             }
@@ -149,7 +157,7 @@ mod tests {
     #[test]
     fn swap_direction_bridges_to_move_direction() {
         assert_eq!(
-            bridge_action(&WmAction::SwapDirection {
+            bridge_action(&WmCommand::SwapDirection {
                 direction: FocusDirection::Left,
             }),
             RiverCommand::MoveDirection {

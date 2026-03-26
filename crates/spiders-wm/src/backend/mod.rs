@@ -9,7 +9,7 @@ use spiders_config::model::{Binding, Config};
 use spiders_config::model::ConfigPaths;
 use spiders_config::model::InputConfig;
 use spiders_scene::pipeline::SceneCache;
-use spiders_shared::api::{FocusDirection, WmAction};
+use spiders_shared::command::{FocusDirection, WmCommand};
 use spiders_runtime_js::{build_authoring_layout_service, DefaultLayoutRuntime};
 use wayland_backend::client::ObjectId;
 use wayland_client::protocol::{wl_buffer, wl_compositor, wl_output, wl_registry, wl_seat, wl_shm, wl_shm_pool, wl_surface};
@@ -1170,7 +1170,7 @@ impl RiverBackendState {
         let config = Config {
             bindings: vec![Binding {
                 trigger: "Alt+Enter".into(),
-                action: WmAction::Spawn {
+                action: WmCommand::Spawn {
                     command: "alacritty".into(),
                 },
             }],
@@ -1199,7 +1199,7 @@ impl RiverBackendState {
         let config = Config {
             bindings: vec![Binding {
                 trigger: "Weird+Thing+Unsupported".into(),
-                action: WmAction::Spawn {
+                action: WmCommand::Spawn {
                     command: "foo".into(),
                 },
             }],
@@ -1250,7 +1250,7 @@ impl RiverBackendState {
             },
             bindings: vec![Binding {
                 trigger: "Alt+Ctrl+1".into(),
-                action: WmAction::AssignFocusedWindowToWorkspace { workspace: 1 },
+                action: WmCommand::AssignFocusedWindowToWorkspace { workspace: 1 },
             }],
             ..Config::default()
         };
