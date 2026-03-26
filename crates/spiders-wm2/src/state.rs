@@ -93,10 +93,6 @@ impl SpidersWm {
             let _ = runtime.execute(RuntimeCommand::EnsureDefaultWorkspace {
                 name: "1".to_string(),
             });
-            let _ = runtime.execute(RuntimeCommand::RequestSelectWorkspace {
-                workspace_id: "1".into(),
-                window_order: Vec::new(),
-            });
             let _ = runtime.execute(RuntimeCommand::EnsureSeat {
                 seat_id: "winit".into(),
             });

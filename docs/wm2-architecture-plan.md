@@ -206,6 +206,20 @@ Responsibilities:
 - cache prepared scene artifacts
 - own integration with `spiders-config` and JS runtime crates
 
+Runtime should also expose a small high-level WM command surface for external integrations.
+
+That command surface should express user-facing intents such as:
+
+- focus next or previous window
+- select a workspace by name
+- select next or previous workspace
+- close the focused window
+- launch configured programs
+
+Important rule:
+
+- config, JS, IPC, and shortcut layers should target these high-level WM commands instead of calling compositor shell methods directly
+
 ## What To Port From `spiders-wm`
 
 Good ideas to reuse conceptually from `spiders-wm`:

@@ -9,7 +9,7 @@ use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::utils::SERIAL_COUNTER;
 use tracing::{debug, info};
 
-use crate::runtime::RuntimeCommand;
+use crate::runtime::{RuntimeCommand, WmCommand};
 use crate::state::SpidersWm;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -62,20 +62,11 @@ impl SpidersWm {
                     )
                     .unwrap_or(KeyAction::None);
 
-                match action {
-                    KeyAction::None => {}
-                    KeyAction::SpawnFoot => {
+                if let Some(command) = action.into_wm_command() {
+                    if command == WmCommand::SpawnTerminal {
                         info!("Alt+Enter matched; spawning terminal");
-                        self.spawn_foot()
                     }
-                    KeyAction::FocusNextWindow => self.focus_next_window(serial),
-                    KeyAction::FocusPreviousWindow => self.focus_previous_window(serial),
-                    KeyAction::SelectNextWorkspace => self.select_next_workspace(serial),
-                    KeyAction::SelectPreviousWorkspace => self.select_previous_workspace(serial),
-                    KeyAction::SelectWorkspace(index) => {
-                        self.ensure_and_select_workspace(index.to_string(), serial)
-                    }
-                    KeyAction::CloseFocusedWindow => self.close_focused_window(),
+                    self.execute_wm_command_with_serial(command, serial);
                 }
             }
             InputEvent::PointerMotion { .. } => {}
@@ -178,6 +169,23 @@ impl SpidersWm {
     }
 }
 
+impl KeyAction {
+    fn into_wm_command(self) -> Option<WmCommand> {
+        match self {
+            KeyAction::None => None,
+            KeyAction::SpawnFoot => Some(WmCommand::SpawnTerminal),
+            KeyAction::FocusNextWindow => Some(WmCommand::FocusNextWindow),
+            KeyAction::FocusPreviousWindow => Some(WmCommand::FocusPreviousWindow),
+            KeyAction::SelectNextWorkspace => Some(WmCommand::SelectNextWorkspace),
+            KeyAction::SelectPreviousWorkspace => Some(WmCommand::SelectPreviousWorkspace),
+            KeyAction::SelectWorkspace(index) => {
+                Some(WmCommand::SelectWorkspaceNamed(index.to_string()))
+            }
+            KeyAction::CloseFocusedWindow => Some(WmCommand::CloseFocusedWindow),
+        }
+    }
+}
+
 fn shortcut_action(modifiers: ModifiersState, keysym: Keysym) -> Option<KeyAction> {
     if modifiers.alt && matches!(keysym.raw(), xkb::KEY_Return | xkb::KEY_KP_Enter) {
         Some(KeyAction::SpawnFoot)
@@ -215,5 +223,15 @@ mod tests {
 
         assert_eq!(shortcut_action(modifiers, Keysym::Tab), Some(KeyAction::FocusPreviousWindow));
         assert_eq!(shortcut_action(modifiers, Keysym::W), Some(KeyAction::SelectPreviousWorkspace));
+    }
+
+    #[test]
+    fn key_actions_translate_to_wm_commands() {
+        assert_eq!(KeyAction::SpawnFoot.into_wm_command(), Some(WmCommand::SpawnTerminal));
+        assert_eq!(KeyAction::FocusNextWindow.into_wm_command(), Some(WmCommand::FocusNextWindow));
+        assert_eq!(
+            KeyAction::SelectWorkspace(4).into_wm_command(),
+            Some(WmCommand::SelectWorkspaceNamed("4".to_string()))
+        );
     }
 }

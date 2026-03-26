@@ -1,3 +1,7 @@
+pub mod command;
+
+pub use command::WmCommand;
+
 use crate::actions::WmActions;
 use crate::actions::focus::{FocusSelection, FocusUpdate};
 use crate::actions::window::CloseSelection;
