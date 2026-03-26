@@ -1,5 +1,7 @@
 use crate::actions::WmActions;
-use crate::actions::focus::FocusUpdate;
+use crate::actions::focus::{FocusSelection, FocusUpdate};
+use crate::actions::window::CloseSelection;
+use crate::actions::workspace::WorkspaceSelection;
 use crate::model::wm::WmModel;
 use crate::model::{OutputId, SeatId, WindowId, WorkspaceId};
 use crate::state::SpidersWm;
@@ -8,8 +10,16 @@ use crate::state::SpidersWm;
 pub enum RuntimeCommand {
     EnsureWorkspace { name: String },
     EnsureDefaultWorkspace { name: String },
-    SelectWorkspace { workspace_id: WorkspaceId },
-    SelectNextWorkspace,
+    RequestSelectWorkspace {
+        workspace_id: WorkspaceId,
+        window_order: Vec<WindowId>,
+    },
+    RequestSelectNextWorkspace {
+        window_order: Vec<WindowId>,
+    },
+    RequestSelectPreviousWorkspace {
+        window_order: Vec<WindowId>,
+    },
     EnsureSeat { seat_id: SeatId },
     SyncOutput {
         output_id: OutputId,
@@ -18,11 +28,12 @@ pub enum RuntimeCommand {
         logical_height: u32,
     },
     PlaceNewWindow { window_id: WindowId },
-    RequestFocusWindow {
+    RequestFocusWindowSelection {
         seat_id: SeatId,
         window_id: Option<WindowId>,
     },
-    RequestFocusNextWindow { seat_id: SeatId },
+    RequestFocusNextWindowSelection { seat_id: SeatId },
+    RequestFocusPreviousWindowSelection { seat_id: SeatId },
     SyncHoveredWindow {
         seat_id: SeatId,
         hovered_window_id: Option<WindowId>,
@@ -32,7 +43,7 @@ pub enum RuntimeCommand {
         interacted_window_id: Option<WindowId>,
     },
     RemoveWindow { window_id: WindowId },
-    RequestCloseFocusedWindow,
+    RequestCloseFocusedWindowSelection,
     SyncWindowIdentity {
         window_id: WindowId,
         title: Option<String>,
@@ -47,6 +58,9 @@ pub enum RuntimeCommand {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RuntimeResult {
     Workspace(WorkspaceId),
+    WorkspaceSelection(Option<WorkspaceSelection>),
+    FocusSelection(FocusSelection),
+    CloseSelection(CloseSelection),
     Seat(SeatId),
     Output(OutputId),
     Window(Option<WindowId>),
@@ -72,11 +86,17 @@ impl<'a> WmRuntime<'a> {
             RuntimeCommand::EnsureDefaultWorkspace { name } => {
                 RuntimeResult::Workspace(self.ensure_default_workspace(name))
             }
-            RuntimeCommand::SelectWorkspace { workspace_id } => {
-                RuntimeResult::Workspace(self.select_workspace(workspace_id).unwrap_or_default())
+            RuntimeCommand::RequestSelectWorkspace {
+                workspace_id,
+                window_order,
+            } => RuntimeResult::WorkspaceSelection(
+                self.request_select_workspace(workspace_id, window_order),
+            ),
+            RuntimeCommand::RequestSelectNextWorkspace { window_order } => {
+                RuntimeResult::WorkspaceSelection(self.request_select_next_workspace(window_order))
             }
-            RuntimeCommand::SelectNextWorkspace => {
-                RuntimeResult::Workspace(self.select_next_workspace().unwrap_or_default())
+            RuntimeCommand::RequestSelectPreviousWorkspace { window_order } => {
+                RuntimeResult::WorkspaceSelection(self.request_select_previous_workspace(window_order))
             }
             RuntimeCommand::EnsureSeat { seat_id } => RuntimeResult::Seat(self.ensure_seat(seat_id)),
             RuntimeCommand::SyncOutput {
@@ -88,11 +108,14 @@ impl<'a> WmRuntime<'a> {
             RuntimeCommand::PlaceNewWindow { window_id } => {
                 RuntimeResult::Window(Some(self.place_new_window(window_id)))
             }
-            RuntimeCommand::RequestFocusWindow { seat_id, window_id } => {
-                RuntimeResult::Window(self.request_focus_window(seat_id, window_id))
+            RuntimeCommand::RequestFocusWindowSelection { seat_id, window_id } => {
+                RuntimeResult::FocusSelection(self.request_focus_window_selection(seat_id, window_id))
             }
-            RuntimeCommand::RequestFocusNextWindow { seat_id } => {
-                RuntimeResult::Window(self.request_focus_next_window(seat_id))
+            RuntimeCommand::RequestFocusNextWindowSelection { seat_id } => {
+                RuntimeResult::FocusSelection(self.request_focus_next_window_selection(seat_id))
+            }
+            RuntimeCommand::RequestFocusPreviousWindowSelection { seat_id } => {
+                RuntimeResult::FocusSelection(self.request_focus_previous_window_selection(seat_id))
             }
             RuntimeCommand::SyncHoveredWindow {
                 seat_id,
@@ -105,8 +128,8 @@ impl<'a> WmRuntime<'a> {
             RuntimeCommand::RemoveWindow { window_id } => {
                 RuntimeResult::FocusUpdate(self.remove_window(window_id))
             }
-            RuntimeCommand::RequestCloseFocusedWindow => {
-                RuntimeResult::Window(self.request_close_focused_window())
+            RuntimeCommand::RequestCloseFocusedWindowSelection => {
+                RuntimeResult::CloseSelection(self.request_close_focused_window_selection())
             }
             RuntimeCommand::SyncWindowIdentity {
                 window_id,
@@ -127,12 +150,32 @@ impl<'a> WmRuntime<'a> {
         self.actions.ensure_workspace(name)
     }
 
-    pub fn select_workspace(&mut self, workspace_id: WorkspaceId) -> Option<WorkspaceId> {
-        self.actions.select_workspace(workspace_id)
+    pub fn request_select_workspace<I>(
+        &mut self,
+        workspace_id: WorkspaceId,
+        window_order: I,
+    ) -> Option<WorkspaceSelection>
+    where
+        I: IntoIterator<Item = WindowId>,
+    {
+        self.actions.request_select_workspace(workspace_id, window_order)
     }
 
-    pub fn select_next_workspace(&mut self) -> Option<WorkspaceId> {
-        self.actions.select_next_workspace()
+    pub fn request_select_next_workspace<I>(&mut self, window_order: I) -> Option<WorkspaceSelection>
+    where
+        I: IntoIterator<Item = WindowId>,
+    {
+        self.actions.request_select_next_workspace(window_order)
+    }
+
+    pub fn request_select_previous_workspace<I>(
+        &mut self,
+        window_order: I,
+    ) -> Option<WorkspaceSelection>
+    where
+        I: IntoIterator<Item = WindowId>,
+    {
+        self.actions.request_select_previous_workspace(window_order)
     }
 
     pub fn ensure_seat(&mut self, seat_id: impl Into<SeatId>) -> SeatId {
@@ -154,16 +197,26 @@ impl<'a> WmRuntime<'a> {
         self.actions.place_new_window(window_id)
     }
 
-    pub fn request_focus_window(
+    pub fn request_focus_window_selection(
         &mut self,
         seat_id: impl Into<SeatId>,
         window_id: Option<WindowId>,
-    ) -> Option<WindowId> {
-        self.actions.request_focus_window(seat_id, window_id)
+    ) -> FocusSelection {
+        self.actions.request_focus_window_selection(seat_id, window_id)
     }
 
-    pub fn request_focus_next_window(&mut self, seat_id: impl Into<SeatId>) -> Option<WindowId> {
-        self.actions.request_focus_next_window(seat_id)
+    pub fn request_focus_next_window_selection(
+        &mut self,
+        seat_id: impl Into<SeatId>,
+    ) -> FocusSelection {
+        self.actions.request_focus_next_window_selection(seat_id)
+    }
+
+    pub fn request_focus_previous_window_selection(
+        &mut self,
+        seat_id: impl Into<SeatId>,
+    ) -> FocusSelection {
+        self.actions.request_focus_previous_window_selection(seat_id)
     }
 
     pub fn sync_hovered_window(
@@ -187,8 +240,8 @@ impl<'a> WmRuntime<'a> {
         self.actions.remove_window(window_id)
     }
 
-    pub fn request_close_focused_window(&mut self) -> Option<WindowId> {
-        self.actions.request_close_focused_window()
+    pub fn request_close_focused_window_selection(&mut self) -> CloseSelection {
+        self.actions.request_close_focused_window_selection()
     }
 
     pub fn sync_window_identity(
@@ -221,11 +274,11 @@ mod tests {
         let mut runtime = WmRuntime::new(&mut model);
 
         runtime.ensure_default_workspace("1");
-        runtime.select_next_workspace();
+        runtime.request_select_next_workspace(Vec::new());
         runtime.ensure_seat("winit");
         runtime.sync_output("winit", "winit", 1280, 720);
         runtime.place_new_window(WindowId(1));
-        runtime.request_focus_window("winit", Some(WindowId(1)));
+        runtime.request_focus_window_selection("winit", Some(WindowId(1)));
         runtime.sync_window_mapped(WindowId(1), true);
 
         assert_eq!(model.current_workspace_id, Some(WorkspaceId("1".to_string())));
@@ -245,18 +298,71 @@ mod tests {
         let ensured_workspace = runtime.execute(RuntimeCommand::EnsureWorkspace {
             name: "2".to_string(),
         });
-        let selected_workspace = runtime.execute(RuntimeCommand::SelectWorkspace {
+        let selected_workspace = runtime.execute(RuntimeCommand::RequestSelectWorkspace {
             workspace_id: WorkspaceId("1".to_string()),
+            window_order: Vec::new(),
         });
-        let next_workspace = runtime.execute(RuntimeCommand::SelectNextWorkspace);
+        let next_workspace = runtime.execute(RuntimeCommand::RequestSelectNextWorkspace {
+            window_order: Vec::new(),
+        });
+        let previous_workspace = runtime.execute(RuntimeCommand::RequestSelectPreviousWorkspace {
+            window_order: Vec::new(),
+        });
+        let requested_selection = runtime.execute(RuntimeCommand::RequestSelectWorkspace {
+            workspace_id: WorkspaceId("2".to_string()),
+            window_order: Vec::new(),
+        });
+        let focus_selection = runtime.execute(RuntimeCommand::RequestFocusWindowSelection {
+            seat_id: SeatId("winit".to_string()),
+            window_id: None,
+        });
+        let close_selection = runtime.execute(RuntimeCommand::RequestCloseFocusedWindowSelection);
         let seat = runtime.execute(RuntimeCommand::EnsureSeat {
             seat_id: SeatId("winit".to_string()),
         });
 
         assert_eq!(workspace, RuntimeResult::Workspace(WorkspaceId("1".to_string())));
         assert_eq!(ensured_workspace, RuntimeResult::Workspace(WorkspaceId("2".to_string())));
-        assert_eq!(selected_workspace, RuntimeResult::Workspace(WorkspaceId("1".to_string())));
-        assert_eq!(next_workspace, RuntimeResult::Workspace(WorkspaceId("2".to_string())));
+        assert_eq!(
+            selected_workspace,
+            RuntimeResult::WorkspaceSelection(Some(WorkspaceSelection {
+                workspace_id: WorkspaceId("1".to_string()),
+                focused_window_id: None,
+            }))
+        );
+        assert_eq!(
+            next_workspace,
+            RuntimeResult::WorkspaceSelection(Some(WorkspaceSelection {
+                workspace_id: WorkspaceId("2".to_string()),
+                focused_window_id: None,
+            }))
+        );
+        assert_eq!(
+            previous_workspace,
+            RuntimeResult::WorkspaceSelection(Some(WorkspaceSelection {
+                workspace_id: WorkspaceId("1".to_string()),
+                focused_window_id: None,
+            }))
+        );
+        assert_eq!(
+            requested_selection,
+            RuntimeResult::WorkspaceSelection(Some(WorkspaceSelection {
+                workspace_id: WorkspaceId("2".to_string()),
+                focused_window_id: None,
+            }))
+        );
+        assert_eq!(
+            focus_selection,
+            RuntimeResult::FocusSelection(FocusSelection {
+                focused_window_id: None,
+            })
+        );
+        assert_eq!(
+            close_selection,
+            RuntimeResult::CloseSelection(CloseSelection {
+                closing_window_id: None,
+            })
+        );
         assert_eq!(seat, RuntimeResult::Seat(SeatId("winit".to_string())));
     }
 
@@ -270,19 +376,43 @@ mod tests {
         runtime.place_new_window(WindowId(3));
         runtime.place_new_window(WindowId(4));
 
-        let focused = runtime.execute(RuntimeCommand::RequestFocusWindow {
+        let focused = runtime.execute(RuntimeCommand::RequestFocusWindowSelection {
             seat_id: SeatId("winit".to_string()),
             window_id: Some(WindowId(3)),
         });
-        let next_focused = runtime.execute(RuntimeCommand::RequestFocusNextWindow {
+        let next_focused = runtime.execute(RuntimeCommand::RequestFocusNextWindowSelection {
             seat_id: SeatId("winit".to_string()),
         });
-        let closing = runtime.execute(RuntimeCommand::RequestCloseFocusedWindow);
+        let previous_focused = runtime.execute(RuntimeCommand::RequestFocusPreviousWindowSelection {
+            seat_id: SeatId("winit".to_string()),
+        });
+        let closing = runtime.execute(RuntimeCommand::RequestCloseFocusedWindowSelection);
 
-        assert_eq!(focused, RuntimeResult::Window(Some(WindowId(3))));
-        assert_eq!(next_focused, RuntimeResult::Window(Some(WindowId(4))));
-        assert_eq!(closing, RuntimeResult::Window(Some(WindowId(4))));
-        assert_eq!(model.focused_window_id, Some(WindowId(4)));
-        assert_eq!(model.windows.get(&WindowId(4)).map(|window| window.closing), Some(true));
+        assert_eq!(
+            focused,
+            RuntimeResult::FocusSelection(FocusSelection {
+                focused_window_id: Some(WindowId(3)),
+            })
+        );
+        assert_eq!(
+            next_focused,
+            RuntimeResult::FocusSelection(FocusSelection {
+                focused_window_id: Some(WindowId(4)),
+            })
+        );
+        assert_eq!(
+            previous_focused,
+            RuntimeResult::FocusSelection(FocusSelection {
+                focused_window_id: Some(WindowId(3)),
+            })
+        );
+        assert_eq!(
+            closing,
+            RuntimeResult::CloseSelection(CloseSelection {
+                closing_window_id: Some(WindowId(3)),
+            })
+        );
+        assert_eq!(model.focused_window_id, Some(WindowId(3)));
+        assert_eq!(model.windows.get(&WindowId(3)).map(|window| window.closing), Some(true));
     }
 }

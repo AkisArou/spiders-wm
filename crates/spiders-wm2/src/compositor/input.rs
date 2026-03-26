@@ -17,7 +17,9 @@ pub enum KeyAction {
     None,
     SpawnFoot,
     FocusNextWindow,
+    FocusPreviousWindow,
     SelectNextWorkspace,
+    SelectPreviousWorkspace,
     SelectWorkspace(u8),
     CloseFocusedWindow,
 }
@@ -67,7 +69,9 @@ impl SpidersWm {
                         self.spawn_foot()
                     }
                     KeyAction::FocusNextWindow => self.focus_next_window(serial),
+                    KeyAction::FocusPreviousWindow => self.focus_previous_window(serial),
                     KeyAction::SelectNextWorkspace => self.select_next_workspace(serial),
+                    KeyAction::SelectPreviousWorkspace => self.select_previous_workspace(serial),
                     KeyAction::SelectWorkspace(index) => {
                         self.ensure_and_select_workspace(index.to_string(), serial)
                     }
@@ -177,8 +181,15 @@ impl SpidersWm {
 fn shortcut_action(modifiers: ModifiersState, keysym: Keysym) -> Option<KeyAction> {
     if modifiers.alt && matches!(keysym.raw(), xkb::KEY_Return | xkb::KEY_KP_Enter) {
         Some(KeyAction::SpawnFoot)
+    } else if modifiers.alt
+        && modifiers.shift
+        && matches!(keysym.raw(), xkb::KEY_Tab | xkb::KEY_ISO_Left_Tab)
+    {
+        Some(KeyAction::FocusPreviousWindow)
     } else if modifiers.alt && keysym.raw() == xkb::KEY_Tab {
         Some(KeyAction::FocusNextWindow)
+    } else if modifiers.alt && modifiers.shift && matches!(keysym.raw(), xkb::KEY_W | xkb::KEY_w) {
+        Some(KeyAction::SelectPreviousWorkspace)
     } else if modifiers.alt && (keysym == Keysym::w || keysym.raw() == xkb::KEY_w) {
         Some(KeyAction::SelectNextWorkspace)
     } else if modifiers.alt && matches!(keysym.raw(), xkb::KEY_1..=xkb::KEY_9) {
@@ -187,5 +198,22 @@ fn shortcut_action(modifiers: ModifiersState, keysym: Keysym) -> Option<KeyActio
         Some(KeyAction::CloseFocusedWindow)
     } else {
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shortcut_action_maps_previous_traversal_keys() {
+        let modifiers = ModifiersState {
+            alt: true,
+            shift: true,
+            ..ModifiersState::default()
+        };
+
+        assert_eq!(shortcut_action(modifiers, Keysym::Tab), Some(KeyAction::FocusPreviousWindow));
+        assert_eq!(shortcut_action(modifiers, Keysym::W), Some(KeyAction::SelectPreviousWorkspace));
     }
 }

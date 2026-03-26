@@ -1,6 +1,12 @@
 use crate::model::wm::WmModel;
 use crate::model::{WindowId, WorkspaceId};
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceSelection {
+    pub workspace_id: WorkspaceId,
+    pub focused_window_id: Option<WindowId>,
+}
+
 pub fn ensure_workspace(model: &mut WmModel, name: impl Into<String>) -> WorkspaceId {
     let name = name.into();
     let workspace_id = WorkspaceId(name.clone());
@@ -11,21 +17,40 @@ pub fn ensure_workspace(model: &mut WmModel, name: impl Into<String>) -> Workspa
 pub fn ensure_default_workspace(model: &mut WmModel, name: impl Into<String>) -> WorkspaceId {
     let workspace_id = ensure_workspace(model, name);
     if model.current_workspace_id.is_none() {
-        let _ = select_workspace(model, workspace_id.clone());
+        let window_ids: Vec<_> = model.windows.keys().copied().collect();
+        let _ = request_select_workspace(model, workspace_id.clone(), window_ids);
     }
     workspace_id
 }
 
-pub fn select_workspace(model: &mut WmModel, workspace_id: WorkspaceId) -> Option<WorkspaceId> {
+pub fn request_select_workspace<I>(
+    model: &mut WmModel,
+    workspace_id: WorkspaceId,
+    window_ids: I,
+) -> Option<WorkspaceSelection>
+where
+    I: IntoIterator<Item = WindowId>,
+{
     if !model.workspaces.contains_key(&workspace_id) {
         return None;
     }
 
     model.set_current_workspace(workspace_id.clone());
-    Some(workspace_id)
+    let focused_window_id = model.preferred_focus_window_on_current_workspace(window_ids);
+
+    Some(WorkspaceSelection {
+        workspace_id,
+        focused_window_id,
+    })
 }
 
-pub fn select_next_workspace(model: &mut WmModel) -> Option<WorkspaceId> {
+pub fn request_select_next_workspace<I>(
+    model: &mut WmModel,
+    window_ids: I,
+) -> Option<WorkspaceSelection>
+where
+    I: IntoIterator<Item = WindowId>,
+{
     let next_workspace_id = match model.current_workspace_id.as_ref() {
         Some(current_id) => model
             .workspaces
@@ -36,7 +61,28 @@ pub fn select_next_workspace(model: &mut WmModel) -> Option<WorkspaceId> {
         None => model.workspaces.keys().next().cloned(),
     }?;
 
-    select_workspace(model, next_workspace_id)
+    request_select_workspace(model, next_workspace_id, window_ids)
+}
+
+pub fn request_select_previous_workspace<I>(
+    model: &mut WmModel,
+    window_ids: I,
+) -> Option<WorkspaceSelection>
+where
+    I: IntoIterator<Item = WindowId>,
+{
+    let previous_workspace_id = match model.current_workspace_id.as_ref() {
+        Some(current_id) => model
+            .workspaces
+            .keys()
+            .rev()
+            .find(|workspace_id| *workspace_id < current_id)
+            .cloned()
+            .or_else(|| model.workspaces.keys().next_back().cloned()),
+        None => model.workspaces.keys().next_back().cloned(),
+    }?;
+
+    request_select_workspace(model, previous_workspace_id, window_ids)
 }
 
 pub fn place_new_window(model: &mut WmModel, window_id: WindowId) -> WindowId {
@@ -72,9 +118,19 @@ mod tests {
         ensure_workspace(&mut model, "2");
         ensure_default_workspace(&mut model, "1");
 
-        let selected = select_workspace(&mut model, WorkspaceId("2".to_string()));
+        let selected = request_select_workspace(
+            &mut model,
+            WorkspaceId("2".to_string()),
+            Vec::new(),
+        );
 
-        assert_eq!(selected, Some(WorkspaceId("2".to_string())));
+        assert_eq!(
+            selected,
+            Some(WorkspaceSelection {
+                workspace_id: WorkspaceId("2".to_string()),
+                focused_window_id: None,
+            })
+        );
         assert_eq!(model.current_workspace_id, Some(WorkspaceId("2".to_string())));
         assert_eq!(
             model.workspaces.get(&WorkspaceId("1".to_string())).map(|workspace| workspace.focused),
@@ -94,11 +150,75 @@ mod tests {
         ensure_workspace(&mut model, "3");
         ensure_default_workspace(&mut model, "2");
 
-        let next = select_next_workspace(&mut model);
-        assert_eq!(next, Some(WorkspaceId("3".to_string())));
+        let next = request_select_next_workspace(&mut model, Vec::new());
+        assert_eq!(
+            next,
+            Some(WorkspaceSelection {
+                workspace_id: WorkspaceId("3".to_string()),
+                focused_window_id: None,
+            })
+        );
 
-        let wrapped = select_next_workspace(&mut model);
-        assert_eq!(wrapped, Some(WorkspaceId("1".to_string())));
+        let wrapped = request_select_next_workspace(&mut model, Vec::new());
+        assert_eq!(
+            wrapped,
+            Some(WorkspaceSelection {
+                workspace_id: WorkspaceId("1".to_string()),
+                focused_window_id: None,
+            })
+        );
+    }
+
+    #[test]
+    fn selecting_previous_workspace_rewinds_and_wraps() {
+        let mut model = WmModel::default();
+        ensure_workspace(&mut model, "1");
+        ensure_workspace(&mut model, "2");
+        ensure_workspace(&mut model, "3");
+        ensure_default_workspace(&mut model, "2");
+
+        let previous = request_select_previous_workspace(&mut model, Vec::new());
+        assert_eq!(
+            previous,
+            Some(WorkspaceSelection {
+                workspace_id: WorkspaceId("1".to_string()),
+                focused_window_id: None,
+            })
+        );
+
+        let wrapped = request_select_previous_workspace(&mut model, Vec::new());
+        assert_eq!(
+            wrapped,
+            Some(WorkspaceSelection {
+                workspace_id: WorkspaceId("3".to_string()),
+                focused_window_id: None,
+            })
+        );
+    }
+
+    #[test]
+    fn request_select_workspace_returns_preferred_focus_for_selected_workspace() {
+        let mut model = WmModel::default();
+        ensure_workspace(&mut model, "1");
+        ensure_workspace(&mut model, "2");
+        model.insert_window(WindowId(1), Some(WorkspaceId("1".to_string())), None);
+        model.insert_window(WindowId(2), Some(WorkspaceId("2".to_string())), None);
+        model.insert_window(WindowId(3), Some(WorkspaceId("2".to_string())), None);
+        model.set_window_focused(Some(WindowId(1)));
+
+        let selection = request_select_workspace(
+            &mut model,
+            WorkspaceId("2".to_string()),
+            [WindowId(1), WindowId(2), WindowId(3)],
+        );
+
+        assert_eq!(
+            selection,
+            Some(WorkspaceSelection {
+                workspace_id: WorkspaceId("2".to_string()),
+                focused_window_id: Some(WindowId(3)),
+            })
+        );
     }
 
     #[test]

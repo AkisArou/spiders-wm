@@ -1,4 +1,7 @@
 use crate::actions::{focus, output, seat, window, workspace};
+use crate::actions::focus::FocusSelection;
+use crate::actions::window::CloseSelection;
+use crate::actions::workspace::WorkspaceSelection;
 use crate::model::wm::WmModel;
 use crate::model::{OutputId, SeatId, WindowId, WorkspaceId};
 
@@ -15,15 +18,33 @@ impl<'a> WmActions<'a> {
         workspace::ensure_default_workspace(self.model, name)
     }
 
-    pub fn select_workspace(&mut self, workspace_id: WorkspaceId) -> Option<WorkspaceId> {
-        workspace::select_workspace(self.model, workspace_id)
+    pub fn ensure_workspace(&mut self, name: impl Into<String>) -> WorkspaceId {
+        workspace::ensure_workspace(self.model, name)
     }
-        pub fn ensure_workspace(&mut self, name: impl Into<String>) -> WorkspaceId {
-            workspace::ensure_workspace(self.model, name)
-        }
 
-    pub fn select_next_workspace(&mut self) -> Option<WorkspaceId> {
-        workspace::select_next_workspace(self.model)
+    pub fn request_select_workspace<I>(
+        &mut self,
+        workspace_id: WorkspaceId,
+        window_ids: I,
+    ) -> Option<WorkspaceSelection>
+    where
+        I: IntoIterator<Item = WindowId>,
+    {
+        workspace::request_select_workspace(self.model, workspace_id, window_ids)
+    }
+
+    pub fn request_select_next_workspace<I>(&mut self, window_ids: I) -> Option<WorkspaceSelection>
+    where
+        I: IntoIterator<Item = WindowId>,
+    {
+        workspace::request_select_next_workspace(self.model, window_ids)
+    }
+
+    pub fn request_select_previous_workspace<I>(&mut self, window_ids: I) -> Option<WorkspaceSelection>
+    where
+        I: IntoIterator<Item = WindowId>,
+    {
+        workspace::request_select_previous_workspace(self.model, window_ids)
     }
 
     pub fn ensure_seat(&mut self, seat_id: impl Into<SeatId>) -> SeatId {
@@ -44,26 +65,32 @@ impl<'a> WmActions<'a> {
         workspace::place_new_window(self.model, window_id)
     }
 
-    pub fn sync_focus(
-        &mut self,
-        seat_id: impl Into<SeatId>,
-        focused_window_id: Option<WindowId>,
-    ) -> Option<WindowId> {
-        let focused_window_id = focus::set_focused_window(self.model, focused_window_id);
-        seat::sync_focused_window(self.model, seat_id, focused_window_id)
-    }
-
-    pub fn request_focus_window(
+    pub fn request_focus_window_selection(
         &mut self,
         seat_id: impl Into<SeatId>,
         window_id: Option<WindowId>,
-    ) -> Option<WindowId> {
-        self.sync_focus(seat_id, window_id)
+    ) -> FocusSelection {
+        let selection = focus::request_focus_window(self.model, window_id);
+        let focused_window_id = seat::sync_focused_window(self.model, seat_id, selection.focused_window_id);
+        FocusSelection { focused_window_id }
     }
 
-    pub fn request_focus_next_window(&mut self, seat_id: impl Into<SeatId>) -> Option<WindowId> {
-        let focused_window_id = focus::focus_next_window(self.model);
-        seat::sync_focused_window(self.model, seat_id, focused_window_id)
+    pub fn request_focus_next_window_selection(
+        &mut self,
+        seat_id: impl Into<SeatId>,
+    ) -> FocusSelection {
+        let selection = focus::request_focus_next_window(self.model);
+        let focused_window_id = seat::sync_focused_window(self.model, seat_id, selection.focused_window_id);
+        FocusSelection { focused_window_id }
+    }
+
+    pub fn request_focus_previous_window_selection(
+        &mut self,
+        seat_id: impl Into<SeatId>,
+    ) -> FocusSelection {
+        let selection = focus::request_focus_previous_window(self.model);
+        let focused_window_id = seat::sync_focused_window(self.model, seat_id, selection.focused_window_id);
+        FocusSelection { focused_window_id }
     }
 
     pub fn sync_hovered_window(
@@ -86,12 +113,8 @@ impl<'a> WmActions<'a> {
         focus::remove_window(self.model, window_id)
     }
 
-    pub fn mark_focused_window_closing(&mut self) -> Option<WindowId> {
-        window::mark_focused_window_closing(self.model)
-    }
-
-    pub fn request_close_focused_window(&mut self) -> Option<WindowId> {
-        self.mark_focused_window_closing()
+    pub fn request_close_focused_window_selection(&mut self) -> CloseSelection {
+        window::request_close_focused_window(self.model)
     }
 
     pub fn sync_window_identity(
@@ -126,10 +149,10 @@ mod tests {
         actions.ensure_seat("winit");
         actions.sync_output("winit", "winit", 1280, 720);
         actions.place_new_window(WindowId(5));
-        let focused = actions.sync_focus("winit", Some(WindowId(5)));
+        let focused = actions.request_focus_window_selection("winit", Some(WindowId(5)));
         let mapped = actions.sync_window_mapped(WindowId(5), true);
 
-        assert_eq!(focused, Some(WindowId(5)));
+        assert_eq!(focused.focused_window_id, Some(WindowId(5)));
         assert_eq!(mapped, Some(WindowId(5)));
         assert_eq!(model.current_workspace_id, Some(WorkspaceId("1".to_string())));
         assert_eq!(model.current_output_id, Some(OutputId("winit".to_string())));

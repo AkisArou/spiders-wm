@@ -145,6 +145,31 @@ impl WmModel {
         }
     }
 
+    pub fn window_ids_on_current_workspace<I>(&self, window_ids: I) -> Vec<WindowId>
+    where
+        I: IntoIterator<Item = WindowId>,
+    {
+        window_ids
+            .into_iter()
+            .filter(|window_id| self.window_is_on_current_workspace(*window_id))
+            .collect()
+    }
+
+    pub fn preferred_focus_window_on_current_workspace<I>(&self, window_ids: I) -> Option<WindowId>
+    where
+        I: IntoIterator<Item = WindowId>,
+    {
+        let visible_window_ids = self.window_ids_on_current_workspace(window_ids);
+
+        if let Some(focused_window_id) = self.focused_window_id {
+            if visible_window_ids.contains(&focused_window_id) {
+                return Some(focused_window_id);
+            }
+        }
+
+        visible_window_ids.into_iter().last()
+    }
+
     pub fn set_window_mapped(&mut self, id: WindowId, mapped: bool) {
         if let Some(window) = self.windows.get_mut(&id) {
             window.mapped = mapped;
@@ -351,5 +376,40 @@ mod tests {
         assert!(!model.window_is_on_current_workspace(WindowId(1)));
         assert!(model.window_is_on_current_workspace(WindowId(2)));
         assert!(!model.window_is_on_current_workspace(WindowId(99)));
+    }
+
+    #[test]
+    fn current_workspace_window_order_preserves_stack_order_input() {
+        let mut model = WmModel::default();
+        model.upsert_workspace(WorkspaceId("1".to_string()), "1".to_string());
+        model.upsert_workspace(WorkspaceId("2".to_string()), "2".to_string());
+        model.set_current_workspace(WorkspaceId("2".to_string()));
+        model.insert_window(WindowId(1), Some(WorkspaceId("1".to_string())), None);
+        model.insert_window(WindowId(2), Some(WorkspaceId("2".to_string())), None);
+        model.insert_window(WindowId(3), Some(WorkspaceId("2".to_string())), None);
+
+        let visible = model.window_ids_on_current_workspace([WindowId(3), WindowId(1), WindowId(2)]);
+
+        assert_eq!(visible, vec![WindowId(3), WindowId(2)]);
+    }
+
+    #[test]
+    fn preferred_focus_window_falls_back_to_last_visible_window() {
+        let mut model = WmModel::default();
+        model.upsert_workspace(WorkspaceId("1".to_string()), "1".to_string());
+        model.upsert_workspace(WorkspaceId("2".to_string()), "2".to_string());
+        model.set_current_workspace(WorkspaceId("2".to_string()));
+        model.insert_window(WindowId(1), Some(WorkspaceId("1".to_string())), None);
+        model.insert_window(WindowId(2), Some(WorkspaceId("2".to_string())), None);
+        model.insert_window(WindowId(3), Some(WorkspaceId("2".to_string())), None);
+        model.set_window_focused(Some(WindowId(1)));
+
+        let focused = model.preferred_focus_window_on_current_workspace([
+            WindowId(1),
+            WindowId(2),
+            WindowId(3),
+        ]);
+
+        assert_eq!(focused, Some(WindowId(3)));
     }
 }

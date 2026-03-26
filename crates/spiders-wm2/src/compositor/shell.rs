@@ -12,32 +12,52 @@ use crate::state::{ManagedWindow, SpidersWm};
 
 impl SpidersWm {
     pub fn ensure_and_select_workspace(&mut self, name: impl Into<String>, serial: Serial) {
+        let window_order: Vec<_> = self.managed_windows.iter().map(|record| record.id).collect();
         let workspace_id = match self.runtime().execute(RuntimeCommand::EnsureWorkspace { name: name.into() }) {
             RuntimeResult::Workspace(workspace_id) => workspace_id,
             _ => return,
         };
 
-        let _ = self.runtime().execute(RuntimeCommand::SelectWorkspace {
-            workspace_id: workspace_id.clone(),
-        });
-        info!(workspace = %workspace_id.0, "selected workspace");
-        self.apply_workspace_selection(serial);
+        let selection = match self.runtime().execute(RuntimeCommand::RequestSelectWorkspace {
+            workspace_id,
+            window_order,
+        }) {
+            RuntimeResult::WorkspaceSelection(Some(selection)) => selection,
+            _ => return,
+        };
+        info!(workspace = %selection.workspace_id.0, "selected workspace");
+        self.apply_workspace_selection(selection.focused_window_id, serial);
     }
 
     pub fn select_next_workspace(&mut self, serial: Serial) {
-        let workspace_id = match self.runtime().execute(RuntimeCommand::SelectNextWorkspace) {
-            RuntimeResult::Workspace(workspace_id) => workspace_id,
+        let window_order: Vec<_> = self.managed_windows.iter().map(|record| record.id).collect();
+        let selection = match self.runtime().execute(RuntimeCommand::RequestSelectNextWorkspace {
+            window_order,
+        }) {
+            RuntimeResult::WorkspaceSelection(Some(selection)) => selection,
             _ => return,
         };
-        info!(workspace = %workspace_id.0, "selected workspace");
-        self.apply_workspace_selection(serial);
+        info!(workspace = %selection.workspace_id.0, "selected workspace");
+        self.apply_workspace_selection(selection.focused_window_id, serial);
+    }
+
+    pub fn select_previous_workspace(&mut self, serial: Serial) {
+        let window_order: Vec<_> = self.managed_windows.iter().map(|record| record.id).collect();
+        let selection = match self.runtime().execute(RuntimeCommand::RequestSelectPreviousWorkspace {
+            window_order,
+        }) {
+            RuntimeResult::WorkspaceSelection(Some(selection)) => selection,
+            _ => return,
+        };
+        info!(workspace = %selection.workspace_id.0, "selected workspace");
+        self.apply_workspace_selection(selection.focused_window_id, serial);
     }
 
     pub fn focus_next_window(&mut self, serial: Serial) {
-        let next_focus_window_id = match self.runtime().execute(RuntimeCommand::RequestFocusNextWindow {
+        let next_focus_window_id = match self.runtime().execute(RuntimeCommand::RequestFocusNextWindowSelection {
             seat_id: "winit".into(),
         }) {
-            RuntimeResult::Window(window_id) => window_id,
+            RuntimeResult::FocusSelection(selection) => selection.focused_window_id,
             _ => None,
         };
         let next_surface = next_focus_window_id.and_then(|window_id| self.surface_for_window_id(window_id));
@@ -46,40 +66,35 @@ impl SpidersWm {
         self.apply_window_activation(next_surface.as_ref());
     }
 
-    fn apply_workspace_selection(&mut self, serial: Serial) {
+    pub fn focus_previous_window(&mut self, serial: Serial) {
+        let previous_focus_window_id = match self.runtime().execute(
+            RuntimeCommand::RequestFocusPreviousWindowSelection {
+                seat_id: "winit".into(),
+            },
+        ) {
+            RuntimeResult::FocusSelection(selection) => selection.focused_window_id,
+            _ => None,
+        };
+        let previous_surface = previous_focus_window_id.and_then(|window_id| self.surface_for_window_id(window_id));
+
+        self.apply_backend_focus(previous_surface.clone(), serial);
+        self.apply_window_activation(previous_surface.as_ref());
+    }
+
+    fn apply_workspace_selection(&mut self, focused_window_id: Option<WindowId>, serial: Serial) {
         self.schedule_relayout();
-        let focused_surface = self.focus_surface_for_current_workspace();
+        let focused_surface = focused_window_id.and_then(|window_id| self.surface_for_window_id(window_id));
         self.set_focus(focused_surface, serial);
     }
 
-    fn focus_surface_for_current_workspace(&self) -> Option<WlSurface> {
-        let current_workspace_id = self.model.current_workspace_id.as_ref()?;
-
-        if let Some(focused_window_id) = self.model.focused_window_id {
-            let focused_is_visible = self
-                .model
-                .windows
-                .get(&focused_window_id)
-                .and_then(|window| window.workspace_id.as_ref())
-                == Some(current_workspace_id);
-            if focused_is_visible {
-                return self.surface_for_window_id(focused_window_id);
-            }
-        }
-
-        self.managed_windows
-            .iter()
-            .rev()
-            .find(|record| self.model.window_is_on_current_workspace(record.id))
-            .map(ManagedWindow::wl_surface)
-    }
-
     pub fn close_focused_window(&mut self) {
-        let Some(focused_surface) = self.focused_surface.clone() else {
+        let closing_window_id = match self.runtime().execute(RuntimeCommand::RequestCloseFocusedWindowSelection) {
+            RuntimeResult::CloseSelection(selection) => selection.closing_window_id,
+            _ => None,
+        };
+        let Some(focused_surface) = closing_window_id.and_then(|window_id| self.surface_for_window_id(window_id)) else {
             return;
         };
-
-        let _ = self.runtime().execute(RuntimeCommand::RequestCloseFocusedWindow);
 
         if let Some(record) = self.managed_window_for_surface(&focused_surface) {
             if let Some(toplevel) = record.window.toplevel() {
@@ -102,11 +117,11 @@ impl SpidersWm {
     }
 
     fn update_modeled_focus(&mut self, focused_window_id: Option<WindowId>) -> Option<WindowId> {
-        match self.runtime().execute(RuntimeCommand::RequestFocusWindow {
+        match self.runtime().execute(RuntimeCommand::RequestFocusWindowSelection {
             seat_id: "winit".into(),
             window_id: focused_window_id,
         }) {
-            RuntimeResult::Window(focused_window_id) => focused_window_id,
+            RuntimeResult::FocusSelection(selection) => selection.focused_window_id,
             _ => None,
         }
     }

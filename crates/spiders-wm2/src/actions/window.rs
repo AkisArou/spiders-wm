@@ -1,6 +1,11 @@
 use crate::model::wm::WmModel;
 use crate::model::WindowId;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CloseSelection {
+    pub closing_window_id: Option<WindowId>,
+}
+
 pub fn mark_focused_window_closing(model: &mut WmModel) -> Option<WindowId> {
     let focused_id = model
         .focused_window_id
@@ -15,6 +20,12 @@ pub fn mark_focused_window_closing(model: &mut WmModel) -> Option<WindowId> {
     }
 
     focused_id
+}
+
+pub fn request_close_focused_window(model: &mut WmModel) -> CloseSelection {
+    CloseSelection {
+        closing_window_id: mark_focused_window_closing(model),
+    }
 }
 
 pub fn sync_window_identity(
@@ -48,6 +59,22 @@ mod tests {
         assert_eq!(model.windows.get(&WindowId(1)).map(|window| window.closing), Some(false));
         assert_eq!(model.windows.get(&WindowId(2)).map(|window| window.closing), Some(true));
         assert_eq!(model.focused_window_id, Some(WindowId(2)));
+    }
+
+    #[test]
+    fn request_close_focused_window_returns_selection() {
+        let mut model = WmModel::default();
+        model.insert_window(WindowId(4), None, None);
+        model.set_window_focused(Some(WindowId(4)));
+
+        let selection = request_close_focused_window(&mut model);
+
+        assert_eq!(
+            selection,
+            CloseSelection {
+                closing_window_id: Some(WindowId(4)),
+            }
+        );
     }
 
     #[test]

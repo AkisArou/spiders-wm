@@ -93,10 +93,10 @@ impl SpidersWm {
             let _ = runtime.execute(RuntimeCommand::EnsureDefaultWorkspace {
                 name: "1".to_string(),
             });
-            let _ = runtime.execute(RuntimeCommand::SelectWorkspace {
+            let _ = runtime.execute(RuntimeCommand::RequestSelectWorkspace {
                 workspace_id: "1".into(),
+                window_order: Vec::new(),
             });
-            let _ = runtime.execute(RuntimeCommand::SelectNextWorkspace);
             let _ = runtime.execute(RuntimeCommand::EnsureSeat {
                 seat_id: "winit".into(),
             });
@@ -215,13 +215,15 @@ impl SpidersWm {
     }
 
     pub fn visible_managed_window_positions(&self) -> Vec<usize> {
+        let visible_window_ids = self
+            .model
+            .window_ids_on_current_workspace(self.managed_windows.iter().map(|record| record.id));
+
         self.managed_windows
             .iter()
             .enumerate()
             .filter_map(|(index, record)| {
-                self.model
-                    .window_is_on_current_workspace(record.id)
-                    .then_some(index)
+                visible_window_ids.contains(&record.id).then_some(index)
             })
             .collect()
     }
