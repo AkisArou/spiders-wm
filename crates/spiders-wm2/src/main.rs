@@ -2,6 +2,7 @@ mod actions;
 mod compositor;
 mod frame_sync;
 mod handlers;
+mod ipc;
 mod model;
 mod runtime;
 mod state;
@@ -22,6 +23,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Child processes should connect to the nested compositor socket.
     unsafe {
         std::env::set_var("WAYLAND_DISPLAY", &state.socket_name);
+        if let Some(ipc_socket_path) = state.ipc_socket_path.as_ref() {
+            std::env::set_var("SPIDERS_WM_IPC_SOCKET", ipc_socket_path);
+        }
     }
 
     event_loop.run(None, &mut state, |_| {})?;

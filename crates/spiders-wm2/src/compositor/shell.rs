@@ -214,6 +214,9 @@ impl SpidersWm {
 
         info!(workspace = %workspace_id.0, "assigned focused window to workspace");
         self.schedule_relayout();
+        if let Some(window_id) = focused_window_id.clone() {
+            self.emit_window_workspace_change(window_id);
+        }
         let focused_surface = focused_window_id.and_then(|window_id| self.surface_for_window_id(window_id));
         self.set_focus(focused_surface, serial);
     }
@@ -238,6 +241,9 @@ impl SpidersWm {
 
         info!(workspace = %workspace_id.0, "toggled focused window assignment to workspace");
         self.schedule_relayout();
+        if let Some(window_id) = focused_window_id.clone() {
+            self.emit_window_workspace_change(window_id);
+        }
         let focused_surface = focused_window_id.and_then(|window_id| self.surface_for_window_id(window_id));
         self.set_focus(focused_surface, serial);
     }
@@ -252,6 +258,14 @@ impl SpidersWm {
         }
 
         self.schedule_relayout();
+        if let Some(window_id) = toggled_window_id {
+            let floating = self
+                .model
+                .windows
+                .get(&window_id)
+                .is_some_and(|window| window.floating);
+            self.emit_window_floating_change(window_id, floating);
+        }
     }
 
     pub fn toggle_focused_window_fullscreen(&mut self) {
@@ -264,6 +278,14 @@ impl SpidersWm {
         }
 
         self.schedule_relayout();
+        if let Some(window_id) = toggled_window_id {
+            let fullscreen = self
+                .model
+                .windows
+                .get(&window_id)
+                .is_some_and(|window| window.fullscreen);
+            self.emit_window_fullscreen_change(window_id, fullscreen);
+        }
     }
 
     pub fn set_focus(&mut self, surface: Option<WlSurface>, serial: Serial) {
@@ -273,6 +295,7 @@ impl SpidersWm {
 
         self.apply_backend_focus(focused_surface.clone(), serial);
         self.apply_window_activation(focused_surface.as_ref());
+        self.emit_focus_change();
     }
 
     fn resolve_focus_window_id(&self, surface: Option<&WlSurface>) -> Option<WindowId> {

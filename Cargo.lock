@@ -3088,11 +3088,14 @@ dependencies = [
 name = "spiders-wm2"
 version = "0.1.0"
 dependencies = [
+ "serde_json",
  "smithay",
  "spiders-config",
+ "spiders-ipc",
  "spiders-runtime-js",
  "spiders-shared",
  "spiders-tree",
+ "thiserror 2.0.18",
  "tracing",
  "tracing-subscriber",
 ]

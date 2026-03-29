@@ -7,9 +7,11 @@ publish.workspace = true
 
 [dependencies]
 spiders-config = { path = "../spiders-config" }
+spiders-ipc = { path = "../spiders-ipc" }
 spiders-runtime-js = { path = "../runtimes/js" }
 spiders-shared = { path = "../spiders-shared" }
 spiders-tree = { path = "../spiders-tree" }
+thiserror = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["env-filter", "fmt", "ansi"] }
 
@@ -22,3 +24,6 @@ features = [
     "desktop",
     "wayland_frontend",
 ]
+
+[dev-dependencies]
+serde_json.workspace = true
