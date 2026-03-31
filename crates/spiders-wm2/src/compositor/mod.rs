@@ -7,3 +7,4 @@ pub(crate) mod navigation;
 pub(crate) mod rendering;
 pub(crate) mod shell;
 pub(crate) mod windows;
+pub(crate) mod workspaces;
