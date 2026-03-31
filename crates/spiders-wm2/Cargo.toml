@@ -9,6 +9,7 @@ publish.workspace = true
 anyhow.workspace = true
 spiders-config = { path = "../spiders-config" }
 spiders-ipc = { path = "../spiders-ipc" }
+spiders-scene = { path = "../spiders-scene" }
 spiders-runtime-js = { path = "../runtimes/js" }
 spiders-shared = { path = "../spiders-shared" }
 spiders-tree = { path = "../spiders-tree" }

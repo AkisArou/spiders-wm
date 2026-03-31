@@ -19,6 +19,14 @@ That does not mean "done forever". It means:
 
 For restructuring purposes, `frame_sync` should now be treated as a mostly frozen subsystem.
 
+Its current internal shape is intentionally small:
+
+- `frame_sync/mod.rs` is the façade and ownership boundary
+- `frame_sync/transaction.rs` holds the transaction and pending-configure machinery
+- `frame_sync/render_snapshot.rs` holds snapshot capture and render elements
+
+That is the preferred shape for now. Do not proactively split `frame_sync` further unless a specific internal pressure appears. The goal of this phase is containment, not creating more submodules.
+
 The main rule for upcoming work is:
 
 - new layout systems should produce target layout decisions
@@ -26,14 +34,22 @@ The main rule for upcoming work is:
 
 ## Current Problem
 
-`spiders-wm2` still has an early-stage structure:
+`spiders-wm2` has moved beyond the earliest proof-of-concept layout, but the structure is still transitional.
+
+Current source layout already includes:
 
 - `main.rs`
-- `state.rs`
-- `winit.rs`
-- `input.rs`
-- `handlers/`
+- `app/`
+- `actions/`
+- `compositor/`
 - `frame_sync/`
+- `model/`
+- `runtime/`
+- `scene/`
+- `state.rs`
+- `layout.rs`
+- `ipc.rs`
+- `handlers/`
 
 This is workable for the proof of concept, but it is not a good base for integrating:
 
@@ -42,7 +58,13 @@ This is workable for the proof of concept, but it is not a good base for integra
 - the JS runtime crates
 - richer models/actions/policies similar to `spiders-wm`
 
-Right now too much responsibility still lives in `state.rs`.
+The remaining structural problem is more specific now:
+
+- too much bootstrap and composition-root logic still lives in `state.rs`
+- the new `app/bootstrap.rs` boundary exists, but `state.rs` still owns too much application-side orchestration
+- compositor application, runtime orchestration, and model-to-Smithay bridging are still mixed together in `state.rs`
+- `scene/adapter.rs` now owns the authoring-layout service, scene cache, and scene-backed target computation, but bootstrap tiling still remains as the final fallback path
+- `frame_sync` is in a good containment state, but the rest of wm2 still needs to be reorganized around it
 
 ## Design Principles
 
@@ -67,11 +89,9 @@ src/
   compositor/
     mod.rs
     shell.rs
-    outputs.rs
+    layout.rs
     input.rs
     rendering.rs
-    dmabuf.rs
-    popups.rs
   model/
     mod.rs
     wm.rs
@@ -81,17 +101,16 @@ src/
     window.rs
   actions/
     mod.rs
+    facade.rs
     focus.rs
+    output.rs
+    seat.rs
     workspace.rs
     window.rs
-    layout.rs
   frame_sync/
     mod.rs
-    runtime.rs
     transaction.rs
-    snapshots.rs
-    close_path.rs
-    planner.rs
+    render_snapshot.rs
   scene/
     mod.rs
     layout.rs
@@ -100,17 +119,17 @@ src/
     adapter.rs
   runtime/
     mod.rs
-    config.rs
-    js.rs
-    registry.rs
-  smithay/
-    mod.rs
-    state.rs
-    handlers/
-    winit.rs
+    command.rs
 ```
 
-This does not need to be created all at once. It is the target shape.
+This does not need to be created all at once. It is the target shape after reconciling with the directories that already exist today.
+
+Notably:
+
+- `compositor/`, `model/`, `actions/`, and `runtime/` are already present and should be expanded rather than reintroduced
+- `frame_sync/` should stay small and stable instead of being split into more files right now
+- a future `app/` boundary is still desirable, but it should be introduced only when it is ready to absorb real bootstrap code from `state.rs` and `winit.rs`
+- `app/` now exists and should continue absorbing composition-root responsibilities from `state.rs`
 
 ## Architectural Roles
 
@@ -133,6 +152,10 @@ Must not own:
 - config loading
 - JS runtime concerns
 - workspace/window policy unrelated to visibility timing
+
+Current note:
+
+- keep `frame_sync` as `mod.rs` plus the two internal implementation files unless a concrete maintenance problem forces a split
 
 ### 2. `model`
 
@@ -237,20 +260,34 @@ Things not to port directly:
 
 ## Immediate Restructure Plan
 
-### Phase 1: Split `state.rs` by responsibility
+### Phase 1: Consolidate the current composition root
 
 Goal: reduce `state.rs` into a composition root rather than a giant behavior file.
 
-Move first:
+Status:
 
-- socket/display/bootstrap setup into `app/bootstrap.rs`
-- focus/window lifecycle helpers into `compositor/shell.rs`
-- redraw/snapshot/render orchestration into `compositor/rendering.rs`
-- input processing into `compositor/input.rs`
+- partially complete
+- `app/bootstrap.rs` now owns startup assembly, config discovery, Wayland listener setup, IPC listener setup, and winit initialization
+- relayout planning/application now lives in `compositor/layout.rs` instead of `state.rs`
+- `compositor/input.rs`, `compositor/rendering.rs`, and `compositor/shell.rs` already exist
+- `model/`, `actions/`, and `runtime/` already exist and are no longer hypothetical
+- the remaining work is to keep moving orchestration and apply-layer responsibilities out of `state.rs`
+
+Move next:
+
+- keep building out `app/` as the composition-root boundary
+- split any remaining startup or lifecycle glue out of `state.rs` when it is not true owned state
+- decide whether long-term backend setup belongs entirely in `app/` or in a thinner Smithay/platform module under `compositor/`
+- keep `state.rs` focused on owned state, lookups, and high-level relayout/application entry points
 
 Do not change behavior in this phase.
 
 ### Phase 2: Introduce a real `model/`
+
+Status:
+
+- underway
+- `model/` exists and already owns meaningful WM data
 
 Create wm2 model types for:
 
@@ -262,9 +299,14 @@ Create wm2 model types for:
 
 Initially these can coexist with current Smithay-owned records.
 
-The main purpose is to stop using the compositor object graph as the only source of truth.
+The main purpose is to continue reducing reliance on the compositor object graph as the only source of truth.
 
 ### Phase 3: Introduce `actions/`
+
+Status:
+
+- underway
+- `actions/` exists and already drives part of the runtime command surface
 
 Extract pure operations from stateful methods such as:
 
@@ -277,6 +319,11 @@ These should work on the wm2 model, not directly on Smithay objects.
 
 ### Phase 4: Add `runtime/` integration boundary
 
+Status:
+
+- underway
+- `runtime/` exists, but the integration boundary is still thin and still wired too directly through compositor state
+
 Prepare for:
 
 - `spiders-config`
@@ -287,6 +334,12 @@ Prepare for:
 This phase should produce a small service layer that can later feed scene/layout inputs into the compositor.
 
 ### Phase 5: Add `scene/adapter`
+
+Status:
+
+- underway
+- `scene/adapter.rs` now owns wm2's scene-facing layout engine, including prepared-layout evaluation and `spiders-scene` target extraction
+- bootstrap tiling remains behind that adapter as a last-resort fallback when scene evaluation or coverage fails
 
 Create a wm2-specific adapter that converts:
 
@@ -302,6 +355,7 @@ into:
 
 Once `spiders-scene` is integrated:
 
+- tighten scene coverage until the bootstrap planner is no longer needed
 - delete the current temporary tiled planner logic
 - keep `frame_sync` as the transition contract around the new layout outputs
 
@@ -309,12 +363,12 @@ Once `spiders-scene` is integrated:
 
 These are the safest next structural steps:
 
-1. Create `crates/spiders-wm2/src/compositor/`.
-2. Move redraw, frame dispatch, and output render code out of `state.rs` and `winit.rs` into `compositor/rendering.rs`.
-3. Move focus and window lifecycle helpers out of `state.rs` into `compositor/shell.rs`.
-4. Move input event translation into `compositor/input.rs`.
-5. Leave `frame_sync/` unchanged except for small API polish.
-6. Introduce `model/mod.rs` with minimal placeholder model structs before any scene integration.
+1. Create `crates/spiders-wm2/src/app/` and move `SpidersWm::new`, Wayland socket setup, config loading, and IPC/bootstrap helpers out of `state.rs`.
+2. Reduce `state.rs` to owned state definitions, lookup helpers, relayout entry points, and thin application glue.
+3. Decide whether any remaining backend/platform wiring should stay in `app/` or move under a thinner Smithay-facing compositor boundary.
+4. Leave `frame_sync/` unchanged except for small API polish or internal test additions.
+5. Continue moving model mutations and policy decisions toward `model/`, `actions/`, and `runtime/` instead of adding new behavior to `state.rs`.
+6. Finish collapsing bootstrap fallback usage now that `scene/adapter.rs` can already produce real `spiders-scene` driven targets.
 
 That sequence improves structure without forcing layout migration early.
 
@@ -349,12 +403,11 @@ Use as the shared typed interface for snapshots, layout/style payloads, and API-
 ## Suggested Order Of Execution
 
 1. Freeze `frame_sync` behavior and API shape.
-2. Split compositor code out of `state.rs`.
-3. Introduce wm2 `model/`.
-4. Introduce wm2 `actions/`.
-5. Introduce `runtime/` service boundary.
-6. Integrate `spiders-scene` behind `scene/adapter`.
-7. Remove the temporary planner.
+2. Continue the composition-root split by shrinking `state.rs` around the new `app/` bootstrap boundary.
+3. Continue shrinking `state.rs` so model/runtime/compositor boundaries become explicit.
+4. Strengthen wm2 `model/`, `actions/`, and `runtime/` around the already-existing modules.
+5. Keep shrinking `state.rs` and runtime/compositor glue now that the scene boundary owns real target computation.
+6. Remove the temporary planner once scene coverage is complete.
 
 ## Definition Of Success
 

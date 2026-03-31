@@ -1,42 +1,35 @@
 use std::ffi::OsString;
-use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::mpsc::{Receiver, Sender};
 use std::path::PathBuf;
 use std::process::Command;
-use std::sync::Arc;
 use std::os::unix::net::UnixStream;
 use std::collections::BTreeMap;
 
-use spiders_config::model::{Config, ConfigDiscoveryOptions, ConfigPaths};
+use spiders_config::model::{Config, ConfigPaths};
 use spiders_ipc::{IpcClientId, IpcServerState};
 
 use smithay::backend::renderer::gles::GlesRenderer;
 use smithay::backend::winit::WinitGraphicsBackend;
 use smithay::desktop::{PopupManager, Space, Window, WindowSurfaceType};
 use smithay::input::{Seat, SeatState};
-use smithay::reexports::calloop::{
-    EventLoop, Interest, LoopHandle, LoopSignal, Mode, PostAction, generic::Generic,
-};
-use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel;
+use smithay::reexports::calloop::{LoopHandle, LoopSignal};
 use smithay::reexports::wayland_server::backend::{ClientData, ClientId, DisconnectReason};
-use smithay::reexports::wayland_server::protocol::{wl_output::WlOutput, wl_surface::WlSurface};
-use smithay::reexports::wayland_server::{Client, Display, DisplayHandle, Resource};
-use smithay::utils::{Logical, Point, Size};
+use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
+use smithay::reexports::wayland_server::{Client, DisplayHandle};
+use smithay::utils::{Logical, Point};
 use smithay::wayland::compositor::{CompositorClientState, CompositorHandler, CompositorState};
 use smithay::wayland::output::OutputHandler;
 use smithay::wayland::dmabuf::{DmabufGlobal, DmabufState};
-use smithay::wayland::output::OutputManagerState;
 use smithay::wayland::selection::SelectionHandler;
 use smithay::wayland::selection::data_device::DataDeviceHandler;
 use smithay::wayland::selection::data_device::DataDeviceState;
 use smithay::wayland::shell::xdg::XdgShellState;
 use smithay::wayland::shm::ShmState;
-use smithay::wayland::socket::ListeningSocketSource;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 
-use crate::frame_sync::{FrameSyncState, SyncHandle, WindowFrameSyncState};
-use crate::layout::{plan_tiled_slot, plan_tiled_slots};
+use crate::frame_sync::{FrameSyncState, WindowFrameSyncState};
 use crate::model::{WindowId, wm::WmModel};
-use crate::runtime::{RuntimeCommand, WmRuntime};
+use crate::scene::adapter::SceneLayoutState;
 
 pub struct SpidersWm {
     pub start_time: std::time::Instant,
@@ -68,6 +61,7 @@ pub struct SpidersWm {
     pub(crate) ipc_server: IpcServerState,
     pub(crate) ipc_clients: BTreeMap<IpcClientId, UnixStream>,
     pub(crate) ipc_socket_path: Option<PathBuf>,
+    pub(crate) scene: SceneLayoutState,
     pub(crate) model: WmModel,
     pub(crate) next_window_id: u64,
 }
@@ -80,106 +74,6 @@ pub(crate) struct ManagedWindow {
 }
 
 impl SpidersWm {
-    pub fn new(event_loop: &mut EventLoop<'static, Self>, display: Display<Self>) -> Self {
-        let start_time = std::time::Instant::now();
-        let display_handle = display.handle();
-        let compositor_state = CompositorState::new::<Self>(&display_handle);
-        let xdg_shell_state = XdgShellState::new::<Self>(&display_handle);
-        let shm_state = ShmState::new::<Self>(&display_handle, vec![]);
-        let dmabuf_state = DmabufState::new();
-        let _output_manager_state =
-            OutputManagerState::new_with_xdg_output::<Self>(&display_handle);
-        let data_device_state = DataDeviceState::new::<Self>(&display_handle);
-        let popups = PopupManager::default();
-        let (blocker_cleared_tx, blocker_cleared_rx) = mpsc::channel();
-        let mut seat_state = SeatState::new();
-        let mut seat: Seat<Self> = seat_state.new_wl_seat(&display_handle, "winit");
-        seat.add_keyboard(Default::default(), 200, 25)
-            .expect("failed to create keyboard");
-        seat.add_pointer();
-
-        let socket_name = Self::init_wayland_listener(display, event_loop);
-        let mut model = WmModel::default();
-        {
-            let mut runtime = WmRuntime::new(&mut model);
-            let _ = runtime.execute(RuntimeCommand::EnsureDefaultWorkspace {
-                name: "1".to_string(),
-            });
-            let _ = runtime.execute(RuntimeCommand::EnsureSeat {
-                seat_id: "winit".into(),
-            });
-        }
-        let (config_paths, config) = Self::load_wm_config();
-        let ipc_socket_path = crate::ipc::init_ipc_listener(event_loop);
-
-        Self {
-            start_time,
-            socket_name,
-            display_handle,
-            event_loop: event_loop.handle(),
-            loop_signal: event_loop.get_signal(),
-            blocker_cleared_tx,
-            blocker_cleared_rx,
-            space: Space::default(),
-            popups,
-            compositor_state,
-            xdg_shell_state,
-            shm_state,
-            dmabuf_state,
-            dmabuf_global: None,
-            seat_state,
-            data_device_state,
-            seat,
-            backend: None,
-            focused_surface: None,
-            config_paths,
-            config,
-            managed_windows: Vec::new(),
-            frame_sync: FrameSyncState::default(),
-            ipc_server: IpcServerState::new(),
-            ipc_clients: BTreeMap::new(),
-            ipc_socket_path,
-            model,
-            next_window_id: 1,
-        }
-    }
-
-    fn init_wayland_listener(
-        display: Display<Self>,
-        event_loop: &mut EventLoop<'static, Self>,
-    ) -> OsString {
-        let listening_socket =
-            ListeningSocketSource::new_auto().expect("failed to create Wayland socket");
-        let socket_name = listening_socket.socket_name().to_os_string();
-        let loop_handle = event_loop.handle();
-
-        loop_handle
-            .insert_source(listening_socket, move |client_stream, _, state| {
-                state
-                    .display_handle
-                    .insert_client(client_stream, Arc::new(ClientState::default()))
-                    .expect("failed to insert Wayland client");
-            })
-            .expect("failed to register Wayland listening socket");
-
-        loop_handle
-            .insert_source(
-                Generic::new(display, Interest::READ, Mode::Level),
-                |_, display, state| {
-                    unsafe {
-                        display
-                            .get_mut()
-                            .dispatch_clients(state)
-                            .expect("failed to dispatch clients");
-                    }
-                    Ok(PostAction::Continue)
-                },
-            )
-            .expect("failed to register Wayland display source");
-
-        socket_name
-    }
-
     pub fn surface_under(
         &self,
         pos: Point<f64, Logical>,
@@ -326,8 +220,9 @@ impl SpidersWm {
     }
 
     pub fn reload_config(&mut self) {
-        let (config_paths, config) = Self::load_wm_config_with_paths(self.config_paths.clone());
+        let (config_paths, config) = crate::app::bootstrap::load_wm_config(self.config_paths.clone());
         self.config_paths = config_paths;
+        self.scene.set_config_paths(self.config_paths.clone());
         self.config = config;
         self.emit_config_reloaded();
     }
@@ -340,235 +235,9 @@ impl SpidersWm {
         }
     }
 
-    fn load_wm_config() -> (Option<ConfigPaths>, Config) {
-        Self::load_wm_config_with_paths(None)
-    }
-
-    fn load_wm_config_with_paths(existing_paths: Option<ConfigPaths>) -> (Option<ConfigPaths>, Config) {
-        let paths = match existing_paths {
-            Some(paths) => paths,
-            None => match ConfigPaths::discover(ConfigDiscoveryOptions::from_env()) {
-                Ok(paths) => paths,
-                Err(error) => {
-                    warn!(%error, "wm2 could not discover config paths; using empty config");
-                    return (None, Config::default());
-                }
-            },
-        };
-
-        let service = spiders_runtime_js::build_authoring_layout_service(&paths);
-        match service.load_config(&paths) {
-            Ok(config) => {
-                info!(
-                    authored_config = %paths.authored_config.display(),
-                    prepared_config = %paths.prepared_config.display(),
-                    binding_count = config.bindings.len(),
-                    "loaded wm2 config"
-                );
-                (Some(paths), config)
-            }
-            Err(error) => {
-                warn!(
-                    authored_config = %paths.authored_config.display(),
-                    prepared_config = %paths.prepared_config.display(),
-                    %error,
-                    "wm2 failed to load config; using empty config"
-                );
-                (Some(paths), Config::default())
-            }
-        }
-    }
-
-    pub fn schedule_relayout(&mut self) {
-        debug!(
-            window_count = self.managed_windows.len(),
-            "wm2 schedule relayout"
-        );
-        let _ = self.start_relayout();
-    }
-
     pub fn prune_completed_closing_overlays(&mut self) {
         self.frame_sync.prune_completed_closing_overlays();
     }
-
-    pub fn planned_layout_for_surface(
-        &self,
-        surface: &WlSurface,
-    ) -> Option<(Point<i32, Logical>, Size<i32, Logical>)> {
-        let output = self.space.outputs().next()?;
-        let output_geometry = self.space.output_geometry(output)?;
-        let visible_positions = self.visible_managed_window_positions();
-        let index = visible_positions
-            .iter()
-            .position(|managed_index| {
-                self.managed_windows[*managed_index]
-                    .window
-                    .toplevel()
-                    .is_some_and(|toplevel| toplevel.wl_surface() == surface)
-            })?;
-
-        let slot = plan_tiled_slot(output_geometry, visible_positions.len(), index)?;
-        Some((slot.location, slot.size))
-    }
-
-    pub(crate) fn start_relayout(&mut self) -> Option<SyncHandle> {
-        let output = self
-            .space
-            .outputs()
-            .next()
-            .cloned()
-            .expect("output must exist before relayout");
-        let output_geometry = self
-            .space
-            .output_geometry(&output)
-            .expect("output geometry missing during relayout");
-
-        let visible_positions = self.visible_managed_window_positions();
-        let fullscreen_window_id = self.model.fullscreen_window_on_current_workspace(
-            visible_positions
-                .iter()
-                .map(|managed_index| self.managed_windows[*managed_index].id.clone()),
-        );
-        info!(
-            visible_windows = visible_positions.len(),
-            total_windows = self.managed_windows.len(),
-            fullscreen_window = ?fullscreen_window_id,
-            "wm2 relayout start"
-        );
-        self.log_managed_window_state("before relayout");
-        for record in &self.managed_windows {
-            if !self.model.window_is_on_current_workspace(record.id.clone())
-                || fullscreen_window_id.as_ref().is_some_and(|window_id| *window_id != record.id)
-            {
-                self.space.unmap_elem(&record.window);
-            }
-        }
-
-        if visible_positions.is_empty() {
-            debug!("wm2 relayout skipped because there are no visible windows");
-            return None;
-        }
-
-        let relayout_positions = match fullscreen_window_id {
-            Some(ref fullscreen_window_id) => visible_positions
-                .iter()
-                .copied()
-                .filter(|managed_index| self.managed_windows[*managed_index].id == *fullscreen_window_id)
-                .collect::<Vec<_>>(),
-            None => visible_positions,
-        };
-
-        if fullscreen_window_id.is_some() {
-            for managed_index in self
-                .visible_managed_window_positions()
-                .into_iter()
-                .filter(|managed_index| !relayout_positions.contains(managed_index))
-            {
-                if let Some(toplevel) = self.managed_windows[managed_index].window.toplevel().cloned() {
-                    if sync_toplevel_fullscreen_state(&toplevel, false, None) {
-                        let _ = toplevel.send_configure();
-                    }
-                }
-            }
-        }
-
-        let slots = plan_tiled_slots(output_geometry, relayout_positions.len());
-        let mut relayout_transaction: Option<SyncHandle> = None;
-
-        for (slot_index, managed_index) in relayout_positions.into_iter().enumerate() {
-            let slot = slots[slot_index];
-            let current_location = self
-                .space
-                .element_location(&self.managed_windows[managed_index].window);
-            let toplevel = self.managed_windows[managed_index].window.toplevel().cloned();
-
-            if let Some(toplevel) = toplevel {
-                let record = &mut self.managed_windows[managed_index];
-                let fullscreen = fullscreen_window_id.as_ref() == Some(&record.id);
-                let fullscreen_output = fullscreen
-                    .then(|| fullscreen_output_for_toplevel(&output, &toplevel))
-                    .flatten();
-                let mut needs_configure = false;
-                toplevel.with_pending_state(|state| {
-                    if state.size != Some(slot.size) {
-                        needs_configure = true;
-                    }
-                    if sync_pending_fullscreen_state(state, fullscreen, fullscreen_output.clone()) {
-                        needs_configure = true;
-                    }
-                    state.size = Some(slot.size);
-                });
-
-                debug!(
-                    window = %record.id.0,
-                    mapped = record.mapped,
-                    pending_configures = record.frame_sync.has_pending_configures(),
-                    current_location = ?current_location,
-                    target_location = ?slot.location,
-                    target_size = ?slot.size,
-                    needs_configure,
-                    "wm2 relayout window plan"
-                );
-
-                if needs_configure {
-                    let serial = toplevel.send_configure();
-                    let transaction = relayout_transaction
-                        .get_or_insert_with(|| crate::frame_sync::new_sync_handle(&self.event_loop))
-                        .clone();
-                    record.frame_sync.track_pending_layout(
-                        serial,
-                        slot.location,
-                        slot.size,
-                        transaction,
-                    );
-                    debug!(window = %record.id.0, ?serial, "wm2 sent configure during relayout");
-                } else if !record.frame_sync.has_pending_configures() {
-                    self.space.map_element(record.window.clone(), slot.location, false);
-                    debug!(window = %record.id.0, location = ?slot.location, "wm2 mapped window during relayout");
-                } else {
-                    debug!(window = %record.id.0, "wm2 deferred remap until pending configure commits");
-                }
-            }
-        }
-
-        self.log_managed_window_state("after relayout");
-        relayout_transaction
-    }
-}
-
-fn sync_toplevel_fullscreen_state(
-    toplevel: &smithay::wayland::shell::xdg::ToplevelSurface,
-    fullscreen: bool,
-    fullscreen_output: Option<WlOutput>,
-) -> bool {
-    let mut changed = false;
-    toplevel.with_pending_state(|state| {
-        changed = sync_pending_fullscreen_state(state, fullscreen, fullscreen_output.clone());
-    });
-    changed
-}
-
-fn sync_pending_fullscreen_state(
-    state: &mut smithay::wayland::shell::xdg::ToplevelState,
-    fullscreen: bool,
-    fullscreen_output: Option<WlOutput>,
-) -> bool {
-    let output_changed = state.fullscreen_output != fullscreen_output;
-    state.fullscreen_output = fullscreen_output;
-
-    if fullscreen {
-        state.states.set(xdg_toplevel::State::Fullscreen) || output_changed
-    } else {
-        state.states.unset(xdg_toplevel::State::Fullscreen) || output_changed
-    }
-}
-
-fn fullscreen_output_for_toplevel(
-    output: &smithay::output::Output,
-    toplevel: &smithay::wayland::shell::xdg::ToplevelSurface,
-) -> Option<WlOutput> {
-    let client = toplevel.wl_surface().client()?;
-    output.client_outputs(&client).next()
 }
 
 impl ManagedWindow {
@@ -619,40 +288,6 @@ export default {{
     }
 
     #[test]
-    fn sync_pending_fullscreen_state_sets_fullscreen_flag() {
-        let mut state = smithay::wayland::shell::xdg::ToplevelState::default();
-
-        let changed = sync_pending_fullscreen_state(&mut state, true, None);
-
-        assert!(changed);
-        assert!(state.states.contains(xdg_toplevel::State::Fullscreen));
-        assert_eq!(state.fullscreen_output, None);
-    }
-
-    #[test]
-    fn sync_pending_fullscreen_state_clears_fullscreen_flag() {
-        let mut state = smithay::wayland::shell::xdg::ToplevelState::default();
-        state.states.set(xdg_toplevel::State::Fullscreen);
-
-        let changed = sync_pending_fullscreen_state(&mut state, false, None);
-
-        assert!(changed);
-        assert!(!state.states.contains(xdg_toplevel::State::Fullscreen));
-        assert_eq!(state.fullscreen_output, None);
-    }
-
-    #[test]
-    fn sync_pending_fullscreen_state_is_stable_when_unchanged() {
-        let mut state = smithay::wayland::shell::xdg::ToplevelState::default();
-
-        let changed = sync_pending_fullscreen_state(&mut state, false, None);
-
-        assert!(!changed);
-        assert!(!state.states.contains(xdg_toplevel::State::Fullscreen));
-        assert_eq!(state.fullscreen_output, None);
-    }
-
-    #[test]
     fn load_wm_config_with_paths_decodes_authored_toggle_workspace_binding() {
         let root = unique_root("config-load");
         let project_root = root.join("project");
@@ -664,7 +299,7 @@ export default {{
         let prepared_config = cache_root.join("config.js");
         write_authored_config(&authored_config, "commands.toggle_workspace(2)");
 
-        let (paths, config) = SpidersWm::load_wm_config_with_paths(Some(ConfigPaths::new(
+        let (paths, config) = crate::app::bootstrap::load_wm_config(Some(ConfigPaths::new(
             &authored_config,
             &prepared_config,
         )));
@@ -695,14 +330,14 @@ export default {{
         let paths = ConfigPaths::new(&authored_config, &prepared_config);
 
         write_authored_config(&authored_config, "commands.toggle_fullscreen()");
-        let (_, initial_config) = SpidersWm::load_wm_config_with_paths(Some(paths.clone()));
+        let (_, initial_config) = crate::app::bootstrap::load_wm_config(Some(paths.clone()));
         assert_eq!(initial_config.bindings.len(), 1);
         assert_eq!(initial_config.bindings[0].command, WmCommand::ToggleFullscreen);
 
         std::thread::sleep(Duration::from_millis(20));
         write_authored_config(&authored_config, "commands.reload_config()");
 
-        let (_, reloaded_config) = SpidersWm::load_wm_config_with_paths(Some(paths));
+        let (_, reloaded_config) = crate::app::bootstrap::load_wm_config(Some(paths));
         assert_eq!(reloaded_config.bindings.len(), 1);
         assert_eq!(reloaded_config.bindings[0].trigger, "super+Return");
         assert_eq!(reloaded_config.bindings[0].command, WmCommand::ReloadConfig);

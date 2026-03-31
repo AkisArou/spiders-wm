@@ -3094,6 +3094,7 @@ dependencies = [
  "spiders-config",
  "spiders-ipc",
  "spiders-runtime-js",
+ "spiders-scene",
  "spiders-shared",
  "spiders-tree",
  "thiserror 2.0.18",
