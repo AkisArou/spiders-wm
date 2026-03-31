@@ -19,29 +19,37 @@ pub fn set_focused_window(model: &mut WmModel, focused_id: Option<WindowId>) -> 
 }
 
 pub fn focus_next_window(model: &mut WmModel) -> Option<WindowId> {
-    let next_focus = match model.focused_window_id.clone() {
-        Some(current_id) => model
-            .windows
-            .keys()
+    let focusable_window_ids = model.focusable_window_ids();
+    let next_focus = match model
+        .focused_window_id
+        .clone()
+        .filter(|window_id| focusable_window_ids.contains(window_id))
+    {
+        Some(current_id) => focusable_window_ids
+            .iter()
+            .find(|window_id| **window_id > current_id)
             .cloned()
-            .find(|window_id| *window_id > current_id)
-            .or_else(|| model.windows.keys().next().cloned()),
-        None => model.windows.keys().next().cloned(),
+            .or_else(|| focusable_window_ids.first().cloned()),
+        None => focusable_window_ids.first().cloned(),
     };
 
     set_focused_window(model, next_focus)
 }
 
 pub fn focus_previous_window(model: &mut WmModel) -> Option<WindowId> {
-    let previous_focus = match model.focused_window_id.clone() {
-        Some(current_id) => model
-            .windows
-            .keys()
-            .cloned()
+    let focusable_window_ids = model.focusable_window_ids();
+    let previous_focus = match model
+        .focused_window_id
+        .clone()
+        .filter(|window_id| focusable_window_ids.contains(window_id))
+    {
+        Some(current_id) => focusable_window_ids
+            .iter()
             .rev()
-            .find(|window_id| *window_id < current_id)
-            .or_else(|| model.windows.keys().next_back().cloned()),
-        None => model.windows.keys().next_back().cloned(),
+            .find(|window_id| **window_id < current_id)
+            .cloned()
+            .or_else(|| focusable_window_ids.last().cloned()),
+        None => focusable_window_ids.last().cloned(),
     };
 
     set_focused_window(model, previous_focus)
@@ -73,7 +81,30 @@ pub fn remove_window(model: &mut WmModel, removed_id: WindowId) -> FocusUpdate {
         return FocusUpdate::Unchanged;
     }
 
-    let next_focus = model.windows.keys().next_back().cloned();
+    let next_focus = model.preferred_focusable_window_id();
+    let next_focus = set_focused_window(model, next_focus);
+    FocusUpdate::Set(next_focus)
+}
+
+pub fn unmap_window(model: &mut WmModel, unmapped_id: WindowId) -> FocusUpdate {
+    if !model.windows.contains_key(&unmapped_id) {
+        return FocusUpdate::Unchanged;
+    }
+
+    let unmapped_was_focused = model.focused_window_id.as_ref() == Some(&unmapped_id);
+    model.set_window_mapped(unmapped_id.clone(), false);
+
+    if !unmapped_was_focused {
+        return FocusUpdate::Unchanged;
+    }
+
+    let next_focus = model
+        .windows
+        .iter()
+        .rev()
+        .find_map(|(window_id, window)| {
+            (*window_id != unmapped_id && !window.closing).then_some(window_id.clone())
+        });
     let next_focus = set_focused_window(model, next_focus);
     FocusUpdate::Set(next_focus)
 }
@@ -220,6 +251,8 @@ mod tests {
         let mut model = WmModel::default();
         model.insert_window(window_id(1), None, None);
         model.insert_window(window_id(2), None, None);
+        model.set_window_mapped(window_id(1), true);
+        model.set_window_mapped(window_id(2), true);
         model.set_window_focused(Some(window_id(2)));
 
         let selection = request_focus_previous_window(&mut model);
@@ -230,5 +263,35 @@ mod tests {
                 focused_window_id: Some(window_id(1)),
             }
         );
+    }
+
+    #[test]
+    fn focus_navigation_skips_closing_windows() {
+        let mut model = WmModel::default();
+        model.insert_window(window_id(1), None, None);
+        model.insert_window(window_id(2), None, None);
+        model.insert_window(window_id(3), None, None);
+        model.set_window_closing(window_id(2), true);
+        model.set_window_focused(Some(window_id(1)));
+
+        let next = focus_next_window(&mut model);
+
+        assert_eq!(next, Some(window_id(3)));
+    }
+
+    #[test]
+    fn unmapping_focused_window_moves_focus_to_remaining_mapped_window() {
+        let mut model = WmModel::default();
+        model.insert_window(window_id(1), None, None);
+        model.insert_window(window_id(2), None, None);
+        model.set_window_mapped(window_id(1), true);
+        model.set_window_mapped(window_id(2), true);
+        model.set_window_focused(Some(window_id(2)));
+
+        let update = unmap_window(&mut model, window_id(2));
+
+        assert_eq!(update, FocusUpdate::Set(Some(window_id(1))));
+        assert_eq!(model.focused_window_id, Some(window_id(1)));
+        assert_eq!(model.windows.get(&window_id(2)).map(|window| window.mapped), Some(false));
     }
 }

@@ -5,7 +5,7 @@ use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
 
 use spiders_ipc::{
-    IpcClientId, IpcRequest, IpcResponse, IpcServerHandleResult, IpcServerState,
+    IpcClientId, IpcCodecError, IpcRequest, IpcResponse, IpcServerHandleResult, IpcServerState,
     IpcTransportError, UnknownClientError, bind_listener, recv_request, send_response,
 };
 use spiders_shared::api::{CompositorEvent, QueryRequest, QueryResponse};
@@ -42,6 +42,7 @@ impl SpidersWm {
                 request_id,
                 query,
             } => {
+                debug!(client_id, request_id = ?request_id, query = ?query, "wm2 handling IPC query");
                 let response = self.query_ipc(query);
                 self.ipc_server.query_response(client_id, request_id, response)
             }
@@ -50,6 +51,7 @@ impl SpidersWm {
                 request_id,
                 command,
             } => {
+                debug!(client_id, request_id = ?request_id, command = ?command, "wm2 handling IPC command");
                 self.execute_wm_command(command);
                 self.ipc_server.command_accepted(client_id, request_id)
             }
@@ -90,6 +92,12 @@ impl SpidersWm {
                 self.ipc_remove_client(client_id);
                 Ok(PostAction::Remove)
             }
+            Err(WmIpcStreamError::Transport(IpcTransportError::Codec(
+                IpcCodecError::EmptyFrame,
+            ))) => {
+                self.ipc_remove_client(client_id);
+                Ok(PostAction::Remove)
+            }
             Err(WmIpcStreamError::UnknownClient(_)) => Ok(PostAction::Remove),
             Err(WmIpcStreamError::Transport(IpcTransportError::Codec(error))) => {
                 warn!(client_id, %error, "discarding malformed IPC request");
@@ -101,8 +109,21 @@ impl SpidersWm {
                     self.ipc_remove_client(client_id);
                     return Ok(PostAction::Remove);
                 };
-                send_response(stream, &response).map_err(stream_io_error)?;
-                Ok(PostAction::Continue)
+                match send_response(stream, &response).map_err(stream_io_error) {
+                    Ok(()) => Ok(PostAction::Continue),
+                    Err(error)
+                        if matches!(
+                            error.kind(),
+                            std::io::ErrorKind::BrokenPipe
+                                | std::io::ErrorKind::ConnectionReset
+                                | std::io::ErrorKind::UnexpectedEof
+                        ) =>
+                    {
+                        self.ipc_remove_client(client_id);
+                        Ok(PostAction::Remove)
+                    }
+                    Err(error) => Err(error),
+                }
             }
             Err(WmIpcStreamError::Transport(IpcTransportError::Io(error))) => Err(error),
         }

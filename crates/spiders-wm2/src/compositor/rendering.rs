@@ -2,45 +2,13 @@ use smithay::backend::renderer::damage::OutputDamageTracker;
 use smithay::output::Output;
 use smithay::utils::Rectangle;
 
-use crate::frame_sync::RenderElements;
+use crate::frame_sync::SnapshotRenderElement;
 use crate::state::SpidersWm;
 
 impl SpidersWm {
-    pub(crate) fn refresh_window_snapshots(
-        &mut self,
-        renderer: &mut smithay::backend::renderer::gles::GlesRenderer,
-    ) {
-        self.frame_sync.refresh_window_snapshots(
-            renderer,
-            self.managed_windows
-                .iter_mut()
-                .map(|record| (&record.window, record.mapped, &mut record.frame_sync)),
-        );
-    }
-
-    pub(crate) fn advance_closing_windows(&mut self) {
-        self.frame_sync.advance_closing_windows();
-        self.flush_queued_relayout();
-    }
-
-    pub(crate) fn advance_resize_overlays(&mut self) {
-        let remaps = self.frame_sync.finished_resize_overlay_mappings(
-            self.managed_windows
-                .iter_mut()
-                .map(|record| (&record.window, &mut record.frame_sync)),
-        );
-        self.frame_sync.advance_resize_overlays(&mut self.space, remaps);
-        self.flush_queued_relayout();
-    }
-
-    pub(crate) fn transition_render_elements(&self) -> Vec<RenderElements> {
-        self.frame_sync
-            .render_elements(self.managed_windows.iter().map(|record| &record.frame_sync))
-    }
-
     pub(crate) fn send_frames_for_windows(&self, output: &Output) {
         for record in &self.managed_windows {
-            if !record.frame_sync.needs_frame_callback(record.mapped) {
+            if !record.mapped {
                 continue;
             }
 
@@ -59,8 +27,7 @@ impl SpidersWm {
         damage_tracker: &mut OutputDamageTracker,
     ) {
         self.notify_blocker_cleared();
-        self.advance_closing_windows();
-        self.advance_resize_overlays();
+        self.prune_completed_closing_overlays();
 
         let mut backend = self
             .backend
@@ -72,16 +39,17 @@ impl SpidersWm {
         {
             let (renderer, mut framebuffer) =
                 backend.bind().expect("failed to bind winit backend");
-            self.refresh_window_snapshots(renderer);
-            let transition_elements = self.transition_render_elements();
-            smithay::desktop::space::render_output::<_, RenderElements, _, _>(
+            let scale = output.current_scale().fractional_scale().into();
+            let custom_elements = self.frame_sync.render_elements(renderer, scale, 1.0);
+
+            smithay::desktop::space::render_output::<_, SnapshotRenderElement, _, _>(
                 output,
                 renderer,
                 &mut framebuffer,
                 1.0,
                 0,
                 [&self.space],
-                &transition_elements,
+                &custom_elements,
                 damage_tracker,
                 [0.08, 0.08, 0.1, 1.0],
             )

@@ -46,6 +46,7 @@ pub enum RuntimeCommand {
         seat_id: SeatId,
         interacted_window_id: Option<WindowId>,
     },
+    UnmapWindow { window_id: WindowId },
     RemoveWindow { window_id: WindowId },
     RequestCloseFocusedWindowSelection,
     AssignFocusedWindowToWorkspace {
@@ -139,6 +140,9 @@ impl<'a> WmRuntime<'a> {
                 seat_id,
                 interacted_window_id,
             } => RuntimeResult::Window(self.sync_interacted_window(seat_id, interacted_window_id)),
+            RuntimeCommand::UnmapWindow { window_id } => {
+                RuntimeResult::FocusUpdate(self.unmap_window(window_id))
+            }
             RuntimeCommand::RemoveWindow { window_id } => {
                 RuntimeResult::FocusUpdate(self.remove_window(window_id))
             }
@@ -270,6 +274,10 @@ impl<'a> WmRuntime<'a> {
 
     pub fn remove_window(&mut self, window_id: WindowId) -> FocusUpdate {
         self.actions.remove_window(window_id)
+    }
+
+    pub fn unmap_window(&mut self, window_id: WindowId) -> FocusUpdate {
+        self.actions.unmap_window(window_id)
     }
 
     pub fn request_close_focused_window_selection(&mut self) -> CloseSelection {

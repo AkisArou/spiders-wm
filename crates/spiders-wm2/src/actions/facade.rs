@@ -113,6 +113,10 @@ impl<'a> WmActions<'a> {
         focus::remove_window(self.model, window_id)
     }
 
+    pub fn unmap_window(&mut self, window_id: WindowId) -> focus::FocusUpdate {
+        focus::unmap_window(self.model, window_id)
+    }
+
     pub fn request_close_focused_window_selection(&mut self) -> CloseSelection {
         window::request_close_focused_window(self.model)
     }

@@ -4,11 +4,12 @@ use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel;
 use smithay::reexports::wayland_server::Resource;
 use smithay::reexports::wayland_server::protocol::{wl_seat, wl_surface::WlSurface};
 use smithay::utils::Serial;
-use smithay::wayland::compositor::{HookId, add_blocker, add_pre_commit_hook, with_states};
+use smithay::wayland::compositor::with_states;
 use smithay::wayland::shell::xdg::{PopupConfigureError, XdgShellState};
 use smithay::wayland::shell::xdg::{
     PopupSurface, PositionerState, ToplevelSurface, XdgShellHandler, XdgToplevelSurfaceData,
 };
+use tracing::info;
 
 use crate::runtime::RuntimeCommand;
 use crate::state::SpidersWm;
@@ -19,7 +20,7 @@ impl XdgShellHandler for SpidersWm {
     }
 
     fn new_toplevel(&mut self, surface: ToplevelSurface) {
-        let _hook = add_transaction_pre_commit_hook(surface.wl_surface());
+        info!(surface = ?surface.wl_surface().id(), "wm2 new toplevel");
         let window = Window::new_wayland_window(surface);
         self.add_window(window);
     }
@@ -66,44 +67,12 @@ impl XdgShellHandler for SpidersWm {
     }
 
     fn toplevel_destroyed(&mut self, surface: ToplevelSurface) {
-        self.handle_window_close(surface.wl_surface());
+        info!(surface = ?surface.wl_surface().id(), "wm2 toplevel destroyed");
+        self.finalize_window_destroy(surface.wl_surface());
     }
 }
 
 delegate_xdg_shell!(SpidersWm);
-
-fn add_transaction_pre_commit_hook(surface: &WlSurface) -> HookId {
-    add_pre_commit_hook::<SpidersWm, _>(surface, move |state, _display_handle, wl_surface| {
-        let commit_serial = with_states(wl_surface, |states| {
-            states
-                .data_map
-                .get::<XdgToplevelSurfaceData>()
-                .and_then(|data| data.lock().ok())
-                .and_then(|role| role.last_acked.as_ref().map(|configure| configure.serial))
-        });
-
-        let Some(commit_serial) = commit_serial else {
-            return;
-        };
-
-        let Some(record) = state.find_window_mut(wl_surface) else {
-            return;
-        };
-
-        if let Some(transaction) = record.frame_sync.match_configure_commit(commit_serial) {
-            if !transaction.is_completed() {
-                transaction.register_deadline(&state.event_loop);
-
-                if !transaction.is_last() {
-                    if let Some(client) = wl_surface.client() {
-                        transaction.add_notification(state.blocker_cleared_tx.clone(), client);
-                        add_blocker(wl_surface, transaction.blocker());
-                    }
-                }
-            }
-        }
-    })
-}
 
 pub fn handle_commit(state: &mut SpidersWm, surface: &WlSurface) {
     sync_toplevel_identity(state, surface);
@@ -119,6 +88,11 @@ pub fn handle_commit(state: &mut SpidersWm, surface: &WlSurface) {
     let planned_size = (!initial_configure_sent)
         .then(|| state.planned_layout_for_surface(surface).map(|(_, size)| size))
         .flatten();
+    let planned_layout = (!initial_configure_sent)
+        .then(|| state.planned_layout_for_surface(surface))
+        .flatten();
+    let initial_transaction = (!initial_configure_sent)
+        .then(|| crate::frame_sync::new_sync_handle(&state.event_loop));
 
     if let Some(record) = state.find_window_mut(surface) {
         if !initial_configure_sent {
@@ -128,7 +102,16 @@ pub fn handle_commit(state: &mut SpidersWm, surface: &WlSurface) {
                         state.size = Some(size);
                     });
                 }
-                toplevel.send_configure();
+                info!(window = %record.id.0, planned_size = ?planned_size, "wm2 sending initial configure");
+                let serial = toplevel.send_configure();
+                if let Some((location, size)) = planned_layout {
+                    record.frame_sync.track_pending_layout(
+                        serial,
+                        location,
+                        size,
+                        initial_transaction.expect("initial transaction missing"),
+                    );
+                }
             }
         }
     }

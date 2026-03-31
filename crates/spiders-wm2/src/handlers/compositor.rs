@@ -8,6 +8,7 @@ use smithay::wayland::compositor::{
     CompositorClientState, CompositorHandler, CompositorState, get_parent, is_sync_subsurface,
 };
 use smithay::wayland::shm::{ShmHandler, ShmState};
+use tracing::{debug, info};
 
 use crate::state::{ClientState, SpidersWm};
 
@@ -37,11 +38,21 @@ impl CompositorHandler for SpidersWm {
             let is_mapped =
                 with_renderer_surface_state(&root, |state| state.buffer().is_some())
                     .unwrap_or(false);
+            let window_id = self.window_id_for_surface(&root);
+            let known_mapped = self.is_known_window_mapped(&root);
+
+            debug!(
+                window = ?window_id,
+                has_buffer = is_mapped,
+                known_mapped,
+                "wm2 compositor root commit"
+            );
 
             if is_mapped {
                 self.handle_window_commit(&root);
-            } else if self.is_known_window_mapped(&root) {
-                self.handle_window_close(&root);
+            } else if known_mapped {
+                info!(window = ?window_id, "wm2 compositor observed root unmap commit");
+                self.handle_window_unmap(&root);
             }
         }
 

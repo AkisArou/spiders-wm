@@ -3,6 +3,7 @@ mod compositor;
 mod frame_sync;
 mod handlers;
 mod ipc;
+mod layout;
 mod model;
 mod runtime;
 mod state;
@@ -10,6 +11,7 @@ mod winit;
 
 use smithay::reexports::{calloop::EventLoop, wayland_server::Display};
 use state::SpidersWm;
+use tracing::info;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     init_logging();
@@ -19,6 +21,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut state = SpidersWm::new(&mut event_loop, display);
     winit::init_winit(&mut event_loop, &mut state)?;
+    info!(wayland_display = %state.socket_name.to_string_lossy(), ipc_socket = ?state.ipc_socket_path, "wm2 initialized sockets");
 
     // Child processes should connect to the nested compositor socket.
     unsafe {
@@ -33,9 +36,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn init_logging() {
-    if let Ok(env_filter) = tracing_subscriber::EnvFilter::try_from_default_env() {
-        tracing_subscriber::fmt().with_env_filter(env_filter).init();
-    } else {
-        tracing_subscriber::fmt().init();
-    }
+    let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .or_else(|_| tracing_subscriber::EnvFilter::try_from_env("SPIDERS_LOG"))
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+
+    tracing_subscriber::fmt()
+        .with_env_filter(env_filter)
+        .with_target(true)
+        .init();
 }

@@ -1,167 +1,215 @@
-//! Transaction-based frame synchronization for frame-perfect relayouts.
-//!
-//! This module implements the core transaction mechanism ensuring that layout changes
-//! become visible atomically on screen without intermediate frames.
+use std::{
+    cell::RefCell,
+    collections::VecDeque,
+    rc::Rc,
+    sync::{
+        Arc, Mutex, Weak,
+        atomic::{AtomicBool, Ordering},
+        mpsc::Sender,
+    },
+    time::{Duration, Instant},
+};
 
-use std::cell::RefCell;
-use std::rc::Rc;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::Sender;
-use std::sync::{Arc, Mutex, Weak};
-use std::time::{Duration, Instant};
+use smithay::{
+    reexports::{
+        calloop::{
+            self, LoopHandle,
+            ping::Ping,
+            timer::{TimeoutAction, Timer},
+        },
+        wayland_server::Client,
+    },
+    utils::{Logical, Point, Serial, Size},
+    wayland::compositor::{Blocker, BlockerState},
+};
+use tracing::{debug, error, trace, trace_span, warn};
 
-use smithay::reexports::calloop::LoopHandle;
-use smithay::reexports::calloop::ping::{Ping, make_ping};
-use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
-use smithay::reexports::wayland_server::Client;
-use smithay::wayland::compositor::{Blocker, BlockerState};
-use tracing::{error, trace, trace_span, warn};
+const TIMEOUT: Duration = Duration::from_millis(75);
 
-/// Time limit for transaction completion before automatic timeout.
-///
-/// This prevents the compositor from hanging when a client fails to respond to
-/// a configure event promptly. Set to a safe default for interactive use.
-const TIME_LIMIT: Duration = Duration::from_millis(300);
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct PendingLayout {
+    pub(crate) location: Point<i32, Logical>,
+    pub(crate) size: Size<i32, Logical>,
+}
 
-/// Core transaction for frame-perfect relayouts.
-///
-/// A transaction represents a batch of relayout changes that should become visible
-/// atomically. Each transaction can be cloned multiple times and distributed to
-/// multiple windows. The transaction completes when either all clones are dropped
-/// or the deadline timer fires.
+#[derive(Debug, Default)]
+pub(crate) struct PendingConfigureState {
+    pending: VecDeque<(Serial, PendingConfigure)>,
+    ready: Option<PendingLayout>,
+}
+
+#[derive(Debug)]
+struct PendingConfigure {
+    layout: PendingLayout,
+    transaction: Transaction,
+}
+
+#[derive(Debug)]
+pub(crate) struct MatchedConfigure {
+    pub(crate) layout: PendingLayout,
+    pub(crate) transaction: Transaction,
+}
+
 #[derive(Debug, Clone)]
-pub struct Transaction {
+pub(crate) struct Transaction {
     inner: Arc<Inner>,
     deadline: Rc<RefCell<Deadline>>,
 }
 
-/// Monitor for tracking when a transaction completes.
-///
-/// Use this to poll whether a transaction is ready to be released in the render
-/// loop without holding references to the transaction itself.
-#[derive(Debug, Clone)]
-pub struct TransactionMonitor(Weak<Inner>);
+pub(crate) struct TransactionBlocker {
+    inner: Weak<Inner>,
+}
 
-/// Blocker to add to Wayland surfaces during a transaction.
-///
-/// Implement Smithay's Blocker trait to prevent surface commits from becoming
-/// visible until the transaction completes.
-#[derive(Debug)]
-pub struct TransactionBlocker(Weak<Inner>);
-
-/// Internal deadline state machine for per-clone timer registration.
 #[derive(Debug)]
 enum Deadline {
-    /// Timer not yet registered; stores the intended deadline instant
     NotRegistered(Instant),
-    /// Timer registered; stores the Ping to cancel it on early completion
     Registered { remove: Ping },
 }
 
-/// Shared state for a transaction.
 #[derive(Debug)]
 struct Inner {
-    /// Whether this transaction has completed
     completed: AtomicBool,
-    /// Clients waiting for blocker_cleared events when transaction completes
     notifications: Mutex<Option<(Sender<Client>, Vec<Client>)>>,
 }
 
+impl PendingConfigureState {
+    pub(crate) fn push(&mut self, serial: Serial, layout: PendingLayout, transaction: Transaction) {
+        self.pending.push_back((
+            serial,
+            PendingConfigure {
+                layout,
+                transaction,
+            },
+        ));
+    }
+
+    pub(crate) fn has_pending(&self) -> bool {
+        !self.pending.is_empty()
+    }
+
+    pub(crate) fn mark_ready(&mut self, commit_serial: Serial) -> Option<MatchedConfigure> {
+        let mut matched = None;
+
+        while let Some((serial, _)) = self.pending.front() {
+            if *serial <= commit_serial {
+                let (_, pending) = self.pending.pop_front().expect("pending configure missing");
+                matched = Some(MatchedConfigure {
+                    layout: pending.layout,
+                    transaction: pending.transaction,
+                });
+            } else {
+                break;
+            }
+        }
+
+        if let Some(matched) = matched.as_ref() {
+            self.ready = Some(matched.layout);
+        }
+
+        matched
+    }
+
+    pub(crate) fn take_ready(&mut self) -> Option<PendingLayout> {
+        self.ready.take()
+    }
+
+    pub(crate) fn clear(&mut self) {
+        self.pending.clear();
+        self.ready = None;
+    }
+}
+
 impl Transaction {
-    /// Creates a new transaction with a 300ms timeout deadline.
-    pub fn new() -> Self {
-        Self {
+    pub(super) fn new<T: 'static>(loop_handle: &LoopHandle<'static, T>) -> Self {
+        let transaction = Self {
             inner: Arc::new(Inner {
                 completed: AtomicBool::new(false),
                 notifications: Mutex::new(None),
             }),
-            deadline: Rc::new(RefCell::new(Deadline::NotRegistered(
-                Instant::now() + TIME_LIMIT,
-            ))),
+            deadline: Rc::new(RefCell::new(Deadline::NotRegistered(Instant::now() + TIMEOUT))),
+        };
+        transaction.register_deadline_timer(loop_handle);
+        transaction
+    }
+
+    pub(crate) fn blocker(&self) -> TransactionBlocker {
+        trace!(transaction = ?Arc::as_ptr(&self.inner), "generating blocker");
+        TransactionBlocker {
+            inner: Arc::downgrade(&self.inner),
         }
     }
 
-    /// Gets a blocker to add to window surfaces during this transaction.
-    #[inline]
-    pub fn blocker(&self) -> TransactionBlocker {
-        TransactionBlocker(Arc::downgrade(&self.inner))
-    }
-
-    /// Gets a monitor to poll transaction completion in the render loop.
-    #[inline]
-    pub fn monitor(&self) -> TransactionMonitor {
-        TransactionMonitor(Arc::downgrade(&self.inner))
-    }
-
-    /// Checks if this transaction has already completed.
-    #[inline]
-    pub fn is_completed(&self) -> bool {
-        self.inner.is_completed()
-    }
-
-    /// Checks if this is the last handle to this transaction.
-    #[inline]
-    pub fn is_last(&self) -> bool {
-        Arc::strong_count(&self.inner) == 1
-    }
-
-    /// Registers a deadline timer with the event loop.
-    pub fn register_deadline<T: 'static>(&self, event_loop: &LoopHandle<'static, T>) {
-        let mut deadline = self.deadline.borrow_mut();
-        if let Deadline::NotRegistered(instant) = *deadline {
-            let timer = Timer::from_deadline(instant);
-            let inner = Arc::downgrade(&self.inner);
-            let token = event_loop
-                .insert_source(timer, move |_, _, _| {
-                    let _span =
-                        trace_span!("frame_sync deadline", transaction = ?Weak::as_ptr(&inner))
-                            .entered();
-                    if let Some(inner) = inner.upgrade() {
-                        trace!("frame_sync deadline reached");
-                        inner.complete();
-                    }
-
-                    TimeoutAction::Drop
-                })
-                .expect("failed to register frame_sync deadline timer");
-
-            let (ping, source) = make_ping().expect("failed to create deadline removal ping");
-            let loop_handle = event_loop.clone();
-            event_loop
-                .insert_source(source, move |_, _, _| {
-                    loop_handle.remove(token);
-                })
-                .expect("failed to register deadline removal ping source");
-
-            *deadline = Deadline::Registered { remove: ping };
-        }
-    }
-
-    /// Registers a callback to receive blocker_cleared events when transaction completes.
-    pub fn add_notification(&self, sender: Sender<Client>, client: Client) {
+    pub(crate) fn add_notification(&self, sender: Sender<Client>, client: Client) {
         if self.is_completed() {
             error!("tried to add notification to a completed transaction");
             return;
         }
 
-        let mut guard = self
-            .inner
-            .notifications
-            .lock()
-            .expect("frame_sync notifications poisoned");
-        guard
-            .get_or_insert((sender, Vec::new()))
-            .1
-            .push(client);
+        let mut guard = self.inner.notifications.lock().expect("transaction notifications poisoned");
+        guard.get_or_insert((sender, Vec::new())).1.push(client);
+    }
+
+    pub(crate) fn is_completed(&self) -> bool {
+        self.inner.is_completed()
+    }
+
+    pub(crate) fn is_last(&self) -> bool {
+        Arc::strong_count(&self.inner) == 1
+    }
+
+    pub(crate) fn debug_id(&self) -> usize {
+        Arc::as_ptr(&self.inner) as usize
+    }
+
+    fn register_deadline_timer<T: 'static>(&self, loop_handle: &LoopHandle<'static, T>) {
+        let mut cell = self.deadline.borrow_mut();
+        if let Deadline::NotRegistered(deadline) = *cell {
+            let timer = Timer::from_deadline(deadline);
+            let inner = Arc::downgrade(&self.inner);
+            let token = loop_handle
+                .insert_source(timer, move |_, _, _| {
+                    let _span = trace_span!("deadline timer", transaction = ?Weak::as_ptr(&inner)).entered();
+
+                    if let Some(inner) = inner.upgrade() {
+                        warn!(
+                            transaction = Arc::as_ptr(&inner) as usize,
+                            release_reason = "timeout",
+                            "wm2 transaction deadline expired"
+                        );
+                        inner.complete();
+                    } else {
+                        trace!("transaction completed without removing the timer");
+                    }
+
+                    TimeoutAction::Drop
+                })
+                .expect("failed to register transaction deadline timer");
+
+            let (ping, source) = calloop::ping::make_ping().expect("failed to create deadline removal ping");
+            loop_handle
+                .insert_source(source, {
+                    let loop_handle = loop_handle.clone();
+                    move |_, _, _| {
+                        loop_handle.remove(token);
+                    }
+                })
+                .expect("failed to register deadline removal source");
+
+            *cell = Deadline::Registered { remove: ping };
+        }
     }
 }
 
 impl Drop for Transaction {
     fn drop(&mut self) {
-        let _span =
-            trace_span!("frame_sync drop", transaction = ?Arc::as_ptr(&self.inner)).entered();
+        let _span = trace_span!("drop", transaction = ?Arc::as_ptr(&self.inner)).entered();
+
         if self.is_last() {
-            trace!("last frame_sync handle dropped; releasing blockers");
+            debug!(
+                transaction = self.debug_id(),
+                release_reason = "last-reference-drop",
+                "wm2 transaction completed after retained handle drop"
+            );
             self.inner.complete();
 
             if let Deadline::Registered { remove } = &*self.deadline.borrow() {
@@ -171,23 +219,9 @@ impl Drop for Transaction {
     }
 }
 
-impl TransactionMonitor {
-    /// Checks if this transaction has been released.
-    #[inline]
-    pub fn is_released(&self) -> bool {
-        self.0
-            .upgrade()
-            .is_none_or(|inner| inner.is_completed())
-    }
-}
-
 impl Blocker for TransactionBlocker {
     fn state(&self) -> BlockerState {
-        if self
-            .0
-            .upgrade()
-            .is_none_or(|inner| inner.is_completed())
-        {
+        if self.inner.upgrade().is_none_or(|inner| inner.is_completed()) {
             BlockerState::Released
         } else {
             BlockerState::Pending
@@ -196,25 +230,19 @@ impl Blocker for TransactionBlocker {
 }
 
 impl Inner {
-    /// Marks this transaction as complete and notifies all waiting clients.
     fn complete(&self) {
         self.completed.store(true, Ordering::Relaxed);
 
-        let mut guard = self
-            .notifications
-            .lock()
-            .expect("frame_sync notifications poisoned");
+        let mut guard = self.notifications.lock().expect("transaction notifications poisoned");
         if let Some((sender, clients)) = guard.take() {
             for client in clients {
-                if let Err(err) = sender.send(client) {
-                    warn!("error sending frame_sync blocker notification: {err:?}");
+                if let Err(error) = sender.send(client) {
+                    warn!(?error, "error sending transaction blocker notification");
                 }
             }
         }
     }
 
-    /// Polls the completion status of this transaction.
-    #[inline]
     fn is_completed(&self) -> bool {
         self.completed.load(Ordering::Relaxed)
     }
@@ -222,42 +250,64 @@ impl Inner {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use smithay::reexports::calloop::EventLoop;
+    use smithay::utils::{Point, Serial, Size};
 
-    #[test]
-    fn transaction_creation() {
-        let tx = Transaction::new();
-        assert!(!tx.is_completed());
-        assert!(tx.is_last());
+    use super::{PendingConfigureState, PendingLayout, Transaction};
+
+    fn layout(x: i32, y: i32, w: i32, h: i32) -> PendingLayout {
+        PendingLayout {
+            location: Point::from((x, y)),
+            size: Size::from((w, h)),
+        }
     }
 
     #[test]
-    fn transaction_clone_increments_count() {
-        let tx1 = Transaction::new();
-        assert!(tx1.is_last());
+    fn mark_ready_returns_latest_matching_layout() {
+        let mut state = PendingConfigureState::default();
+        let first = layout(0, 0, 100, 100);
+        let second = layout(50, 0, 80, 100);
+        let event_loop = EventLoop::<()>::try_new().expect("event loop");
 
-        let tx2 = tx1.clone();
-        assert!(!tx1.is_last());
-        assert!(!tx2.is_last());
+        state.push(Serial::from(4_u32), first, Transaction::new(&event_loop.handle()));
+        state.push(Serial::from(8_u32), second, Transaction::new(&event_loop.handle()));
+
+        let matched = state.mark_ready(Serial::from(8_u32));
+
+        assert_eq!(matched.map(|matched| matched.layout), Some(second));
+        assert_eq!(state.take_ready(), Some(second));
+        assert!(!state.has_pending());
     }
 
     #[test]
-    fn monitor_tracks_completion() {
-        let tx = Transaction::new();
-        let monitor = tx.monitor();
-        assert!(!monitor.is_released());
+    fn mark_ready_ignores_newer_configures() {
+        let mut state = PendingConfigureState::default();
+        let first = layout(0, 0, 100, 100);
+        let second = layout(100, 0, 100, 100);
+        let event_loop = EventLoop::<()>::try_new().expect("event loop");
 
-        drop(tx);
-        assert!(monitor.is_released());
+        state.push(Serial::from(4_u32), first, Transaction::new(&event_loop.handle()));
+        state.push(Serial::from(10_u32), second, Transaction::new(&event_loop.handle()));
+
+        let matched = state.mark_ready(Serial::from(5_u32));
+
+        assert_eq!(matched.map(|matched| matched.layout), Some(first));
+        assert_eq!(state.take_ready(), Some(first));
+        assert!(state.has_pending());
     }
 
     #[test]
-    fn blocker_state_reflects_completion() {
-        let tx = Transaction::new();
-        let blocker = tx.blocker();
-        assert_eq!(blocker.state(), BlockerState::Pending);
+    fn take_ready_is_empty_without_match() {
+        let mut state = PendingConfigureState::default();
+        let event_loop = EventLoop::<()>::try_new().expect("event loop");
+        state.push(
+            Serial::from(4_u32),
+            layout(0, 0, 100, 100),
+            Transaction::new(&event_loop.handle()),
+        );
 
-        drop(tx);
-        assert_eq!(blocker.state(), BlockerState::Released);
+        assert!(state.mark_ready(Serial::from(3_u32)).is_none());
+        assert_eq!(state.take_ready(), None);
+        assert!(state.has_pending());
     }
 }

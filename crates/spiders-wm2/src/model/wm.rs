@@ -172,7 +172,11 @@ impl WmModel {
     where
         I: IntoIterator<Item = WindowId>,
     {
-        let visible_window_ids = self.window_ids_on_current_workspace(window_ids);
+        let visible_window_ids = self
+            .window_ids_on_current_workspace(window_ids)
+            .into_iter()
+            .filter(|window_id| self.window_is_focusable(window_id))
+            .collect::<Vec<_>>();
 
         if let Some(focused_window_id) = self.focused_window_id.clone() {
             if visible_window_ids.contains(&focused_window_id) {
@@ -181,6 +185,35 @@ impl WmModel {
         }
 
         visible_window_ids.into_iter().last()
+    }
+
+    pub fn window_is_focusable(&self, id: &WindowId) -> bool {
+        self.windows
+            .get(id)
+            .is_some_and(|window| !window.closing)
+    }
+
+    pub fn window_is_layout_eligible(&self, id: &WindowId) -> bool {
+        self.windows.get(id).is_some_and(|window| {
+            window.workspace_id.as_ref() == self.current_workspace_id.as_ref() && (!window.closing || window.mapped)
+        })
+    }
+
+    pub fn focusable_window_ids(&self) -> Vec<WindowId> {
+        self.windows
+            .iter()
+            .filter_map(|(window_id, window)| (!window.closing).then_some(window_id.clone()))
+            .collect()
+    }
+
+    pub fn preferred_focusable_window_id(&self) -> Option<WindowId> {
+        if let Some(focused_window_id) = self.focused_window_id.clone()
+            && self.window_is_focusable(&focused_window_id)
+        {
+            return Some(focused_window_id);
+        }
+
+        self.focusable_window_ids().into_iter().next_back()
     }
 
     pub fn set_window_mapped(&mut self, id: WindowId, mapped: bool) {

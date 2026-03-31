@@ -1,9 +1,9 @@
 use std::ffi::OsString;
-use std::os::unix::net::UnixStream;
+use std::sync::mpsc::{self, Receiver, Sender};
 use std::path::PathBuf;
 use std::process::Command;
-use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::Arc;
+use std::os::unix::net::UnixStream;
 use std::collections::BTreeMap;
 
 use spiders_config::model::{Config, ConfigDiscoveryOptions, ConfigPaths};
@@ -31,9 +31,10 @@ use smithay::wayland::selection::data_device::DataDeviceState;
 use smithay::wayland::shell::xdg::XdgShellState;
 use smithay::wayland::shm::ShmState;
 use smithay::wayland::socket::ListeningSocketSource;
-use tracing::{error, info, trace, warn};
+use tracing::{debug, error, info, warn};
 
-use crate::frame_sync::{FrameSyncState, Transaction, WindowFrameSyncState, plan_tiled_slot, plan_tiled_slots};
+use crate::frame_sync::{FrameSyncState, SyncHandle, WindowFrameSyncState};
+use crate::layout::{plan_tiled_slot, plan_tiled_slots};
 use crate::model::{WindowId, wm::WmModel};
 use crate::runtime::{RuntimeCommand, WmRuntime};
 
@@ -91,7 +92,6 @@ impl SpidersWm {
         let data_device_state = DataDeviceState::new::<Self>(&display_handle);
         let popups = PopupManager::default();
         let (blocker_cleared_tx, blocker_cleared_rx) = mpsc::channel();
-
         let mut seat_state = SeatState::new();
         let mut seat: Seat<Self> = seat_state.new_wl_seat(&display_handle, "winit");
         seat.add_keyboard(Default::default(), 200, 25)
@@ -200,26 +200,26 @@ impl SpidersWm {
     pub fn managed_window_for_surface(&self, surface: &WlSurface) -> Option<&ManagedWindow> {
         self.managed_windows
             .iter()
-            .find(|record| record.wl_surface() == *surface)
+            .find(|record| record.window.toplevel().is_some_and(|toplevel| toplevel.wl_surface() == surface))
     }
 
     pub fn managed_window_mut_for_surface(&mut self, surface: &WlSurface) -> Option<&mut ManagedWindow> {
         self.managed_windows
             .iter_mut()
-            .find(|record| record.wl_surface() == *surface)
+            .find(|record| record.window.toplevel().is_some_and(|toplevel| toplevel.wl_surface() == surface))
     }
 
     pub fn managed_window_position_for_surface(&self, surface: &WlSurface) -> Option<usize> {
         self.managed_windows
             .iter()
-            .position(|record| record.wl_surface() == *surface)
+            .position(|record| record.window.toplevel().is_some_and(|toplevel| toplevel.wl_surface() == surface))
     }
 
     pub fn surface_for_window_id(&self, window_id: WindowId) -> Option<WlSurface> {
         self.managed_windows
             .iter()
             .find(|record| record.id == window_id)
-            .map(ManagedWindow::wl_surface)
+            .and_then(|record| record.window.toplevel().map(|toplevel| toplevel.wl_surface().clone()))
     }
 
     pub fn window_id_under(&self, pos: Point<f64, Logical>) -> Option<WindowId> {
@@ -230,17 +230,42 @@ impl SpidersWm {
     }
 
     pub fn visible_managed_window_positions(&self) -> Vec<usize> {
-        let visible_window_ids = self
-            .model
-            .window_ids_on_current_workspace(self.managed_windows.iter().map(|record| record.id.clone()));
-
         self.managed_windows
             .iter()
             .enumerate()
             .filter_map(|(index, record)| {
-                visible_window_ids.contains(&record.id).then_some(index)
+                self.model.window_is_layout_eligible(&record.id).then_some(index)
             })
             .collect()
+    }
+
+    pub(crate) fn managed_window_debug_summary(&self) -> Vec<String> {
+        self.managed_windows
+            .iter()
+            .map(|record| {
+                format!(
+                    "{}:mapped={}:closing={}:snapshot={}:pending_configures={}",
+                    record.id.0,
+                    record.mapped,
+                    self.model
+                        .windows
+                        .get(&record.id)
+                        .is_some_and(|window| window.closing),
+                    record.frame_sync.has_close_snapshot(),
+                    record.frame_sync.has_pending_configures(),
+                )
+            })
+            .collect()
+    }
+
+    pub(crate) fn log_managed_window_state(&self, reason: &str) {
+        debug!(
+            reason,
+            windows = ?self.managed_window_debug_summary(),
+            closing_overlays = self.frame_sync.overlay_count(),
+            focused = ?self.focused_surface.as_ref().and_then(|surface| self.window_id_for_surface(surface)),
+            "wm2 managed window state"
+        );
     }
 
     pub fn spawn_foot(&self) {
@@ -307,6 +332,14 @@ impl SpidersWm {
         self.emit_config_reloaded();
     }
 
+    pub fn notify_blocker_cleared(&mut self) {
+        let display_handle = self.display_handle.clone();
+        while let Ok(client) = self.blocker_cleared_rx.try_recv() {
+            self.client_compositor_state(&client)
+                .blocker_cleared(self, &display_handle);
+        }
+    }
+
     fn load_wm_config() -> (Option<ConfigPaths>, Config) {
         Self::load_wm_config_with_paths(None)
     }
@@ -346,42 +379,16 @@ impl SpidersWm {
         }
     }
 
-    pub(crate) fn flush_queued_relayout(&mut self) {
-        if !self
-            .frame_sync
-            .take_ready_relayout(self.managed_windows.iter().map(|record| &record.frame_sync))
-        {
-            return;
-        }
-
-        self.start_relayout(None);
-    }
-
-    
-
-    pub fn notify_blocker_cleared(&mut self) {
-        let display_handle = self.display_handle.clone();
-        while let Ok(client) = self.blocker_cleared_rx.try_recv() {
-            trace!("calling blocker_cleared");
-            self.client_compositor_state(&client)
-                .blocker_cleared(self, &display_handle);
-        }
-    }
-
     pub fn schedule_relayout(&mut self) {
-        self.schedule_relayout_with_transaction(None);
+        debug!(
+            window_count = self.managed_windows.len(),
+            "wm2 schedule relayout"
+        );
+        let _ = self.start_relayout();
     }
 
-    pub fn schedule_relayout_with_transaction(&mut self, transaction: Option<Transaction>) {
-        if transaction.is_none()
-            && self
-                .frame_sync
-                .should_defer_relayout(self.managed_windows.iter().map(|record| &record.frame_sync))
-        {
-            return;
-        }
-
-        self.start_relayout(transaction);
+    pub fn prune_completed_closing_overlays(&mut self) {
+        self.frame_sync.prune_completed_closing_overlays();
     }
 
     pub fn planned_layout_for_surface(
@@ -393,13 +400,18 @@ impl SpidersWm {
         let visible_positions = self.visible_managed_window_positions();
         let index = visible_positions
             .iter()
-            .position(|managed_index| self.managed_windows[*managed_index].wl_surface() == *surface)?;
+            .position(|managed_index| {
+                self.managed_windows[*managed_index]
+                    .window
+                    .toplevel()
+                    .is_some_and(|toplevel| toplevel.wl_surface() == surface)
+            })?;
 
         let slot = plan_tiled_slot(output_geometry, visible_positions.len(), index)?;
         Some((slot.location, slot.size))
     }
 
-    fn start_relayout(&mut self, transaction: Option<Transaction>) {
+    pub(crate) fn start_relayout(&mut self) -> Option<SyncHandle> {
         let output = self
             .space
             .outputs()
@@ -417,6 +429,13 @@ impl SpidersWm {
                 .iter()
                 .map(|managed_index| self.managed_windows[*managed_index].id.clone()),
         );
+        info!(
+            visible_windows = visible_positions.len(),
+            total_windows = self.managed_windows.len(),
+            fullscreen_window = ?fullscreen_window_id,
+            "wm2 relayout start"
+        );
+        self.log_managed_window_state("before relayout");
         for record in &self.managed_windows {
             if !self.model.window_is_on_current_workspace(record.id.clone())
                 || fullscreen_window_id.as_ref().is_some_and(|window_id| *window_id != record.id)
@@ -426,7 +445,8 @@ impl SpidersWm {
         }
 
         if visible_positions.is_empty() {
-            return;
+            debug!("wm2 relayout skipped because there are no visible windows");
+            return None;
         }
 
         let relayout_positions = match fullscreen_window_id {
@@ -452,8 +472,8 @@ impl SpidersWm {
             }
         }
 
-        let transaction = transaction.unwrap_or_else(Transaction::new);
         let slots = plan_tiled_slots(output_geometry, relayout_positions.len());
+        let mut relayout_transaction: Option<SyncHandle> = None;
 
         for (slot_index, managed_index) in relayout_positions.into_iter().enumerate() {
             let slot = slots[slot_index];
@@ -468,7 +488,7 @@ impl SpidersWm {
                 let fullscreen_output = fullscreen
                     .then(|| fullscreen_output_for_toplevel(&output, &toplevel))
                     .flatten();
-                let mut needs_configure = !record.mapped;
+                let mut needs_configure = false;
                 toplevel.with_pending_state(|state| {
                     if state.size != Some(slot.size) {
                         needs_configure = true;
@@ -479,33 +499,41 @@ impl SpidersWm {
                     state.size = Some(slot.size);
                 });
 
-                let action = record.frame_sync.plan_relayout(
-                    &record.window,
-                    record.mapped,
-                    current_location,
-                    slot.location,
-                    slot.size,
+                debug!(
+                    window = %record.id.0,
+                    mapped = record.mapped,
+                    pending_configures = record.frame_sync.has_pending_configures(),
+                    current_location = ?current_location,
+                    target_location = ?slot.location,
+                    target_size = ?slot.size,
                     needs_configure,
-                    &transaction,
+                    "wm2 relayout window plan"
                 );
 
                 if needs_configure {
-                    if action.unmap_window {
-                        self.space.unmap_elem(&record.window);
-                    }
                     let serial = toplevel.send_configure();
-                    record.frame_sync.register_sent_configure(serial);
-                }
-
-                if let Some(location) = action.map_now {
-                    self.space.map_element(record.window.clone(), location, false);
+                    let transaction = relayout_transaction
+                        .get_or_insert_with(|| crate::frame_sync::new_sync_handle(&self.event_loop))
+                        .clone();
+                    record.frame_sync.track_pending_layout(
+                        serial,
+                        slot.location,
+                        slot.size,
+                        transaction,
+                    );
+                    debug!(window = %record.id.0, ?serial, "wm2 sent configure during relayout");
+                } else if !record.frame_sync.has_pending_configures() {
+                    self.space.map_element(record.window.clone(), slot.location, false);
+                    debug!(window = %record.id.0, location = ?slot.location, "wm2 mapped window during relayout");
+                } else {
+                    debug!(window = %record.id.0, "wm2 deferred remap until pending configure commits");
                 }
             }
         }
 
-        drop(transaction);
+        self.log_managed_window_state("after relayout");
+        relayout_transaction
     }
-
 }
 
 fn sync_toplevel_fullscreen_state(
@@ -544,13 +572,6 @@ fn fullscreen_output_for_toplevel(
 }
 
 impl ManagedWindow {
-    pub(crate) fn wl_surface(&self) -> WlSurface {
-        self.window
-            .toplevel()
-            .expect("managed window missing toplevel")
-            .wl_surface()
-            .clone()
-    }
     pub fn toplevel(&self) -> Option<&smithay::wayland::shell::xdg::ToplevelSurface> {
         self.window.toplevel()
     }
