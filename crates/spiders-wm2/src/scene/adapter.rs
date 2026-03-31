@@ -1,20 +1,25 @@
 use std::collections::BTreeSet;
 
-use smithay::utils::{Logical, Point, Rectangle, Size};
+use smithay::utils::{Logical, Point, Size};
 use spiders_config::authoring_layout::AuthoringLayoutService;
 use spiders_config::model::{Config, ConfigPaths};
 use spiders_runtime_js::DefaultLayoutRuntime;
 use spiders_scene::ast::ValidatedLayoutTree;
 use spiders_scene::pipeline::SceneCache;
-use spiders_scene::LayoutSnapshotNode;
+use spiders_scene::{LayoutSnapshotNode, SceneRequest};
+use spiders_shared::runtime::prepared_layout::{PreparedStylesheet, PreparedStylesheets};
 use spiders_shared::snapshot::{StateSnapshot, WindowSnapshot};
 use spiders_shared::types::LayoutRef;
-use spiders_tree::{LayoutRect, ResolvedLayoutNode, WindowId};
+use spiders_tree::{
+    LayoutNodeMeta, LayoutRect, LayoutSpace, RemainingTake, ResolvedLayoutNode, SlotTake,
+    SourceLayoutNode, WindowId,
+};
 use tracing::{debug, warn};
 
 use crate::ipc::state_snapshot_for_model;
-use crate::layout::{plan_tiled_slot, plan_tiled_slots};
 use crate::model::wm::WmModel;
+
+const FALLBACK_MASTER_STACK_STYLESHEET: &str = "workspace { display: flex; flex-direction: row; width: 100%; height: 100%; } group { display: flex; flex-direction: column; height: 100%; } #main { width: 60%; } #stack { width: 40%; } window { flex-grow: 1; flex-basis: 0; }";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct LayoutTarget {
@@ -59,19 +64,34 @@ impl SceneLayoutState {
         model: &WmModel,
         visible_window_ids: &[WindowId],
     ) -> Option<Vec<LayoutTarget>> {
-        let root = self.compute_layout_snapshot(config, model, visible_window_ids)?;
-        let targets = scene_targets_from_snapshot(&root);
+        if let Some(root) = self.compute_authored_layout_snapshot(config, model, visible_window_ids)
+        {
+            let targets = scene_targets_from_snapshot(&root);
 
-        if !targets_cover_windows(&targets, visible_window_ids) {
+            if targets_cover_windows(&targets, visible_window_ids) {
+                return Some(targets);
+            }
+
             warn!(
                 expected_window_count = visible_window_ids.len(),
                 resolved_window_count = targets.len(),
-                "scene layout did not cover all visible windows; falling back to bootstrap planner"
+                "scene layout did not cover all visible windows; retrying with scene fallback layout"
             );
-            return None;
         }
 
-        Some(targets)
+        let root = self.compute_fallback_layout_snapshot(config, model, visible_window_ids)?;
+        let targets = scene_targets_from_snapshot(&root);
+
+        if targets_cover_windows(&targets, visible_window_ids) {
+            Some(targets)
+        } else {
+            warn!(
+                expected_window_count = visible_window_ids.len(),
+                resolved_window_count = targets.len(),
+                "scene fallback layout still did not cover all visible windows"
+            );
+            None
+        }
     }
 
     pub(crate) fn compute_layout_target(
@@ -87,28 +107,19 @@ impl SceneLayoutState {
             .map(|target| (target.location, target.size))
     }
 
-    fn compute_layout_snapshot(
+    fn compute_authored_layout_snapshot(
         &mut self,
         config: &Config,
         model: &WmModel,
         visible_window_ids: &[WindowId],
     ) -> Option<LayoutSnapshotNode> {
         let layout_service = self.layout_service.as_mut()?;
-        let mut snapshot = state_snapshot_for_model(model);
-        snapshot.visible_window_ids = visible_window_ids.to_vec();
-
-        let selected_layout = selected_layout_name(config, &snapshot);
-        if let Some(workspace_id) = snapshot.current_workspace_id.clone()
-            && let Some(workspace) = snapshot
-                .workspaces
-                .iter_mut()
-                .find(|workspace| workspace.id == workspace_id)
-        {
-            workspace.effective_layout = selected_layout.clone().map(|name| LayoutRef { name });
-        }
+        let snapshot = scene_input_snapshot(config, model, visible_window_ids);
 
         let workspace = snapshot.current_workspace()?.clone();
-        let evaluation = match layout_service.evaluate_prepared_for_workspace(config, &snapshot, &workspace) {
+        let evaluation = match layout_service
+            .evaluate_prepared_for_workspace(config, &snapshot, &workspace)
+        {
             Ok(Some(evaluation)) => evaluation,
             Ok(None) => {
                 debug!(workspace = %workspace.name, "no prepared layout available for current workspace");
@@ -121,12 +132,13 @@ impl SceneLayoutState {
         };
 
         let windows = visible_window_snapshots(&snapshot, visible_window_ids);
-        let resolved_root = match resolve_layout_root(evaluation.layout, &windows) {
-            Some(root) => root,
-            None => return None,
-        };
+        let resolved_root = resolve_layout_root(evaluation.layout, &windows, visible_window_ids);
 
-        let request = match config.build_scene_request_from_state(&snapshot, resolved_root, &evaluation.artifact) {
+        let request = match config.build_scene_request_from_state(
+            &snapshot,
+            resolved_root,
+            &evaluation.artifact,
+        ) {
             Ok(Some(request)) => request,
             Ok(None) => {
                 warn!(workspace = %workspace.name, "scene request was not produced for current workspace");
@@ -146,50 +158,104 @@ impl SceneLayoutState {
             }
         }
     }
+
+    fn compute_fallback_layout_snapshot(
+        &mut self,
+        config: &Config,
+        model: &WmModel,
+        visible_window_ids: &[WindowId],
+    ) -> Option<LayoutSnapshotNode> {
+        let snapshot = scene_input_snapshot(config, model, visible_window_ids);
+        let workspace = snapshot.current_workspace()?.clone();
+        let output = workspace
+            .output_id
+            .as_ref()
+            .and_then(|output_id| snapshot.output_by_id(output_id));
+        let windows = visible_window_snapshots(&snapshot, visible_window_ids);
+        let resolved_root =
+            resolve_layout_root(fallback_source_layout_tree(), &windows, visible_window_ids);
+
+        let request = SceneRequest {
+            workspace_id: workspace.id,
+            output_id: output.map(|output| output.id.clone()),
+            layout_name: selected_layout_name(config, &snapshot),
+            root: resolved_root,
+            stylesheets: PreparedStylesheets {
+                global: None,
+                layout: Some(PreparedStylesheet {
+                    path: "fallback://wm2-master-stack.css".into(),
+                    source: FALLBACK_MASTER_STACK_STYLESHEET.into(),
+                }),
+            },
+            space: LayoutSpace {
+                width: output
+                    .map(|output| output.logical_width as f32)
+                    .unwrap_or_default(),
+                height: output
+                    .map(|output| output.logical_height as f32)
+                    .unwrap_or_default(),
+            },
+        };
+
+        match self.cache.compute_layout_from_request(&request) {
+            Ok(response) => Some(response.root),
+            Err(error) => {
+                warn!(%error, workspace = %workspace.name, "failed to compute fallback scene layout");
+                None
+            }
+        }
+    }
 }
 
-pub(crate) fn bootstrap_layout_target(
-    output_geometry: Rectangle<i32, Logical>,
-    window_order: &[WindowId],
-    target_window_id: &WindowId,
-) -> Option<(Point<i32, Logical>, Size<i32, Logical>)> {
-    let index = window_order
-        .iter()
-        .position(|window_id| window_id == target_window_id)?;
-    let slot = plan_tiled_slot(output_geometry, window_order.len(), index)?;
-    Some((slot.location, slot.size))
-}
+fn scene_input_snapshot(
+    config: &Config,
+    model: &WmModel,
+    visible_window_ids: &[WindowId],
+) -> StateSnapshot {
+    let mut snapshot = state_snapshot_for_model(model);
+    snapshot.visible_window_ids = visible_window_ids.to_vec();
 
-pub(crate) fn bootstrap_layout_targets(
-    output_geometry: Rectangle<i32, Logical>,
-    window_order: &[WindowId],
-    fullscreen_window_id: Option<&WindowId>,
-) -> Vec<LayoutTarget> {
-    if let Some(fullscreen_window_id) = fullscreen_window_id {
-        return window_order
-            .iter()
-            .filter(|window_id| *window_id == fullscreen_window_id)
-            .map(|window_id| LayoutTarget {
-                window_id: window_id.clone(),
-                location: output_geometry.loc,
-                size: output_geometry.size,
-                fullscreen: true,
-            })
-            .collect();
+    let selected_layout = selected_layout_name(config, &snapshot);
+    if let Some(workspace_id) = snapshot.current_workspace_id.clone()
+        && let Some(workspace) = snapshot
+            .workspaces
+            .iter_mut()
+            .find(|workspace| workspace.id == workspace_id)
+    {
+        workspace.effective_layout = selected_layout.map(|name| LayoutRef { name });
     }
 
-    let slots = plan_tiled_slots(output_geometry, window_order.len());
-    window_order
-        .iter()
-        .cloned()
-        .zip(slots)
-        .map(|(window_id, slot)| LayoutTarget {
-            window_id,
-            location: slot.location,
-            size: slot.size,
-            fullscreen: false,
-        })
-        .collect()
+    snapshot
+}
+
+fn fallback_source_layout_tree() -> SourceLayoutNode {
+    SourceLayoutNode::Workspace {
+        meta: LayoutNodeMeta::default(),
+        children: vec![
+            SourceLayoutNode::Group {
+                meta: LayoutNodeMeta {
+                    id: Some("main".into()),
+                    ..LayoutNodeMeta::default()
+                },
+                children: vec![SourceLayoutNode::Slot {
+                    meta: LayoutNodeMeta::default(),
+                    window_match: None,
+                    take: SlotTake::Count(1),
+                }],
+            },
+            SourceLayoutNode::Group {
+                meta: LayoutNodeMeta {
+                    id: Some("stack".into()),
+                    ..LayoutNodeMeta::default()
+                },
+                children: vec![SourceLayoutNode::Slot {
+                    meta: LayoutNodeMeta::default(),
+                    window_match: None,
+                    take: SlotTake::Remaining(RemainingTake::Remaining),
+                }],
+            },
+        ],
+    }
 }
 
 fn selected_layout_name(config: &Config, state: &StateSnapshot) -> Option<String> {
@@ -231,23 +297,38 @@ fn visible_window_snapshots(
 }
 
 fn resolve_layout_root(
-    source_layout: spiders_tree::SourceLayoutNode,
+    source_layout: SourceLayoutNode,
     windows: &[WindowSnapshot],
-) -> Option<ResolvedLayoutNode> {
+    visible_window_ids: &[WindowId],
+) -> ResolvedLayoutNode {
     let validated = match ValidatedLayoutTree::new(source_layout) {
         Ok(validated) => validated,
         Err(error) => {
             warn!(%error, window_count = windows.len(), "scene layout validation failed");
-            return None;
+            return flat_workspace_root(visible_window_ids);
         }
     };
 
     match validated.resolve(windows) {
-        Ok(resolved) => Some(resolved.root),
+        Ok(resolved) => resolved.root,
         Err(error) => {
             warn!(%error, window_count = windows.len(), "scene layout resolve failed");
-            None
+            flat_workspace_root(visible_window_ids)
         }
+    }
+}
+
+fn flat_workspace_root(visible_window_ids: &[WindowId]) -> ResolvedLayoutNode {
+    ResolvedLayoutNode::Workspace {
+        meta: LayoutNodeMeta::default(),
+        children: visible_window_ids
+            .iter()
+            .cloned()
+            .map(|window_id| ResolvedLayoutNode::Window {
+                meta: LayoutNodeMeta::default(),
+                window_id: Some(window_id),
+            })
+            .collect(),
     }
 }
 
@@ -275,7 +356,10 @@ fn rect_location(rect: LayoutRect) -> Point<i32, Logical> {
 }
 
 fn rect_size(rect: LayoutRect) -> Size<i32, Logical> {
-    Size::from(((rect.width.round() as i32).max(1), (rect.height.round() as i32).max(1)))
+    Size::from((
+        (rect.width.round() as i32).max(1),
+        (rect.height.round() as i32).max(1),
+    ))
 }
 
 fn targets_cover_windows(targets: &[LayoutTarget], visible_window_ids: &[WindowId]) -> bool {
@@ -292,34 +376,7 @@ fn targets_cover_windows(targets: &[LayoutTarget], visible_window_ids: &[WindowI
 mod tests {
     use super::*;
     use crate::model::window_id;
-    use spiders_tree::LayoutNodeMeta;
-
-    #[test]
-    fn bootstrap_layout_target_resolves_slot_for_window() {
-        let output = Rectangle::new((10, 20).into(), (100, 50).into());
-        let windows = vec![window_id(1), window_id(2)];
-
-        assert_eq!(
-            bootstrap_layout_target(output, &windows, &window_id(2)),
-            Some((Point::from((70, 20)), Size::from((40, 50))))
-        );
-    }
-
-    #[test]
-    fn bootstrap_layout_targets_returns_fullscreen_target_when_requested() {
-        let output = Rectangle::new((10, 20).into(), (100, 50).into());
-        let windows = vec![window_id(1), window_id(2)];
-
-        assert_eq!(
-            bootstrap_layout_targets(output, &windows, Some(&window_id(2))),
-            vec![LayoutTarget {
-                window_id: window_id(2),
-                location: Point::from((10, 20)),
-                size: Size::from((100, 50)),
-                fullscreen: true,
-            }]
-        );
-    }
+    use spiders_tree::{LayoutNodeMeta, SourceLayoutNode};
 
     #[test]
     fn scene_targets_from_snapshot_extracts_window_geometry() {
@@ -366,6 +423,35 @@ mod tests {
         }];
 
         assert!(targets_cover_windows(&targets, &[window_id(1)]));
-        assert!(!targets_cover_windows(&targets, &[window_id(1), window_id(2)]));
+        assert!(!targets_cover_windows(
+            &targets,
+            &[window_id(1), window_id(2)]
+        ));
+    }
+
+    #[test]
+    fn resolve_layout_root_falls_back_to_flat_workspace_when_invalid() {
+        let root = resolve_layout_root(
+            SourceLayoutNode::Window {
+                meta: LayoutNodeMeta::default(),
+                window_match: None,
+            },
+            &[],
+            &[window_id(1), window_id(2)],
+        );
+
+        let ResolvedLayoutNode::Workspace { children, .. } = root else {
+            panic!("expected workspace root");
+        };
+
+        assert_eq!(children.len(), 2);
+        assert!(matches!(
+            &children[0],
+            ResolvedLayoutNode::Window { window_id: Some(id), .. } if id == &window_id(1)
+        ));
+        assert!(matches!(
+            &children[1],
+            ResolvedLayoutNode::Window { window_id: Some(id), .. } if id == &window_id(2)
+        ));
     }
 }

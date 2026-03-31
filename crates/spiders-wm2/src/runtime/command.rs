@@ -37,7 +37,10 @@ impl SpidersWm {
             WmCommand::CloseFocusedWindow => self.close_focused_window(),
             WmCommand::ResizeDirection { direction }
             | WmCommand::ResizeTiledDirection { direction } => {
-                warn!(?direction, "resize wm command is intentionally stubbed for now")
+                warn!(
+                    ?direction,
+                    "resize wm command is intentionally stubbed for now"
+                )
             }
             WmCommand::ReloadConfig => self.reload_config(),
             WmCommand::SetLayout { name } => {
@@ -46,23 +49,18 @@ impl SpidersWm {
             WmCommand::CycleLayout { direction } => {
                 warn!(?direction, "cycle-layout wm command is not implemented yet")
             }
-            WmCommand::ToggleFullscreen => {
-                self.toggle_focused_window_fullscreen()
-            }
-            WmCommand::ToggleFloating => {
-                self.toggle_focused_window_floating()
-            }
+            WmCommand::ToggleFullscreen => self.toggle_focused_window_fullscreen(),
+            WmCommand::ToggleFloating => self.toggle_focused_window_floating(),
             WmCommand::FocusDirection { direction } => {
                 self.focus_direction_window(direction, serial)
             }
-            WmCommand::FocusWindow { window_id } => {
-                self.focus_window_by_id(window_id, serial)
-            }
-            WmCommand::SwapDirection { direction } => {
-                self.swap_focused_window_direction(direction)
-            }
+            WmCommand::FocusWindow { window_id } => self.focus_window_by_id(window_id, serial),
+            WmCommand::SwapDirection { direction } => self.swap_focused_window_direction(direction),
             WmCommand::MoveDirection { direction } => {
-                warn!(?direction, "move-direction wm command is not implemented yet")
+                warn!(
+                    ?direction,
+                    "move-direction wm command is not implemented yet"
+                )
             }
             unsupported => {
                 warn!(?unsupported, "ignoring unsupported wm command");

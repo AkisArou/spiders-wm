@@ -138,8 +138,20 @@ mod tests {
         let closing_id = mark_focused_window_closing(&mut model);
 
         assert_eq!(closing_id, Some(window_id(2)));
-        assert_eq!(model.windows.get(&window_id(1)).map(|window| window.closing), Some(false));
-        assert_eq!(model.windows.get(&window_id(2)).map(|window| window.closing), Some(true));
+        assert_eq!(
+            model
+                .windows
+                .get(&window_id(1))
+                .map(|window| window.closing),
+            Some(false)
+        );
+        assert_eq!(
+            model
+                .windows
+                .get(&window_id(2))
+                .map(|window| window.closing),
+            Some(true)
+        );
         assert_eq!(model.focused_window_id, Some(window_id(2)));
     }
 
@@ -167,7 +179,13 @@ mod tests {
         let closing_id = mark_focused_window_closing(&mut model);
 
         assert_eq!(closing_id, None);
-        assert_eq!(model.windows.get(&window_id(1)).map(|window| window.closing), Some(false));
+        assert_eq!(
+            model
+                .windows
+                .get(&window_id(1))
+                .map(|window| window.closing),
+            Some(false)
+        );
     }
 
     #[test]
@@ -230,7 +248,10 @@ mod tests {
         );
 
         assert_eq!(
-            model.windows.get(&window_id(2)).and_then(|window| window.workspace_id.clone()),
+            model
+                .windows
+                .get(&window_id(2))
+                .and_then(|window| window.workspace_id.clone()),
             Some(WorkspaceId("2".to_string()))
         );
         assert_eq!(next_focus, Some(window_id(1)));
@@ -264,14 +285,20 @@ mod tests {
         let toggled = toggle_focused_window_floating(&mut model);
         assert_eq!(toggled, Some(window_id(12)));
         assert_eq!(
-            model.windows.get(&window_id(12)).map(|window| window.floating),
+            model
+                .windows
+                .get(&window_id(12))
+                .map(|window| window.floating),
             Some(true)
         );
 
         let toggled_again = toggle_focused_window_floating(&mut model);
         assert_eq!(toggled_again, Some(window_id(12)));
         assert_eq!(
-            model.windows.get(&window_id(12)).map(|window| window.floating),
+            model
+                .windows
+                .get(&window_id(12))
+                .map(|window| window.floating),
             Some(false)
         );
     }
@@ -285,7 +312,10 @@ mod tests {
 
         assert_eq!(toggled, None);
         assert_eq!(
-            model.windows.get(&window_id(13)).map(|window| window.floating),
+            model
+                .windows
+                .get(&window_id(13))
+                .map(|window| window.floating),
             Some(false)
         );
     }
@@ -300,7 +330,10 @@ mod tests {
 
         assert_eq!(toggled, Some(window_id(14)));
         assert_eq!(
-            model.windows.get(&window_id(14)).map(|window| window.fullscreen),
+            model
+                .windows
+                .get(&window_id(14))
+                .map(|window| window.fullscreen),
             Some(true)
         );
     }
@@ -317,11 +350,17 @@ mod tests {
 
         assert_eq!(toggled, Some(window_id(15)));
         assert_eq!(
-            model.windows.get(&window_id(14)).map(|window| window.fullscreen),
+            model
+                .windows
+                .get(&window_id(14))
+                .map(|window| window.fullscreen),
             Some(false)
         );
         assert_eq!(
-            model.windows.get(&window_id(15)).map(|window| window.fullscreen),
+            model
+                .windows
+                .get(&window_id(15))
+                .map(|window| window.fullscreen),
             Some(true)
         );
     }
@@ -335,7 +374,10 @@ mod tests {
 
         assert_eq!(toggled, None);
         assert_eq!(
-            model.windows.get(&window_id(16)).map(|window| window.fullscreen),
+            model
+                .windows
+                .get(&window_id(16))
+                .map(|window| window.fullscreen),
             Some(false)
         );
     }

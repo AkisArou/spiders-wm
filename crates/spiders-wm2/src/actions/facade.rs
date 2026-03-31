@@ -1,7 +1,7 @@
-use crate::actions::{focus, output, seat, window, workspace};
 use crate::actions::focus::FocusSelection;
 use crate::actions::window::CloseSelection;
 use crate::actions::workspace::WorkspaceSelection;
+use crate::actions::{focus, output, seat, window, workspace};
 use crate::model::wm::WmModel;
 use crate::model::{OutputId, SeatId, WindowId, WorkspaceId};
 
@@ -40,7 +40,10 @@ impl<'a> WmActions<'a> {
         workspace::request_select_next_workspace(self.model, window_ids)
     }
 
-    pub fn request_select_previous_workspace<I>(&mut self, window_ids: I) -> Option<WorkspaceSelection>
+    pub fn request_select_previous_workspace<I>(
+        &mut self,
+        window_ids: I,
+    ) -> Option<WorkspaceSelection>
     where
         I: IntoIterator<Item = WindowId>,
     {
@@ -71,7 +74,8 @@ impl<'a> WmActions<'a> {
         window_id: Option<WindowId>,
     ) -> FocusSelection {
         let selection = focus::request_focus_window(self.model, window_id);
-        let focused_window_id = seat::sync_focused_window(self.model, seat_id, selection.focused_window_id);
+        let focused_window_id =
+            seat::sync_focused_window(self.model, seat_id, selection.focused_window_id);
         FocusSelection { focused_window_id }
     }
 
@@ -80,7 +84,8 @@ impl<'a> WmActions<'a> {
         seat_id: impl Into<SeatId>,
     ) -> FocusSelection {
         let selection = focus::request_focus_next_window(self.model);
-        let focused_window_id = seat::sync_focused_window(self.model, seat_id, selection.focused_window_id);
+        let focused_window_id =
+            seat::sync_focused_window(self.model, seat_id, selection.focused_window_id);
         FocusSelection { focused_window_id }
     }
 
@@ -89,7 +94,8 @@ impl<'a> WmActions<'a> {
         seat_id: impl Into<SeatId>,
     ) -> FocusSelection {
         let selection = focus::request_focus_previous_window(self.model);
-        let focused_window_id = seat::sync_focused_window(self.model, seat_id, selection.focused_window_id);
+        let focused_window_id =
+            seat::sync_focused_window(self.model, seat_id, selection.focused_window_id);
         FocusSelection { focused_window_id }
     }
 
@@ -201,12 +207,21 @@ mod tests {
 
         assert_eq!(focused.focused_window_id, Some(window_id(5)));
         assert_eq!(mapped, Some(window_id(5)));
-        assert_eq!(model.current_workspace_id, Some(WorkspaceId("1".to_string())));
+        assert_eq!(
+            model.current_workspace_id,
+            Some(WorkspaceId("1".to_string()))
+        );
         assert_eq!(model.current_output_id, Some(OutputId("winit".to_string())));
         assert_eq!(model.focused_window_id, Some(window_id(5)));
-        assert_eq!(model.windows.get(&window_id(5)).map(|window| window.mapped), Some(true));
         assert_eq!(
-            model.seats.get(&SeatId("winit".to_string())).and_then(|seat| seat.focused_window_id.clone()),
+            model.windows.get(&window_id(5)).map(|window| window.mapped),
+            Some(true)
+        );
+        assert_eq!(
+            model
+                .seats
+                .get(&SeatId("winit".to_string()))
+                .and_then(|seat| seat.focused_window_id.clone()),
             Some(window_id(5))
         );
     }

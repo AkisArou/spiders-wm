@@ -47,7 +47,6 @@ Current source layout already includes:
 - `runtime/`
 - `scene/`
 - `state.rs`
-- `layout.rs`
 - `ipc.rs`
 - `handlers/`
 
@@ -60,10 +59,11 @@ This is workable for the proof of concept, but it is not a good base for integra
 
 The remaining structural problem is more specific now:
 
-- too much bootstrap and composition-root logic still lives in `state.rs`
-- the new `app/bootstrap.rs` boundary exists, but `state.rs` still owns too much application-side orchestration
-- compositor application, runtime orchestration, and model-to-Smithay bridging are still mixed together in `state.rs`
-- `scene/adapter.rs` now owns the authoring-layout service, scene cache, and scene-backed target computation, but bootstrap tiling still remains as the final fallback path
+- `state.rs` is smaller, but it still owns too much cross-boundary state access and orchestration
+- the `app/bootstrap.rs` and `app/lifecycle.rs` boundaries exist, but more app-side lifecycle/application glue still needs to move outward
+- compositor application, runtime orchestration, and model-to-Smithay bridging are still mixed across a few compositor-facing modules
+- `scene/adapter.rs` now owns both authored layout evaluation and the default scene-native fallback layout path, so the old bootstrap planner is gone from the live relayout path
+- `compositor/apply.rs` now exists as the beginning of a thinner apply boundary for focus, map, unmap, and raise side effects
 - `frame_sync` is in a good containment state, but the rest of wm2 still needs to be reorganized around it
 
 ## Design Principles
@@ -88,10 +88,15 @@ src/
     lifecycle.rs
   compositor/
     mod.rs
-    shell.rs
-    layout.rs
+    apply.rs
+    diagnostics.rs
     input.rs
+    layout.rs
+    lookup.rs
+    navigation.rs
     rendering.rs
+    shell.rs
+    windows.rs
   model/
     mod.rs
     wm.rs
@@ -128,8 +133,11 @@ Notably:
 
 - `compositor/`, `model/`, `actions/`, and `runtime/` are already present and should be expanded rather than reintroduced
 - `frame_sync/` should stay small and stable instead of being split into more files right now
-- a future `app/` boundary is still desirable, but it should be introduced only when it is ready to absorb real bootstrap code from `state.rs` and `winit.rs`
-- `app/` now exists and should continue absorbing composition-root responsibilities from `state.rs`
+- `app/` already owns bootstrap and lifecycle entry points and should continue absorbing composition-root responsibilities from `state.rs`
+- `compositor/apply.rs` should keep absorbing direct Smithay side effects so shell/layout/input stay focused on intent-level flow
+- `compositor/lookup.rs` and `compositor/windows.rs` are now useful precedent for pulling Smithay-facing lookup and window-lifecycle code out of `state.rs` and `shell.rs`
+- `compositor/navigation.rs` is now the right home for geometry-based directional focus and swap helpers instead of leaving that policy mixed into `shell.rs`
+- `scene/adapter.rs` is now the only live layout fallback boundary; if fallback behavior changes, it should remain scene-native instead of reintroducing geometry planners outside `scene/`
 
 ## Architectural Roles
 
@@ -199,7 +207,7 @@ Responsibilities:
 - `Space<Window>` and popup management
 - renderer backend ownership
 - input event translation
-- applying model/action results to Smithay objects
+- applying model/action results to Smithay objects, increasingly through small apply-oriented helpers
 
 This layer should become thinner over time.
 
@@ -268,7 +276,10 @@ Status:
 
 - partially complete
 - `app/bootstrap.rs` now owns startup assembly, config discovery, Wayland listener setup, IPC listener setup, and winit initialization
+- `app/lifecycle.rs` now owns app-side command spawning and config reload wiring
 - relayout planning/application now lives in `compositor/layout.rs` instead of `state.rs`
+- redraw-time blocker draining and closing-overlay pruning now live in `compositor/rendering.rs`
+- managed-window diagnostics/logging now live in `compositor/diagnostics.rs`
 - `compositor/input.rs`, `compositor/rendering.rs`, and `compositor/shell.rs` already exist
 - `model/`, `actions/`, and `runtime/` already exist and are no longer hypothetical
 - the remaining work is to keep moving orchestration and apply-layer responsibilities out of `state.rs`

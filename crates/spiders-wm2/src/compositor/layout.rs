@@ -1,8 +1,8 @@
 use smithay::output::Output;
 use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel;
-use smithay::reexports::wayland_server::protocol::{wl_output::WlOutput, wl_surface::WlSurface};
 use smithay::reexports::wayland_server::Resource;
-use smithay::utils::{Logical, Point, Size};
+use smithay::reexports::wayland_server::protocol::{wl_output::WlOutput, wl_surface::WlSurface};
+use smithay::utils::{Logical, Point, Rectangle, Size};
 use tracing::{debug, info};
 
 use crate::frame_sync::SyncHandle;
@@ -39,14 +39,19 @@ impl SpidersWm {
                 .then_some((output_geometry.loc, output_geometry.size));
         }
 
-        if let Some(target) = self
-            .scene
-            .compute_layout_target(&self.config, &self.model, &visible_window_ids, &window_id)
-        {
+        if let Some(target) = self.scene.compute_layout_target(
+            &self.config,
+            &self.model,
+            &visible_window_ids,
+            &window_id,
+        ) {
             return Some(target);
         }
 
-        crate::scene::adapter::bootstrap_layout_target(output_geometry, &visible_window_ids, &window_id)
+        let visible_index = visible_window_ids.iter().position(|id| id == &window_id)?;
+        let fallback = plan_tiled_slot(output_geometry, visible_window_ids.len(), visible_index)?;
+
+        Some((fallback.location, fallback.size))
     }
 
     pub(crate) fn start_relayout(&mut self) -> Option<SyncHandle> {
@@ -77,12 +82,19 @@ impl SpidersWm {
         );
         self.log_managed_window_state("before relayout");
 
-        for record in &self.managed_windows {
-            if !self.model.window_is_on_current_workspace(record.id.clone())
-                || fullscreen_window_id.as_ref().is_some_and(|window_id| *window_id != record.id)
-            {
-                self.space.unmap_elem(&record.window);
-            }
+        let windows_to_unmap = self
+            .managed_windows
+            .iter()
+            .filter(|record| {
+                !self.model.window_is_on_current_workspace(record.id.clone())
+                    || fullscreen_window_id
+                        .as_ref()
+                        .is_some_and(|window_id| *window_id != record.id)
+            })
+            .map(|record| record.window.clone())
+            .collect::<Vec<_>>();
+        for window in &windows_to_unmap {
+            self.unmap_window_element(window);
         }
 
         if visible_positions.is_empty() {
@@ -91,14 +103,19 @@ impl SpidersWm {
         }
 
         if fullscreen_window_id.is_some() {
-            for managed_index in self
-                .visible_managed_window_positions()
-                .into_iter()
-                .filter(|managed_index| {
-                    fullscreen_window_id.as_ref() != Some(&self.managed_windows[*managed_index].id)
-                })
+            for managed_index in
+                self.visible_managed_window_positions()
+                    .into_iter()
+                    .filter(|managed_index| {
+                        fullscreen_window_id.as_ref()
+                            != Some(&self.managed_windows[*managed_index].id)
+                    })
             {
-                if let Some(toplevel) = self.managed_windows[managed_index].window.toplevel().cloned() {
+                if let Some(toplevel) = self.managed_windows[managed_index]
+                    .window
+                    .toplevel()
+                    .cloned()
+                {
                     if sync_toplevel_fullscreen_state(&toplevel, false, None) {
                         let _ = toplevel.send_configure();
                     }
@@ -106,22 +123,21 @@ impl SpidersWm {
             }
         }
 
-        let relayout_targets = if fullscreen_window_id.is_some() {
-            crate::scene::adapter::bootstrap_layout_targets(
-                output_geometry,
-                &visible_window_ids,
-                fullscreen_window_id.as_ref(),
-            )
+        let relayout_targets = if let Some(fullscreen_window_id) = fullscreen_window_id.as_ref() {
+            visible_window_ids
+                .iter()
+                .filter(|window_id| *window_id == fullscreen_window_id)
+                .cloned()
+                .map(|window_id| crate::scene::adapter::LayoutTarget {
+                    window_id,
+                    location: output_geometry.loc,
+                    size: output_geometry.size,
+                    fullscreen: true,
+                })
+                .collect::<Vec<_>>()
         } else {
             self.scene
-                .compute_layout_targets(&self.config, &self.model, &visible_window_ids)
-                .unwrap_or_else(|| {
-                    crate::scene::adapter::bootstrap_layout_targets(
-                        output_geometry,
-                        &visible_window_ids,
-                        None,
-                    )
-                })
+                .compute_layout_targets(&self.config, &self.model, &visible_window_ids)?
         };
         let mut relayout_transaction: Option<SyncHandle> = None;
 
@@ -137,7 +153,10 @@ impl SpidersWm {
             let current_location = self
                 .space
                 .element_location(&self.managed_windows[managed_index].window);
-            let toplevel = self.managed_windows[managed_index].window.toplevel().cloned();
+            let toplevel = self.managed_windows[managed_index]
+                .window
+                .toplevel()
+                .cloned();
 
             if let Some(toplevel) = toplevel {
                 let record = &mut self.managed_windows[managed_index];
@@ -150,7 +169,11 @@ impl SpidersWm {
                     if state.size != Some(target.size) {
                         needs_configure = true;
                     }
-                    if sync_pending_fullscreen_state(state, target.fullscreen, fullscreen_output.clone()) {
+                    if sync_pending_fullscreen_state(
+                        state,
+                        target.fullscreen,
+                        fullscreen_output.clone(),
+                    ) {
                         needs_configure = true;
                     }
                     state.size = Some(target.size);
@@ -180,11 +203,19 @@ impl SpidersWm {
                         transaction,
                     );
                     debug!(window = %record.id.0, ?serial, "wm2 sent configure during relayout");
-                } else if !record.frame_sync.has_pending_configures() {
-                    self.space.map_element(record.window.clone(), target.location, false);
-                    debug!(window = %record.id.0, location = ?target.location, "wm2 mapped window during relayout");
                 } else {
-                    debug!(window = %record.id.0, "wm2 deferred remap until pending configure commits");
+                    let pending_configures = record.frame_sync.has_pending_configures();
+                    let window_id = record.id.clone();
+                    let window = (!pending_configures).then(|| record.window.clone());
+
+                    let _ = record;
+
+                    if let Some(window) = window {
+                        self.map_window_element(window, target.location);
+                        debug!(window = %window_id.0, location = ?target.location, "wm2 mapped window during relayout");
+                    } else {
+                        debug!(window = %window_id.0, "wm2 deferred remap until pending configure commits");
+                    }
                 }
             }
         }
@@ -192,6 +223,54 @@ impl SpidersWm {
         self.log_managed_window_state("after relayout");
         relayout_transaction
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct RelayoutSlot {
+    location: Point<i32, Logical>,
+    size: Size<i32, Logical>,
+}
+
+fn plan_tiled_slot(
+    output_geometry: Rectangle<i32, Logical>,
+    count: usize,
+    index: usize,
+) -> Option<RelayoutSlot> {
+    if count == 0 || index >= count {
+        return None;
+    }
+
+    let output_width = output_geometry.size.w.max(1);
+    let output_height = output_geometry.size.h.max(1);
+
+    if count == 1 {
+        return Some(RelayoutSlot {
+            location: output_geometry.loc,
+            size: Size::from((output_width, output_height)),
+        });
+    }
+
+    let master_width = ((output_width * 3) / 5).max(1);
+    let stack_width = (output_width - master_width).max(1);
+
+    if index == 0 {
+        return Some(RelayoutSlot {
+            location: output_geometry.loc,
+            size: Size::from((master_width, output_height)),
+        });
+    }
+
+    let stack_count = (count - 1) as i32;
+    let stack_index = (index - 1) as i32;
+    let base_height = (output_height / stack_count).max(1);
+    let remainder = output_height.rem_euclid(stack_count);
+    let height = (base_height + i32::from(stack_index < remainder)).max(1);
+    let y = output_geometry.loc.y + stack_index * base_height + remainder.min(stack_index);
+
+    Some(RelayoutSlot {
+        location: Point::from((output_geometry.loc.x + master_width, y)),
+        size: Size::from((stack_width, height)),
+    })
 }
 
 fn sync_toplevel_fullscreen_state(
@@ -232,6 +311,26 @@ fn fullscreen_output_for_toplevel(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn plan_tiled_slot_uses_master_column_for_first_window() {
+        let output = Rectangle::new((10, 20).into(), (100, 50).into());
+
+        let slot = plan_tiled_slot(output, 2, 0).expect("master slot should exist");
+
+        assert_eq!(slot.location, Point::from((10, 20)));
+        assert_eq!(slot.size, Size::from((60, 50)));
+    }
+
+    #[test]
+    fn plan_tiled_slot_splits_stack_windows_by_height() {
+        let output = Rectangle::new((10, 20).into(), (100, 101).into());
+
+        let slot = plan_tiled_slot(output, 4, 2).expect("stack slot should exist");
+
+        assert_eq!(slot.location, Point::from((70, 54)));
+        assert_eq!(slot.size, Size::from((40, 34)));
+    }
 
     #[test]
     fn sync_pending_fullscreen_state_sets_fullscreen_flag() {

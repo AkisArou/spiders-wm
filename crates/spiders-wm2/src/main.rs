@@ -1,10 +1,9 @@
-mod app;
 mod actions;
+mod app;
 mod compositor;
 mod frame_sync;
 mod handlers;
 mod ipc;
-mod layout;
 mod model;
 mod runtime;
 mod scene;

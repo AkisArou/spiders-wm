@@ -86,13 +86,17 @@ pub fn handle_commit(state: &mut SpidersWm, surface: &WlSurface) {
             .unwrap_or(false)
     });
     let planned_size = (!initial_configure_sent)
-        .then(|| state.planned_layout_for_surface(surface).map(|(_, size)| size))
+        .then(|| {
+            state
+                .planned_layout_for_surface(surface)
+                .map(|(_, size)| size)
+        })
         .flatten();
     let planned_layout = (!initial_configure_sent)
         .then(|| state.planned_layout_for_surface(surface))
         .flatten();
-    let initial_transaction = (!initial_configure_sent)
-        .then(|| crate::frame_sync::new_sync_handle(&state.event_loop));
+    let initial_transaction =
+        (!initial_configure_sent).then(|| crate::frame_sync::new_sync_handle(&state.event_loop));
 
     if let Some(record) = state.find_window_mut(surface) {
         if !initial_configure_sent {

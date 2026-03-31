@@ -1,11 +1,24 @@
 use smithay::backend::renderer::damage::OutputDamageTracker;
 use smithay::output::Output;
 use smithay::utils::Rectangle;
+use smithay::wayland::compositor::CompositorHandler;
 
 use crate::frame_sync::SnapshotRenderElement;
 use crate::state::SpidersWm;
 
 impl SpidersWm {
+    pub(crate) fn notify_blocker_cleared(&mut self) {
+        let display_handle = self.display_handle.clone();
+        while let Ok(client) = self.blocker_cleared_rx.try_recv() {
+            self.client_compositor_state(&client)
+                .blocker_cleared(self, &display_handle);
+        }
+    }
+
+    pub(crate) fn prune_completed_closing_overlays(&mut self) {
+        self.frame_sync.prune_completed_closing_overlays();
+    }
+
     pub(crate) fn send_frames_for_windows(&self, output: &Output) {
         for record in &self.managed_windows {
             if !record.mapped {
@@ -37,8 +50,7 @@ impl SpidersWm {
         let damage = Rectangle::from_size(size);
 
         {
-            let (renderer, mut framebuffer) =
-                backend.bind().expect("failed to bind winit backend");
+            let (renderer, mut framebuffer) = backend.bind().expect("failed to bind winit backend");
             let scale = output.current_scale().fractional_scale().into();
             let custom_elements = self.frame_sync.render_elements(renderer, scale, 1.0);
 

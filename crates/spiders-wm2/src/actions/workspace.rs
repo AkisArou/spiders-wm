@@ -104,9 +104,15 @@ mod tests {
         let workspace_id = ensure_default_workspace(&mut model, "1");
 
         assert_eq!(workspace_id, WorkspaceId("1".to_string()));
-        assert_eq!(model.current_workspace_id, Some(WorkspaceId("1".to_string())));
         assert_eq!(
-            model.workspaces.get(&WorkspaceId("1".to_string())).map(|workspace| workspace.focused),
+            model.current_workspace_id,
+            Some(WorkspaceId("1".to_string()))
+        );
+        assert_eq!(
+            model
+                .workspaces
+                .get(&WorkspaceId("1".to_string()))
+                .map(|workspace| workspace.focused),
             Some(true)
         );
     }
@@ -118,11 +124,8 @@ mod tests {
         ensure_workspace(&mut model, "2");
         ensure_default_workspace(&mut model, "1");
 
-        let selected = request_select_workspace(
-            &mut model,
-            WorkspaceId("2".to_string()),
-            Vec::new(),
-        );
+        let selected =
+            request_select_workspace(&mut model, WorkspaceId("2".to_string()), Vec::new());
 
         assert_eq!(
             selected,
@@ -131,13 +134,22 @@ mod tests {
                 focused_window_id: None,
             })
         );
-        assert_eq!(model.current_workspace_id, Some(WorkspaceId("2".to_string())));
         assert_eq!(
-            model.workspaces.get(&WorkspaceId("1".to_string())).map(|workspace| workspace.focused),
+            model.current_workspace_id,
+            Some(WorkspaceId("2".to_string()))
+        );
+        assert_eq!(
+            model
+                .workspaces
+                .get(&WorkspaceId("1".to_string()))
+                .map(|workspace| workspace.focused),
             Some(false)
         );
         assert_eq!(
-            model.workspaces.get(&WorkspaceId("2".to_string())).map(|workspace| workspace.visible),
+            model
+                .workspaces
+                .get(&WorkspaceId("2".to_string()))
+                .map(|workspace| workspace.visible),
             Some(true)
         );
     }

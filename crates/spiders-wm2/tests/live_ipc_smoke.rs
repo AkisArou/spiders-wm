@@ -19,7 +19,10 @@ fn wm2_live_ipc_smoke_uses_test_config() {
     let workspace_root = workspace_root();
     let test_config_root = workspace_root.join("test_config");
     let authored_config = test_config_root.join("config.ts");
-    assert!(authored_config.exists(), "missing test_config authored config");
+    assert!(
+        authored_config.exists(),
+        "missing test_config authored config"
+    );
 
     let temp_root = unique_temp_root("wm2-live-ipc-smoke");
     std::fs::create_dir_all(&temp_root).unwrap();
@@ -36,7 +39,11 @@ fn wm2_live_ipc_smoke_uses_test_config() {
         &ipc_socket,
         ["ipc-query", "--json", "--query", "workspace-names"],
     );
-    assert!(query_output.status.success(), "ipc-query failed: {}", String::from_utf8_lossy(&query_output.stderr));
+    assert!(
+        query_output.status.success(),
+        "ipc-query failed: {}",
+        String::from_utf8_lossy(&query_output.stderr)
+    );
 
     let query_json: serde_json::Value = serde_json::from_slice(&query_output.stdout).unwrap();
     assert_eq!(query_json["status"], "ok");
@@ -48,7 +55,11 @@ fn wm2_live_ipc_smoke_uses_test_config() {
         &ipc_socket,
         ["ipc-command", "--json", "--command", "reload-config"],
     );
-    assert!(command_output.status.success(), "ipc-command failed: {}", String::from_utf8_lossy(&command_output.stderr));
+    assert!(
+        command_output.status.success(),
+        "ipc-command failed: {}",
+        String::from_utf8_lossy(&command_output.stderr)
+    );
 
     let command_json: serde_json::Value = serde_json::from_slice(&command_output.stdout).unwrap();
     assert_eq!(command_json["status"], "ok");
@@ -117,7 +128,10 @@ fn wait_for_socket(socket_path: &Path, timeout: Duration) {
         thread::sleep(Duration::from_millis(50));
     }
 
-    panic!("timed out waiting for wm2 IPC socket at {}", socket_path.display());
+    panic!(
+        "timed out waiting for wm2 IPC socket at {}",
+        socket_path.display()
+    );
 }
 
 fn terminate_child(child: &mut Child) {

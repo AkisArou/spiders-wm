@@ -31,7 +31,8 @@ smithay::backend::renderer::element::render_elements! {
     SolidColor = SolidColorRenderElement,
 }
 
-pub(crate) type SnapshotRenderElement = RescaleRenderElement<SurfaceTextureRenderElement<GlesRenderer>>;
+pub(crate) type SnapshotRenderElement =
+    RescaleRenderElement<SurfaceTextureRenderElement<GlesRenderer>>;
 
 #[derive(Debug, Clone)]
 struct EncompassingTexture {
@@ -195,10 +196,13 @@ fn texture_render_elements_from_surface_tree(
                                         Some(view.dst),
                                         element::Kind::Unspecified,
                                     );
-                                    surfaces.push(SurfaceTextureRenderElement::Texture(texture_element));
+                                    surfaces.push(SurfaceTextureRenderElement::Texture(
+                                        texture_element,
+                                    ));
                                 }
                                 WaylandSurfaceTexture::SolidColor(color) => {
-                                    let solid_color_buffer = SolidColorBuffer::new(view.dst, *color);
+                                    let solid_color_buffer =
+                                        SolidColorBuffer::new(view.dst, *color);
                                     let solid_color = SolidColorRenderElement::from_buffer(
                                         &solid_color_buffer,
                                         location.to_i32_round(),
@@ -206,7 +210,8 @@ fn texture_render_elements_from_surface_tree(
                                         alpha,
                                         element::Kind::Unspecified,
                                     );
-                                    surfaces.push(SurfaceTextureRenderElement::SolidColor(solid_color));
+                                    surfaces
+                                        .push(SurfaceTextureRenderElement::SolidColor(solid_color));
                                 }
                             }
                         }
@@ -279,7 +284,14 @@ fn render_to_texture(
 
     let sync_point = {
         let mut framebuffer = renderer.bind(&mut texture)?;
-        render_elements_to_framebuffer(renderer, &mut framebuffer, elements, size, scale, transform)?
+        render_elements_to_framebuffer(
+            renderer,
+            &mut framebuffer,
+            elements,
+            size,
+            scale,
+            transform,
+        )?
     };
 
     Ok((texture, sync_point))

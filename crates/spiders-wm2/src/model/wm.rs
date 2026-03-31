@@ -24,10 +24,12 @@ pub struct WmModel {
 
 impl WmModel {
     pub fn upsert_seat(&mut self, seat_id: SeatId) {
-        self.seats.entry(seat_id.clone()).or_insert_with(|| SeatModel {
-            id: seat_id,
-            ..SeatModel::default()
-        });
+        self.seats
+            .entry(seat_id.clone())
+            .or_insert_with(|| SeatModel {
+                id: seat_id,
+                ..SeatModel::default()
+            });
     }
 
     pub fn upsert_workspace(&mut self, workspace_id: WorkspaceId, name: String) {
@@ -99,19 +101,31 @@ impl WmModel {
         self.current_output_id = Some(output_id);
     }
 
-    pub fn set_seat_focused_window(&mut self, seat_id: SeatId, focused_window_id: Option<WindowId>) {
+    pub fn set_seat_focused_window(
+        &mut self,
+        seat_id: SeatId,
+        focused_window_id: Option<WindowId>,
+    ) {
         if let Some(seat) = self.seats.get_mut(&seat_id) {
             seat.focused_window_id = focused_window_id;
         }
     }
 
-    pub fn set_seat_hovered_window(&mut self, seat_id: SeatId, hovered_window_id: Option<WindowId>) {
+    pub fn set_seat_hovered_window(
+        &mut self,
+        seat_id: SeatId,
+        hovered_window_id: Option<WindowId>,
+    ) {
         if let Some(seat) = self.seats.get_mut(&seat_id) {
             seat.hovered_window_id = hovered_window_id;
         }
     }
 
-    pub fn set_seat_interacted_window(&mut self, seat_id: SeatId, interacted_window_id: Option<WindowId>) {
+    pub fn set_seat_interacted_window(
+        &mut self,
+        seat_id: SeatId,
+        interacted_window_id: Option<WindowId>,
+    ) {
         if let Some(seat) = self.seats.get_mut(&seat_id) {
             seat.interacted_window_id = interacted_window_id;
         }
@@ -140,7 +154,9 @@ impl WmModel {
         };
 
         match self.current_workspace_id.as_ref() {
-            Some(current_workspace_id) => window.workspace_id.as_ref() == Some(current_workspace_id),
+            Some(current_workspace_id) => {
+                window.workspace_id.as_ref() == Some(current_workspace_id)
+            }
             None => true,
         }
     }
@@ -188,14 +204,13 @@ impl WmModel {
     }
 
     pub fn window_is_focusable(&self, id: &WindowId) -> bool {
-        self.windows
-            .get(id)
-            .is_some_and(|window| !window.closing)
+        self.windows.get(id).is_some_and(|window| !window.closing)
     }
 
     pub fn window_is_layout_eligible(&self, id: &WindowId) -> bool {
         self.windows.get(id).is_some_and(|window| {
-            window.workspace_id.as_ref() == self.current_workspace_id.as_ref() && (!window.closing || window.mapped)
+            window.workspace_id.as_ref() == self.current_workspace_id.as_ref()
+                && (!window.closing || window.mapped)
         })
     }
 
@@ -287,21 +302,36 @@ mod tests {
 
         model.set_current_workspace(WorkspaceId("2".to_string()));
 
-        assert_eq!(model.current_workspace_id, Some(WorkspaceId("2".to_string())));
         assert_eq!(
-            model.workspaces.get(&WorkspaceId("1".to_string())).map(|workspace| workspace.focused),
+            model.current_workspace_id,
+            Some(WorkspaceId("2".to_string()))
+        );
+        assert_eq!(
+            model
+                .workspaces
+                .get(&WorkspaceId("1".to_string()))
+                .map(|workspace| workspace.focused),
             Some(false)
         );
         assert_eq!(
-            model.workspaces.get(&WorkspaceId("2".to_string())).map(|workspace| workspace.focused),
+            model
+                .workspaces
+                .get(&WorkspaceId("2".to_string()))
+                .map(|workspace| workspace.focused),
             Some(true)
         );
         assert_eq!(
-            model.workspaces.get(&WorkspaceId("1".to_string())).map(|workspace| workspace.visible),
+            model
+                .workspaces
+                .get(&WorkspaceId("1".to_string()))
+                .map(|workspace| workspace.visible),
             Some(false)
         );
         assert_eq!(
-            model.workspaces.get(&WorkspaceId("2".to_string())).map(|workspace| workspace.visible),
+            model
+                .workspaces
+                .get(&WorkspaceId("2".to_string()))
+                .map(|workspace| workspace.visible),
             Some(true)
         );
     }
@@ -314,7 +344,10 @@ mod tests {
         model.set_window_workspace(window_id(9), Some(WorkspaceId("2".to_string())));
 
         assert_eq!(
-            model.windows.get(&window_id(9)).and_then(|window| window.workspace_id.clone()),
+            model
+                .windows
+                .get(&window_id(9))
+                .and_then(|window| window.workspace_id.clone()),
             Some(WorkspaceId("2".to_string()))
         );
     }
@@ -327,7 +360,10 @@ mod tests {
         model.set_window_floating(window_id(10), true);
 
         assert_eq!(
-            model.windows.get(&window_id(10)).map(|window| window.floating),
+            model
+                .windows
+                .get(&window_id(10))
+                .map(|window| window.floating),
             Some(true)
         );
     }
@@ -340,7 +376,10 @@ mod tests {
         model.set_window_fullscreen(window_id(11), true);
 
         assert_eq!(
-            model.windows.get(&window_id(11)).map(|window| window.fullscreen),
+            model
+                .windows
+                .get(&window_id(11))
+                .map(|window| window.fullscreen),
             Some(true)
         );
     }
@@ -370,7 +409,10 @@ mod tests {
         model.set_seat_focused_window(SeatId("winit".to_string()), Some(window_id(7)));
 
         assert_eq!(
-            model.seats.get(&SeatId("winit".to_string())).and_then(|seat| seat.focused_window_id.clone()),
+            model
+                .seats
+                .get(&SeatId("winit".to_string()))
+                .and_then(|seat| seat.focused_window_id.clone()),
             Some(window_id(7))
         );
     }
@@ -383,7 +425,10 @@ mod tests {
         model.set_seat_hovered_window(SeatId("winit".to_string()), Some(window_id(3)));
         model.set_seat_interacted_window(SeatId("winit".to_string()), Some(window_id(4)));
 
-        let seat = model.seats.get(&SeatId("winit".to_string())).expect("seat missing");
+        let seat = model
+            .seats
+            .get(&SeatId("winit".to_string()))
+            .expect("seat missing");
         assert_eq!(seat.hovered_window_id, Some(window_id(3)));
         assert_eq!(seat.interacted_window_id, Some(window_id(4)));
     }
@@ -409,11 +454,17 @@ mod tests {
 
         assert_eq!(model.current_output_id, Some(OutputId("winit".to_string())));
         assert_eq!(
-            model.outputs.get(&OutputId("winit".to_string())).map(|output| output.logical_width),
+            model
+                .outputs
+                .get(&OutputId("winit".to_string()))
+                .map(|output| output.logical_width),
             Some(1280)
         );
         assert_eq!(
-            model.workspaces.get(&WorkspaceId("1".to_string())).and_then(|workspace| workspace.output_id.clone()),
+            model
+                .workspaces
+                .get(&WorkspaceId("1".to_string()))
+                .and_then(|workspace| workspace.output_id.clone()),
             Some(OutputId("winit".to_string()))
         );
     }
@@ -457,8 +508,20 @@ mod tests {
         model.set_window_focused(Some(window_id(2)));
 
         assert_eq!(model.focused_window_id, Some(window_id(2)));
-        assert_eq!(model.windows.get(&window_id(1)).map(|window| window.focused), Some(false));
-        assert_eq!(model.windows.get(&window_id(2)).map(|window| window.focused), Some(true));
+        assert_eq!(
+            model
+                .windows
+                .get(&window_id(1))
+                .map(|window| window.focused),
+            Some(false)
+        );
+        assert_eq!(
+            model
+                .windows
+                .get(&window_id(2))
+                .map(|window| window.focused),
+            Some(true)
+        );
     }
 
     #[test]
@@ -509,7 +572,8 @@ mod tests {
         model.insert_window(window_id(2), Some(WorkspaceId("2".to_string())), None);
         model.insert_window(window_id(3), Some(WorkspaceId("2".to_string())), None);
 
-        let visible = model.window_ids_on_current_workspace([window_id(3), window_id(1), window_id(2)]);
+        let visible =
+            model.window_ids_on_current_workspace([window_id(3), window_id(1), window_id(2)]);
 
         assert_eq!(visible, vec![window_id(3), window_id(2)]);
     }

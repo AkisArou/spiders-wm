@@ -126,7 +126,9 @@ impl Transaction {
                 completed: AtomicBool::new(false),
                 notifications: Mutex::new(None),
             }),
-            deadline: Rc::new(RefCell::new(Deadline::NotRegistered(Instant::now() + TIMEOUT))),
+            deadline: Rc::new(RefCell::new(Deadline::NotRegistered(
+                Instant::now() + TIMEOUT,
+            ))),
         };
         transaction.register_deadline_timer(loop_handle);
         transaction
@@ -145,7 +147,11 @@ impl Transaction {
             return;
         }
 
-        let mut guard = self.inner.notifications.lock().expect("transaction notifications poisoned");
+        let mut guard = self
+            .inner
+            .notifications
+            .lock()
+            .expect("transaction notifications poisoned");
         guard.get_or_insert((sender, Vec::new())).1.push(client);
     }
 
@@ -168,7 +174,8 @@ impl Transaction {
             let inner = Arc::downgrade(&self.inner);
             let token = loop_handle
                 .insert_source(timer, move |_, _, _| {
-                    let _span = trace_span!("deadline timer", transaction = ?Weak::as_ptr(&inner)).entered();
+                    let _span = trace_span!("deadline timer", transaction = ?Weak::as_ptr(&inner))
+                        .entered();
 
                     if let Some(inner) = inner.upgrade() {
                         warn!(
@@ -185,7 +192,8 @@ impl Transaction {
                 })
                 .expect("failed to register transaction deadline timer");
 
-            let (ping, source) = calloop::ping::make_ping().expect("failed to create deadline removal ping");
+            let (ping, source) =
+                calloop::ping::make_ping().expect("failed to create deadline removal ping");
             loop_handle
                 .insert_source(source, {
                     let loop_handle = loop_handle.clone();
@@ -221,7 +229,11 @@ impl Drop for Transaction {
 
 impl Blocker for TransactionBlocker {
     fn state(&self) -> BlockerState {
-        if self.inner.upgrade().is_none_or(|inner| inner.is_completed()) {
+        if self
+            .inner
+            .upgrade()
+            .is_none_or(|inner| inner.is_completed())
+        {
             BlockerState::Released
         } else {
             BlockerState::Pending
@@ -233,7 +245,10 @@ impl Inner {
     fn complete(&self) {
         self.completed.store(true, Ordering::Relaxed);
 
-        let mut guard = self.notifications.lock().expect("transaction notifications poisoned");
+        let mut guard = self
+            .notifications
+            .lock()
+            .expect("transaction notifications poisoned");
         if let Some((sender, clients)) = guard.take() {
             for client in clients {
                 if let Err(error) = sender.send(client) {
@@ -269,8 +284,16 @@ mod tests {
         let second = layout(50, 0, 80, 100);
         let event_loop = EventLoop::<()>::try_new().expect("event loop");
 
-        state.push(Serial::from(4_u32), first, Transaction::new(&event_loop.handle()));
-        state.push(Serial::from(8_u32), second, Transaction::new(&event_loop.handle()));
+        state.push(
+            Serial::from(4_u32),
+            first,
+            Transaction::new(&event_loop.handle()),
+        );
+        state.push(
+            Serial::from(8_u32),
+            second,
+            Transaction::new(&event_loop.handle()),
+        );
 
         let matched = state.mark_ready(Serial::from(8_u32));
 
@@ -286,8 +309,16 @@ mod tests {
         let second = layout(100, 0, 100, 100);
         let event_loop = EventLoop::<()>::try_new().expect("event loop");
 
-        state.push(Serial::from(4_u32), first, Transaction::new(&event_loop.handle()));
-        state.push(Serial::from(10_u32), second, Transaction::new(&event_loop.handle()));
+        state.push(
+            Serial::from(4_u32),
+            first,
+            Transaction::new(&event_loop.handle()),
+        );
+        state.push(
+            Serial::from(10_u32),
+            second,
+            Transaction::new(&event_loop.handle()),
+        );
 
         let matched = state.mark_ready(Serial::from(5_u32));
 

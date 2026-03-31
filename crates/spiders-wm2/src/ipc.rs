@@ -4,18 +4,16 @@ use std::collections::BTreeMap;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
 
+use smithay::reexports::calloop::{EventLoop, Interest, Mode, PostAction, generic::Generic};
 use spiders_ipc::{
     IpcClientId, IpcCodecError, IpcRequest, IpcResponse, IpcServerHandleResult, IpcServerState,
     IpcTransportError, UnknownClientError, bind_listener, recv_request, send_response,
 };
 use spiders_shared::api::{CompositorEvent, QueryRequest, QueryResponse};
 use spiders_shared::command::WmCommand;
-use spiders_shared::snapshot::{
-    OutputSnapshot, StateSnapshot, WindowSnapshot, WorkspaceSnapshot,
-};
+use spiders_shared::snapshot::{OutputSnapshot, StateSnapshot, WindowSnapshot, WorkspaceSnapshot};
 use spiders_shared::types::{OutputTransform, ShellKind, WindowMode};
 use spiders_tree::{OutputId as SharedOutputId, WorkspaceId as SharedWorkspaceId};
-use smithay::reexports::calloop::{EventLoop, Interest, Mode, PostAction, generic::Generic};
 use tracing::{debug, warn};
 
 use crate::model::{OutputId, WorkspaceId, wm::WmModel};
@@ -44,7 +42,8 @@ impl SpidersWm {
             } => {
                 debug!(client_id, request_id = ?request_id, query = ?query, "wm2 handling IPC query");
                 let response = self.query_ipc(query);
-                self.ipc_server.query_response(client_id, request_id, response)
+                self.ipc_server
+                    .query_response(client_id, request_id, response)
             }
             IpcServerHandleResult::Command {
                 client_id,
@@ -69,15 +68,19 @@ impl SpidersWm {
         self.ipc_clients.insert(client_id, writer);
 
         self.event_loop
-            .insert_source(Generic::new(stream, Interest::READ, Mode::Level), move |_, _, state| {
-                state.handle_ipc_client_io(client_id)
-            })
+            .insert_source(
+                Generic::new(stream, Interest::READ, Mode::Level),
+                move |_, _, state| state.handle_ipc_client_io(client_id),
+            )
             .expect("failed to register IPC client stream");
 
         Ok(())
     }
 
-    pub fn handle_ipc_client_io(&mut self, client_id: IpcClientId) -> Result<PostAction, std::io::Error> {
+    pub fn handle_ipc_client_io(
+        &mut self,
+        client_id: IpcClientId,
+    ) -> Result<PostAction, std::io::Error> {
         match serve_ipc_client_stream(self, client_id) {
             Ok(_) => Ok(PostAction::Continue),
             Err(WmIpcStreamError::Transport(IpcTransportError::Io(error)))
@@ -130,11 +133,8 @@ impl SpidersWm {
     }
 
     pub fn broadcast_ipc_event(&mut self, event: CompositorEvent) {
-        let stale_clients = broadcast_ipc_event_to_clients(
-            &self.ipc_server,
-            &mut self.ipc_clients,
-            event,
-        );
+        let stale_clients =
+            broadcast_ipc_event_to_clients(&self.ipc_server, &mut self.ipc_clients, event);
 
         for client_id in stale_clients {
             self.ipc_remove_client(client_id);
@@ -145,7 +145,11 @@ impl SpidersWm {
         self.broadcast_ipc_event(CompositorEvent::FocusChange {
             focused_window_id: self.model.focused_window_id.clone(),
             current_output_id: self.model.current_output_id.as_ref().map(shared_output_id),
-            current_workspace_id: self.model.current_workspace_id.as_ref().map(shared_workspace_id),
+            current_workspace_id: self
+                .model
+                .current_workspace_id
+                .as_ref()
+                .map(shared_workspace_id),
         });
     }
 
@@ -153,8 +157,15 @@ impl SpidersWm {
         self.broadcast_ipc_event(CompositorEvent::ConfigReloaded);
     }
 
-    pub fn emit_window_floating_change(&mut self, window_id: crate::model::WindowId, floating: bool) {
-        self.broadcast_ipc_event(CompositorEvent::WindowFloatingChange { window_id, floating });
+    pub fn emit_window_floating_change(
+        &mut self,
+        window_id: crate::model::WindowId,
+        floating: bool,
+    ) {
+        self.broadcast_ipc_event(CompositorEvent::WindowFloatingChange {
+            window_id,
+            floating,
+        });
     }
 
     pub fn emit_window_fullscreen_change(
@@ -209,10 +220,13 @@ pub(crate) fn init_ipc_listener(event_loop: &mut EventLoop<'static, SpidersWm>) 
 
     event_loop
         .handle()
-        .insert_source(Generic::new(listener, Interest::READ, Mode::Level), move |_, listener, state| {
-            accept_pending_ipc_clients(state, listener);
-            Ok(PostAction::Continue)
-        })
+        .insert_source(
+            Generic::new(listener, Interest::READ, Mode::Level),
+            move |_, listener, state| {
+                accept_pending_ipc_clients(state, listener);
+                Ok(PostAction::Continue)
+            },
+        )
         .expect("failed to register IPC listener socket");
 
     Some(socket_path)
@@ -309,7 +323,9 @@ fn accept_pending_ipc_clients(state: &mut SpidersWm, listener: &UnixListener) {
 fn stream_io_error(error: IpcTransportError) -> std::io::Error {
     match error {
         IpcTransportError::Io(error) => error,
-        IpcTransportError::Codec(error) => std::io::Error::new(std::io::ErrorKind::InvalidData, error),
+        IpcTransportError::Codec(error) => {
+            std::io::Error::new(std::io::ErrorKind::InvalidData, error)
+        }
     }
 }
 
@@ -356,7 +372,9 @@ pub(crate) fn query_response_for_model(model: &WmModel, query: QueryRequest) -> 
                     .cloned()
             }),
         ),
-        QueryRequest::CurrentOutput => QueryResponse::CurrentOutput(snapshot.current_output().cloned()),
+        QueryRequest::CurrentOutput => {
+            QueryResponse::CurrentOutput(snapshot.current_output().cloned())
+        }
         QueryRequest::CurrentWorkspace => {
             QueryResponse::CurrentWorkspace(snapshot.current_workspace().cloned())
         }
@@ -379,7 +397,10 @@ pub(crate) fn state_snapshot_for_model(model: &WmModel) -> StateSnapshot {
             scale: 1,
             transform: OutputTransform::Normal,
             enabled: output.enabled,
-            current_workspace_id: output.focused_workspace_id.as_ref().map(shared_workspace_id),
+            current_workspace_id: output
+                .focused_workspace_id
+                .as_ref()
+                .map(shared_workspace_id),
         })
         .collect();
 
@@ -450,7 +471,10 @@ pub(crate) fn state_snapshot_for_model(model: &WmModel) -> StateSnapshot {
     }
 }
 
-fn active_workspace_names(model: &WmModel, workspace: &crate::model::workspace::WorkspaceModel) -> Vec<String> {
+fn active_workspace_names(
+    model: &WmModel,
+    workspace: &crate::model::workspace::WorkspaceModel,
+) -> Vec<String> {
     workspace
         .output_id
         .as_ref()
@@ -499,8 +523,8 @@ mod tests {
 
     use spiders_ipc::{IpcClientMessage, IpcEnvelope, IpcServerMessage, IpcSubscriptionTopic};
     use spiders_ipc::{bind_listener, connect, recv_response, send_request};
-    use spiders_tree::{OutputId as SharedOutputId, WindowId, WorkspaceId as SharedWorkspaceId};
     use spiders_shared::command::WmCommand;
+    use spiders_tree::{OutputId as SharedOutputId, WindowId, WorkspaceId as SharedWorkspaceId};
 
     use super::*;
 
@@ -538,10 +562,19 @@ mod tests {
     fn state_snapshot_tracks_shared_query_state() {
         let snapshot = state_snapshot_for_model(&sample_model());
 
-        assert_eq!(snapshot.current_workspace_id, Some(SharedWorkspaceId::from("1")));
-        assert_eq!(snapshot.current_output_id, Some(SharedOutputId::from("output-1")));
+        assert_eq!(
+            snapshot.current_workspace_id,
+            Some(SharedWorkspaceId::from("1"))
+        );
+        assert_eq!(
+            snapshot.current_output_id,
+            Some(SharedOutputId::from("output-1"))
+        );
         assert_eq!(snapshot.focused_window_id, Some(WindowId::from("win-1")));
-        assert_eq!(snapshot.workspace_names, vec!["1".to_string(), "2".to_string()]);
+        assert_eq!(
+            snapshot.workspace_names,
+            vec!["1".to_string(), "2".to_string()]
+        );
         assert_eq!(snapshot.visible_window_ids, vec![WindowId::from("win-1")]);
         assert_eq!(snapshot.outputs.len(), 1);
         assert_eq!(snapshot.workspaces.len(), 2);
@@ -751,7 +784,8 @@ mod tests {
         CommandHandler: FnMut(WmCommand),
     {
         let request = recv_request(stream)?;
-        let response = resolve_ipc_request(server, client_id, request, query_handler, command_handler)?;
+        let response =
+            resolve_ipc_request(server, client_id, request, query_handler, command_handler)?;
         send_response(stream, &response)?;
         Ok(response)
     }

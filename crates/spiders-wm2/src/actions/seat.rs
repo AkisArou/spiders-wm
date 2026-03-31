@@ -13,7 +13,8 @@ pub fn sync_focused_window(
     focused_window_id: Option<WindowId>,
 ) -> Option<WindowId> {
     let seat_id = ensure_seat(model, seat_id);
-    let focused_window_id = focused_window_id.filter(|window_id| model.windows.contains_key(window_id));
+    let focused_window_id =
+        focused_window_id.filter(|window_id| model.windows.contains_key(window_id));
     model.set_seat_focused_window(seat_id, focused_window_id.clone());
     focused_window_id
 }
@@ -24,7 +25,8 @@ pub fn sync_hovered_window(
     hovered_window_id: Option<WindowId>,
 ) -> Option<WindowId> {
     let seat_id = ensure_seat(model, seat_id);
-    let hovered_window_id = hovered_window_id.filter(|window_id| model.windows.contains_key(window_id));
+    let hovered_window_id =
+        hovered_window_id.filter(|window_id| model.windows.contains_key(window_id));
     model.set_seat_hovered_window(seat_id, hovered_window_id.clone());
     hovered_window_id
 }
@@ -35,7 +37,8 @@ pub fn sync_interacted_window(
     interacted_window_id: Option<WindowId>,
 ) -> Option<WindowId> {
     let seat_id = ensure_seat(model, seat_id);
-    let interacted_window_id = interacted_window_id.filter(|window_id| model.windows.contains_key(window_id));
+    let interacted_window_id =
+        interacted_window_id.filter(|window_id| model.windows.contains_key(window_id));
     model.set_seat_interacted_window(seat_id, interacted_window_id.clone());
     interacted_window_id
 }
@@ -66,7 +69,10 @@ mod tests {
 
         assert_eq!(focused, Some(window_id(1)));
         assert_eq!(
-            model.seats.get(&SeatId("winit".to_string())).and_then(|seat| seat.focused_window_id.clone()),
+            model
+                .seats
+                .get(&SeatId("winit".to_string()))
+                .and_then(|seat| seat.focused_window_id.clone()),
             Some(window_id(1))
         );
     }
@@ -79,7 +85,10 @@ mod tests {
 
         assert_eq!(focused, None);
         assert_eq!(
-            model.seats.get(&SeatId("winit".to_string())).and_then(|seat| seat.focused_window_id.clone()),
+            model
+                .seats
+                .get(&SeatId("winit".to_string()))
+                .and_then(|seat| seat.focused_window_id.clone()),
             None
         );
     }
@@ -93,7 +102,10 @@ mod tests {
 
         assert_eq!(hovered, Some(window_id(2)));
         assert_eq!(
-            model.seats.get(&SeatId("winit".to_string())).and_then(|seat| seat.hovered_window_id.clone()),
+            model
+                .seats
+                .get(&SeatId("winit".to_string()))
+                .and_then(|seat| seat.hovered_window_id.clone()),
             Some(window_id(2))
         );
     }
@@ -106,7 +118,10 @@ mod tests {
 
         assert_eq!(interacted, None);
         assert_eq!(
-            model.seats.get(&SeatId("winit".to_string())).and_then(|seat| seat.interacted_window_id.clone()),
+            model
+                .seats
+                .get(&SeatId("winit".to_string()))
+                .and_then(|seat| seat.interacted_window_id.clone()),
             None
         );
     }

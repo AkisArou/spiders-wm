@@ -35,9 +35,8 @@ impl CompositorHandler for SpidersWm {
                 root = parent;
             }
 
-            let is_mapped =
-                with_renderer_surface_state(&root, |state| state.buffer().is_some())
-                    .unwrap_or(false);
+            let is_mapped = with_renderer_surface_state(&root, |state| state.buffer().is_some())
+                .unwrap_or(false);
             let window_id = self.window_id_for_surface(&root);
             let known_mapped = self.is_known_window_mapped(&root);
 

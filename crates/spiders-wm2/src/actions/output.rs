@@ -1,5 +1,5 @@
-use crate::model::wm::WmModel;
 use crate::model::OutputId;
+use crate::model::wm::WmModel;
 
 pub fn sync_output(
     model: &mut WmModel,
@@ -51,11 +51,15 @@ mod tests {
         assert_eq!(output_id, OutputId("winit".to_string()));
         assert_eq!(model.current_output_id, Some(OutputId("winit".to_string())));
         assert_eq!(
-            model.outputs.get(&output_id).and_then(|output| output.focused_workspace_id.clone()),
+            model
+                .outputs
+                .get(&output_id)
+                .and_then(|output| output.focused_workspace_id.clone()),
             Some(WorkspaceId("1".to_string()))
         );
         assert_eq!(
-            model.workspaces
+            model
+                .workspaces
                 .get(&WorkspaceId("1".to_string()))
                 .and_then(|workspace| workspace.output_id.clone()),
             Some(OutputId("winit".to_string()))
@@ -78,11 +82,17 @@ mod tests {
 
         assert_eq!(output_id, OutputId("winit".to_string()));
         assert_eq!(
-            model.outputs.get(&output_id).and_then(|output| output.focused_workspace_id.clone()),
+            model
+                .outputs
+                .get(&output_id)
+                .and_then(|output| output.focused_workspace_id.clone()),
             Some(WorkspaceId("2".to_string()))
         );
         assert_eq!(
-            model.outputs.get(&output_id).map(|output| output.logical_width),
+            model
+                .outputs
+                .get(&output_id)
+                .map(|output| output.logical_width),
             Some(1920)
         );
     }

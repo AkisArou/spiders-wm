@@ -12,8 +12,12 @@ use crate::state::SpidersWm;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RuntimeCommand {
-    EnsureWorkspace { name: String },
-    EnsureDefaultWorkspace { name: String },
+    EnsureWorkspace {
+        name: String,
+    },
+    EnsureDefaultWorkspace {
+        name: String,
+    },
     RequestSelectWorkspace {
         workspace_id: WorkspaceId,
         window_order: Vec<WindowId>,
@@ -24,20 +28,28 @@ pub enum RuntimeCommand {
     RequestSelectPreviousWorkspace {
         window_order: Vec<WindowId>,
     },
-    EnsureSeat { seat_id: SeatId },
+    EnsureSeat {
+        seat_id: SeatId,
+    },
     SyncOutput {
         output_id: OutputId,
         name: String,
         logical_width: u32,
         logical_height: u32,
     },
-    PlaceNewWindow { window_id: WindowId },
+    PlaceNewWindow {
+        window_id: WindowId,
+    },
     RequestFocusWindowSelection {
         seat_id: SeatId,
         window_id: Option<WindowId>,
     },
-    RequestFocusNextWindowSelection { seat_id: SeatId },
-    RequestFocusPreviousWindowSelection { seat_id: SeatId },
+    RequestFocusNextWindowSelection {
+        seat_id: SeatId,
+    },
+    RequestFocusPreviousWindowSelection {
+        seat_id: SeatId,
+    },
     SyncHoveredWindow {
         seat_id: SeatId,
         hovered_window_id: Option<WindowId>,
@@ -46,8 +58,12 @@ pub enum RuntimeCommand {
         seat_id: SeatId,
         interacted_window_id: Option<WindowId>,
     },
-    UnmapWindow { window_id: WindowId },
-    RemoveWindow { window_id: WindowId },
+    UnmapWindow {
+        window_id: WindowId,
+    },
+    RemoveWindow {
+        window_id: WindowId,
+    },
     RequestCloseFocusedWindowSelection,
     AssignFocusedWindowToWorkspace {
         workspace_id: WorkspaceId,
@@ -111,20 +127,31 @@ impl<'a> WmRuntime<'a> {
                 RuntimeResult::WorkspaceSelection(self.request_select_next_workspace(window_order))
             }
             RuntimeCommand::RequestSelectPreviousWorkspace { window_order } => {
-                RuntimeResult::WorkspaceSelection(self.request_select_previous_workspace(window_order))
+                RuntimeResult::WorkspaceSelection(
+                    self.request_select_previous_workspace(window_order),
+                )
             }
-            RuntimeCommand::EnsureSeat { seat_id } => RuntimeResult::Seat(self.ensure_seat(seat_id)),
+            RuntimeCommand::EnsureSeat { seat_id } => {
+                RuntimeResult::Seat(self.ensure_seat(seat_id))
+            }
             RuntimeCommand::SyncOutput {
                 output_id,
                 name,
                 logical_width,
                 logical_height,
-            } => RuntimeResult::Output(self.sync_output(output_id, name, logical_width, logical_height)),
+            } => RuntimeResult::Output(self.sync_output(
+                output_id,
+                name,
+                logical_width,
+                logical_height,
+            )),
             RuntimeCommand::PlaceNewWindow { window_id } => {
                 RuntimeResult::Window(Some(self.place_new_window(window_id)))
             }
             RuntimeCommand::RequestFocusWindowSelection { seat_id, window_id } => {
-                RuntimeResult::FocusSelection(self.request_focus_window_selection(seat_id, window_id))
+                RuntimeResult::FocusSelection(
+                    self.request_focus_window_selection(seat_id, window_id),
+                )
             }
             RuntimeCommand::RequestFocusNextWindowSelection { seat_id } => {
                 RuntimeResult::FocusSelection(self.request_focus_next_window_selection(seat_id))
@@ -194,10 +221,14 @@ impl<'a> WmRuntime<'a> {
     where
         I: IntoIterator<Item = WindowId>,
     {
-        self.actions.request_select_workspace(workspace_id, window_order)
+        self.actions
+            .request_select_workspace(workspace_id, window_order)
     }
 
-    pub fn request_select_next_workspace<I>(&mut self, window_order: I) -> Option<WorkspaceSelection>
+    pub fn request_select_next_workspace<I>(
+        &mut self,
+        window_order: I,
+    ) -> Option<WorkspaceSelection>
     where
         I: IntoIterator<Item = WindowId>,
     {
@@ -238,7 +269,8 @@ impl<'a> WmRuntime<'a> {
         seat_id: impl Into<SeatId>,
         window_id: Option<WindowId>,
     ) -> FocusSelection {
-        self.actions.request_focus_window_selection(seat_id, window_id)
+        self.actions
+            .request_focus_window_selection(seat_id, window_id)
     }
 
     pub fn request_focus_next_window_selection(
@@ -252,7 +284,8 @@ impl<'a> WmRuntime<'a> {
         &mut self,
         seat_id: impl Into<SeatId>,
     ) -> FocusSelection {
-        self.actions.request_focus_previous_window_selection(seat_id)
+        self.actions
+            .request_focus_previous_window_selection(seat_id)
     }
 
     pub fn sync_hovered_window(
@@ -354,10 +387,16 @@ mod tests {
         runtime.request_focus_window_selection("winit", Some(window_id(1)));
         runtime.sync_window_mapped(window_id(1), true);
 
-        assert_eq!(model.current_workspace_id, Some(WorkspaceId("1".to_string())));
+        assert_eq!(
+            model.current_workspace_id,
+            Some(WorkspaceId("1".to_string()))
+        );
         assert_eq!(model.current_output_id, Some(OutputId("winit".to_string())));
         assert_eq!(model.focused_window_id, Some(window_id(1)));
-        assert_eq!(model.windows.get(&window_id(1)).map(|window| window.mapped), Some(true));
+        assert_eq!(
+            model.windows.get(&window_id(1)).map(|window| window.mapped),
+            Some(true)
+        );
     }
 
     #[test]
@@ -398,8 +437,14 @@ mod tests {
             seat_id: SeatId("winit".to_string()),
         });
 
-        assert_eq!(workspace, RuntimeResult::Workspace(WorkspaceId("1".to_string())));
-        assert_eq!(ensured_workspace, RuntimeResult::Workspace(WorkspaceId("2".to_string())));
+        assert_eq!(
+            workspace,
+            RuntimeResult::Workspace(WorkspaceId("1".to_string()))
+        );
+        assert_eq!(
+            ensured_workspace,
+            RuntimeResult::Workspace(WorkspaceId("2".to_string()))
+        );
         assert_eq!(
             selected_workspace,
             RuntimeResult::WorkspaceSelection(Some(WorkspaceSelection {
@@ -466,9 +511,10 @@ mod tests {
         let next_focused = runtime.execute(RuntimeCommand::RequestFocusNextWindowSelection {
             seat_id: SeatId("winit".to_string()),
         });
-        let previous_focused = runtime.execute(RuntimeCommand::RequestFocusPreviousWindowSelection {
-            seat_id: SeatId("winit".to_string()),
-        });
+        let previous_focused =
+            runtime.execute(RuntimeCommand::RequestFocusPreviousWindowSelection {
+                seat_id: SeatId("winit".to_string()),
+            });
         let closing = runtime.execute(RuntimeCommand::RequestCloseFocusedWindowSelection);
 
         assert_eq!(
@@ -496,7 +542,13 @@ mod tests {
             })
         );
         assert_eq!(model.focused_window_id, Some(window_id(3)));
-        assert_eq!(model.windows.get(&window_id(3)).map(|window| window.closing), Some(true));
+        assert_eq!(
+            model
+                .windows
+                .get(&window_id(3))
+                .map(|window| window.closing),
+            Some(true)
+        );
     }
 
     #[test]
@@ -523,7 +575,10 @@ mod tests {
             })
         );
         assert_eq!(
-            model.windows.get(&window_id(2)).and_then(|window| window.workspace_id.clone()),
+            model
+                .windows
+                .get(&window_id(2))
+                .and_then(|window| window.workspace_id.clone()),
             Some(WorkspaceId("2".to_string()))
         );
         assert_eq!(model.focused_window_id, Some(window_id(1)));
@@ -553,7 +608,10 @@ mod tests {
             })
         );
         assert_eq!(
-            model.windows.get(&window_id(2)).and_then(|window| window.workspace_id.clone()),
+            model
+                .windows
+                .get(&window_id(2))
+                .and_then(|window| window.workspace_id.clone()),
             Some(WorkspaceId("2".to_string()))
         );
     }
@@ -571,7 +629,10 @@ mod tests {
 
         assert_eq!(toggled, RuntimeResult::Window(Some(window_id(6))));
         assert_eq!(
-            model.windows.get(&window_id(6)).map(|window| window.floating),
+            model
+                .windows
+                .get(&window_id(6))
+                .map(|window| window.floating),
             Some(true)
         );
     }
@@ -589,7 +650,10 @@ mod tests {
 
         assert_eq!(toggled, RuntimeResult::Window(Some(window_id(7))));
         assert_eq!(
-            model.windows.get(&window_id(7)).map(|window| window.fullscreen),
+            model
+                .windows
+                .get(&window_id(7))
+                .map(|window| window.fullscreen),
             Some(true)
         );
     }

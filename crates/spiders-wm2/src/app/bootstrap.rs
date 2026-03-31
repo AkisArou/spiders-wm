@@ -17,13 +17,13 @@ use smithay::reexports::calloop::{
 use smithay::reexports::wayland_server::Display;
 use smithay::utils::Transform;
 use smithay::wayland::compositor::CompositorState;
+use smithay::wayland::dmabuf::DmabufFeedbackBuilder;
 use smithay::wayland::dmabuf::{DmabufGlobal, DmabufState};
 use smithay::wayland::output::OutputManagerState;
 use smithay::wayland::selection::data_device::DataDeviceState;
-use smithay::wayland::shm::ShmState;
 use smithay::wayland::shell::xdg::XdgShellState;
+use smithay::wayland::shm::ShmState;
 use smithay::wayland::socket::ListeningSocketSource;
-use smithay::wayland::dmabuf::DmabufFeedbackBuilder;
 use tracing::{info, warn};
 
 use crate::frame_sync::FrameSyncState;
@@ -99,9 +99,7 @@ pub(crate) fn build_state(
     }
 }
 
-pub(crate) fn load_wm_config(
-    existing_paths: Option<ConfigPaths>,
-) -> (Option<ConfigPaths>, Config) {
+pub(crate) fn load_wm_config(existing_paths: Option<ConfigPaths>) -> (Option<ConfigPaths>, Config) {
     let paths = match existing_paths {
         Some(paths) => paths,
         None => match ConfigPaths::discover(ConfigDiscoveryOptions::from_env()) {
@@ -142,7 +140,9 @@ pub(crate) fn init_winit(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let (mut backend, winit) = winit::init::<GlesRenderer>()?;
 
-    state.shm_state.update_formats(backend.renderer().shm_formats());
+    state
+        .shm_state
+        .update_formats(backend.renderer().shm_formats());
 
     let render_node = EGLDevice::device_for_display(backend.renderer().egl_context().display())
         .and_then(|device| device.try_get_render_node());

@@ -100,10 +100,12 @@ impl SpidersWm {
 
                 if event.state() == ButtonState::Pressed && !pointer.is_grabbed() {
                     let interacted_window_id = self.window_id_under(pointer.current_location());
-                    let _ = self.runtime().execute(RuntimeCommand::SyncInteractedWindow {
-                        seat_id: "winit".into(),
-                        interacted_window_id,
-                    });
+                    let _ = self
+                        .runtime()
+                        .execute(RuntimeCommand::SyncInteractedWindow {
+                            seat_id: "winit".into(),
+                            interacted_window_id,
+                        });
                     if let Some((window, _)) = self.space.element_under(pointer.current_location())
                     {
                         let window = window.clone();
@@ -112,7 +114,7 @@ impl SpidersWm {
                             .expect("window missing toplevel")
                             .wl_surface()
                             .clone();
-                        self.space.raise_element(&window, true);
+                        self.raise_window_element(&window);
                         self.set_focus(Some(surface), serial);
                     } else {
                         self.set_focus(Option::<WlSurface>::None, serial);
@@ -164,7 +166,11 @@ impl SpidersWm {
     }
 }
 
-fn binding_command(bindings: &[Binding], modifiers: ModifiersState, keysym: Keysym) -> Option<WmCommand> {
+fn binding_command(
+    bindings: &[Binding],
+    modifiers: ModifiersState,
+    keysym: Keysym,
+) -> Option<WmCommand> {
     bindings
         .iter()
         .find(|binding| binding_matches(&binding.trigger, modifiers, keysym))
@@ -281,7 +287,10 @@ mod tests {
             ..ModifiersState::default()
         };
 
-        assert_eq!(binding_command(&bindings, modifiers, Keysym::Return), Some(WmCommand::SpawnTerminal));
+        assert_eq!(
+            binding_command(&bindings, modifiers, Keysym::Return),
+            Some(WmCommand::SpawnTerminal)
+        );
     }
 
     #[test]

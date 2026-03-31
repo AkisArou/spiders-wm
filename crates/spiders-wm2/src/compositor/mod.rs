@@ -1,4 +1,9 @@
+pub(crate) mod apply;
+pub(crate) mod diagnostics;
 pub(crate) mod input;
 pub(crate) mod layout;
+pub(crate) mod lookup;
+pub(crate) mod navigation;
 pub(crate) mod rendering;
 pub(crate) mod shell;
+pub(crate) mod windows;

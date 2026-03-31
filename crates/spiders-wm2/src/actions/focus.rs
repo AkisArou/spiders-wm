@@ -98,13 +98,9 @@ pub fn unmap_window(model: &mut WmModel, unmapped_id: WindowId) -> FocusUpdate {
         return FocusUpdate::Unchanged;
     }
 
-    let next_focus = model
-        .windows
-        .iter()
-        .rev()
-        .find_map(|(window_id, window)| {
-            (*window_id != unmapped_id && !window.closing).then_some(window_id.clone())
-        });
+    let next_focus = model.windows.iter().rev().find_map(|(window_id, window)| {
+        (*window_id != unmapped_id && !window.closing).then_some(window_id.clone())
+    });
     let next_focus = set_focused_window(model, next_focus);
     FocusUpdate::Set(next_focus)
 }
@@ -124,7 +120,13 @@ mod tests {
 
         assert_eq!(resolved, None);
         assert_eq!(model.focused_window_id, None);
-        assert_eq!(model.windows.get(&window_id(1)).map(|window| window.focused), Some(false));
+        assert_eq!(
+            model
+                .windows
+                .get(&window_id(1))
+                .map(|window| window.focused),
+            Some(false)
+        );
     }
 
     #[test]
@@ -137,8 +139,20 @@ mod tests {
 
         assert_eq!(resolved, Some(window_id(2)));
         assert_eq!(model.focused_window_id, Some(window_id(2)));
-        assert_eq!(model.windows.get(&window_id(1)).map(|window| window.focused), Some(false));
-        assert_eq!(model.windows.get(&window_id(2)).map(|window| window.focused), Some(true));
+        assert_eq!(
+            model
+                .windows
+                .get(&window_id(1))
+                .map(|window| window.focused),
+            Some(false)
+        );
+        assert_eq!(
+            model
+                .windows
+                .get(&window_id(2))
+                .map(|window| window.focused),
+            Some(true)
+        );
     }
 
     #[test]
@@ -167,8 +181,20 @@ mod tests {
 
         assert_eq!(update, FocusUpdate::Set(Some(window_id(3))));
         assert_eq!(model.focused_window_id, Some(window_id(3)));
-        assert_eq!(model.windows.get(&window_id(1)).map(|window| window.focused), Some(false));
-        assert_eq!(model.windows.get(&window_id(3)).map(|window| window.focused), Some(true));
+        assert_eq!(
+            model
+                .windows
+                .get(&window_id(1))
+                .map(|window| window.focused),
+            Some(false)
+        );
+        assert_eq!(
+            model
+                .windows
+                .get(&window_id(3))
+                .map(|window| window.focused),
+            Some(true)
+        );
     }
 
     #[test]
@@ -292,6 +318,9 @@ mod tests {
 
         assert_eq!(update, FocusUpdate::Set(Some(window_id(1))));
         assert_eq!(model.focused_window_id, Some(window_id(1)));
-        assert_eq!(model.windows.get(&window_id(2)).map(|window| window.mapped), Some(false));
+        assert_eq!(
+            model.windows.get(&window_id(2)).map(|window| window.mapped),
+            Some(false)
+        );
     }
 }
