@@ -1,6 +1,8 @@
 mod compositor;
 mod xdg_shell;
 
+pub(crate) use compositor::ClientState;
+
 use smithay::backend::allocator::dmabuf::Dmabuf;
 use smithay::backend::renderer::ImportDma;
 use smithay::input::dnd::{DnDGrab, DndGrabHandler, GrabType, Source};
@@ -10,6 +12,9 @@ use smithay::reexports::wayland_server::Resource;
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::utils::Serial;
 use smithay::wayland::dmabuf::{DmabufGlobal, DmabufHandler, DmabufState, ImportNotifier};
+use smithay::wayland::output::OutputHandler;
+use smithay::wayland::selection::SelectionHandler;
+use smithay::wayland::selection::data_device::DataDeviceHandler;
 use smithay::wayland::selection::data_device::{WaylandDndGrabHandler, set_data_device_focus};
 use smithay::{delegate_data_device, delegate_dmabuf, delegate_output, delegate_seat};
 
@@ -38,6 +43,20 @@ impl SeatHandler for SpidersWm {
 }
 
 impl DndGrabHandler for SpidersWm {}
+
+impl SelectionHandler for SpidersWm {
+    type SelectionUserData = ();
+}
+
+impl DataDeviceHandler for SpidersWm {
+    fn data_device_state(
+        &mut self,
+    ) -> &mut smithay::wayland::selection::data_device::DataDeviceState {
+        &mut self.data_device_state
+    }
+}
+
+impl OutputHandler for SpidersWm {}
 
 impl WaylandDndGrabHandler for SpidersWm {
     fn dnd_requested<S: Source>(

@@ -23,6 +23,69 @@ pub struct WmModel {
 }
 
 impl WmModel {
+    pub fn focused_window_id(&self) -> Option<&WindowId> {
+        self.focused_window_id.as_ref()
+    }
+
+    pub fn current_workspace_id(&self) -> Option<&WorkspaceId> {
+        self.current_workspace_id.as_ref()
+    }
+
+    pub fn current_output_id(&self) -> Option<&OutputId> {
+        self.current_output_id.as_ref()
+    }
+
+    pub fn has_window(&self, id: &WindowId) -> bool {
+        self.windows.contains_key(id)
+    }
+
+    pub fn workspace_names_for_window(&self, id: &WindowId) -> Vec<String> {
+        self.windows
+            .get(id)
+            .and_then(|window| window.workspace_id.as_ref())
+            .and_then(|workspace_id| self.workspaces.get(workspace_id))
+            .map(|workspace| vec![workspace.name.clone()])
+            .unwrap_or_default()
+    }
+
+    pub fn workspace_names(&self) -> Vec<String> {
+        self.workspaces
+            .values()
+            .map(|workspace| workspace.name.clone())
+            .collect()
+    }
+
+    pub fn visible_window_ids(&self) -> Vec<WindowId> {
+        self.windows
+            .values()
+            .filter(|window| window.mapped)
+            .map(|window| window.id.clone())
+            .collect()
+    }
+
+    pub fn active_workspace_names(&self, workspace: &WorkspaceModel) -> Vec<String> {
+        workspace
+            .output_id
+            .as_ref()
+            .map(|output_id| {
+                self.workspaces
+                    .values()
+                    .filter(|candidate| {
+                        candidate.visible && candidate.output_id.as_ref() == Some(output_id)
+                    })
+                    .map(|candidate| candidate.name.clone())
+                    .collect()
+            })
+            .filter(|names: &Vec<String>| !names.is_empty())
+            .unwrap_or_else(|| {
+                if workspace.visible {
+                    vec![workspace.name.clone()]
+                } else {
+                    Vec::new()
+                }
+            })
+    }
+
     pub fn upsert_seat(&mut self, seat_id: SeatId) {
         self.seats
             .entry(seat_id.clone())

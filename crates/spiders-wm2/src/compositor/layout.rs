@@ -11,7 +11,7 @@ use crate::state::SpidersWm;
 impl SpidersWm {
     pub fn schedule_relayout(&mut self) {
         debug!(
-            window_count = self.managed_windows.len(),
+            window_count = self.managed_window_count(),
             "wm2 schedule relayout"
         );
         let _ = self.start_relayout();
@@ -21,13 +21,8 @@ impl SpidersWm {
         &mut self,
         surface: &WlSurface,
     ) -> Option<(Point<i32, Logical>, Size<i32, Logical>)> {
-        let output = self.space.outputs().next()?;
-        let output_geometry = self.space.output_geometry(output)?;
-        let visible_window_ids = self
-            .visible_managed_window_positions()
-            .into_iter()
-            .map(|managed_index| self.managed_windows[managed_index].id.clone())
-            .collect::<Vec<_>>();
+        let output_geometry = self.current_output_geometry()?;
+        let visible_window_ids = self.visible_managed_window_ids();
         let window_id = self.window_id_for_surface(surface)?;
 
         let fullscreen_window_id = self
@@ -56,37 +51,29 @@ impl SpidersWm {
 
     pub(crate) fn start_relayout(&mut self) -> Option<SyncHandle> {
         let output = self
-            .space
-            .outputs()
-            .next()
-            .cloned()
+            .current_output_cloned()
             .expect("output must exist before relayout");
         let output_geometry = self
-            .space
-            .output_geometry(&output)
+            .output_geometry_for(&output)
             .expect("output geometry missing during relayout");
 
-        let visible_positions = self.visible_managed_window_positions();
-        let visible_window_ids = visible_positions
-            .iter()
-            .map(|managed_index| self.managed_windows[*managed_index].id.clone())
-            .collect::<Vec<_>>();
+        let visible_window_ids = self.visible_managed_window_ids();
         let fullscreen_window_id = self
             .model
             .fullscreen_window_on_current_workspace(visible_window_ids.iter().cloned());
         info!(
-            visible_windows = visible_positions.len(),
-            total_windows = self.managed_windows.len(),
+            visible_windows = visible_window_ids.len(),
+            total_windows = self.managed_window_count(),
             fullscreen_window = ?fullscreen_window_id,
             "wm2 relayout start"
         );
         self.log_managed_window_state("before relayout");
 
         let windows_to_unmap = self
-            .managed_windows
+            .managed_windows()
             .iter()
             .filter(|record| {
-                !self.model.window_is_on_current_workspace(record.id.clone())
+                !self.window_is_on_current_workspace(&record.id)
                     || fullscreen_window_id
                         .as_ref()
                         .is_some_and(|window_id| *window_id != record.id)
@@ -97,24 +84,19 @@ impl SpidersWm {
             self.unmap_window_element(window);
         }
 
-        if visible_positions.is_empty() {
+        if visible_window_ids.is_empty() {
             debug!("wm2 relayout skipped because there are no visible windows");
             return None;
         }
 
         if fullscreen_window_id.is_some() {
-            for managed_index in
-                self.visible_managed_window_positions()
-                    .into_iter()
-                    .filter(|managed_index| {
-                        fullscreen_window_id.as_ref()
-                            != Some(&self.managed_windows[*managed_index].id)
-                    })
+            for window_id in visible_window_ids
+                .iter()
+                .filter(|window_id| fullscreen_window_id.as_ref() != Some(window_id))
             {
-                if let Some(toplevel) = self.managed_windows[managed_index]
-                    .window
-                    .toplevel()
-                    .cloned()
+                if let Some(toplevel) = self
+                    .managed_window_for_id(window_id)
+                    .and_then(|record| record.window.toplevel().cloned())
                 {
                     if sync_toplevel_fullscreen_state(&toplevel, false, None) {
                         let _ = toplevel.send_configure();
@@ -142,24 +124,16 @@ impl SpidersWm {
         let mut relayout_transaction: Option<SyncHandle> = None;
 
         for target in relayout_targets {
-            let Some(managed_index) = self
-                .managed_windows
-                .iter()
-                .position(|record| record.id == target.window_id)
-            else {
+            let Some(record) = self.managed_window_for_id(&target.window_id) else {
                 continue;
             };
 
-            let current_location = self
-                .space
-                .element_location(&self.managed_windows[managed_index].window);
-            let toplevel = self.managed_windows[managed_index]
-                .window
-                .toplevel()
-                .cloned();
+            let current_location = self.element_location(&record.window);
+            let toplevel = record.window.toplevel().cloned();
+            let window_id = record.id.clone();
+            let mapped = record.mapped;
 
             if let Some(toplevel) = toplevel {
-                let record = &mut self.managed_windows[managed_index];
                 let fullscreen_output = target
                     .fullscreen
                     .then(|| fullscreen_output_for_toplevel(&output, &toplevel))
@@ -180,9 +154,11 @@ impl SpidersWm {
                 });
 
                 debug!(
-                    window = %record.id.0,
-                    mapped = record.mapped,
-                    pending_configures = record.frame_sync.has_pending_configures(),
+                    window = %window_id.0,
+                    mapped,
+                    pending_configures = self
+                        .managed_window_for_id(&window_id)
+                        .is_some_and(|record| record.frame_sync.has_pending_configures()),
                     current_location = ?current_location,
                     target_location = ?target.location,
                     target_size = ?target.size,
@@ -196,19 +172,20 @@ impl SpidersWm {
                     let transaction = relayout_transaction
                         .get_or_insert_with(|| crate::frame_sync::new_sync_handle(&self.event_loop))
                         .clone();
+                    let record = self
+                        .managed_window_mut_for_id(&target.window_id)
+                        .expect("managed window disappeared during relayout");
                     record.frame_sync.track_pending_layout(
                         serial,
                         target.location,
                         target.size,
                         transaction,
                     );
-                    debug!(window = %record.id.0, ?serial, "wm2 sent configure during relayout");
+                    debug!(window = %window_id.0, ?serial, "wm2 sent configure during relayout");
                 } else {
-                    let pending_configures = record.frame_sync.has_pending_configures();
-                    let window_id = record.id.clone();
-                    let window = (!pending_configures).then(|| record.window.clone());
-
-                    let _ = record;
+                    let window = self.managed_window_for_id(&window_id).and_then(|record| {
+                        (!record.frame_sync.has_pending_configures()).then(|| record.window.clone())
+                    });
 
                     if let Some(window) = window {
                         self.map_window_element(window, target.location);

@@ -81,19 +81,11 @@ impl SpidersWm {
             return;
         };
 
-        let target_workspace_id = self
-            .model
-            .windows
-            .get(&window_id)
-            .and_then(|window| window.workspace_id.clone());
+        let target_workspace_id = self.window_workspace_id(&window_id);
 
         if let Some(workspace_id) = target_workspace_id {
-            if self.model.current_workspace_id.as_ref() != Some(&workspace_id) {
-                let window_order = self
-                    .managed_windows
-                    .iter()
-                    .map(|record| record.id.clone())
-                    .collect();
+            if self.current_workspace_id() != Some(&workspace_id) {
+                let window_order = self.managed_window_ids();
                 let selection =
                     match self
                         .runtime()
@@ -129,11 +121,7 @@ impl SpidersWm {
             return;
         };
 
-        let window_order = self
-            .managed_windows
-            .iter()
-            .map(|record| record.id.clone())
-            .collect::<Vec<_>>();
+        let window_order = self.managed_window_ids();
         let Some((focused_index, target_index)) = managed_window_swap_positions(
             &window_order,
             current_focused_window_id.clone(),
@@ -142,7 +130,7 @@ impl SpidersWm {
             return;
         };
 
-        self.managed_windows.swap(focused_index, target_index);
+        self.swap_managed_window_positions(focused_index, target_index);
         self.schedule_relayout();
         info!(
             ?direction,
@@ -156,8 +144,8 @@ impl SpidersWm {
         self.visible_managed_window_positions()
             .into_iter()
             .filter_map(|managed_index| {
-                let record = &self.managed_windows[managed_index];
-                let location = self.space.element_location(&record.window)?;
+                let record = self.managed_window_at(managed_index)?;
+                let location = self.element_location(&record.window)?;
                 Some(GeometryCandidate {
                     window_id: record.id.clone(),
                     rect: Rectangle::new(location, record.window.geometry().size),

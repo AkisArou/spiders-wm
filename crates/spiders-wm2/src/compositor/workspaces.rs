@@ -6,7 +6,7 @@ use crate::state::SpidersWm;
 
 impl SpidersWm {
     pub fn ensure_and_select_workspace(&mut self, name: impl Into<String>, serial: Serial) {
-        let window_order = self.managed_window_order();
+        let window_order = self.managed_window_ids();
         let workspace_id = match self
             .runtime()
             .execute(RuntimeCommand::EnsureWorkspace { name: name.into() })
@@ -29,7 +29,7 @@ impl SpidersWm {
     }
 
     pub fn select_next_workspace(&mut self, serial: Serial) {
-        let window_order = self.managed_window_order();
+        let window_order = self.managed_window_ids();
         let selection = match self
             .runtime()
             .execute(RuntimeCommand::RequestSelectNextWorkspace { window_order })
@@ -42,7 +42,7 @@ impl SpidersWm {
     }
 
     pub fn select_previous_workspace(&mut self, serial: Serial) {
-        let window_order = self.managed_window_order();
+        let window_order = self.managed_window_ids();
         let selection = match self
             .runtime()
             .execute(RuntimeCommand::RequestSelectPreviousWorkspace { window_order })
@@ -55,7 +55,7 @@ impl SpidersWm {
     }
 
     pub fn assign_focused_window_to_workspace(&mut self, workspace: u8, serial: Serial) {
-        let window_order = self.managed_window_order();
+        let window_order = self.managed_window_ids();
         let workspace_id = match self.runtime().execute(RuntimeCommand::EnsureWorkspace {
             name: workspace.to_string(),
         }) {
@@ -82,7 +82,7 @@ impl SpidersWm {
     }
 
     pub fn toggle_assign_focused_window_to_workspace(&mut self, workspace: u8, serial: Serial) {
-        let window_order = self.managed_window_order();
+        let window_order = self.managed_window_ids();
         let workspace_id = match self.runtime().execute(RuntimeCommand::EnsureWorkspace {
             name: workspace.to_string(),
         }) {
@@ -106,12 +106,5 @@ impl SpidersWm {
             self.emit_window_workspace_change(window_id);
         }
         self.apply_modeled_focus(focused_window_id, serial);
-    }
-
-    fn managed_window_order(&self) -> Vec<crate::model::WindowId> {
-        self.managed_windows
-            .iter()
-            .map(|record| record.id.clone())
-            .collect()
     }
 }

@@ -81,7 +81,7 @@ impl SpidersWm {
     }
 
     pub(crate) fn apply_window_activation(&self, focused_surface: Option<&WlSurface>) {
-        for record in &self.managed_windows {
+        for record in self.managed_windows() {
             let active = focused_surface.is_some_and(|focused| {
                 record
                     .window

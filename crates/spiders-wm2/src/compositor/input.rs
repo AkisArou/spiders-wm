@@ -66,10 +66,8 @@ impl SpidersWm {
             }
             InputEvent::PointerMotion { .. } => {}
             InputEvent::PointerMotionAbsolute { event, .. } => {
-                let output = self.space.outputs().next().expect("output missing");
                 let output_geo = self
-                    .space
-                    .output_geometry(output)
+                    .current_output_geometry()
                     .expect("output geometry missing");
                 let location =
                     event.position_transformed(output_geo.size) + output_geo.loc.to_f64();
@@ -106,9 +104,7 @@ impl SpidersWm {
                             seat_id: "winit".into(),
                             interacted_window_id,
                         });
-                    if let Some((window, _)) = self.space.element_under(pointer.current_location())
-                    {
-                        let window = window.clone();
+                    if let Some(window) = self.window_under(pointer.current_location()) {
                         let surface = window
                             .toplevel()
                             .expect("window missing toplevel")

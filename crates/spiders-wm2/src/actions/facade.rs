@@ -179,7 +179,7 @@ impl<'a> WmActions<'a> {
     }
 
     pub fn sync_window_mapped(&mut self, window_id: WindowId, mapped: bool) -> Option<WindowId> {
-        if !self.model.windows.contains_key(&window_id) {
+        if !self.model.has_window(&window_id) {
             return None;
         }
 

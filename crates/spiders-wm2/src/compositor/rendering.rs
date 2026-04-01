@@ -20,7 +20,7 @@ impl SpidersWm {
     }
 
     pub(crate) fn send_frames_for_windows(&self, output: &Output) {
-        for record in &self.managed_windows {
+        for record in self.managed_windows() {
             if !record.mapped {
                 continue;
             }

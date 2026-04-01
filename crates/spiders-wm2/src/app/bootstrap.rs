@@ -27,9 +27,10 @@ use smithay::wayland::socket::ListeningSocketSource;
 use tracing::{info, warn};
 
 use crate::frame_sync::FrameSyncState;
+use crate::handlers::ClientState;
 use crate::runtime::{RuntimeCommand, WmRuntime};
 use crate::scene::adapter::SceneLayoutState;
-use crate::state::{ClientState, SpidersWm};
+use crate::state::SpidersWm;
 
 pub(crate) fn build_state(
     event_loop: &mut EventLoop<'static, SpidersWm>,
@@ -291,4 +292,110 @@ fn init_wayland_listener(
         .expect("failed to register Wayland display source");
 
     socket_name
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+    use spiders_config::model::ConfigPaths;
+    use spiders_shared::command::WmCommand;
+
+    use super::load_wm_config;
+
+    fn unique_root(name: &str) -> PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock before unix epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("spiders-wm2-{name}-{nonce}"));
+        fs::create_dir_all(&root).expect("failed to create temp root");
+        root
+    }
+
+    fn write_authored_config(path: &Path, command_expression: &str) {
+        fs::write(
+            path,
+            format!(
+                r#"
+import * as commands from "spiders-wm/commands";
+
+export default {{
+  workspaces: ["1", "2"],
+  bindings: {{
+    mod: "super",
+    entries: [
+      {{ bind: ["mod", "Return"], command: {command_expression} }},
+    ],
+  }},
+}};
+"#,
+            ),
+        )
+        .expect("failed to write authored config");
+    }
+
+    #[test]
+    fn load_wm_config_with_paths_decodes_authored_toggle_workspace_binding() {
+        let root = unique_root("config-load");
+        let project_root = root.join("project");
+        let cache_root = root.join("cache");
+        fs::create_dir_all(&project_root).unwrap();
+        fs::create_dir_all(&cache_root).unwrap();
+
+        let authored_config = project_root.join("config.ts");
+        let prepared_config = cache_root.join("config.js");
+        write_authored_config(&authored_config, "commands.toggle_workspace(2)");
+
+        let (paths, config) =
+            load_wm_config(Some(ConfigPaths::new(&authored_config, &prepared_config)));
+
+        assert_eq!(
+            paths,
+            Some(ConfigPaths::new(&authored_config, &prepared_config))
+        );
+        assert!(prepared_config.exists());
+        assert_eq!(config.workspaces, vec!["1".to_string(), "2".to_string()]);
+        assert_eq!(config.bindings.len(), 1);
+        assert_eq!(config.bindings[0].trigger, "super+Return");
+        assert_eq!(
+            config.bindings[0].command,
+            WmCommand::ToggleAssignFocusedWindowToWorkspace { workspace: 2 }
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn load_wm_config_with_paths_refreshes_prepared_config_after_authored_changes() {
+        let root = unique_root("config-reload");
+        let project_root = root.join("project");
+        let cache_root = root.join("cache");
+        fs::create_dir_all(&project_root).unwrap();
+        fs::create_dir_all(&cache_root).unwrap();
+
+        let authored_config = project_root.join("config.ts");
+        let prepared_config = cache_root.join("config.js");
+        let paths = ConfigPaths::new(&authored_config, &prepared_config);
+
+        write_authored_config(&authored_config, "commands.toggle_fullscreen()");
+        let (_, initial_config) = load_wm_config(Some(paths.clone()));
+        assert_eq!(initial_config.bindings.len(), 1);
+        assert_eq!(
+            initial_config.bindings[0].command,
+            WmCommand::ToggleFullscreen
+        );
+
+        std::thread::sleep(Duration::from_millis(20));
+        write_authored_config(&authored_config, "commands.reload_config()");
+
+        let (_, reloaded_config) = load_wm_config(Some(paths));
+        assert_eq!(reloaded_config.bindings.len(), 1);
+        assert_eq!(reloaded_config.bindings[0].trigger, "super+Return");
+        assert_eq!(reloaded_config.bindings[0].command, WmCommand::ReloadConfig);
+
+        let _ = fs::remove_dir_all(root);
+    }
 }

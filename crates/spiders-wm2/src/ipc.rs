@@ -16,6 +16,9 @@ use spiders_shared::types::{OutputTransform, ShellKind, WindowMode};
 use spiders_tree::{OutputId as SharedOutputId, WorkspaceId as SharedWorkspaceId};
 use tracing::{debug, warn};
 
+use crate::model::output::OutputModel;
+use crate::model::window::WindowModel;
+use crate::model::workspace::WorkspaceModel;
 use crate::model::{OutputId, WorkspaceId, wm::WmModel};
 use crate::state::SpidersWm;
 
@@ -143,13 +146,9 @@ impl SpidersWm {
 
     pub fn emit_focus_change(&mut self) {
         self.broadcast_ipc_event(CompositorEvent::FocusChange {
-            focused_window_id: self.model.focused_window_id.clone(),
-            current_output_id: self.model.current_output_id.as_ref().map(shared_output_id),
-            current_workspace_id: self
-                .model
-                .current_workspace_id
-                .as_ref()
-                .map(shared_workspace_id),
+            focused_window_id: self.model.focused_window_id().cloned(),
+            current_output_id: self.model.current_output_id().map(shared_output_id),
+            current_workspace_id: self.model.current_workspace_id().map(shared_workspace_id),
         });
     }
 
@@ -180,14 +179,7 @@ impl SpidersWm {
     }
 
     pub fn emit_window_workspace_change(&mut self, window_id: crate::model::WindowId) {
-        let workspaces = self
-            .model
-            .windows
-            .get(&window_id)
-            .and_then(|window| window.workspace_id.as_ref())
-            .and_then(|workspace_id| self.model.workspaces.get(workspace_id))
-            .map(|workspace| vec![workspace.name.clone()])
-            .unwrap_or_default();
+        let workspaces = self.model.workspace_names_for_window(&window_id);
 
         self.broadcast_ipc_event(CompositorEvent::WindowWorkspaceChange {
             window_id,
@@ -384,85 +376,28 @@ pub(crate) fn query_response_for_model(model: &WmModel, query: QueryRequest) -> 
 }
 
 pub(crate) fn state_snapshot_for_model(model: &WmModel) -> StateSnapshot {
-    let outputs: Vec<OutputSnapshot> = model
-        .outputs
-        .values()
-        .map(|output| OutputSnapshot {
-            id: shared_output_id(&output.id),
-            name: output.name.clone(),
-            logical_x: output.logical_x,
-            logical_y: output.logical_y,
-            logical_width: output.logical_width,
-            logical_height: output.logical_height,
-            scale: 1,
-            transform: OutputTransform::Normal,
-            enabled: output.enabled,
-            current_workspace_id: output
-                .focused_workspace_id
-                .as_ref()
-                .map(shared_workspace_id),
-        })
-        .collect();
+    let outputs: Vec<OutputSnapshot> = model.outputs.values().map(output_snapshot).collect();
 
-    let workspace_names: Vec<String> = model
-        .workspaces
-        .values()
-        .map(|workspace| workspace.name.clone())
-        .collect();
+    let workspace_names = model.workspace_names();
 
     let workspaces: Vec<WorkspaceSnapshot> = model
         .workspaces
         .values()
-        .map(|workspace| WorkspaceSnapshot {
-            id: shared_workspace_id(&workspace.id),
-            name: workspace.name.clone(),
-            output_id: workspace.output_id.as_ref().map(shared_output_id),
-            active_workspaces: active_workspace_names(model, workspace),
-            focused: workspace.focused,
-            visible: workspace.visible,
-            effective_layout: None,
-        })
+        .map(|workspace| workspace_snapshot(model, workspace))
         .collect();
 
     let windows: Vec<WindowSnapshot> = model
         .windows
         .values()
-        .map(|window| WindowSnapshot {
-            id: window.id.clone(),
-            shell: ShellKind::Unknown,
-            app_id: window.app_id.clone(),
-            title: window.title.clone(),
-            class: None,
-            instance: None,
-            role: None,
-            window_type: None,
-            mapped: window.mapped,
-            mode: window_mode(window),
-            focused: window.focused,
-            urgent: false,
-            closing: window.closing,
-            output_id: window.output_id.as_ref().map(shared_output_id),
-            workspace_id: window.workspace_id.as_ref().map(shared_workspace_id),
-            workspaces: window
-                .workspace_id
-                .as_ref()
-                .and_then(|workspace_id| model.workspaces.get(workspace_id))
-                .map(|workspace| vec![workspace.name.clone()])
-                .unwrap_or_default(),
-        })
+        .map(|window| window_snapshot(model, window))
         .collect();
 
-    let visible_window_ids = model
-        .windows
-        .values()
-        .filter(|window| window.mapped)
-        .map(|window| window.id.clone())
-        .collect();
+    let visible_window_ids = model.visible_window_ids();
 
     StateSnapshot {
-        focused_window_id: model.focused_window_id.clone(),
-        current_output_id: model.current_output_id.as_ref().map(shared_output_id),
-        current_workspace_id: model.current_workspace_id.as_ref().map(shared_workspace_id),
+        focused_window_id: model.focused_window_id().cloned(),
+        current_output_id: model.current_output_id().map(shared_output_id),
+        current_workspace_id: model.current_workspace_id().map(shared_workspace_id),
         outputs,
         workspaces,
         windows,
@@ -471,34 +406,58 @@ pub(crate) fn state_snapshot_for_model(model: &WmModel) -> StateSnapshot {
     }
 }
 
-fn active_workspace_names(
-    model: &WmModel,
-    workspace: &crate::model::workspace::WorkspaceModel,
-) -> Vec<String> {
-    workspace
-        .output_id
-        .as_ref()
-        .map(|output_id| {
-            model
-                .workspaces
-                .values()
-                .filter(|candidate| {
-                    candidate.visible && candidate.output_id.as_ref() == Some(output_id)
-                })
-                .map(|candidate| candidate.name.clone())
-                .collect()
-        })
-        .filter(|names: &Vec<String>| !names.is_empty())
-        .unwrap_or_else(|| {
-            if workspace.visible {
-                vec![workspace.name.clone()]
-            } else {
-                Vec::new()
-            }
-        })
+fn output_snapshot(output: &OutputModel) -> OutputSnapshot {
+    OutputSnapshot {
+        id: shared_output_id(&output.id),
+        name: output.name.clone(),
+        logical_x: output.logical_x,
+        logical_y: output.logical_y,
+        logical_width: output.logical_width,
+        logical_height: output.logical_height,
+        scale: 1,
+        transform: OutputTransform::Normal,
+        enabled: output.enabled,
+        current_workspace_id: output
+            .focused_workspace_id
+            .as_ref()
+            .map(shared_workspace_id),
+    }
 }
 
-fn window_mode(window: &crate::model::window::WindowModel) -> WindowMode {
+fn workspace_snapshot(model: &WmModel, workspace: &WorkspaceModel) -> WorkspaceSnapshot {
+    WorkspaceSnapshot {
+        id: shared_workspace_id(&workspace.id),
+        name: workspace.name.clone(),
+        output_id: workspace.output_id.as_ref().map(shared_output_id),
+        active_workspaces: model.active_workspace_names(workspace),
+        focused: workspace.focused,
+        visible: workspace.visible,
+        effective_layout: None,
+    }
+}
+
+fn window_snapshot(model: &WmModel, window: &WindowModel) -> WindowSnapshot {
+    WindowSnapshot {
+        id: window.id.clone(),
+        shell: ShellKind::Unknown,
+        app_id: window.app_id.clone(),
+        title: window.title.clone(),
+        class: None,
+        instance: None,
+        role: None,
+        window_type: None,
+        mapped: window.mapped,
+        mode: window_mode(window),
+        focused: window.focused,
+        urgent: false,
+        closing: window.closing,
+        output_id: window.output_id.as_ref().map(shared_output_id),
+        workspace_id: window.workspace_id.as_ref().map(shared_workspace_id),
+        workspaces: model.workspace_names_for_window(&window.id),
+    }
+}
+
+fn window_mode(window: &WindowModel) -> WindowMode {
     if window.fullscreen {
         WindowMode::Fullscreen
     } else if window.floating {

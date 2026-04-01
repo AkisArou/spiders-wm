@@ -9,6 +9,68 @@ use crate::runtime::{RuntimeCommand, RuntimeResult};
 use crate::state::{ManagedWindow, SpidersWm};
 
 impl SpidersWm {
+    pub fn close_focused_window(&mut self) {
+        let closing_window_id = match self
+            .runtime()
+            .execute(RuntimeCommand::RequestCloseFocusedWindowSelection)
+        {
+            RuntimeResult::CloseSelection(selection) => selection.closing_window_id,
+            _ => None,
+        };
+        info!(closing_window = ?closing_window_id, "wm2 close focused window request");
+        let Some(focused_surface) =
+            closing_window_id.and_then(|window_id| self.surface_for_window_id(window_id))
+        else {
+            return;
+        };
+
+        self.capture_close_snapshot(&focused_surface);
+
+        if let Some(record) = self.managed_window_for_surface(&focused_surface) {
+            if let Some(toplevel) = record.window.toplevel() {
+                toplevel.send_close();
+            }
+        }
+    }
+
+    pub fn toggle_focused_window_floating(&mut self) {
+        let toggled_window_id = match self
+            .runtime()
+            .execute(RuntimeCommand::ToggleFocusedWindowFloating)
+        {
+            RuntimeResult::Window(toggled_window_id) => toggled_window_id,
+            _ => None,
+        };
+        if toggled_window_id.is_none() {
+            return;
+        }
+
+        self.schedule_relayout();
+        if let Some(window_id) = toggled_window_id {
+            let floating = self.window_is_floating(&window_id);
+            self.emit_window_floating_change(window_id, floating);
+        }
+    }
+
+    pub fn toggle_focused_window_fullscreen(&mut self) {
+        let toggled_window_id = match self
+            .runtime()
+            .execute(RuntimeCommand::ToggleFocusedWindowFullscreen)
+        {
+            RuntimeResult::Window(toggled_window_id) => toggled_window_id,
+            _ => None,
+        };
+        if toggled_window_id.is_none() {
+            return;
+        }
+
+        self.schedule_relayout();
+        if let Some(window_id) = toggled_window_id {
+            let fullscreen = self.window_is_fullscreen(&window_id);
+            self.emit_window_fullscreen_change(window_id, fullscreen);
+        }
+    }
+
     pub fn add_window(&mut self, window: Window) {
         let window_id = window_id(self.next_window_id);
         self.next_window_id += 1;
@@ -16,22 +78,16 @@ impl SpidersWm {
             window_id: window_id.clone(),
         });
 
-        self.managed_windows.push(ManagedWindow {
-            id: window_id.clone(),
-            window,
-            mapped: false,
-            frame_sync: Default::default(),
-        });
+        self.insert_managed_window(window_id.clone(), window);
 
         if let Some(toplevel) = self
-            .managed_windows
-            .last()
+            .managed_window_for_id(&window_id)
             .and_then(|record| record.window.toplevel().cloned())
         {
             crate::frame_sync::install_window_pre_commit_hook(&toplevel);
         }
 
-        info!(window = %window_id.0, total_windows = self.managed_windows.len(), "wm2 added window");
+        info!(window = %window_id.0, total_windows = self.managed_window_count(), "wm2 added window");
         self.log_managed_window_state("after add window");
     }
 
@@ -54,7 +110,6 @@ impl SpidersWm {
             return;
         };
         let location = self
-            .space
             .element_location(&window)
             .map(|location| location - window.geometry().loc);
 
@@ -64,11 +119,7 @@ impl SpidersWm {
             RuntimeResult::FocusUpdate(focus_update) => focus_update,
             _ => FocusUpdate::Unchanged,
         };
-        let closing = self
-            .model
-            .windows
-            .get(&window_id)
-            .is_some_and(|window| window.closing);
+        let closing = self.window_is_closing(&window_id);
 
         info!(
             window = %window_id.0,
@@ -104,7 +155,7 @@ impl SpidersWm {
             return;
         };
 
-        let record = self.managed_windows.remove(position);
+        let record = self.remove_managed_window_at(position);
         let window_id = record.id.clone();
         let mut focus_update = FocusUpdate::Unchanged;
 
@@ -143,7 +194,7 @@ impl SpidersWm {
     }
 
     pub(crate) fn capture_close_snapshot(&mut self, surface: &WlSurface) {
-        let output = self.space.outputs().next().cloned();
+        let output = self.current_output_cloned();
         let Some(output) = output else {
             return;
         };

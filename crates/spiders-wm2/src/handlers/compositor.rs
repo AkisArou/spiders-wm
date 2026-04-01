@@ -2,6 +2,7 @@ use smithay::backend::renderer::utils::{on_commit_buffer_handler, with_renderer_
 use smithay::delegate_compositor;
 use smithay::delegate_shm;
 use smithay::reexports::wayland_server::Client;
+use smithay::reexports::wayland_server::backend::{ClientData, ClientId, DisconnectReason};
 use smithay::reexports::wayland_server::protocol::{wl_buffer, wl_surface::WlSurface};
 use smithay::wayland::buffer::BufferHandler;
 use smithay::wayland::compositor::{
@@ -10,9 +11,20 @@ use smithay::wayland::compositor::{
 use smithay::wayland::shm::{ShmHandler, ShmState};
 use tracing::{debug, info};
 
-use crate::state::{ClientState, SpidersWm};
+use crate::state::SpidersWm;
 
 use super::xdg_shell;
+
+#[derive(Default)]
+pub(crate) struct ClientState {
+    pub compositor_state: CompositorClientState,
+}
+
+impl ClientData for ClientState {
+    fn initialized(&self, _client_id: ClientId) {}
+
+    fn disconnected(&self, _client_id: ClientId, _reason: DisconnectReason) {}
+}
 
 impl CompositorHandler for SpidersWm {
     fn compositor_state(&mut self) -> &mut CompositorState {
