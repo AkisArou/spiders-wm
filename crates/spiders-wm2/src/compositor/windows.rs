@@ -142,9 +142,7 @@ impl SpidersWm {
         self.log_managed_window_state("after close start");
 
         self.apply_focus_update(focus_update);
-        let relayout_transaction = self
-            .start_relayout()
-            .or_else(|| self.live_frame_sync_transaction());
+        let relayout_transaction = self.closing_overlay_transaction();
 
         if let Some(result) =
             self.frame_sync
@@ -162,9 +160,32 @@ impl SpidersWm {
     }
 
     pub fn finalize_window_destroy(&mut self, surface: &WlSurface) {
+        self.capture_close_snapshot(surface);
+
+        let destroy_overlay = if let Some(record) = self.find_window_mut(surface) {
+            if record.mapped {
+                let unmap = record.frame_sync.begin_unmap();
+                let snapshot = (!unmap.had_pending_configures)
+                    .then_some(unmap.snapshot)
+                    .flatten();
+                Some((record.window.clone(), snapshot))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
         let Some(position) = self.managed_window_position_for_surface(surface) else {
             return;
         };
+
+        let destroy_overlay = destroy_overlay.map(|(window, snapshot)| {
+            let location = self
+                .element_location(&window)
+                .map(|location| location - window.geometry().loc);
+            (window, location, snapshot)
+        });
 
         let record = self.remove_managed_window_at(position);
         let window_id = record.id.clone();
@@ -201,7 +222,26 @@ impl SpidersWm {
         self.log_managed_window_state("after window destroy");
 
         self.apply_focus_update(focus_update);
-        self.schedule_relayout();
+
+        if let Some((window, location, snapshot)) = destroy_overlay {
+            let relayout_transaction = self.closing_overlay_transaction();
+
+            if let Some(result) =
+                self.frame_sync
+                    .push_closing_overlay(snapshot, location, relayout_transaction)
+            {
+                debug!(
+                    window = %window_id.0,
+                    location = ?location,
+                    geometry_loc = ?window.geometry().loc,
+                    carried_overlays = result.carried_overlays,
+                    transaction = result.transaction_debug_id,
+                    "wm2 added closing snapshot overlay during destroy"
+                );
+            }
+        } else {
+            self.schedule_relayout();
+        }
     }
 
     pub(crate) fn capture_close_snapshot(&mut self, surface: &WlSurface) {
@@ -297,5 +337,11 @@ impl SpidersWm {
         self.managed_windows()
             .iter()
             .find_map(|record| record.frame_sync.live_transaction())
+    }
+
+    fn closing_overlay_transaction(&mut self) -> Option<frame_sync::SyncHandle> {
+        self.start_relayout()
+            .or_else(|| self.live_frame_sync_transaction())
+            .or_else(|| Some(frame_sync::new_sync_handle(&self.event_loop)))
     }
 }
