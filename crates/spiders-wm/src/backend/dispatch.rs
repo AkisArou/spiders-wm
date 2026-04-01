@@ -97,12 +97,7 @@ impl Dispatch<wl_registry::WlRegistry, ()> for RiverBackendState {
                     state.compositor = Some(compositor);
                 }
                 "wl_shm" => {
-                    let shm = registry.bind::<wl_shm::WlShm, _, _>(
-                        name,
-                        version.min(1),
-                        qh,
-                        (),
-                    );
+                    let shm = registry.bind::<wl_shm::WlShm, _, _>(name, version.min(1), qh, ());
                     state.shm = Some(shm);
                 }
                 "wl_seat" => {
@@ -256,7 +251,10 @@ impl Dispatch<river_window_manager_v1::RiverWindowManagerV1, ()> for RiverBacken
             river_window_manager_v1::Event::Seat { id } => {
                 let seat_name = state.next_seat_name();
                 state.runtime_state.insert_seat(seat_name.clone());
-                state.registry.seats.insert(id.id(), SeatRecord::new(id, seat_name));
+                state
+                    .registry
+                    .seats
+                    .insert(id.id(), SeatRecord::new(id, seat_name));
             }
             river_window_manager_v1::Event::ManageStart => state.handle_manage_start(qh),
             river_window_manager_v1::Event::RenderStart => state.handle_render_start(),
@@ -283,7 +281,9 @@ impl Dispatch<river_window_v1::RiverWindowV1, ()> for RiverBackendState {
 
         match event {
             river_window_v1::Event::Closed => {
-                state.runtime_state.set_window_closed(&window.state_id, true);
+                state
+                    .runtime_state
+                    .set_window_closed(&window.state_id, true);
             }
             river_window_v1::Event::Dimensions { width, height } => {
                 let (x, y) = state
@@ -314,15 +314,16 @@ impl Dispatch<river_window_v1::RiverWindowV1, ()> for RiverBackendState {
                     .set_window_identifier(&window.state_id, Some(identifier));
             }
             river_window_v1::Event::UnreliablePid { unreliable_pid } => {
-                state
-                    .runtime_state
-                    .set_window_unreliable_pid(
-                        &window.state_id,
-                        u32::try_from(unreliable_pid).ok(),
-                    );
+                state.runtime_state.set_window_unreliable_pid(
+                    &window.state_id,
+                    u32::try_from(unreliable_pid).ok(),
+                );
             }
             river_window_v1::Event::PointerMoveRequested { seat } => {
-                state.transient.window_pointer_move_requests.insert(proxy.id(), seat.id());
+                state
+                    .transient
+                    .window_pointer_move_requests
+                    .insert(proxy.id(), seat.id());
             }
             river_window_v1::Event::PointerResizeRequested { seat, edges } => {
                 if let Ok(edges) = edges.into_result() {
@@ -509,7 +510,9 @@ impl Dispatch<river_seat_v1::RiverSeatV1, ()> for RiverBackendState {
             }
             river_seat_v1::Event::PointerLeave => {
                 if let Some(seat_name) = state.seat_name(&seat_id).map(str::to_owned) {
-                    state.runtime_state.set_seat_hovered_window(&seat_name, None);
+                    state
+                        .runtime_state
+                        .set_seat_hovered_window(&seat_name, None);
                 }
             }
             river_seat_v1::Event::WindowInteraction { window } => {
@@ -526,12 +529,16 @@ impl Dispatch<river_seat_v1::RiverSeatV1, ()> for RiverBackendState {
             }
             river_seat_v1::Event::OpDelta { dx, dy } => {
                 if let Some(seat_name) = state.seat_name(&seat_id).map(str::to_owned) {
-                    state.runtime_state.set_seat_pointer_delta(&seat_name, dx, dy);
+                    state
+                        .runtime_state
+                        .set_seat_pointer_delta(&seat_name, dx, dy);
                 }
             }
             river_seat_v1::Event::OpRelease => {
                 if let Some(seat_name) = state.seat_name(&seat_id).map(str::to_owned) {
-                    state.runtime_state.set_seat_pointer_release(&seat_name, true);
+                    state
+                        .runtime_state
+                        .set_seat_pointer_release(&seat_name, true);
                 }
             }
             _ => {}
@@ -568,7 +575,10 @@ impl Dispatch<river_xkb_binding_v1::RiverXkbBindingV1, ObjectId> for RiverBacken
                     "received keybinding press"
                 );
                 if let RiverCommand::Unsupported { action } = &river_command {
-                    tracing::warn!(action = *action, "received keybinding for unsupported command");
+                    tracing::warn!(
+                        action = *action,
+                        "received keybinding for unsupported command"
+                    );
                 }
                 state.queue_seat_command(seat_id, river_command);
             }
@@ -606,7 +616,10 @@ impl Dispatch<river_pointer_binding_v1::RiverPointerBindingV1, ObjectId> for Riv
                     "received pointer binding press"
                 );
                 if let RiverCommand::Unsupported { action } = &river_command {
-                    tracing::warn!(action = *action, "received pointer binding for unsupported command");
+                    tracing::warn!(
+                        action = *action,
+                        "received pointer binding for unsupported command"
+                    );
                 }
                 state.queue_seat_command(seat_id, river_command);
             }
@@ -799,10 +812,15 @@ impl Dispatch<river_xkb_keymap_v1::RiverXkbKeymapV1, ()> for RiverBackendState {
     ) {
         match event {
             river_xkb_keymap_v1::Event::Success => {
-                let Some(input_device_id) = state.transient.pending_xkb_keymaps.remove(&proxy.id()) else {
+                let Some(input_device_id) = state.transient.pending_xkb_keymaps.remove(&proxy.id())
+                else {
                     return;
                 };
-                if let Some(context) = state.transient.pending_xkb_keymap_context.remove(&proxy.id()) {
+                if let Some(context) = state
+                    .transient
+                    .pending_xkb_keymap_context
+                    .remove(&proxy.id())
+                {
                     info!(target: "spiders_wm::input", "applied xkb keymap: {context}");
                 }
                 for keyboard in state.registry.xkb_keyboards.values() {
@@ -845,7 +863,9 @@ impl Dispatch<river_libinput_device_v1::RiverLibinputDeviceV1, ()> for RiverBack
                 state.registry.libinput_devices.remove(&proxy.id());
                 proxy.destroy();
             }
-            river_libinput_device_v1::Event::InputDevice { device: input_device } => {
+            river_libinput_device_v1::Event::InputDevice {
+                device: input_device,
+            } => {
                 device.input_device_id = Some(input_device.id());
                 state.apply_input_config_for_device(&input_device.id(), qh);
             }

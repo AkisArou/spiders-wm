@@ -1,6 +1,6 @@
-use spiders_tree::{MatchClause, MatchKey, WindowMatch};
 use spiders_shared::snapshot::WindowSnapshot;
 use spiders_shared::types::ShellKind;
+use spiders_tree::{MatchClause, MatchKey, WindowMatch};
 use thiserror::Error;
 
 #[derive(Debug, Error, PartialEq, Eq)]

@@ -1,6 +1,6 @@
 use crate::css::{
-    compute_style, compute_style_for_pseudo, map_computed_style_to_taffy, CssValueError,
-    LayoutPseudoElement, NodeComputedStyle, StyledLayoutTree,
+    CssValueError, LayoutPseudoElement, NodeComputedStyle, StyledLayoutTree, compute_style,
+    compute_style_for_pseudo, map_computed_style_to_taffy,
 };
 use spiders_tree::ResolvedLayoutNode;
 

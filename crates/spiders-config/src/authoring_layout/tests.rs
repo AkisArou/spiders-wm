@@ -2,11 +2,11 @@ use std::fs;
 
 use spiders_shared::runtime::layout_context::LayoutEvaluationContext;
 use spiders_shared::runtime::prepared_layout::{PreparedLayout, SelectedLayout};
-use spiders_shared::runtime::runtime_contract::{AuthoringLayoutRuntime, LayoutModuleContract, PreparedLayoutRuntime};
-use spiders_shared::runtime::runtime_error::{RuntimeError, RuntimeRefreshSummary};
-use spiders_shared::snapshot::{
-    OutputSnapshot, StateSnapshot, WorkspaceSnapshot,
+use spiders_shared::runtime::runtime_contract::{
+    AuthoringLayoutRuntime, LayoutModuleContract, PreparedLayoutRuntime,
 };
+use spiders_shared::runtime::runtime_error::{RuntimeError, RuntimeRefreshSummary};
+use spiders_shared::snapshot::{OutputSnapshot, StateSnapshot, WorkspaceSnapshot};
 use spiders_shared::types::{LayoutRef, OutputTransform};
 use spiders_tree::{OutputId, SourceLayoutNode, WorkspaceId};
 use tempfile::TempDir;
@@ -67,7 +67,9 @@ impl PreparedLayoutRuntime for StubRuntime {
 
 impl AuthoringLayoutRuntime for StubRuntime {
     fn load_authored_config(&self, _path: &std::path::Path) -> Result<Self::Config, RuntimeError> {
-        Err(RuntimeError::NotImplemented("authored config loading".into()))
+        Err(RuntimeError::NotImplemented(
+            "authored config loading".into(),
+        ))
     }
 
     fn load_prepared_config(&self, _path: &std::path::Path) -> Result<Self::Config, RuntimeError> {
@@ -96,7 +98,9 @@ impl AuthoringLayoutRuntime for StubRuntime {
         _authored: &std::path::Path,
         _runtime: &std::path::Path,
     ) -> Result<RuntimeRefreshSummary, RuntimeError> {
-        Err(RuntimeError::NotImplemented("prepared config rebuild".into()))
+        Err(RuntimeError::NotImplemented(
+            "prepared config rebuild".into(),
+        ))
     }
 }
 
@@ -292,7 +296,10 @@ fn authoring_layout_service_evaluates_prepared_layout_for_workspace() {
         .unwrap();
 
     assert_eq!(evaluated.artifact.selected.name, "master-stack");
-    assert!(matches!(evaluated.layout, SourceLayoutNode::Workspace { .. }));
+    assert!(matches!(
+        evaluated.layout,
+        SourceLayoutNode::Workspace { .. }
+    ));
 }
 
 #[test]
@@ -333,8 +340,16 @@ fn authoring_layout_service_discovers_config_paths_from_options() {
         })
         .unwrap();
 
-    assert!(paths.authored_config.ends_with(".config/spiders-wm/config.ts"));
-    assert!(paths.prepared_config.ends_with(".cache/spiders-wm/config.js"));
+    assert!(
+        paths
+            .authored_config
+            .ends_with(".config/spiders-wm/config.ts")
+    );
+    assert!(
+        paths
+            .prepared_config
+            .ends_with(".cache/spiders-wm/config.js")
+    );
 }
 
 #[test]

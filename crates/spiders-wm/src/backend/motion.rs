@@ -40,7 +40,10 @@ impl RiverBackendState {
         width: f32,
         height: f32,
     ) -> ResolvedMotion {
-        let now = self.transient.motion_frame_time.unwrap_or_else(Instant::now);
+        let now = self
+            .transient
+            .motion_frame_time
+            .unwrap_or_else(Instant::now);
 
         let window_state = self
             .transient
@@ -72,7 +75,9 @@ impl RiverBackendState {
         let active = animation.active.any() || transition.active.any();
         if active {
             self.transient.motion_has_active_animations = true;
-            self.transient.motion_active_windows.insert(window_id.clone());
+            self.transient
+                .motion_active_windows
+                .insert(window_id.clone());
         }
         motion
     }

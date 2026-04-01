@@ -1,15 +1,15 @@
 use std::marker::PhantomData;
 use std::time::Instant;
 
+use crate::ComputedStyle;
 use crate::motion::easing::{expand_transition_lists, sample_easing};
-use crate::motion::runtime::shared::ensure_initialized;
 use crate::motion::runtime::MotionModifier;
+use crate::motion::runtime::shared::ensure_initialized;
 use crate::motion::state::{
     ActiveMotionTransition, AppliedMotionPhase, MotionContext, MotionPhaseActivity,
     MotionTrackState, MotionTransitionSpec,
 };
 use crate::style::MotionPropertyValue;
-use crate::ComputedStyle;
 
 pub(crate) trait TransitionModifierApplierHandle {
     fn apply(
@@ -120,13 +120,12 @@ impl<M: MotionModifier> TransitionModifierApplier<M> {
         let last_animation_spec = state.last_animation_spec.clone();
         ensure_initialized::<M>(state, base_value, &transition_spec, &last_animation_spec);
 
-        let (current_before_update, active_before_update) = if let Some(transition) =
-            state.active_transition.as_mut()
-        {
-            self.sample_transition_value(transition, context, now)
-        } else {
-            (M::output_from_value(&state.target_value, context), false)
-        };
+        let (current_before_update, active_before_update) =
+            if let Some(transition) = state.active_transition.as_mut() {
+                self.sample_transition_value(transition, context, now)
+            } else {
+                (M::output_from_value(&state.target_value, context), false)
+            };
 
         if animation_active {
             state.active_transition = None;
@@ -177,7 +176,9 @@ impl<M: MotionModifier> TransitionModifierApplier<M> {
         context: M::Context,
         now: Instant,
     ) -> (M::Output, bool) {
-        let elapsed = now.saturating_duration_since(transition.started_at).as_secs_f32();
+        let elapsed = now
+            .saturating_duration_since(transition.started_at)
+            .as_secs_f32();
         if elapsed < transition.spec.delay_secs {
             return (M::output_from_value(&transition.from_value, context), true);
         }
@@ -186,11 +187,14 @@ impl<M: MotionModifier> TransitionModifierApplier<M> {
             return (M::output_from_value(&transition.to_value, context), false);
         }
 
-        let progress =
-            ((elapsed - transition.spec.delay_secs) / transition.spec.duration_secs).clamp(0.0, 1.0);
+        let progress = ((elapsed - transition.spec.delay_secs) / transition.spec.duration_secs)
+            .clamp(0.0, 1.0);
         let eased = sample_easing(&transition.spec.easing, progress);
         let from = M::output_from_value(&transition.from_value, context);
         let to = M::output_from_value(&transition.to_value, context);
-        (M::interpolate_output(from, to, eased, context), progress < 1.0)
+        (
+            M::interpolate_output(from, to, eased, context),
+            progress < 1.0,
+        )
     }
 }

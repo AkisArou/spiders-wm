@@ -114,5 +114,4 @@ mod tests {
         assert!(json.get("errors").is_none());
         assert!(json.get("prepared_config").is_none());
     }
-
 }

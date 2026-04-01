@@ -11,7 +11,9 @@ mod matching;
 mod style_calc;
 mod style_tree;
 
-pub use css::{CompiledDeclaration, CompiledKeyframeStep, CompiledKeyframesRule, CompiledStyleSheet};
-pub use scene::{LayoutSnapshotNode, SceneNodeStyle, SceneRequest, SceneResponse};
+pub use css::{
+    CompiledDeclaration, CompiledKeyframeStep, CompiledKeyframesRule, CompiledStyleSheet,
+};
 pub use motion::*;
+pub use scene::{LayoutSnapshotNode, SceneNodeStyle, SceneRequest, SceneResponse};
 pub use style::*;

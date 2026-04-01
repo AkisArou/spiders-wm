@@ -573,8 +573,8 @@ pub fn compute_stylo_for_layout_tree(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use spiders_tree::WindowId;
     use spiders_tree::LayoutNodeMeta;
+    use spiders_tree::WindowId;
 
     fn tree() -> LayoutDomTree {
         LayoutDomTree::from_resolved_root(&ResolvedLayoutNode::Workspace {

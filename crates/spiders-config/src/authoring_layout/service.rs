@@ -73,7 +73,10 @@ where
         &self,
         paths: &ConfigPaths,
     ) -> Result<
-        (Config, Option<spiders_shared::runtime::runtime_error::RuntimeRefreshSummary>),
+        (
+            Config,
+            Option<spiders_shared::runtime::runtime_error::RuntimeRefreshSummary>,
+        ),
         AuthoringLayoutServiceError,
     > {
         prepared_cache::load_config_with_cache_update(&self.runtime, paths)
@@ -90,7 +93,10 @@ where
         &self,
         paths: &ConfigPaths,
         _config: &Config,
-    ) -> Result<spiders_shared::runtime::runtime_error::RuntimeRefreshSummary, AuthoringLayoutServiceError> {
+    ) -> Result<
+        spiders_shared::runtime::runtime_error::RuntimeRefreshSummary,
+        AuthoringLayoutServiceError,
+    > {
         prepared_cache::write_prepared_config(&self.runtime, paths)
     }
 
@@ -98,7 +104,11 @@ where
         debug!("reloading config and clearing prepared layout cache");
         let config = prepared_cache::reload_config(&self.runtime, self.paths.as_ref())?;
         self.cache.clear();
-        info!(layout_count = config.layouts.len(), workspace_count = config.workspaces.len(), "reloaded config");
+        info!(
+            layout_count = config.layouts.len(),
+            workspace_count = config.workspaces.len(),
+            "reloaded config"
+        );
         Ok(config)
     }
 
@@ -106,7 +116,10 @@ where
         &self,
         config: &Config,
     ) -> Result<Vec<String>, AuthoringLayoutServiceError> {
-        debug!(layout_count = config.layouts.len(), "validating layout modules");
+        debug!(
+            layout_count = config.layouts.len(),
+            "validating layout modules"
+        );
         let mut errors = Vec::new();
 
         for layout in &config.layouts {

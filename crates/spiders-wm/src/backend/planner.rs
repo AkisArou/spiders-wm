@@ -1,18 +1,18 @@
 use super::*;
-use crate::backend::motion::MotionStyleScope;
-use spiders_scene::{
-    AppearanceValue, BorderStyleValue, BoxEdges, ColorValue, ComputedStyle, LayoutSnapshotNode,
-    FontWeightValue, LengthPercentage, SizeValue, TextAlignValue, TextTransformValue,
-};
-use spiders_shared::types::WindowMode;
-use spiders_tree::{LayoutRect, WindowId, WorkspaceId};
-use crate::backend::plan::TitlebarPlan;
 use crate::actions::{
     active_tiled_window_ids, compute_horizontal_tiled_edges, compute_pointer_render_positions,
     compute_window_borders, configured_mode_for_window, directional_neighbor_window_id,
     inactive_window_ids, top_window_id,
 };
+use crate::backend::motion::MotionStyleScope;
+use crate::backend::plan::TitlebarPlan;
 use crate::layout_adapter::{compute_layout_snapshot, compute_workspace_layout_snapshot};
+use spiders_scene::{
+    AppearanceValue, BorderStyleValue, BoxEdges, ColorValue, ComputedStyle, FontWeightValue,
+    LayoutSnapshotNode, LengthPercentage, SizeValue, TextAlignValue, TextTransformValue,
+};
+use spiders_shared::types::WindowMode;
+use spiders_tree::{LayoutRect, WindowId, WorkspaceId};
 
 const NO_WORKSPACE_CLASSES: &[&str] = &[];
 const ENTER_FROM_LEFT_CLASSES: &[&str] = &["enter-from-left"];
@@ -39,9 +39,18 @@ fn river_border_from_box_edges(
 ) -> (river_window_v1::Edges, i32) {
     let edge_widths = [
         (river_window_v1::Edges::Top, border_length_to_px(border.top)),
-        (river_window_v1::Edges::Right, border_length_to_px(border.right)),
-        (river_window_v1::Edges::Bottom, border_length_to_px(border.bottom)),
-        (river_window_v1::Edges::Left, border_length_to_px(border.left)),
+        (
+            river_window_v1::Edges::Right,
+            border_length_to_px(border.right),
+        ),
+        (
+            river_window_v1::Edges::Bottom,
+            border_length_to_px(border.bottom),
+        ),
+        (
+            river_window_v1::Edges::Left,
+            border_length_to_px(border.left),
+        ),
     ];
 
     edge_widths.into_iter().fold(
@@ -88,7 +97,9 @@ fn apply_border_styles(
     }
 }
 
-fn river_border_from_layout_node(node: &LayoutSnapshotNode) -> Option<(river_window_v1::Edges, i32)> {
+fn river_border_from_layout_node(
+    node: &LayoutSnapshotNode,
+) -> Option<(river_window_v1::Edges, i32)> {
     let style = &node.styles()?.layout;
     let border = apply_border_styles(style.border?, style.border_style);
     Some(river_border_from_box_edges(border))
@@ -125,9 +136,7 @@ fn river_color_to_color_value(red: u32, green: u32, blue: u32, alpha: u32) -> Co
 
 fn river_border_color_from_color(color: ColorValue) -> (u32, u32, u32, u32) {
     let alpha = u32::from(color.alpha);
-    let premultiply = |component: u8| -> u8 {
-        ((u32::from(component) * alpha + 127) / 255) as u8
-    };
+    let premultiply = |component: u8| -> u8 { ((u32::from(component) * alpha + 127) / 255) as u8 };
 
     (
         river_rgb_component_from_u8(premultiply(color.red)),
@@ -212,8 +221,8 @@ fn titlebar_text_align(style: Option<&ComputedStyle>) -> TextAlignValue {
 fn titlebar_font_family(style: Option<&ComputedStyle>) -> Option<spiders_scene::FontFamilyValue> {
     style
         .and_then(|style| style.font_family.as_ref())
-    .cloned()
-    .filter(|families| !families.is_empty())
+        .cloned()
+        .filter(|families| !families.is_empty())
 }
 
 fn titlebar_font_weight(style: Option<&ComputedStyle>) -> FontWeightValue {
@@ -379,9 +388,10 @@ impl RiverBackendState {
             .window_stack
             .iter()
             .filter(|window_id| {
-                self.runtime_state.windows.get(*window_id).is_some_and(|window| {
-                    window.workspace_ids.iter().any(|id| id == workspace_id)
-                })
+                self.runtime_state
+                    .windows
+                    .get(*window_id)
+                    .is_some_and(|window| window.workspace_ids.iter().any(|id| id == workspace_id))
             })
             .cloned()
             .collect()
@@ -405,7 +415,8 @@ impl RiverBackendState {
             };
 
             let mut contexts = Vec::new();
-            let outgoing_window_ids = self.workspace_window_state_ids(&transition.from_workspace_id);
+            let outgoing_window_ids =
+                self.workspace_window_state_ids(&transition.from_workspace_id);
             if !outgoing_window_ids.is_empty() {
                 contexts.push(WorkspaceRenderContext {
                     workspace_id: transition.from_workspace_id.clone(),
@@ -516,7 +527,8 @@ impl RiverBackendState {
             | river_window_v1::Edges::Bottom
             | river_window_v1::Edges::Left
             | river_window_v1::Edges::Right;
-        let active_tiled_state_ids = active_tiled_window_ids(&self.runtime_state, &context.window_ids);
+        let active_tiled_state_ids =
+            active_tiled_window_ids(&self.runtime_state, &context.window_ids);
         let snapshot = if active_tiled_state_ids.is_empty() {
             None
         } else {
@@ -559,7 +571,8 @@ impl RiverBackendState {
 
                 if let Some(snapshot) = snapshot.as_ref()
                     && let Some(node) = snapshot.find_by_window_id(&border.window_id)
-                    && let Some((red, green, blue, alpha)) = river_border_color_from_layout_node(node)
+                    && let Some((red, green, blue, alpha)) =
+                        river_border_color_from_layout_node(node)
                 {
                     plan.red = red;
                     plan.green = green;
@@ -627,9 +640,8 @@ impl RiverBackendState {
                     .styles()
                     .and_then(|styles| styles.titlebar.as_ref())
                     .is_some();
-                let supports_compositor_titlebar = self.compositor.is_some()
-                    && self.shm.is_some()
-                    && window.supports_ssd;
+                let supports_compositor_titlebar =
+                    self.compositor.is_some() && self.shm.is_some() && window.supports_ssd;
                 let decoration_mode = decoration_mode_for_window(
                     appearance,
                     has_titlebar_style,
@@ -697,8 +709,10 @@ impl RiverBackendState {
                     window_width as f32,
                     titlebar_height as f32,
                 );
-                let effective_opacity =
-                    titlebar_style.and_then(|style| style.opacity).unwrap_or(1.0) * motion.opacity;
+                let effective_opacity = titlebar_style
+                    .and_then(|style| style.opacity)
+                    .unwrap_or(1.0)
+                    * motion.opacity;
                 let background = apply_opacity(
                     titlebar_background(titlebar_style, focused),
                     effective_opacity,
@@ -884,21 +898,15 @@ impl RiverBackendState {
         let (origin_x, origin_y, total_width, total_height) = self.current_output_geometry();
 
         let mode = match &window.mode {
-            WindowMode::Floating { .. } => {
-                WindowMode::Tiled
-            }
-            WindowMode::Tiled | WindowMode::Fullscreen => {
-                WindowMode::Floating {
-                    rect: Some(window.last_floating_rect.unwrap_or(
-                        LayoutRect {
-                            x: origin_x as f32 + (total_width as f32 * 0.1),
-                            y: origin_y as f32 + (total_height as f32 * 0.1),
-                            width: (total_width as f32 * 0.8).max(1.0),
-                            height: (total_height as f32 * 0.8).max(1.0),
-                        },
-                    )),
-                }
-            }
+            WindowMode::Floating { .. } => WindowMode::Tiled,
+            WindowMode::Tiled | WindowMode::Fullscreen => WindowMode::Floating {
+                rect: Some(window.last_floating_rect.unwrap_or(LayoutRect {
+                    x: origin_x as f32 + (total_width as f32 * 0.1),
+                    y: origin_y as f32 + (total_height as f32 * 0.1),
+                    width: (total_width as f32 * 0.8).max(1.0),
+                    height: (total_height as f32 * 0.8).max(1.0),
+                })),
+            },
         };
 
         let (x, y, width, height) = match &mode {
@@ -917,9 +925,7 @@ impl RiverBackendState {
                     rect.height.round() as i32,
                 )
             }
-            WindowMode::Fullscreen => {
-                (origin_x, origin_y, total_width.max(1), total_height.max(1))
-            }
+            WindowMode::Fullscreen => (origin_x, origin_y, total_width.max(1), total_height.max(1)),
         };
 
         Some(WindowModePlan {
@@ -948,16 +954,11 @@ impl RiverBackendState {
                     WindowMode::Tiled
                 }
             }
-            WindowMode::Tiled
-            | WindowMode::Floating { .. } => {
-                WindowMode::Fullscreen
-            }
+            WindowMode::Tiled | WindowMode::Floating { .. } => WindowMode::Fullscreen,
         };
 
         let (x, y, width, height) = match &mode {
-            WindowMode::Fullscreen => {
-                (origin_x, origin_y, total_width.max(1), total_height.max(1))
-            }
+            WindowMode::Fullscreen => (origin_x, origin_y, total_width.max(1), total_height.max(1)),
             WindowMode::Tiled => (
                 window.x,
                 window.y,
@@ -1658,7 +1659,10 @@ mod tests {
             ..ComputedStyle::default()
         };
 
-        assert_eq!(titlebar_corner_radii(Some(&titlebar_style), Some(&window_style)), (12, 6));
+        assert_eq!(
+            titlebar_corner_radii(Some(&titlebar_style), Some(&window_style)),
+            (12, 6)
+        );
         assert_eq!(titlebar_corner_radii(None, Some(&window_style)), (20, 18));
     }
 
@@ -1687,11 +1691,15 @@ mod tests {
     fn workspace_transition_contexts_follow_workspace_order_direction() {
         let mut backend = test_backend_state(&["1", "2", "3"]);
         backend.runtime_state.insert_window("win-1".into());
-        backend.runtime_state.set_window_workspace(&"win-1".into(), &"1".into());
+        backend
+            .runtime_state
+            .set_window_workspace(&"win-1".into(), &"1".into());
         backend.runtime_state.set_window_new(&"win-1".into(), false);
 
         backend.runtime_state.insert_window("win-2".into());
-        backend.runtime_state.set_window_workspace(&"win-2".into(), &"2".into());
+        backend
+            .runtime_state
+            .set_window_workspace(&"win-2".into(), &"2".into());
         backend.runtime_state.set_window_new(&"win-2".into(), false);
 
         backend.start_workspace_transition(&"2".into());
@@ -1702,7 +1710,10 @@ mod tests {
             .workspace_transition
             .as_ref()
             .expect("workspace transition");
-        assert_eq!(transition.direction, crate::backend::transient::WorkspaceTransitionDirection::Right);
+        assert_eq!(
+            transition.direction,
+            crate::backend::transient::WorkspaceTransitionDirection::Right
+        );
 
         let contexts = backend.render_workspace_contexts();
         assert_eq!(contexts.len(), 2);
@@ -1717,24 +1728,29 @@ mod tests {
         let mut backend = test_backend_state(&["1", "2", "3"]);
 
         backend.runtime_state.insert_window("win-1".into());
-        backend.runtime_state.set_window_workspace(&"win-1".into(), &"1".into());
+        backend
+            .runtime_state
+            .set_window_workspace(&"win-1".into(), &"1".into());
         backend.runtime_state.set_window_new(&"win-1".into(), false);
 
         backend.runtime_state.insert_window("win-2".into());
-        backend.runtime_state.set_window_workspace(&"win-2".into(), &"2".into());
+        backend
+            .runtime_state
+            .set_window_workspace(&"win-2".into(), &"2".into());
         backend.runtime_state.set_window_new(&"win-2".into(), false);
 
         backend.runtime_state.insert_window("win-3".into());
-        backend.runtime_state.set_window_workspace(&"win-3".into(), &"3".into());
+        backend
+            .runtime_state
+            .set_window_workspace(&"win-3".into(), &"3".into());
         backend.runtime_state.set_window_new(&"win-3".into(), false);
 
-        backend.transient.workspace_transition = Some(
-            crate::backend::transient::WorkspaceTransitionState {
+        backend.transient.workspace_transition =
+            Some(crate::backend::transient::WorkspaceTransitionState {
                 from_workspace_id: "1".into(),
                 to_workspace_id: "2".into(),
                 direction: crate::backend::transient::WorkspaceTransitionDirection::Right,
-            },
-        );
+            });
         backend.runtime_state.current_workspace_id = Some("2".into());
 
         let plan = backend.plan_offscreen_windows();

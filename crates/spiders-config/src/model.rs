@@ -2,13 +2,11 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use spiders_scene::SceneRequest;
 use spiders_shared::command::WmCommand;
 use spiders_shared::runtime::prepared_layout::{PreparedLayout, SelectedLayout};
-use spiders_shared::snapshot::{
-    OutputSnapshot, StateSnapshot, WorkspaceSnapshot,
-};
+use spiders_shared::snapshot::{OutputSnapshot, StateSnapshot, WorkspaceSnapshot};
 use spiders_shared::types::LayoutRef;
-use spiders_scene::SceneRequest;
 use spiders_tree::{LayoutSpace, ResolvedLayoutNode};
 use thiserror::Error;
 
@@ -169,8 +167,7 @@ impl ConfigDiscoveryOptions {
     pub fn from_env() -> Self {
         Self {
             home_dir: std::env::var_os("SPIDERS_WM_HOME").map(PathBuf::from),
-            config_dir_override: std::env::var_os("SPIDERS_WM_CONFIG_DIR")
-                .map(PathBuf::from),
+            config_dir_override: std::env::var_os("SPIDERS_WM_CONFIG_DIR").map(PathBuf::from),
             cache_dir_override: std::env::var_os("SPIDERS_WM_CACHE_DIR").map(PathBuf::from),
             authored_config_override: std::env::var_os("SPIDERS_WM_AUTHORED_CONFIG")
                 .map(PathBuf::from),
@@ -336,10 +333,10 @@ impl From<&LayoutDefinition> for LayoutRef {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use spiders_tree::{OutputId, WorkspaceId};
     use spiders_shared::runtime::prepared_layout::{PreparedLayout, PreparedStylesheets};
     use spiders_shared::snapshot::OutputSnapshot;
     use spiders_shared::types::{LayoutRef, OutputTransform};
+    use spiders_tree::{OutputId, WorkspaceId};
     use std::fs;
 
     fn workspace(layout_name: &str) -> WorkspaceSnapshot {

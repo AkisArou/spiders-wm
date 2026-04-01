@@ -68,7 +68,11 @@ fn main() -> std::process::ExitCode {
         OutputMode::Json => "json",
         OutputMode::Text => "text",
     };
-    info!(command, output_mode = output_mode_name, "executing spiders-cli command");
+    info!(
+        command,
+        output_mode = output_mode_name,
+        "executing spiders-cli command"
+    );
 
     if ipc_smoke {
         ipc_smoke_command(output_mode)
@@ -503,12 +507,11 @@ fn describe_prepared_config_update(
 }
 
 fn synthetic_bootstrap_state() -> spiders_shared::snapshot::StateSnapshot {
-    use spiders_tree::{OutputId, WindowId, WorkspaceId};
     use spiders_shared::snapshot::{
-        OutputSnapshot, StateSnapshot, WindowSnapshot,
-        WorkspaceSnapshot,
+        OutputSnapshot, StateSnapshot, WindowSnapshot, WorkspaceSnapshot,
     };
     use spiders_shared::types::{LayoutRef, OutputTransform, ShellKind};
+    use spiders_tree::{OutputId, WindowId, WorkspaceId};
 
     StateSnapshot {
         focused_window_id: Some(WindowId::from("bootstrap-window")),
@@ -1025,7 +1028,10 @@ mod tests {
 
         let report = run_ipc_command(Some(socket_path.clone()), "close-focused-window").unwrap();
 
-        assert_eq!(report.command, spiders_shared::command::WmCommand::CloseFocusedWindow);
+        assert_eq!(
+            report.command,
+            spiders_shared::command::WmCommand::CloseFocusedWindow
+        );
         assert_eq!(report.response_kind, "command-accepted");
 
         let path = handle.join().unwrap();

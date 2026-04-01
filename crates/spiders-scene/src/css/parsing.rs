@@ -1,10 +1,12 @@
-use cssparser::{AtRuleParser, CowRcStr, Parser, ParserInput, QualifiedRuleParser, StyleSheetParser};
-
-use super::stylo_adapter::{
-    parse_selector_list_from_parser, LayoutPseudoElement, LayoutSelectorImpl, LayoutSelectorParser,
+use cssparser::{
+    AtRuleParser, CowRcStr, Parser, ParserInput, QualifiedRuleParser, StyleSheetParser,
 };
 
-use super::compile::{compile_declaration, compile_declaration_from_value, CssValueError};
+use super::stylo_adapter::{
+    LayoutPseudoElement, LayoutSelectorImpl, LayoutSelectorParser, parse_selector_list_from_parser,
+};
+
+use super::compile::{CssValueError, compile_declaration, compile_declaration_from_value};
 use super::compiled::{
     CompiledKeyframeStep, CompiledKeyframesRule, CompiledStyleRule, CompiledStyleSheet,
 };
@@ -14,8 +16,8 @@ use super::tokenizer::parse_value_tokens;
 use style::parser::ParserContext;
 use style::properties::declaration_block::parse_property_declaration_list;
 use style::stylesheets::{CssRuleType, Origin, UrlExtraData};
-use style_traits::values::ToCss;
 use style_traits::ParsingMode;
+use style_traits::values::ToCss;
 
 struct ParsedSelectorPrelude {
     selectors: selectors::parser::SelectorList<LayoutSelectorImpl>,
@@ -323,10 +325,9 @@ fn compile_declarations_from_raw_block(
         }
 
         let mut value = String::new();
-        declaration.to_css(&mut value).map_err(|_| CssParseError::InvalidSyntax {
-            line: 1,
-            column: 1,
-        })?;
+        declaration
+            .to_css(&mut value)
+            .map_err(|_| CssParseError::InvalidSyntax { line: 1, column: 1 })?;
 
         let parsed = ParsedDeclaration {
             property,
@@ -340,40 +341,55 @@ fn compile_declarations_from_raw_block(
     }
 
     if raw_block.contains("appearance:")
-        && !declarations
-            .iter()
-            .any(|declaration| matches!(declaration, super::compile::CompiledDeclaration::Appearance(_)))
+        && !declarations.iter().any(|declaration| {
+            matches!(
+                declaration,
+                super::compile::CompiledDeclaration::Appearance(_)
+            )
+        })
     {
         let fallback = parse_grid_fallback_declarations(raw_block)?;
-        declarations.extend(
-            fallback.into_iter().filter(|declaration| {
-                matches!(declaration, super::compile::CompiledDeclaration::Appearance(_))
-            }),
-        );
+        declarations.extend(fallback.into_iter().filter(|declaration| {
+            matches!(
+                declaration,
+                super::compile::CompiledDeclaration::Appearance(_)
+            )
+        }));
     }
 
     if raw_block.contains("background:")
-        && !declarations
-            .iter()
-            .any(|declaration| matches!(declaration, super::compile::CompiledDeclaration::Background(_)))
+        && !declarations.iter().any(|declaration| {
+            matches!(
+                declaration,
+                super::compile::CompiledDeclaration::Background(_)
+            )
+        })
     {
         let fallback = parse_grid_fallback_declarations(raw_block)?;
-        declarations.extend(
-            fallback.into_iter().filter(|declaration| {
-                matches!(declaration, super::compile::CompiledDeclaration::Background(_))
-            }),
-        );
+        declarations.extend(fallback.into_iter().filter(|declaration| {
+            matches!(
+                declaration,
+                super::compile::CompiledDeclaration::Background(_)
+            )
+        }));
     }
 
     if raw_block.contains("border-color:")
-        && !declarations
-            .iter()
-            .any(|declaration| matches!(declaration, super::compile::CompiledDeclaration::BorderColor(_)))
+        && !declarations.iter().any(|declaration| {
+            matches!(
+                declaration,
+                super::compile::CompiledDeclaration::BorderColor(_)
+            )
+        })
     {
         append_raw_property_fallbacks(raw_block, &mut declarations, &["border-color"])?;
     }
 
-    append_raw_property_fallbacks(raw_block, &mut declarations, &["border-radius", "box-shadow"])?;
+    append_raw_property_fallbacks(
+        raw_block,
+        &mut declarations,
+        &["border-radius", "box-shadow"],
+    )?;
 
     if declarations.is_empty() && needs_grid_fallback(raw_block) {
         declarations = parse_grid_fallback_declarations(raw_block)?;
@@ -382,10 +398,7 @@ fn compile_declarations_from_raw_block(
     Ok(declarations)
 }
 
-fn parse_keyframes_rule(
-    name: String,
-    body: &str,
-) -> Result<CompiledKeyframesRule, CssParseError> {
+fn parse_keyframes_rule(name: String, body: &str) -> Result<CompiledKeyframesRule, CssParseError> {
     let mut steps = Vec::new();
     let mut index = 0;
 
@@ -394,9 +407,14 @@ fn parse_keyframes_rule(
         let selector_text = body[index..block_start].trim();
         let block_end = matching_brace_end(body, block_start)
             .ok_or(CssParseError::InvalidSyntax { line: 1, column: 1 })?;
-        let declarations = compile_declarations_from_raw_block(&body[block_start + 1..block_end - 1])?;
+        let declarations =
+            compile_declarations_from_raw_block(&body[block_start + 1..block_end - 1])?;
 
-        for selector in selector_text.split(',').map(str::trim).filter(|selector| !selector.is_empty()) {
+        for selector in selector_text
+            .split(',')
+            .map(str::trim)
+            .filter(|selector| !selector.is_empty())
+        {
             steps.push(CompiledKeyframeStep {
                 offset: parse_keyframe_offset(selector)?,
                 declarations: declarations.clone(),
@@ -406,7 +424,11 @@ fn parse_keyframes_rule(
         index = block_end;
     }
 
-    steps.sort_by(|left, right| left.offset.partial_cmp(&right.offset).unwrap_or(std::cmp::Ordering::Equal));
+    steps.sort_by(|left, right| {
+        left.offset
+            .partial_cmp(&right.offset)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
 
     Ok(CompiledKeyframesRule { name, steps })
 }
@@ -498,12 +520,15 @@ fn append_raw_property_fallbacks(
         }
 
         let property_name = *property;
-        let already_present = declarations.iter().any(|declaration| match (property_name, declaration) {
-            ("border-radius", super::compile::CompiledDeclaration::BorderRadius(_)) => true,
-            ("border-color", super::compile::CompiledDeclaration::BorderColor(_)) => true,
-            ("box-shadow", super::compile::CompiledDeclaration::BoxShadow(_)) => true,
-            _ => false,
-        });
+        let already_present =
+            declarations
+                .iter()
+                .any(|declaration| match (property_name, declaration) {
+                    ("border-radius", super::compile::CompiledDeclaration::BorderRadius(_)) => true,
+                    ("border-color", super::compile::CompiledDeclaration::BorderColor(_)) => true,
+                    ("box-shadow", super::compile::CompiledDeclaration::BoxShadow(_)) => true,
+                    _ => false,
+                });
         if already_present {
             continue;
         }
@@ -528,17 +553,15 @@ fn extract_raw_property_value(raw_block: &str, property: &str) -> Option<String>
     raw_block
         .split(';')
         .filter_map(|declaration| declaration.split_once(':'))
-        .find_map(|(name, value)| {
-            (name.trim() == property).then(|| value.trim().to_string())
-        })
+        .find_map(|(name, value)| (name.trim() == property).then(|| value.trim().to_string()))
 }
 
 fn needs_grid_fallback(raw_block: &str) -> bool {
     raw_block.contains("grid-template-")
         || raw_block.contains("grid-row:")
         || raw_block.contains("grid-column:")
-    || raw_block.contains("grid-row-start:")
-    || raw_block.contains("grid-row-end:")
-    || raw_block.contains("grid-column-start:")
-    || raw_block.contains("grid-column-end:")
+        || raw_block.contains("grid-row-start:")
+        || raw_block.contains("grid-row-end:")
+        || raw_block.contains("grid-column-start:")
+        || raw_block.contains("grid-column-end:")
 }

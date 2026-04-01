@@ -2,8 +2,8 @@ use std::marker::PhantomData;
 use std::time::Instant;
 
 use crate::motion::easing::sample_easing;
-use crate::motion::runtime::shared::ensure_initialized;
 use crate::motion::runtime::MotionModifier;
+use crate::motion::runtime::shared::ensure_initialized;
 use crate::motion::state::{
     ActiveMotionAnimation, AppliedMotionPhase, MotionAnimationSpec, MotionContext, MotionKeyframe,
     MotionTrackState,
@@ -124,11 +124,12 @@ impl<M: MotionModifier> AnimationModifierApplier<M> {
                 return None;
             }
 
-            let duration_secs = cycle_value(style.animation_duration.as_deref().unwrap_or(&[]), index)
-                .copied()
-                .unwrap_or(MotionTimeValue(0.0))
-                .0
-                .max(0.0);
+            let duration_secs =
+                cycle_value(style.animation_duration.as_deref().unwrap_or(&[]), index)
+                    .copied()
+                    .unwrap_or(MotionTimeValue(0.0))
+                    .0
+                    .max(0.0);
             if duration_secs <= 0.0 {
                 return None;
             }
@@ -155,9 +156,12 @@ impl<M: MotionModifier> AnimationModifierApplier<M> {
                 fill_mode: cycle_value(style.animation_fill_mode.as_deref().unwrap_or(&[]), index)
                     .copied()
                     .unwrap_or(AnimationFillModeValue::None),
-                play_state: cycle_value(style.animation_play_state.as_deref().unwrap_or(&[]), index)
-                    .copied()
-                    .unwrap_or(AnimationPlayStateValue::Running),
+                play_state: cycle_value(
+                    style.animation_play_state.as_deref().unwrap_or(&[]),
+                    index,
+                )
+                .copied()
+                .unwrap_or(AnimationPlayStateValue::Running),
                 timing_function: cycle_value(
                     style.animation_timing_function.as_deref().unwrap_or(&[]),
                     index,
@@ -238,7 +242,12 @@ impl<M: MotionModifier> AnimationModifierApplier<M> {
         context: M::Context,
         now: Instant,
     ) -> (M::Output, bool) {
-        ensure_initialized::<M>(state, base_value, &state.last_transition_spec.clone(), &animation_spec);
+        ensure_initialized::<M>(
+            state,
+            base_value,
+            &state.last_transition_spec.clone(),
+            &animation_spec,
+        );
 
         if state.last_animation_spec != animation_spec {
             state.active_animation = animation_spec.clone().map(|spec| ActiveMotionAnimation {
@@ -282,7 +291,9 @@ impl<M: MotionModifier> AnimationModifierApplier<M> {
     ) -> (M::Output, bool, bool) {
         let spec = &animation.spec;
         let overall_progress = animation.paused_progress.unwrap_or_else(|| {
-            let elapsed = now.saturating_duration_since(animation.started_at).as_secs_f32();
+            let elapsed = now
+                .saturating_duration_since(animation.started_at)
+                .as_secs_f32();
             if spec.duration_secs <= 0.0 {
                 0.0
             } else {
@@ -290,8 +301,8 @@ impl<M: MotionModifier> AnimationModifierApplier<M> {
             }
         });
 
-        let is_running =
-            matches!(spec.play_state, AnimationPlayStateValue::Running) && animation.paused_progress.is_none();
+        let is_running = matches!(spec.play_state, AnimationPlayStateValue::Running)
+            && animation.paused_progress.is_none();
 
         if overall_progress < 0.0 {
             let value = if matches!(
@@ -344,7 +355,11 @@ impl<M: MotionModifier> AnimationModifierApplier<M> {
         self.effective_progress(spec, (iterations - f32::EPSILON).max(0.0))
     }
 
-    fn effective_progress(&self, spec: &MotionAnimationSpec<M::Value>, overall_progress: f32) -> f32 {
+    fn effective_progress(
+        &self,
+        spec: &MotionAnimationSpec<M::Value>,
+        overall_progress: f32,
+    ) -> f32 {
         let cycle_index = overall_progress.floor() as u32;
         let mut cycle_progress = overall_progress.fract();
         if cycle_progress.abs() <= f32::EPSILON && overall_progress > 0.0 {

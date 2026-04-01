@@ -3,14 +3,17 @@ use std::sync::{Mutex, OnceLock};
 
 use spiders_config::authoring_layout::AuthoringLayoutService;
 use spiders_config::model::Config;
+use spiders_runtime_js::DefaultLayoutRuntime;
 use spiders_scene::ast::ValidatedLayoutTree;
-use spiders_scene::{CompiledKeyframesRule, LayoutSnapshotNode, SceneRequest};
 use spiders_scene::pipeline::SceneCache;
-use spiders_tree::{LayoutNodeMeta, RemainingTake, ResolvedLayoutNode, SlotTake, SourceLayoutNode, WindowId, WorkspaceId};
+use spiders_scene::{CompiledKeyframesRule, LayoutSnapshotNode, SceneRequest};
 use spiders_shared::runtime::prepared_layout::PreparedStylesheet;
 use spiders_shared::snapshot::WindowSnapshot;
 use spiders_shared::types::LayoutRef;
-use spiders_runtime_js::DefaultLayoutRuntime;
+use spiders_tree::{
+    LayoutNodeMeta, RemainingTake, ResolvedLayoutNode, SlotTake, SourceLayoutNode, WindowId,
+    WorkspaceId,
+};
 use tracing::{debug, warn};
 
 use crate::model::WmState;
@@ -61,7 +64,10 @@ fn log_fallback_layout_stylesheet(
     }
 }
 
-fn selected_layout_name(config: &Config, state: &spiders_shared::snapshot::StateSnapshot) -> Option<String> {
+fn selected_layout_name(
+    config: &Config,
+    state: &spiders_shared::snapshot::StateSnapshot,
+) -> Option<String> {
     let workspace = state.current_workspace()?;
 
     if let Some(output_id) = workspace.output_id.as_ref()
@@ -109,7 +115,11 @@ fn default_source_layout_tree() -> SourceLayoutNode {
 
 fn resolved_workspace_meta(workspace_classes: &[&str]) -> LayoutNodeMeta {
     let mut class = vec!["river-workspace".into()];
-    class.extend(workspace_classes.iter().map(|class_name| (*class_name).to_owned()));
+    class.extend(
+        workspace_classes
+            .iter()
+            .map(|class_name| (*class_name).to_owned()),
+    );
 
     LayoutNodeMeta {
         class,
@@ -117,10 +127,19 @@ fn resolved_workspace_meta(workspace_classes: &[&str]) -> LayoutNodeMeta {
     }
 }
 
-fn visible_window_snapshots(state: &spiders_shared::snapshot::StateSnapshot, window_ids: &[WindowId]) -> Vec<WindowSnapshot> {
+fn visible_window_snapshots(
+    state: &spiders_shared::snapshot::StateSnapshot,
+    window_ids: &[WindowId],
+) -> Vec<WindowSnapshot> {
     let windows: Vec<WindowSnapshot> = window_ids
         .iter()
-        .filter_map(|window_id| state.windows.iter().find(|window| &window.id == window_id).cloned())
+        .filter_map(|window_id| {
+            state
+                .windows
+                .iter()
+                .find(|window| &window.id == window_id)
+                .cloned()
+        })
         .collect();
 
     if windows.len() != window_ids.len() {
@@ -166,7 +185,8 @@ fn resolved_layout_root(
 
     let resolved = resolved.map(|mut root| {
         if let ResolvedLayoutNode::Workspace { meta, .. } = &mut root {
-            meta.class.retain(|class_name| class_name != "river-workspace");
+            meta.class
+                .retain(|class_name| class_name != "river-workspace");
             meta.class.insert(0, "river-workspace".into());
             meta.class.extend(
                 workspace_classes
@@ -179,18 +199,18 @@ fn resolved_layout_root(
     });
 
     resolved.unwrap_or_else(|| ResolvedLayoutNode::Workspace {
-            meta: resolved_workspace_meta(workspace_classes),
-            children: window_ids
-                .iter()
-                .map(|window_id| ResolvedLayoutNode::Window {
-                    meta: LayoutNodeMeta {
-                        class: vec!["river-window".into()],
-                        ..LayoutNodeMeta::default()
-                    },
-                    window_id: Some(window_id.clone()),
-                })
-                .collect(),
-        })
+        meta: resolved_workspace_meta(workspace_classes),
+        children: window_ids
+            .iter()
+            .map(|window_id| ResolvedLayoutNode::Window {
+                meta: LayoutNodeMeta {
+                    class: vec!["river-window".into()],
+                    ..LayoutNodeMeta::default()
+                },
+                window_id: Some(window_id.clone()),
+            })
+            .collect(),
+    })
 }
 
 pub fn compute_workspace_layout_snapshot(
@@ -233,18 +253,19 @@ pub fn compute_workspace_layout_snapshot(
     let workspace_id = workspace.id.clone();
     let workspace_name = workspace.name.clone();
 
-    let evaluation = match layout_service.evaluate_prepared_for_workspace(config, &snapshot, workspace) {
-        Ok(evaluation) => evaluation,
-        Err(error) => {
-            warn!(
-                %error,
-                %workspace_id,
-                workspace_name = %workspace_name,
-                "failed to evaluate prepared layout for workspace"
-            );
-            None
-        }
-    };
+    let evaluation =
+        match layout_service.evaluate_prepared_for_workspace(config, &snapshot, workspace) {
+            Ok(evaluation) => evaluation,
+            Err(error) => {
+                warn!(
+                    %error,
+                    %workspace_id,
+                    workspace_name = %workspace_name,
+                    "failed to evaluate prepared layout for workspace"
+                );
+                None
+            }
+        };
 
     if evaluation.is_none() {
         warn!(
@@ -317,18 +338,18 @@ pub fn compute_workspace_layout_snapshot(
     );
 
     if layout_stylesheet_missing {
-        log_fallback_layout_stylesheet(
-            &workspace_id,
-            &workspace_name,
-            selected_layout.as_deref(),
-        );
+        log_fallback_layout_stylesheet(&workspace_id, &workspace_name, selected_layout.as_deref());
         request.stylesheets.layout = Some(PreparedStylesheet {
             path: "fallback://river-layout.css".into(),
             source: FALLBACK_HORIZONTAL_STYLESHEET.into(),
         });
     }
 
-    let layout_name = request.layout_name.as_deref().unwrap_or("__default__").to_string();
+    let layout_name = request
+        .layout_name
+        .as_deref()
+        .unwrap_or("__default__")
+        .to_string();
 
     match scene_cache.compute_layout_from_request(&request) {
         Ok(response) => {
@@ -402,7 +423,6 @@ pub fn compute_workspace_layout_snapshot(
         }
     }
 }
-
 
 pub fn compute_layout_snapshot(
     layout_service: &mut AuthoringLayoutService<DefaultLayoutRuntime>,
@@ -504,10 +524,18 @@ mod tests {
         };
         assert_eq!(children.len(), 2);
 
-        let ResolvedLayoutNode::Group { children: top_children, .. } = &children[0] else {
+        let ResolvedLayoutNode::Group {
+            children: top_children,
+            ..
+        } = &children[0]
+        else {
             panic!("expected top group");
         };
-        let ResolvedLayoutNode::Group { children: bottom_children, .. } = &children[1] else {
+        let ResolvedLayoutNode::Group {
+            children: bottom_children,
+            ..
+        } = &children[1]
+        else {
             panic!("expected bottom group");
         };
 
@@ -578,7 +606,15 @@ mod tests {
             panic!("expected workspace root");
         };
 
-        assert!(meta.class.iter().any(|class_name| class_name == "river-workspace"));
-        assert!(meta.class.iter().any(|class_name| class_name == "enter-from-left"));
+        assert!(
+            meta.class
+                .iter()
+                .any(|class_name| class_name == "river-workspace")
+        );
+        assert!(
+            meta.class
+                .iter()
+                .any(|class_name| class_name == "enter-from-left")
+        );
     }
 }

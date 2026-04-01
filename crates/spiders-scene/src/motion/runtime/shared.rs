@@ -1,7 +1,5 @@
 use crate::motion::runtime::MotionModifier;
-use crate::motion::state::{
-    MotionAnimationSpec, MotionTransitionSpec, MotionValueState,
-};
+use crate::motion::state::{MotionAnimationSpec, MotionTransitionSpec, MotionValueState};
 
 pub(super) fn ensure_initialized<M: MotionModifier>(
     state: &mut MotionValueState<M::Value>,

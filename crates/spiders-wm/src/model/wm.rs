@@ -1,13 +1,10 @@
 use std::collections::{BTreeMap, VecDeque};
 
 use spiders_config::model::Config;
-use spiders_tree::{OutputId, WindowId, WorkspaceId};
-use spiders_tree::LayoutRect;
-use spiders_shared::snapshot::{
-    OutputSnapshot, StateSnapshot, WindowSnapshot,
-    WorkspaceSnapshot,
-};
+use spiders_shared::snapshot::{OutputSnapshot, StateSnapshot, WindowSnapshot, WorkspaceSnapshot};
 use spiders_shared::types::{OutputTransform, ShellKind, WindowMode};
+use spiders_tree::LayoutRect;
+use spiders_tree::{OutputId, WindowId, WorkspaceId};
 
 use crate::model::{OutputState, SeatPointerOpState, SeatState, WindowState, WorkspaceState};
 

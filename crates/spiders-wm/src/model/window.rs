@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 
-use spiders_tree::{OutputId, WindowId, WorkspaceId};
-use spiders_tree::LayoutRect;
 use spiders_shared::types::WindowMode;
+use spiders_tree::LayoutRect;
+use spiders_tree::{OutputId, WindowId, WorkspaceId};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WindowState {

@@ -10,8 +10,8 @@ mod taffy;
 mod tokenizer;
 
 pub use crate::style::*;
-pub use compile::CompiledDeclaration;
 pub use crate::style_calc::{compute_style, compute_style_for_pseudo};
+pub use compile::CompiledDeclaration;
 pub use compile::CssValueError;
 pub use compiled::*;
 pub use parsing::{CssParseError, parse_stylesheet};
@@ -440,9 +440,8 @@ mod tests {
 
     #[test]
     fn parses_transform_into_typed_operations() {
-        let declaration = only_declaration(
-            "workspace { transform: translate(100%, 0%) scale(0.8, 1.2); }",
-        );
+        let declaration =
+            only_declaration("workspace { transform: translate(100%, 0%) scale(0.8, 1.2); }");
 
         assert_eq!(
             declaration,
@@ -550,15 +549,17 @@ mod tests {
         assert_eq!(sheet.keyframes.len(), 1);
         assert_eq!(sheet.keyframes[0].name, "open-zoom");
         assert_eq!(sheet.keyframes[0].steps.len(), 2);
-        assert!(sheet.keyframes[0]
-            .steps
-            .iter()
-            .flat_map(|step| step.declarations.iter())
-            .any(|declaration| matches!(
-                declaration,
-                CompiledDeclaration::Transform(TransformValue { operations })
-                if operations.len() == 2
-            )));
+        assert!(
+            sheet.keyframes[0]
+                .steps
+                .iter()
+                .flat_map(|step| step.declarations.iter())
+                .any(|declaration| matches!(
+                    declaration,
+                    CompiledDeclaration::Transform(TransformValue { operations })
+                    if operations.len() == 2
+                ))
+        );
         assert!(style.box_shadow.is_some());
     }
 

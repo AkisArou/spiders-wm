@@ -1,4 +1,6 @@
-use spiders_shared::runtime::prepared_layout::{PreparedLayout, PreparedStylesheet, PreparedStylesheets, SelectedLayout};
+use spiders_shared::runtime::prepared_layout::{
+    PreparedLayout, PreparedStylesheet, PreparedStylesheets, SelectedLayout,
+};
 use spiders_shared::runtime::runtime_error::RuntimeError;
 use tracing::{debug, warn};
 
@@ -80,12 +82,13 @@ impl RuntimeProjectLayoutSourceLoader {
     ) -> Result<PreparedLayout, LayoutLoadError> {
         let module_path = self.resolver.resolve_module_path(&layout.module);
         if let Some(runtime_payload) = layout.runtime_cache_payload.clone() {
-            let runtime_graph = decode_runtime_graph_payload(&runtime_payload).map_err(|error| {
-                LayoutLoadError::InvalidRuntimePayload {
-                    module: layout.module.clone(),
-                    message: error.to_string(),
-                }
-            })?;
+            let runtime_graph =
+                decode_runtime_graph_payload(&runtime_payload).map_err(|error| {
+                    LayoutLoadError::InvalidRuntimePayload {
+                        module: layout.module.clone(),
+                        message: error.to_string(),
+                    }
+                })?;
             return Ok(loaded_layout_definition(
                 layout,
                 global_stylesheet_path,
@@ -137,12 +140,13 @@ impl FsLayoutSourceLoader {
         layout: &LayoutDefinition,
     ) -> Result<PreparedLayout, LayoutLoadError> {
         if let Some(runtime_payload) = layout.runtime_cache_payload.clone() {
-            let runtime_graph = decode_runtime_graph_payload(&runtime_payload).map_err(|error| {
-                LayoutLoadError::InvalidRuntimePayload {
-                    module: layout.module.clone(),
-                    message: error.to_string(),
-                }
-            })?;
+            let runtime_graph =
+                decode_runtime_graph_payload(&runtime_payload).map_err(|error| {
+                    LayoutLoadError::InvalidRuntimePayload {
+                        module: layout.module.clone(),
+                        message: error.to_string(),
+                    }
+                })?;
             return Ok(loaded_layout_definition(
                 layout,
                 global_stylesheet_path,
@@ -266,10 +270,7 @@ fn load_stylesheet_asset(
     }
 }
 
-fn load_global_stylesheet_asset(
-    layout: &LayoutDefinition,
-    path: &str,
-) -> PreparedStylesheet {
+fn load_global_stylesheet_asset(layout: &LayoutDefinition, path: &str) -> PreparedStylesheet {
     let source = std::fs::read_to_string(path).unwrap_or_else(|_| {
         warn!(
             layout = %layout.name,
@@ -339,10 +340,7 @@ fn load_stylesheet_asset_source(
     None
 }
 
-fn single_module_graph(
-    module: String,
-    source: String,
-) -> JavaScriptModuleGraph {
+fn single_module_graph(module: String, source: String) -> JavaScriptModuleGraph {
     JavaScriptModuleGraph {
         entry: module.clone(),
         modules: vec![JavaScriptModule {
@@ -370,9 +368,9 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
 
-    use spiders_tree::{OutputId, WorkspaceId};
     use spiders_shared::snapshot::WorkspaceSnapshot;
     use spiders_shared::types::LayoutRef;
+    use spiders_tree::{OutputId, WorkspaceId};
 
     use super::*;
     use crate::payload::decode_runtime_graph_payload;
@@ -554,11 +552,7 @@ mod tests {
         let loaded_graph = decode_runtime_graph_payload(&loaded.runtime_payload).unwrap();
 
         assert!(loaded.selected.module.ends_with("layouts/fallback.js"));
-        assert!(
-            loaded_graph.modules[0]
-                .source
-                .contains("fallback-group")
-        );
+        assert!(loaded_graph.modules[0].source.contains("fallback-group"));
     }
 
     #[test]
@@ -582,19 +576,34 @@ mod tests {
             &definition,
             config.global_stylesheet_path.as_deref(),
             definition.module.clone(),
-            single_module_graph(definition.module.clone(), "export default () => null".into()),
+            single_module_graph(
+                definition.module.clone(),
+                "export default () => null".into(),
+            ),
         );
 
         assert_eq!(
-            loaded.stylesheets.layout.as_ref().map(|sheet| sheet.path.as_str()),
+            loaded
+                .stylesheets
+                .layout
+                .as_ref()
+                .map(|sheet| sheet.path.as_str()),
             Some(missing_layout)
         );
         assert_eq!(
-            loaded.stylesheets.layout.as_ref().map(|sheet| sheet.source.as_str()),
+            loaded
+                .stylesheets
+                .layout
+                .as_ref()
+                .map(|sheet| sheet.source.as_str()),
             Some("")
         );
         assert_eq!(
-            loaded.stylesheets.global.as_ref().map(|sheet| sheet.path.as_str()),
+            loaded
+                .stylesheets
+                .global
+                .as_ref()
+                .map(|sheet| sheet.path.as_str()),
             Some(missing_global)
         );
     }

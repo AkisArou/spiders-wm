@@ -1,35 +1,38 @@
 use std::collections::HashMap;
-use std::os::fd::AsFd;
 use std::io::{Seek, SeekFrom, Write};
+use std::os::fd::AsFd;
 use std::process::Command;
 
 use anyhow::{Result, anyhow};
 use spiders_config::authoring_layout::AuthoringLayoutService;
-use spiders_config::model::{Binding, Config};
 use spiders_config::model::ConfigPaths;
 use spiders_config::model::InputConfig;
+use spiders_config::model::{Binding, Config};
+use spiders_runtime_js::{DefaultLayoutRuntime, build_authoring_layout_service};
 use spiders_scene::pipeline::SceneCache;
 use spiders_shared::command::{FocusDirection, WmCommand};
-use spiders_runtime_js::{build_authoring_layout_service, DefaultLayoutRuntime};
-use wayland_backend::client::ObjectId;
-use wayland_client::protocol::{wl_buffer, wl_compositor, wl_output, wl_registry, wl_seat, wl_shm, wl_shm_pool, wl_surface};
-use wayland_client::{Connection, Dispatch, EventQueue, Proxy, QueueHandle};
 use tracing::{debug, info, warn};
+use wayland_backend::client::ObjectId;
+use wayland_client::protocol::{
+    wl_buffer, wl_compositor, wl_output, wl_registry, wl_seat, wl_shm, wl_shm_pool, wl_surface,
+};
+use wayland_client::{Connection, Dispatch, EventQueue, Proxy, QueueHandle};
 use xkbcommon::xkb;
 
+use crate::action_bridge::{RiverCommand, bridge_action};
 use crate::actions::{
     activate_workspace, active_workspace_window_ids, compute_horizontal_tiles,
     configured_mode_for_window, configured_workspace_for_window, focus_target_in_direction,
 };
-use crate::action_bridge::{RiverCommand, bridge_action};
+use crate::model::{SeatPointerOpState, WindowState, WmState};
 use crate::protocol::river_input_management::{river_input_device_v1, river_input_manager_v1};
 use crate::protocol::river_layer_shell::river_layer_shell_v1;
 use crate::protocol::river_libinput_config::{
     river_libinput_config_v1, river_libinput_device_v1, river_libinput_result_v1,
 };
 use crate::protocol::river_window_management_v1::{
-    river_decoration_v1, river_node_v1, river_output_v1, river_pointer_binding_v1,
-    river_seat_v1, river_window_manager_v1, river_window_v1,
+    river_decoration_v1, river_node_v1, river_output_v1, river_pointer_binding_v1, river_seat_v1,
+    river_window_manager_v1, river_window_v1,
 };
 use crate::protocol::river_xkb_bindings::{river_xkb_binding_v1, river_xkb_bindings_v1};
 use crate::protocol::river_xkb_config::{
@@ -40,28 +43,27 @@ use crate::protocol::{
     RIVER_WINDOW_MANAGEMENT_GLOBAL, RIVER_XKB_BINDINGS_GLOBAL, RIVER_XKB_CONFIG_GLOBAL,
     RiverProtocolSupport,
 };
-use crate::model::{SeatPointerOpState, WindowState, WmState};
+use crate::runtime::registry::TitlebarRecord;
 use crate::runtime::{
     BindingTargetKind, InputDeviceKind, InputDeviceRecord, LibinputDeviceRecord, OutputRecord,
-    ParsedBinding, PointerBindingRecord, RiverRegistry, SeatRecord, WindowRecord,
-    WlOutputRecord, WlSeatRecord, XkbBindingRecord, XkbKeyboardRecord,
+    ParsedBinding, PointerBindingRecord, RiverRegistry, SeatRecord, WindowRecord, WlOutputRecord,
+    WlSeatRecord, XkbBindingRecord, XkbKeyboardRecord,
 };
-use crate::runtime::registry::TitlebarRecord;
 
 mod apply;
 mod dispatch;
 mod motion;
-mod planner;
 mod plan;
+mod planner;
 mod titlebar_renderer;
 mod transient;
 
 use self::apply::{effective_bindings, parse_binding};
 use self::plan::{
     ActivateWorkspacePlan, AppearancePlan, BorderPlan, ClearTiledStatePlan, CloseWindowPlan,
-    CommandPlan, DecorationMode, FocusPlan, ManageWindowPlan,
-    MoveFocusedWindowToWorkspacePlan, MoveWindowToTopPlan, MoveWindowInWorkspacePlan,
-    OffscreenWindowPlan, PointerRenderPlan, RenderWindowPlan, ResizeWindowPlan, WindowModePlan,
+    CommandPlan, DecorationMode, FocusPlan, ManageWindowPlan, MoveFocusedWindowToWorkspacePlan,
+    MoveWindowInWorkspacePlan, MoveWindowToTopPlan, OffscreenWindowPlan, PointerRenderPlan,
+    RenderWindowPlan, ResizeWindowPlan, WindowModePlan,
 };
 use self::transient::{
     BackendTransientState, WorkspaceTransitionDirection, WorkspaceTransitionState,
@@ -163,21 +165,27 @@ impl RiverBackendState {
         let base_workspace = snapshot.current_workspace().cloned();
 
         for layout in &self.config.layouts {
-            let workspace = base_workspace.clone().unwrap_or(spiders_shared::snapshot::WorkspaceSnapshot {
-                id: spiders_tree::WorkspaceId::from("warmup"),
-                name: "warmup".into(),
-                output_id: None,
-                active_workspaces: Vec::new(),
-                focused: true,
-                visible: true,
-                effective_layout: None,
-            });
+            let workspace =
+                base_workspace
+                    .clone()
+                    .unwrap_or(spiders_shared::snapshot::WorkspaceSnapshot {
+                        id: spiders_tree::WorkspaceId::from("warmup"),
+                        name: "warmup".into(),
+                        output_id: None,
+                        active_workspaces: Vec::new(),
+                        focused: true,
+                        visible: true,
+                        effective_layout: None,
+                    });
             let mut workspace = workspace;
             workspace.effective_layout = Some(spiders_shared::types::LayoutRef {
                 name: layout.name.clone(),
             });
 
-            let prepared = match self.layout_service.prepare_for_workspace(&self.config, &workspace) {
+            let prepared = match self
+                .layout_service
+                .prepare_for_workspace(&self.config, &workspace)
+            {
                 Ok(Some(prepared)) => prepared,
                 Ok(None) => {
                     warn!(layout = %layout.name, "layout preparation returned no artifact during scene cache prewarm");
@@ -195,7 +203,10 @@ impl RiverBackendState {
                 continue;
             }
 
-            if let Err(error) = self.scene_cache.precompile_layout(layout.name.clone(), &source) {
+            if let Err(error) = self
+                .scene_cache
+                .precompile_layout(layout.name.clone(), &source)
+            {
                 warn!(layout = %layout.name, %error, "failed to precompile stylesheet for scene cache");
             }
         }
@@ -240,7 +251,8 @@ impl RiverBackendState {
         if let Some(workspace_id) = configured_workspace_for_window(&self.config, &window)
             && self.runtime_state.workspaces.contains_key(&workspace_id)
         {
-            self.runtime_state.set_window_workspace(window_id, &workspace_id);
+            self.runtime_state
+                .set_window_workspace(window_id, &workspace_id);
         }
 
         if let Some(mode) = configured_mode_for_window(&self.config, &window) {
@@ -249,7 +261,10 @@ impl RiverBackendState {
     }
 
     fn configured_input<'a>(&'a self, device_name: &str) -> Option<&'a InputConfig> {
-        self.config.inputs.iter().find(|input| input.name == device_name)
+        self.config
+            .inputs
+            .iter()
+            .find(|input| input.name == device_name)
     }
 
     fn apply_xkb_keymap_for_device(
@@ -284,7 +299,8 @@ impl RiverBackendState {
         let Ok(mut file) = tempfile::tempfile() else {
             return;
         };
-        if file.write_all(keymap_text.as_bytes()).is_err() || file.seek(SeekFrom::Start(0)).is_err() {
+        if file.write_all(keymap_text.as_bytes()).is_err() || file.seek(SeekFrom::Start(0)).is_err()
+        {
             return;
         }
 
@@ -301,7 +317,11 @@ impl RiverBackendState {
             keymap_proxy.id(),
             format!(
                 "device={} layout={:?} model={:?} variant={:?} options={:?}",
-                device_name, config.xkb_layout, config.xkb_model, config.xkb_variant, config.xkb_options
+                device_name,
+                config.xkb_layout,
+                config.xkb_model,
+                config.xkb_variant,
+                config.xkb_options
             ),
         );
         self.transient
@@ -315,7 +335,11 @@ impl RiverBackendState {
             .insert(proxy.id(), description);
     }
 
-    fn apply_input_config_for_device(&mut self, input_device_id: &ObjectId, qh: &QueueHandle<Self>) {
+    fn apply_input_config_for_device(
+        &mut self,
+        input_device_id: &ObjectId,
+        qh: &QueueHandle<Self>,
+    ) {
         let Some(device) = self.registry.input_devices.get(input_device_id).cloned() else {
             return;
         };
@@ -349,7 +373,12 @@ impl RiverBackendState {
             }
         }
 
-        let libinput_devices = self.registry.libinput_devices.values().cloned().collect::<Vec<_>>();
+        let libinput_devices = self
+            .registry
+            .libinput_devices
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
         for libinput in &libinput_devices {
             if libinput.input_device_id.as_ref() != Some(input_device_id) {
                 continue;
@@ -362,7 +391,10 @@ impl RiverBackendState {
                     crate::protocol::river_libinput_config::river_libinput_device_v1::TapState::Disabled
                 };
                 let result = libinput.proxy.set_tap(state, qh, ());
-                self.track_input_result(&result, format!("set tap={} for {}", enabled, device_name));
+                self.track_input_result(
+                    &result,
+                    format!("set tap={} for {}", enabled, device_name),
+                );
             }
             if let Some(enabled) = config.natural_scroll {
                 let state = if enabled {
@@ -407,7 +439,10 @@ impl RiverBackendState {
                     crate::protocol::river_libinput_config::river_libinput_device_v1::DwtState::Disabled
                 };
                 let result = libinput.proxy.set_dwt(state, qh, ());
-                self.track_input_result(&result, format!("set dwt={} for {}", enabled, device_name));
+                self.track_input_result(
+                    &result,
+                    format!("set dwt={} for {}", enabled, device_name),
+                );
             }
             if let Some(enabled) = config.drag_lock {
                 let state = if enabled {
@@ -782,7 +817,11 @@ impl RiverBackendState {
             .collect::<Vec<_>>();
 
         for seat in self.registry.seats.values_mut() {
-            if self.transient.initialized_seat_bindings.contains(&seat.proxy.id()) {
+            if self
+                .transient
+                .initialized_seat_bindings
+                .contains(&seat.proxy.id())
+            {
                 continue;
             }
 
@@ -811,7 +850,7 @@ impl RiverBackendState {
                                 XkbBindingRecord {
                                     proxy,
                                     trigger: binding.trigger.clone(),
-                                        command: binding.command.clone(),
+                                    command: binding.command.clone(),
                                 },
                             );
                         }
@@ -838,7 +877,7 @@ impl RiverBackendState {
                                 PointerBindingRecord {
                                     proxy,
                                     trigger: binding.trigger.clone(),
-                                        command: binding.command.clone(),
+                                    command: binding.command.clone(),
                                 },
                             );
                         }
@@ -846,7 +885,9 @@ impl RiverBackendState {
                 }
             }
 
-            self.transient.initialized_seat_bindings.insert(seat.proxy.id());
+            self.transient
+                .initialized_seat_bindings
+                .insert(seat.proxy.id());
         }
     }
 
@@ -859,8 +900,14 @@ impl RiverBackendState {
             .map(|id| {
                 (
                     id.clone(),
-                    self.transient.window_pointer_move_requests.get(&id).cloned(),
-                    self.transient.window_pointer_resize_requests.get(&id).cloned(),
+                    self.transient
+                        .window_pointer_move_requests
+                        .get(&id)
+                        .cloned(),
+                    self.transient
+                        .window_pointer_resize_requests
+                        .get(&id)
+                        .cloned(),
                 )
             })
             .collect::<Vec<_>>();
@@ -868,26 +915,37 @@ impl RiverBackendState {
         for (window_id, move_request, resize_request) in pending {
             if let Some(seat_id) = move_request
                 && let Some(window) = self.registry.windows.get(&window_id).cloned()
-                && let Some(window_state) = self.runtime_state.windows.get(&window.state_id).cloned()
+                && let Some(window_state) =
+                    self.runtime_state.windows.get(&window.state_id).cloned()
                 && let Some(seat) = self.registry.seats.get_mut(&seat_id)
             {
                 seat.pointer_move(&mut self.runtime_state, &window, &window_state);
-                self.transient.window_pointer_move_requests.remove(&window_id);
+                self.transient
+                    .window_pointer_move_requests
+                    .remove(&window_id);
             }
 
             if let Some((seat_id, edges)) = resize_request
                 && let Some(window) = self.registry.windows.get(&window_id).cloned()
-                && let Some(window_state) = self.runtime_state.windows.get(&window.state_id).cloned()
+                && let Some(window_state) =
+                    self.runtime_state.windows.get(&window.state_id).cloned()
                 && let Some(seat) = self.registry.seats.get_mut(&seat_id)
             {
                 seat.pointer_resize(&mut self.runtime_state, &window, &window_state, edges);
-                self.transient.window_pointer_resize_requests.remove(&window_id);
+                self.transient
+                    .window_pointer_resize_requests
+                    .remove(&window_id);
             }
         }
     }
 
     fn active_workspace_window_state_ids(&self) -> Vec<spiders_tree::WindowId> {
-        let state_window_stack = self.runtime_state.window_stack.iter().cloned().collect::<Vec<_>>();
+        let state_window_stack = self
+            .runtime_state
+            .window_stack
+            .iter()
+            .cloned()
+            .collect::<Vec<_>>();
 
         active_workspace_window_ids(&self.runtime_state, &state_window_stack)
     }
@@ -939,10 +997,10 @@ impl RiverBackendState {
                     .values()
                     .find(|output| output.enabled)
                     .map(|output| {
-                    let width = output.logical_width.max(1) as i32;
-                    let height = output.logical_height.max(1) as i32;
-                    (output.logical_x, output.logical_y, width, height)
-                })
+                        let width = output.logical_width.max(1) as i32;
+                        let height = output.logical_height.max(1) as i32;
+                        (output.logical_x, output.logical_y, width, height)
+                    })
             })
             .unwrap_or((0, 0, 1024, 768))
     }
@@ -957,7 +1015,8 @@ impl RiverBackendState {
         }
 
         let direction = match (
-            self.runtime_state.workspace_order_index(&previous_workspace_id),
+            self.runtime_state
+                .workspace_order_index(&previous_workspace_id),
             self.runtime_state.workspace_order_index(workspace_id),
         ) {
             (Some(previous_index), Some(next_index)) if next_index < previous_index => {
@@ -978,14 +1037,21 @@ impl RiverBackendState {
             return;
         };
 
-        let transition_is_active = self.transient.motion_active_windows.iter().any(|window_id| {
-            self.runtime_state.windows.get(window_id).is_some_and(|window| {
-                window.workspace_ids.iter().any(|workspace_id| {
-                    workspace_id == &transition.from_workspace_id
-                        || workspace_id == &transition.to_workspace_id
-                })
-            })
-        });
+        let transition_is_active = self
+            .transient
+            .motion_active_windows
+            .iter()
+            .any(|window_id| {
+                self.runtime_state
+                    .windows
+                    .get(window_id)
+                    .is_some_and(|window| {
+                        window.workspace_ids.iter().any(|workspace_id| {
+                            workspace_id == &transition.from_workspace_id
+                                || workspace_id == &transition.to_workspace_id
+                        })
+                    })
+            });
 
         if !transition_is_active {
             self.transient.workspace_transition = None;
@@ -1053,7 +1119,8 @@ impl RiverBackendState {
         for seat_id in seat_ids {
             let interacted = self.seat_interacted_object_id(&seat_id);
             if let Some(seat_name) = self.seat_name(&seat_id).map(str::to_owned) {
-                self.runtime_state.set_seat_interacted_window(&seat_name, None);
+                self.runtime_state
+                    .set_seat_interacted_window(&seat_name, None);
             }
             if let Some(window_id) = interacted {
                 if let Some(state_id) = self
@@ -1139,10 +1206,9 @@ impl RiverBackendState {
     }
 }
 
-
 #[cfg(test)]
-    mod tests {
-        use super::*;
+mod tests {
+    use super::*;
     use spiders_config::model::{ConfigOptions, WindowRule};
     use spiders_tree::LayoutRect;
 
@@ -1157,12 +1223,36 @@ impl RiverBackendState {
         assert_eq!(bindings[3].trigger, "Alt+l");
         assert!(bindings.iter().any(|binding| binding.trigger == "Alt+1"));
         assert!(bindings.iter().any(|binding| binding.trigger == "Alt+9"));
-        assert!(bindings.iter().any(|binding| binding.trigger == "Alt+Shift+1"));
-        assert!(bindings.iter().any(|binding| binding.trigger == "Alt+Shift+9"));
-        assert!(bindings.iter().any(|binding| binding.trigger == "Alt+Shift+h"));
-        assert!(bindings.iter().any(|binding| binding.trigger == "Alt+Shift+j"));
-        assert!(bindings.iter().any(|binding| binding.trigger == "Alt+Shift+k"));
-        assert!(bindings.iter().any(|binding| binding.trigger == "Alt+Shift+l"));
+        assert!(
+            bindings
+                .iter()
+                .any(|binding| binding.trigger == "Alt+Shift+1")
+        );
+        assert!(
+            bindings
+                .iter()
+                .any(|binding| binding.trigger == "Alt+Shift+9")
+        );
+        assert!(
+            bindings
+                .iter()
+                .any(|binding| binding.trigger == "Alt+Shift+h")
+        );
+        assert!(
+            bindings
+                .iter()
+                .any(|binding| binding.trigger == "Alt+Shift+j")
+        );
+        assert!(
+            bindings
+                .iter()
+                .any(|binding| binding.trigger == "Alt+Shift+k")
+        );
+        assert!(
+            bindings
+                .iter()
+                .any(|binding| binding.trigger == "Alt+Shift+l")
+        );
     }
 
     #[test]
@@ -1186,12 +1276,36 @@ impl RiverBackendState {
         assert!(bindings.iter().any(|binding| binding.trigger == "Alt+l"));
         assert!(bindings.iter().any(|binding| binding.trigger == "Alt+1"));
         assert!(bindings.iter().any(|binding| binding.trigger == "Alt+9"));
-        assert!(bindings.iter().any(|binding| binding.trigger == "Alt+Shift+1"));
-        assert!(bindings.iter().any(|binding| binding.trigger == "Alt+Shift+9"));
-        assert!(bindings.iter().any(|binding| binding.trigger == "Alt+Shift+h"));
-        assert!(bindings.iter().any(|binding| binding.trigger == "Alt+Shift+j"));
-        assert!(bindings.iter().any(|binding| binding.trigger == "Alt+Shift+k"));
-        assert!(bindings.iter().any(|binding| binding.trigger == "Alt+Shift+l"));
+        assert!(
+            bindings
+                .iter()
+                .any(|binding| binding.trigger == "Alt+Shift+1")
+        );
+        assert!(
+            bindings
+                .iter()
+                .any(|binding| binding.trigger == "Alt+Shift+9")
+        );
+        assert!(
+            bindings
+                .iter()
+                .any(|binding| binding.trigger == "Alt+Shift+h")
+        );
+        assert!(
+            bindings
+                .iter()
+                .any(|binding| binding.trigger == "Alt+Shift+j")
+        );
+        assert!(
+            bindings
+                .iter()
+                .any(|binding| binding.trigger == "Alt+Shift+k")
+        );
+        assert!(
+            bindings
+                .iter()
+                .any(|binding| binding.trigger == "Alt+Shift+l")
+        );
     }
 
     #[test]
@@ -1216,10 +1330,26 @@ impl RiverBackendState {
         assert!(bindings.iter().any(|binding| binding.trigger == "Alt+q"));
         assert!(bindings.iter().any(|binding| binding.trigger == "Alt+1"));
         assert!(bindings.iter().any(|binding| binding.trigger == "Alt+9"));
-        assert!(bindings.iter().any(|binding| binding.trigger == "Alt+Shift+1"));
-        assert!(bindings.iter().any(|binding| binding.trigger == "Alt+Shift+9"));
-        assert!(bindings.iter().any(|binding| binding.trigger == "Alt+Shift+h"));
-        assert!(bindings.iter().any(|binding| binding.trigger == "Alt+Shift+j"));
+        assert!(
+            bindings
+                .iter()
+                .any(|binding| binding.trigger == "Alt+Shift+1")
+        );
+        assert!(
+            bindings
+                .iter()
+                .any(|binding| binding.trigger == "Alt+Shift+9")
+        );
+        assert!(
+            bindings
+                .iter()
+                .any(|binding| binding.trigger == "Alt+Shift+h")
+        );
+        assert!(
+            bindings
+                .iter()
+                .any(|binding| binding.trigger == "Alt+Shift+j")
+        );
     }
 
     #[test]
@@ -1234,11 +1364,27 @@ impl RiverBackendState {
 
         let bindings = effective_bindings(&config);
 
-        assert!(bindings.iter().any(|binding| binding.trigger == "Super+Enter"));
+        assert!(
+            bindings
+                .iter()
+                .any(|binding| binding.trigger == "Super+Enter")
+        );
         assert!(bindings.iter().any(|binding| binding.trigger == "Super+1"));
-        assert!(bindings.iter().any(|binding| binding.trigger == "Super+Shift+1"));
-        assert!(bindings.iter().any(|binding| binding.trigger == "Super+Shift+h"));
-        assert!(!bindings.iter().any(|binding| binding.trigger == "Alt+Enter"));
+        assert!(
+            bindings
+                .iter()
+                .any(|binding| binding.trigger == "Super+Shift+1")
+        );
+        assert!(
+            bindings
+                .iter()
+                .any(|binding| binding.trigger == "Super+Shift+h")
+        );
+        assert!(
+            !bindings
+                .iter()
+                .any(|binding| binding.trigger == "Alt+Enter")
+        );
     }
 
     #[test]
@@ -1257,9 +1403,21 @@ impl RiverBackendState {
 
         let bindings = effective_bindings(&config);
 
-        assert!(bindings.iter().any(|binding| binding.trigger == "Alt+Ctrl+1"));
-        assert!(bindings.iter().any(|binding| binding.trigger == "Alt+Ctrl+9"));
-        assert!(!bindings.iter().any(|binding| binding.trigger == "Alt+Shift+9"));
+        assert!(
+            bindings
+                .iter()
+                .any(|binding| binding.trigger == "Alt+Ctrl+1")
+        );
+        assert!(
+            bindings
+                .iter()
+                .any(|binding| binding.trigger == "Alt+Ctrl+9")
+        );
+        assert!(
+            !bindings
+                .iter()
+                .any(|binding| binding.trigger == "Alt+Shift+9")
+        );
     }
 
     #[test]
@@ -1362,7 +1520,10 @@ impl RiverBackendState {
             },
         );
         state.set_window_geometry(&"win-1".into(), 10, 20, 300, 200);
-        state.set_window_mode(&"win-1".into(), spiders_shared::types::WindowMode::Fullscreen);
+        state.set_window_mode(
+            &"win-1".into(),
+            spiders_shared::types::WindowMode::Fullscreen,
+        );
 
         let window = state.windows.get(&"win-1".into()).unwrap();
 
@@ -1376,5 +1537,4 @@ impl RiverBackendState {
             })
         );
     }
-
 }

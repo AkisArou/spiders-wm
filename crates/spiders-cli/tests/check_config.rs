@@ -134,7 +134,11 @@ fn cli_build_config_writes_prepared_config_with_module_graphs() {
         "#,
     )
     .unwrap();
-    std::fs::write(root.path().join("layouts/master-stack/index.css"), "workspace {}").unwrap();
+    std::fs::write(
+        root.path().join("layouts/master-stack/index.css"),
+        "workspace {}",
+    )
+    .unwrap();
 
     let authored_config = root.path().join("config.ts");
     let runtime_root = TempDir::new().unwrap();
@@ -159,7 +163,6 @@ fn cli_build_config_writes_prepared_config_with_module_graphs() {
     assert!(built.contains("export default"));
     assert!(std::fs::metadata(runtime_root.path().join("layouts/master-stack/index.js")).is_ok());
 }
-
 
 #[test]
 fn cli_ipc_query_reports_socket_response_in_json_mode() {

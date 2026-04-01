@@ -1352,10 +1352,7 @@ mod tests {
         let runtime_graph =
             decode_runtime_graph_payload(config.layouts[0].runtime_cache_payload.as_ref().unwrap())
                 .unwrap();
-        assert_eq!(
-            runtime_graph.entry,
-            "layouts/master-stack/index.tsx"
-        );
+        assert_eq!(runtime_graph.entry, "layouts/master-stack/index.tsx");
         assert!(
             runtime_graph
                 .modules

@@ -1,6 +1,6 @@
 use spiders_shared::command::{FocusDirection, LayoutCycleDirection, WmCommand};
-use spiders_tree::{OutputId, WindowId, WorkspaceId};
 use spiders_tree::LayoutRect;
+use spiders_tree::{OutputId, WindowId, WorkspaceId};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum RiverCommand {
@@ -51,12 +51,8 @@ pub fn bridge_action(action: &WmCommand) -> RiverCommand {
         WmCommand::ReloadConfig => RiverCommand::ReloadConfig,
         WmCommand::SetLayout { name } => RiverCommand::SetLayout { name: name.clone() },
         WmCommand::CycleLayout { direction } => match direction {
-            Some(LayoutCycleDirection::Previous) => {
-                RiverCommand::CycleLayoutPrevious
-            }
-            None | Some(LayoutCycleDirection::Next) => {
-                RiverCommand::CycleLayoutNext
-            }
+            Some(LayoutCycleDirection::Previous) => RiverCommand::CycleLayoutPrevious,
+            None | Some(LayoutCycleDirection::Next) => RiverCommand::CycleLayoutNext,
         },
         WmCommand::ActivateWorkspace { workspace_id } => RiverCommand::ActivateWorkspace {
             workspace_id: workspace_id.clone(),

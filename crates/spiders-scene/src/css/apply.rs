@@ -52,11 +52,19 @@ impl ApplyCompiledDeclaration for ComputedStyle {
             CompiledDeclaration::AnimationIterationCount(value) => {
                 self.animation_iteration_count = Some(value)
             }
-            CompiledDeclaration::AnimationDirection(value) => self.animation_direction = Some(value),
+            CompiledDeclaration::AnimationDirection(value) => {
+                self.animation_direction = Some(value)
+            }
             CompiledDeclaration::AnimationFillMode(value) => self.animation_fill_mode = Some(value),
-            CompiledDeclaration::AnimationPlayState(value) => self.animation_play_state = Some(value),
-            CompiledDeclaration::TransitionProperty(value) => self.transition_property = Some(value),
-            CompiledDeclaration::TransitionDuration(value) => self.transition_duration = Some(value),
+            CompiledDeclaration::AnimationPlayState(value) => {
+                self.animation_play_state = Some(value)
+            }
+            CompiledDeclaration::TransitionProperty(value) => {
+                self.transition_property = Some(value)
+            }
+            CompiledDeclaration::TransitionDuration(value) => {
+                self.transition_duration = Some(value)
+            }
             CompiledDeclaration::TransitionTimingFunction(value) => {
                 self.transition_timing_function = Some(value)
             }

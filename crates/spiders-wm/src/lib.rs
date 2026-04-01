@@ -1,5 +1,5 @@
-pub mod actions;
 pub mod action_bridge;
+pub mod actions;
 pub mod backend;
 pub mod layout_adapter;
 pub mod model;
@@ -9,7 +9,7 @@ pub mod runtime;
 use anyhow::Result;
 use spiders_config::authoring_layout::AuthoringLayoutService;
 use spiders_config::model::{Config, ConfigDiscoveryOptions, ConfigPaths};
-use spiders_runtime_js::{build_authoring_layout_service, DefaultLayoutRuntime};
+use spiders_runtime_js::{DefaultLayoutRuntime, build_authoring_layout_service};
 
 use crate::model::WmState;
 
@@ -41,7 +41,11 @@ impl SpidersWm {
     }
 
     pub fn connect(&self) -> Result<backend::RiverConnection> {
-        backend::RiverConnection::connect(self.paths.clone(), self.config.clone(), self.state.clone())
+        backend::RiverConnection::connect(
+            self.paths.clone(),
+            self.config.clone(),
+            self.state.clone(),
+        )
     }
 
     pub fn reload_config(&mut self) -> Result<&Config> {

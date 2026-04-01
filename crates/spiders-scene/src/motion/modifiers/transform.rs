@@ -10,11 +10,11 @@ use crate::style::{
 use crate::{CompiledDeclaration, CompiledKeyframeStep, ComputedStyle};
 
 #[cfg(test)]
+use crate::CompiledKeyframesRule;
+#[cfg(test)]
 use crate::motion::runtime::{AnimationModifierApplier, TransitionModifierApplier};
 #[cfg(test)]
 use crate::motion::state::ActiveMotionTransition;
-#[cfg(test)]
-use crate::CompiledKeyframesRule;
 #[cfg(test)]
 use std::time::Instant;
 
@@ -32,14 +32,18 @@ impl MotionModifier for TransformMotion {
     }
 
     fn base_value(style: Option<&ComputedStyle>) -> Self::Value {
-        style.and_then(|style| style.transform.clone()).unwrap_or_default()
+        style
+            .and_then(|style| style.transform.clone())
+            .unwrap_or_default()
     }
 
     fn keyframe_value(step: &CompiledKeyframeStep) -> Option<Self::Value> {
-        step.declarations.iter().find_map(|declaration| match declaration {
-            CompiledDeclaration::Transform(value) => Some(value.clone()),
-            _ => None,
-        })
+        step.declarations
+            .iter()
+            .find_map(|declaration| match declaration {
+                CompiledDeclaration::Transform(value) => Some(value.clone()),
+                _ => None,
+            })
     }
 
     fn output_from_value(value: &Self::Value, context: Self::Context) -> Self::Output {
@@ -73,8 +77,10 @@ impl MotionModifier for TransformMotion {
         _context: Self::Context,
     ) -> Self::Output {
         ResolvedTransform {
-            translate_x_px: start.translate_x_px + (end.translate_x_px - start.translate_x_px) * progress,
-            translate_y_px: start.translate_y_px + (end.translate_y_px - start.translate_y_px) * progress,
+            translate_x_px: start.translate_x_px
+                + (end.translate_x_px - start.translate_x_px) * progress,
+            translate_y_px: start.translate_y_px
+                + (end.translate_y_px - start.translate_y_px) * progress,
             scale_x: start.scale_x + (end.scale_x - start.scale_x) * progress,
             scale_y: start.scale_y + (end.scale_y - start.scale_y) * progress,
         }
@@ -102,13 +108,19 @@ fn resolve_value(transform: &TransformValue, context: MotionContext) -> Resolved
 
 fn transform_value_from_resolved(transform: ResolvedTransform) -> TransformValue {
     let mut operations = Vec::new();
-    if transform.translate_x_px.abs() > f32::EPSILON || transform.translate_y_px.abs() > f32::EPSILON {
-        operations.push(TransformOperationValue::Translate(TranslateTransformValue {
-            x: LengthPercentage::Px(transform.translate_x_px),
-            y: LengthPercentage::Px(transform.translate_y_px),
-        }));
+    if transform.translate_x_px.abs() > f32::EPSILON
+        || transform.translate_y_px.abs() > f32::EPSILON
+    {
+        operations.push(TransformOperationValue::Translate(
+            TranslateTransformValue {
+                x: LengthPercentage::Px(transform.translate_x_px),
+                y: LengthPercentage::Px(transform.translate_y_px),
+            },
+        ));
     }
-    if (transform.scale_x - 1.0).abs() > f32::EPSILON || (transform.scale_y - 1.0).abs() > f32::EPSILON {
+    if (transform.scale_x - 1.0).abs() > f32::EPSILON
+        || (transform.scale_y - 1.0).abs() > f32::EPSILON
+    {
         operations.push(TransformOperationValue::Scale(ScaleTransformValue {
             x: transform.scale_x,
             y: transform.scale_y,
@@ -138,10 +150,12 @@ mod tests {
             steps: vec![CompiledKeyframeStep {
                 offset: 0.5,
                 declarations: vec![CompiledDeclaration::Transform(TransformValue {
-                    operations: vec![TransformOperationValue::Translate(TranslateTransformValue {
-                        x: LengthPercentage::Percent(100.0),
-                        y: LengthPercentage::Px(0.0),
-                    })],
+                    operations: vec![TransformOperationValue::Translate(
+                        TranslateTransformValue {
+                            x: LengthPercentage::Percent(100.0),
+                            y: LengthPercentage::Px(0.0),
+                        },
+                    )],
                 })],
             }],
         };
@@ -178,14 +192,15 @@ mod tests {
             },
         };
 
-        let (value, active) = TransitionModifierApplier::<TransformMotion>::new().sample_transition(
-            &transition,
-            MotionContext {
-                width: 320.0,
-                height: 120.0,
-            },
-            started_at + std::time::Duration::from_millis(200),
-        );
+        let (value, active) = TransitionModifierApplier::<TransformMotion>::new()
+            .sample_transition(
+                &transition,
+                MotionContext {
+                    width: 320.0,
+                    height: 120.0,
+                },
+                started_at + std::time::Duration::from_millis(200),
+            );
 
         assert!(!active);
         assert!((value.translate_x_px - 320.0).abs() < 0.001);

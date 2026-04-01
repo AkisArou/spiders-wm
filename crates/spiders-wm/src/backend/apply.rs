@@ -18,11 +18,8 @@ impl RiverBackendState {
         let mut file = tempfile::tempfile().ok()?;
         file.set_len(size as u64).ok()?;
 
-        let pixels = render_titlebar_pixels(
-            width,
-            entry,
-            self.config.options.titlebar_font.as_ref(),
-        )?;
+        let pixels =
+            render_titlebar_pixels(width, entry, self.config.options.titlebar_font.as_ref())?;
 
         for pixel in pixels {
             file.write_all(&pixel.to_le_bytes()).ok()?;
@@ -177,7 +174,10 @@ impl RiverBackendState {
     pub(super) fn apply_titlebar_plan(&mut self, plan: &[TitlebarPlan]) {
         let planned = plan
             .iter()
-            .filter_map(|entry| self.window_object_id(&entry.window_id).map(|id| (id, entry)))
+            .filter_map(|entry| {
+                self.window_object_id(&entry.window_id)
+                    .map(|id| (id, entry))
+            })
             .collect::<Vec<_>>();
 
         for (object_id, entry) in planned {
@@ -233,7 +233,9 @@ impl RiverBackendState {
                 continue;
             };
 
-            titlebar.decoration.set_offset(entry.offset_x, -entry.height + entry.offset_y);
+            titlebar
+                .decoration
+                .set_offset(entry.offset_x, -entry.height + entry.offset_y);
             titlebar.decoration.sync_next_commit();
             titlebar.surface.attach(Some(&buffer.buffer), 0, 0);
             titlebar.surface.damage_buffer(0, 0, width, entry.height);
@@ -276,8 +278,13 @@ impl RiverBackendState {
 
             self.runtime_state
                 .set_window_mode(&entry.window_id, entry.mode.clone());
-            self.runtime_state
-                .set_window_geometry(&entry.window_id, entry.x, entry.y, entry.width, entry.height);
+            self.runtime_state.set_window_geometry(
+                &entry.window_id,
+                entry.x,
+                entry.y,
+                entry.width,
+                entry.height,
+            );
         }
     }
 
@@ -376,8 +383,13 @@ impl RiverBackendState {
                 .get(&entry.window_id)
                 .map(|window| (window.width, window.height))
                 .unwrap_or((0, 0));
-            self.runtime_state
-                .set_window_geometry(&entry.window_id, entry.x, entry.y, width, height);
+            self.runtime_state.set_window_geometry(
+                &entry.window_id,
+                entry.x,
+                entry.y,
+                width,
+                height,
+            );
         }
     }
 }
@@ -446,13 +458,15 @@ impl SeatRecord {
     ) -> Option<ResizeWindowPlan> {
         if let Some(seat_state) = state.seats.get(&self.state_name)
             && let SeatPointerOpState::Resize {
-            window_id,
-            start_width,
-            start_height,
-            edges,
-            ..
-        } = &seat_state.pointer_op
-            && let Some(window) = windows.values().find(|window| &window.state_id == window_id)
+                window_id,
+                start_width,
+                start_height,
+                edges,
+                ..
+            } = &seat_state.pointer_op
+            && let Some(window) = windows
+                .values()
+                .find(|window| &window.state_id == window_id)
         {
             let mut width = *start_width;
             let mut height = *start_height;
@@ -536,7 +550,11 @@ fn workspace_assign_prefix(config: &Config, mod_key: &str) -> String {
             continue;
         };
 
-        if last.parse::<u8>().ok().is_some_and(|workspace| (1..=9).contains(&workspace)) {
+        if last
+            .parse::<u8>()
+            .ok()
+            .is_some_and(|workspace| (1..=9).contains(&workspace))
+        {
             return tokens[..tokens.len() - 1].join("+");
         }
     }

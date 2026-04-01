@@ -1,7 +1,7 @@
 pub mod easing;
 mod modifiers;
-mod runtime;
 pub mod phases;
+mod runtime;
 pub mod state;
 
 pub use easing::*;

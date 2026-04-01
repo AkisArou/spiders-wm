@@ -161,14 +161,16 @@ mod tests {
     #[test]
     fn minimum_viable_wm_requires_window_management() {
         assert!(!RiverProtocolSupport::default().supports_minimum_viable_wm());
-        assert!(RiverProtocolSupport {
-            window_management: true,
-            layer_shell: false,
-            xkb_bindings: false,
-            input_management: false,
-            xkb_config: false,
-            libinput_config: false,
-        }
-        .supports_minimum_viable_wm());
+        assert!(
+            RiverProtocolSupport {
+                window_management: true,
+                layer_shell: false,
+                xkb_bindings: false,
+                input_management: false,
+                xkb_config: false,
+                libinput_config: false,
+            }
+            .supports_minimum_viable_wm()
+        );
     }
 }

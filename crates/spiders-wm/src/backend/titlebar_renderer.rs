@@ -2,7 +2,7 @@ use std::fs;
 use std::path::Path;
 use std::sync::{Mutex, OnceLock};
 
-use ab_glyph::{point, Font, FontArc, PxScale, ScaleFont};
+use ab_glyph::{Font, FontArc, PxScale, ScaleFont, point};
 use spiders_config::model::TitlebarFontConfig;
 use tiny_skia::{
     Color, FillRule, Mask, Paint, PathBuilder, Pixmap, PixmapPaint, PremultipliedColorU8, Rect,
@@ -228,7 +228,11 @@ fn layout_glyphs(
             break;
         }
 
-        let x = if laid_out.is_empty() { 0.0 } else { current_width + letter_spacing };
+        let x = if laid_out.is_empty() {
+            0.0
+        } else {
+            current_width + letter_spacing
+        };
         laid_out.push((glyph_id, x));
         current_width = if laid_out.len() == 1 {
             scaled.h_advance(glyph_id)
@@ -287,25 +291,25 @@ fn titlebar_fonts(
         return Some(fonts);
     }
 
-    TITLEBAR_FONTS.get_or_init(default_titlebar_fonts).as_ref().cloned()
+    TITLEBAR_FONTS
+        .get_or_init(default_titlebar_fonts)
+        .as_ref()
+        .cloned()
 }
 
 fn resolve_fonts_for_family(font_family: &[String]) -> Option<TitlebarFonts> {
     for family in font_family {
         let normalized = normalize_font_family_name(family);
         let fonts = match normalized.as_str() {
-            "serif" | "dejavu serif" | "liberation serif" => Some((
-                SERIF_REGULAR_FONT_PATHS,
-                SERIF_BOLD_FONT_PATHS,
-            )),
-            "monospace" | "dejavu sans mono" | "liberation mono" => Some((
-                MONO_REGULAR_FONT_PATHS,
-                MONO_BOLD_FONT_PATHS,
-            )),
-            "sans-serif" | "dejavu sans" | "liberation sans" | "system-ui" => Some((
-                REGULAR_FONT_PATHS,
-                BOLD_FONT_PATHS,
-            )),
+            "serif" | "dejavu serif" | "liberation serif" => {
+                Some((SERIF_REGULAR_FONT_PATHS, SERIF_BOLD_FONT_PATHS))
+            }
+            "monospace" | "dejavu sans mono" | "liberation mono" => {
+                Some((MONO_REGULAR_FONT_PATHS, MONO_BOLD_FONT_PATHS))
+            }
+            "sans-serif" | "dejavu sans" | "liberation sans" | "system-ui" => {
+                Some((REGULAR_FONT_PATHS, BOLD_FONT_PATHS))
+            }
             _ => None,
         };
 
@@ -676,7 +680,6 @@ mod tests {
         assert_eq!(pixels[0].to_le_bytes()[3], 0);
         assert!(pixels[4].to_le_bytes()[0] > 0);
     }
-
 }
 
 fn load_font_from_paths(paths: &[&str]) -> Option<FontArc> {
@@ -701,8 +704,7 @@ fn default_titlebar_fonts() -> Option<TitlebarFonts> {
 }
 
 fn load_font_from_path(path: &str) -> Option<FontArc> {
-    let cache = TITLEBAR_FONT_CACHE
-        .get_or_init(|| Mutex::new(std::collections::HashMap::new()));
+    let cache = TITLEBAR_FONT_CACHE.get_or_init(|| Mutex::new(std::collections::HashMap::new()));
 
     if let Ok(guard) = cache.lock() {
         if let Some(font) = guard.get(path) {
@@ -746,11 +748,9 @@ fn blend_premultiplied_rgba(
 
     let blended = PremultipliedColorU8::from_rgba(
         (u16::from(source.red()) + ((u16::from(dest.red()) * inv_alpha + 127) / 255)) as u8,
-        (u16::from(source.green()) + ((u16::from(dest.green()) * inv_alpha + 127) / 255))
-            as u8,
+        (u16::from(source.green()) + ((u16::from(dest.green()) * inv_alpha + 127) / 255)) as u8,
         (u16::from(source.blue()) + ((u16::from(dest.blue()) * inv_alpha + 127) / 255)) as u8,
-        (u16::from(source.alpha()) + ((u16::from(dest.alpha()) * inv_alpha + 127) / 255))
-            as u8,
+        (u16::from(source.alpha()) + ((u16::from(dest.alpha()) * inv_alpha + 127) / 255)) as u8,
     );
     if let Some(blended) = blended {
         *dest = blended;
@@ -883,7 +883,8 @@ impl TopRoundedShape {
 
     fn for_each_part(&self, mut f: impl FnMut(ShapePart)) {
         let bottom_height = self.height - self.max_radius;
-        if let Some(rect) = rect_from_xywh(self.x, self.y + self.max_radius, self.width, bottom_height)
+        if let Some(rect) =
+            rect_from_xywh(self.x, self.y + self.max_radius, self.width, bottom_height)
         {
             f(ShapePart::Rect(rect));
         }
@@ -935,7 +936,11 @@ impl TopRoundedShape {
 
 enum ShapePart {
     Rect(Rect),
-    Circle { center_x: f32, center_y: f32, radius: f32 },
+    Circle {
+        center_x: f32,
+        center_y: f32,
+        radius: f32,
+    },
 }
 
 fn rect_from_xywh(x: f32, y: f32, width: f32, height: f32) -> Option<Rect> {

@@ -13,10 +13,7 @@ pub struct Animation<'a> {
 }
 
 impl<'a> Animation<'a> {
-    pub fn new(
-        style: Option<&'a ComputedStyle>,
-        keyframes: &'a [CompiledKeyframesRule],
-    ) -> Self {
+    pub fn new(style: Option<&'a ComputedStyle>, keyframes: &'a [CompiledKeyframesRule]) -> Self {
         Self {
             style,
             keyframes,
@@ -31,8 +28,14 @@ impl<'a> Animation<'a> {
         now: Instant,
     ) -> AppliedMotionPhase {
         let mut applied = AppliedMotionPhase::default();
-        self.appliers
-            .apply(track, self.style, self.keyframes, context, now, &mut applied);
+        self.appliers.apply(
+            track,
+            self.style,
+            self.keyframes,
+            context,
+            now,
+            &mut applied,
+        );
         applied
     }
 }

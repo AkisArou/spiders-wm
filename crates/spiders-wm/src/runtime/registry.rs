@@ -1,15 +1,15 @@
 use std::collections::{BTreeMap, HashMap};
 use std::fs::File;
 
-use spiders_shared::command::WmCommand;
 use spiders_scene::{BoxShadowValue, ColorValue, FontFamilyValue, FontWeightValue, TextAlignValue};
+use spiders_shared::command::WmCommand;
 use spiders_tree::{OutputId, WindowId};
 use wayland_backend::client::ObjectId;
 use wayland_client::protocol::{wl_buffer, wl_shm_pool, wl_surface};
 
 use crate::protocol::river_window_management_v1::{
-    river_decoration_v1, river_node_v1, river_output_v1, river_pointer_binding_v1,
-    river_seat_v1, river_window_v1,
+    river_decoration_v1, river_node_v1, river_output_v1, river_pointer_binding_v1, river_seat_v1,
+    river_window_v1,
 };
 use crate::protocol::river_xkb_bindings::river_xkb_binding_v1;
 

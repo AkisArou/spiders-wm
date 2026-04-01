@@ -167,7 +167,9 @@ mod tests {
                 MotionPropertyValue::Named("transform".into()),
             ],
             &[MotionTimeValue(0.2)],
-            &[MotionEasingValue::Keyword(MotionEasingKeywordValue::EaseInOut)],
+            &[MotionEasingValue::Keyword(
+                MotionEasingKeywordValue::EaseInOut,
+            )],
             &[MotionTimeValue(0.05), MotionTimeValue(0.15)],
         );
 

@@ -1,5 +1,5 @@
-mod appliers;
 mod animation;
+mod appliers;
 mod shared;
 mod transition;
 
@@ -8,8 +8,8 @@ use crate::motion::state::{
 };
 use crate::{CompiledKeyframeStep, ComputedStyle};
 
-pub(crate) use appliers::{AnimationAppliers, TransitionAppliers};
 pub(crate) use animation::{AnimationModifierApplier, AnimationModifierApplierHandle};
+pub(crate) use appliers::{AnimationAppliers, TransitionAppliers};
 pub(crate) use transition::{TransitionModifierApplier, TransitionModifierApplierHandle};
 
 pub trait MotionModifier {

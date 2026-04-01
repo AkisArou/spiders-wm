@@ -1,7 +1,7 @@
-use crate::css::{parse_stylesheet, CssParseError, CssValueError, StyledLayoutTree};
+use crate::CompiledKeyframesRule;
+use crate::css::{CssParseError, CssValueError, StyledLayoutTree, parse_stylesheet};
 pub use crate::layout_calc::{LaidOutNode, LaidOutTree};
 use crate::scene::{SceneRequest, SceneResponse};
-use crate::CompiledKeyframesRule;
 use spiders_tree::ResolvedLayoutNode;
 use std::collections::HashMap;
 use tracing::debug;
@@ -23,7 +23,10 @@ impl SceneCache {
     }
 
     pub fn clear(&mut self) {
-        debug!(cached_stylesheets = self.stylesheets.len(), "clearing scene cache");
+        debug!(
+            cached_stylesheets = self.stylesheets.len(),
+            "clearing scene cache"
+        );
         self.stylesheets.clear();
     }
 
@@ -59,7 +62,12 @@ impl SceneCache {
         request: &SceneRequest,
     ) -> Result<SceneResponse, LayoutPipelineError> {
         let layout_name = request.layout_name.as_deref().unwrap_or("__default__");
-        debug!(layout = layout_name, width = request.space.width, height = request.space.height, "computing layout from scene request");
+        debug!(
+            layout = layout_name,
+            width = request.space.width,
+            height = request.space.height,
+            "computing layout from scene request"
+        );
         let stylesheet_source = request.stylesheets.combined_source();
         self.precompile_layout(layout_name, &stylesheet_source)?;
 
@@ -121,8 +129,8 @@ pub fn compute_layout_from_sheet(
     width: f32,
     height: f32,
 ) -> Result<LaidOutTree, LayoutPipelineError> {
-    let styled = build_styled_layout_tree_from_sheet(root, sheet)
-        .map_err(LayoutPipelineError::from)?;
+    let styled =
+        build_styled_layout_tree_from_sheet(root, sheet).map_err(LayoutPipelineError::from)?;
     compute_layout_from_styled(&styled, width, height)
 }
 
@@ -180,8 +188,8 @@ mod tests {
 
     use super::*;
     use crate::css::{Display, FlexDirectionValue, LengthPercentage, SizeValue};
-    use spiders_tree::{LayoutNodeMeta, LayoutRect, LayoutSpace, ResolvedLayoutNode};
     use crate::scene::{LayoutSnapshotNode, SceneNodeStyle, SceneResponse};
+    use spiders_tree::{LayoutNodeMeta, LayoutRect, LayoutSpace, ResolvedLayoutNode};
 
     fn sample_tree() -> ResolvedLayoutNode {
         ResolvedLayoutNode::Workspace {
@@ -439,7 +447,9 @@ mod tests {
                         },
                         styles: Some(SceneNodeStyle {
                             layout: crate::css::ComputedStyle {
-                                width: Some(SizeValue::LengthPercentage(LengthPercentage::Px(100.0))),
+                                width: Some(SizeValue::LengthPercentage(LengthPercentage::Px(
+                                    100.0
+                                ))),
                                 ..crate::css::ComputedStyle::default()
                             },
                             titlebar: None,
@@ -500,10 +510,12 @@ mod tests {
             root: sample_tree(),
             stylesheets: spiders_shared::runtime::prepared_layout::PreparedStylesheets {
                 global: None,
-                layout: Some(spiders_shared::runtime::prepared_layout::PreparedStylesheet {
-                    path: "layouts/master-stack/index.css".into(),
-                    source: stylesheet.into(),
-                }),
+                layout: Some(
+                    spiders_shared::runtime::prepared_layout::PreparedStylesheet {
+                        path: "layouts/master-stack/index.css".into(),
+                        source: stylesheet.into(),
+                    },
+                ),
             },
             space: LayoutSpace {
                 width: 320.0,

@@ -12,9 +12,12 @@ where
     R: AuthoringLayoutRuntime<Config = Config>,
 {
     if paths.authored_config.exists() {
-        let update = runtime
-            .refresh_prepared_config(&paths.authored_config, &paths.prepared_config)?;
-        Ok((runtime.load_prepared_config(&paths.prepared_config)?, Some(update)))
+        let update =
+            runtime.refresh_prepared_config(&paths.authored_config, &paths.prepared_config)?;
+        Ok((
+            runtime.load_prepared_config(&paths.prepared_config)?,
+            Some(update),
+        ))
     } else if paths.prepared_config.exists() {
         Ok((runtime.load_prepared_config(&paths.prepared_config)?, None))
     } else {

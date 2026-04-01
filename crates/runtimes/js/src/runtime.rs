@@ -7,7 +7,9 @@ use spiders_scene::ast::{
 };
 use spiders_shared::runtime::layout_context::LayoutEvaluationContext;
 use spiders_shared::runtime::prepared_layout::{PreparedLayout, SelectedLayout};
-use spiders_shared::runtime::runtime_contract::{AuthoringLayoutRuntime, LayoutModuleContract, PreparedLayoutRuntime};
+use spiders_shared::runtime::runtime_contract::{
+    AuthoringLayoutRuntime, LayoutModuleContract, PreparedLayoutRuntime,
+};
 use spiders_shared::runtime::runtime_error::RuntimeError;
 use spiders_tree::{SlotTake, SourceLayoutNode};
 use tracing::{debug, warn};
@@ -313,7 +315,8 @@ impl PreparedLayoutRuntime for StubPreparedLayoutRuntime {
                     entry: String::new(),
                     modules: Vec::new(),
                 }),
-                stylesheets: spiders_shared::runtime::prepared_layout::PreparedStylesheets::default(),
+                stylesheets: spiders_shared::runtime::prepared_layout::PreparedStylesheets::default(
+                ),
             }))
     }
 
@@ -375,11 +378,7 @@ impl<L: JsLayoutSourceLoader> PreparedLayoutRuntime for QuickJsPreparedLayoutRun
     ) -> Result<SourceLayoutNode, RuntimeError> {
         debug!(layout = %loaded_layout.selected.name, module = %loaded_layout.selected.module, "evaluating prepared layout module graph");
         let runtime_graph = decode_runtime_graph_payload(&loaded_layout.runtime_payload)?;
-        let result = self.evaluate_module_graph(
-            &loaded_layout.selected,
-            context,
-            &runtime_graph,
-        );
+        let result = self.evaluate_module_graph(&loaded_layout.selected, context, &runtime_graph);
 
         if let Err(error) = &result {
             warn!(layout = %loaded_layout.selected.name, module = %loaded_layout.selected.module, %error, "layout evaluation failed");
@@ -579,9 +578,9 @@ mod tests {
 
     use serde_json::json;
     use spiders_config::model::{Config, LayoutDefinition};
-    use spiders_tree::{OutputId, WorkspaceId};
     use spiders_shared::snapshot::{OutputSnapshot, StateSnapshot, WorkspaceSnapshot};
     use spiders_shared::types::{LayoutRef, OutputTransform};
+    use spiders_tree::{OutputId, WorkspaceId};
 
     use super::*;
 

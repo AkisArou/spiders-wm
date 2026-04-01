@@ -1,7 +1,9 @@
 use spiders_tree::ResolvedLayoutNode;
 
+use crate::css::stylo_adapter::{
+    LayoutDomTree, LayoutPseudoElement, LayoutSelectorImpl, selector_matches_element,
+};
 use crate::css::{CompiledStyleRule, CompiledStyleSheet};
-use crate::css::stylo_adapter::{selector_matches_element, LayoutDomTree, LayoutPseudoElement, LayoutSelectorImpl};
 
 pub fn matching_rules<'a>(
     sheet: &'a CompiledStyleSheet,

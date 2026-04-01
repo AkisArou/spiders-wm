@@ -1,12 +1,12 @@
 use serde::{Deserialize, Serialize};
 
-use spiders_tree::{LayoutSpace, OutputId, WindowId, WorkspaceId};
 use crate::runtime::layout_context::{
     LayoutEvaluationContext, LayoutMonitorContext, LayoutStateContext, LayoutWindowContext,
     LayoutWorkspaceContext,
 };
 use crate::runtime::prepared_layout::SelectedLayout;
 use crate::types::{LayoutRef, OutputTransform, ShellKind, WindowMode};
+use spiders_tree::{LayoutSpace, OutputId, WindowId, WorkspaceId};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WindowSnapshot {
@@ -30,8 +30,7 @@ pub struct WindowSnapshot {
     pub workspaces: Vec<String>,
 }
 
-impl WindowSnapshot {
-}
+impl WindowSnapshot {}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorkspaceSnapshot {

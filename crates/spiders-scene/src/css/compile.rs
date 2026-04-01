@@ -1,38 +1,35 @@
 use thiserror::Error;
 
-use cssparser::{Parser, ParserInput};
 use super::grid::*;
 use super::parse_values::*;
+use cssparser::{Parser, ParserInput};
 
 use crate::style::{
-    AlignmentValue, AnimationDirectionValue, AnimationFillModeValue,
-    AnimationIterationCountValue, AnimationPlayStateValue, AppearanceValue, BorderRadiusValue,
-    BorderStyleValue, BoxEdges, BoxShadowValue, BoxSizingValue, ColorValue,
-    ContentAlignmentValue, Display, FlexDirectionValue, FlexWrapValue, FontFamilyValue,
-    FontWeightValue, GridAutoFlow, GridPlacementValue, GridTemplate, GridTemplateArea,
-    GridTrackValue, LengthPercentage, Line, LinearStopValue, MotionEasingKeywordValue,
-    MotionEasingValue, MotionPropertyValue, MotionTimeValue, OverflowValue, PositionValue,
-    ScaleTransformValue, Size2, SizeValue, StepPositionValue, TextAlignValue,
-    TextTransformValue, TransformOperationValue, TransformValue, TranslateTransformValue,
+    AlignmentValue, AnimationDirectionValue, AnimationFillModeValue, AnimationIterationCountValue,
+    AnimationPlayStateValue, AppearanceValue, BorderRadiusValue, BorderStyleValue, BoxEdges,
+    BoxShadowValue, BoxSizingValue, ColorValue, ContentAlignmentValue, Display, FlexDirectionValue,
+    FlexWrapValue, FontFamilyValue, FontWeightValue, GridAutoFlow, GridPlacementValue,
+    GridTemplate, GridTemplateArea, GridTrackValue, LengthPercentage, Line, LinearStopValue,
+    MotionEasingKeywordValue, MotionEasingValue, MotionPropertyValue, MotionTimeValue,
+    OverflowValue, PositionValue, ScaleTransformValue, Size2, SizeValue, StepPositionValue,
+    TextAlignValue, TextTransformValue, TransformOperationValue, TransformValue,
+    TranslateTransformValue,
 };
 use style::parser::{Parse as StyloParse, ParserContext};
 use style::stylesheets::{CssRuleType, Origin, UrlExtraData};
 use style::values::computed::easing::TimingFunction as ComputedTimingFunction;
 use style::values::generics::easing::{StepPosition as StyloStepPosition, TimingKeyword};
-use style::values::specified::animation::{
-    AnimationDirection as StyloAnimationDirection,
-    AnimationDuration as StyloAnimationDuration,
-    AnimationFillMode as StyloAnimationFillMode,
-    AnimationIterationCount as StyloAnimationIterationCount,
-    AnimationName as StyloAnimationName,
-    AnimationPlayState as StyloAnimationPlayState,
-    TransitionProperty as StyloTransitionProperty,
-};
-use style::values::specified::effects::BoxShadow as StyloBoxShadow;
-use style::values::specified::easing::TimingFunction as StyloTimingFunction;
 use style::values::specified::Time as StyloTime;
-use style_traits::values::ToCss;
+use style::values::specified::animation::{
+    AnimationDirection as StyloAnimationDirection, AnimationDuration as StyloAnimationDuration,
+    AnimationFillMode as StyloAnimationFillMode,
+    AnimationIterationCount as StyloAnimationIterationCount, AnimationName as StyloAnimationName,
+    AnimationPlayState as StyloAnimationPlayState, TransitionProperty as StyloTransitionProperty,
+};
+use style::values::specified::easing::TimingFunction as StyloTimingFunction;
+use style::values::specified::effects::BoxShadow as StyloBoxShadow;
 use style_traits::ParsingMode;
+use style_traits::values::ToCss;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BoxSide {
@@ -147,9 +144,9 @@ pub fn compile_declaration_from_value(
         "appearance" => Ok(CompiledDeclaration::Appearance(parse_appearance_direct(
             property, value,
         )?)),
-        "background" | "background-color" => Ok(CompiledDeclaration::Background(parse_color_direct(
-            property, value,
-        )?)),
+        "background" | "background-color" => Ok(CompiledDeclaration::Background(
+            parse_color_direct(property, value)?,
+        )),
         "color" => Ok(CompiledDeclaration::Color(parse_color_direct(
             property, value,
         )?)),
@@ -159,9 +156,9 @@ pub fn compile_declaration_from_value(
         "border-color" => Ok(CompiledDeclaration::BorderColor(parse_color_direct(
             property, value,
         )?)),
-        "border-style" => Ok(CompiledDeclaration::BorderStyle(parse_box_border_styles_direct(
-            property, value,
-        )?)),
+        "border-style" => Ok(CompiledDeclaration::BorderStyle(
+            parse_box_border_styles_direct(property, value)?,
+        )),
         "border-top-style" => Ok(CompiledDeclaration::BorderStyleSide(
             BoxSide::Top,
             parse_border_style_direct(property, value)?,
@@ -194,9 +191,9 @@ pub fn compile_declaration_from_value(
             BoxSide::Left,
             parse_color_direct(property, value)?,
         )),
-        "border-radius" => Ok(CompiledDeclaration::BorderRadius(parse_border_radius_direct(
-            property, value,
-        )?)),
+        "border-radius" => Ok(CompiledDeclaration::BorderRadius(
+            parse_border_radius_direct(property, value)?,
+        )),
         "box-shadow" => Ok(CompiledDeclaration::BoxShadow(parse_box_shadow_direct(
             property, value,
         )?)),
@@ -226,9 +223,9 @@ pub fn compile_declaration_from_value(
             parse_letter_spacing_direct(property, value)?,
         )),
         "animation" => Ok(CompiledDeclaration::Ignored),
-        "animation-name" => Ok(CompiledDeclaration::AnimationName(parse_animation_name_direct(
-            property, value,
-        )?)),
+        "animation-name" => Ok(CompiledDeclaration::AnimationName(
+            parse_animation_name_direct(property, value)?,
+        )),
         "animation-duration" => Ok(CompiledDeclaration::AnimationDuration(
             parse_animation_duration_direct(property, value)?,
         )),
@@ -260,9 +257,9 @@ pub fn compile_declaration_from_value(
         "transition-timing-function" => Ok(CompiledDeclaration::TransitionTimingFunction(
             parse_timing_function_list_direct(property, value)?,
         )),
-        "transition-delay" => Ok(CompiledDeclaration::TransitionDelay(parse_time_list_direct(
-            property, value,
-        )?)),
+        "transition-delay" => Ok(CompiledDeclaration::TransitionDelay(
+            parse_time_list_direct(property, value)?,
+        )),
         "transition-behavior" => Ok(CompiledDeclaration::Ignored),
         "flex-direction" => Ok(CompiledDeclaration::FlexDirection(
             parse_flex_direction_direct(property, value)?,
@@ -483,7 +480,10 @@ fn parse_appearance_direct(
     }
 }
 
-fn parse_text_align_direct(property: &str, value: &CssValue) -> Result<TextAlignValue, CssValueError> {
+fn parse_text_align_direct(
+    property: &str,
+    value: &CssValue,
+) -> Result<TextAlignValue, CssValueError> {
     match keyword(property, value)? {
         "left" => Ok(TextAlignValue::Left),
         "right" => Ok(TextAlignValue::Right),
@@ -597,7 +597,10 @@ fn parse_raw_text_direct(property: &str, value: &CssValue) -> Result<String, Css
     }
 }
 
-fn parse_transform_direct(property: &str, value: &CssValue) -> Result<TransformValue, CssValueError> {
+fn parse_transform_direct(
+    property: &str,
+    value: &CssValue,
+) -> Result<TransformValue, CssValueError> {
     let text = value.text.trim();
     if text.is_empty() {
         return Err(CssValueError::UnsupportedValue {
@@ -635,9 +638,9 @@ fn parse_transform_direct(property: &str, value: &CssValue) -> Result<TransformV
                     y: parse_transform_length_percentage_arg(property, value, args.first())?,
                 },
             )),
-            "scale" => operations.push(TransformOperationValue::Scale(
-                parse_scale_function_args(property, value, &args)?,
-            )),
+            "scale" => operations.push(TransformOperationValue::Scale(parse_scale_function_args(
+                property, value, &args,
+            )?)),
             "scalex" => operations.push(TransformOperationValue::Scale(ScaleTransformValue {
                 x: parse_transform_number_arg(property, value, args.first())?,
                 y: 1.0,
@@ -650,7 +653,7 @@ fn parse_transform_direct(property: &str, value: &CssValue) -> Result<TransformV
                 return Err(CssValueError::UnsupportedValue {
                     property: property.to_string(),
                     value: value.text.clone(),
-                })
+                });
             }
         }
     }
@@ -704,7 +707,8 @@ fn parse_scale_function_args(
         });
     }
 
-    let x = parse_transform_number_arg(property, value, parts.first().and_then(|part| part.first()))?;
+    let x =
+        parse_transform_number_arg(property, value, parts.first().and_then(|part| part.first()))?;
     let y = match parts.get(1).and_then(|part| part.first()) {
         Some(token) => parse_transform_number_arg(property, value, Some(token))?,
         None => x,
@@ -799,10 +803,12 @@ fn parse_transition_property_direct(
             property: property.to_string(),
             value: value.text.clone(),
         })?;
-    parser.expect_exhausted().map_err(|_| CssValueError::UnsupportedValue {
-        property: property.to_string(),
-        value: value.text.clone(),
-    })?;
+    parser
+        .expect_exhausted()
+        .map_err(|_| CssValueError::UnsupportedValue {
+            property: property.to_string(),
+            value: value.text.clone(),
+        })?;
 
     Ok(parsed
         .into_iter()
@@ -838,10 +844,12 @@ fn parse_animation_name_direct(
             property: property.to_string(),
             value: value.text.clone(),
         })?;
-    parser.expect_exhausted().map_err(|_| CssValueError::UnsupportedValue {
-        property: property.to_string(),
-        value: value.text.clone(),
-    })?;
+    parser
+        .expect_exhausted()
+        .map_err(|_| CssValueError::UnsupportedValue {
+            property: property.to_string(),
+            value: value.text.clone(),
+        })?;
 
     Ok(parsed
         .into_iter()
@@ -875,10 +883,12 @@ fn parse_animation_duration_direct(
             property: property.to_string(),
             value: value.text.clone(),
         })?;
-    parser.expect_exhausted().map_err(|_| CssValueError::UnsupportedValue {
-        property: property.to_string(),
-        value: value.text.clone(),
-    })?;
+    parser
+        .expect_exhausted()
+        .map_err(|_| CssValueError::UnsupportedValue {
+            property: property.to_string(),
+            value: value.text.clone(),
+        })?;
 
     Ok(parsed
         .into_iter()
@@ -911,10 +921,12 @@ fn parse_timing_function_list_direct(
             property: property.to_string(),
             value: value.text.clone(),
         })?;
-    parser.expect_exhausted().map_err(|_| CssValueError::UnsupportedValue {
-        property: property.to_string(),
-        value: value.text.clone(),
-    })?;
+    parser
+        .expect_exhausted()
+        .map_err(|_| CssValueError::UnsupportedValue {
+            property: property.to_string(),
+            value: value.text.clone(),
+        })?;
 
     Ok(parsed
         .into_iter()
@@ -944,10 +956,12 @@ fn parse_non_negative_time_list_direct(
             property: property.to_string(),
             value: value.text.clone(),
         })?;
-    parser.expect_exhausted().map_err(|_| CssValueError::UnsupportedValue {
-        property: property.to_string(),
-        value: value.text.clone(),
-    })?;
+    parser
+        .expect_exhausted()
+        .map_err(|_| CssValueError::UnsupportedValue {
+            property: property.to_string(),
+            value: value.text.clone(),
+        })?;
 
     Ok(parsed.into_iter().map(motion_time_from_stylo).collect())
 }
@@ -974,10 +988,12 @@ fn parse_time_list_direct(
             property: property.to_string(),
             value: value.text.clone(),
         })?;
-    parser.expect_exhausted().map_err(|_| CssValueError::UnsupportedValue {
-        property: property.to_string(),
-        value: value.text.clone(),
-    })?;
+    parser
+        .expect_exhausted()
+        .map_err(|_| CssValueError::UnsupportedValue {
+            property: property.to_string(),
+            value: value.text.clone(),
+        })?;
 
     Ok(parsed.into_iter().map(motion_time_from_stylo).collect())
 }
@@ -1004,10 +1020,12 @@ fn parse_animation_iteration_count_direct(
             property: property.to_string(),
             value: value.text.clone(),
         })?;
-    parser.expect_exhausted().map_err(|_| CssValueError::UnsupportedValue {
-        property: property.to_string(),
-        value: value.text.clone(),
-    })?;
+    parser
+        .expect_exhausted()
+        .map_err(|_| CssValueError::UnsupportedValue {
+            property: property.to_string(),
+            value: value.text.clone(),
+        })?;
 
     Ok(parsed
         .into_iter()
@@ -1040,10 +1058,12 @@ fn parse_animation_direction_direct(
             property: property.to_string(),
             value: value.text.clone(),
         })?;
-    parser.expect_exhausted().map_err(|_| CssValueError::UnsupportedValue {
-        property: property.to_string(),
-        value: value.text.clone(),
-    })?;
+    parser
+        .expect_exhausted()
+        .map_err(|_| CssValueError::UnsupportedValue {
+            property: property.to_string(),
+            value: value.text.clone(),
+        })?;
 
     Ok(parsed
         .into_iter()
@@ -1051,9 +1071,7 @@ fn parse_animation_direction_direct(
             StyloAnimationDirection::Normal => AnimationDirectionValue::Normal,
             StyloAnimationDirection::Reverse => AnimationDirectionValue::Reverse,
             StyloAnimationDirection::Alternate => AnimationDirectionValue::Alternate,
-            StyloAnimationDirection::AlternateReverse => {
-                AnimationDirectionValue::AlternateReverse
-            }
+            StyloAnimationDirection::AlternateReverse => AnimationDirectionValue::AlternateReverse,
         })
         .collect())
 }
@@ -1078,10 +1096,12 @@ fn parse_animation_fill_mode_direct(
             property: property.to_string(),
             value: value.text.clone(),
         })?;
-    parser.expect_exhausted().map_err(|_| CssValueError::UnsupportedValue {
-        property: property.to_string(),
-        value: value.text.clone(),
-    })?;
+    parser
+        .expect_exhausted()
+        .map_err(|_| CssValueError::UnsupportedValue {
+            property: property.to_string(),
+            value: value.text.clone(),
+        })?;
 
     Ok(parsed
         .into_iter()
@@ -1114,10 +1134,12 @@ fn parse_animation_play_state_direct(
             property: property.to_string(),
             value: value.text.clone(),
         })?;
-    parser.expect_exhausted().map_err(|_| CssValueError::UnsupportedValue {
-        property: property.to_string(),
-        value: value.text.clone(),
-    })?;
+    parser
+        .expect_exhausted()
+        .map_err(|_| CssValueError::UnsupportedValue {
+            property: property.to_string(),
+            value: value.text.clone(),
+        })?;
 
     Ok(parsed
         .into_iter()

@@ -8,9 +8,9 @@ pub use focus::{
     top_window_id,
 };
 pub use layout::{
-    active_tiled_window_ids, compute_horizontal_tiled_edges, compute_horizontal_tiles,
-    compute_pointer_render_positions, compute_window_borders, inactive_window_ids, HorizontalTile,
-    WindowBorder, WindowPosition, WindowTiledEdges,
+    HorizontalTile, WindowBorder, WindowPosition, WindowTiledEdges, active_tiled_window_ids,
+    compute_horizontal_tiled_edges, compute_horizontal_tiles, compute_pointer_render_positions,
+    compute_window_borders, inactive_window_ids,
 };
 pub use rules::{configured_mode_for_window, configured_workspace_for_window};
 pub use workspace::activate_workspace;

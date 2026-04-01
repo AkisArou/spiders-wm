@@ -66,14 +66,22 @@ impl IpcServerState {
         let client_id = self.next_client_id;
         self.next_client_id += 1;
         self.sessions.insert(client_id, IpcSession::new());
-        debug!(client_id, client_count = self.sessions.len(), "ipc client connected");
+        debug!(
+            client_id,
+            client_count = self.sessions.len(),
+            "ipc client connected"
+        );
         client_id
     }
 
     pub fn remove_client(&mut self, client_id: IpcClientId) -> Option<IpcSession> {
         let removed = self.sessions.remove(&client_id);
         if removed.is_some() {
-            debug!(client_id, client_count = self.sessions.len(), "ipc client disconnected");
+            debug!(
+                client_id,
+                client_count = self.sessions.len(),
+                "ipc client disconnected"
+            );
         } else {
             warn!(client_id, "attempted to remove unknown ipc client");
         }
@@ -95,7 +103,12 @@ impl IpcServerState {
             crate::protocol::IpcClientMessage::Subscribe { .. } => "subscribe",
             crate::protocol::IpcClientMessage::Unsubscribe { .. } => "unsubscribe",
         };
-        debug!(client_id, request_id = request.request_id.as_deref().unwrap_or("<none>"), request_type, "handling ipc request");
+        debug!(
+            client_id,
+            request_id = request.request_id.as_deref().unwrap_or("<none>"),
+            request_type,
+            "handling ipc request"
+        );
 
         let session = self
             .sessions
@@ -108,13 +121,14 @@ impl IpcServerState {
                 request_id,
                 query,
             },
-            IpcSessionHandleResult::Command { request_id, command } => {
-                IpcServerHandleResult::Command {
-                    client_id,
-                    request_id,
-                    command,
-                }
-            }
+            IpcSessionHandleResult::Command {
+                request_id,
+                command,
+            } => IpcServerHandleResult::Command {
+                client_id,
+                request_id,
+                command,
+            },
             IpcSessionHandleResult::Response(response) => IpcServerHandleResult::Response {
                 client_id,
                 response,
@@ -158,7 +172,8 @@ impl IpcServerState {
     }
 
     pub fn broadcast_event(&self, event: CompositorEvent) -> Vec<(IpcClientId, IpcResponse)> {
-        let responses: Vec<(IpcClientId, IpcResponse)> = self.sessions
+        let responses: Vec<(IpcClientId, IpcResponse)> = self
+            .sessions
             .iter()
             .filter_map(|(client_id, session)| {
                 session
