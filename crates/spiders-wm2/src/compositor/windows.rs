@@ -115,9 +115,7 @@ impl SpidersWm {
         let Some((window_id, window, unmap)) = window_update else {
             return;
         };
-        let snapshot = (!unmap.had_pending_configures)
-            .then_some(unmap.snapshot)
-            .flatten();
+        let snapshot = unmap.snapshot;
         let location = self
             .element_location(&window)
             .map(|location| location - window.geometry().loc);
@@ -165,9 +163,7 @@ impl SpidersWm {
         let destroy_overlay = if let Some(record) = self.find_window_mut(surface) {
             if record.mapped {
                 let unmap = record.frame_sync.begin_unmap();
-                let snapshot = (!unmap.had_pending_configures)
-                    .then_some(unmap.snapshot)
-                    .flatten();
+                let snapshot = unmap.snapshot;
                 Some((record.window.clone(), snapshot))
             } else {
                 None

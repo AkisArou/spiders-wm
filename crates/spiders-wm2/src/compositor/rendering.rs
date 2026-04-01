@@ -72,6 +72,8 @@ impl SpidersWm {
             .submit(Some(&[damage]))
             .expect("failed to submit frame");
 
+        self.frame_sync.mark_closing_overlays_presented();
+
         self.send_frames_for_windows(output);
 
         self.space.refresh();

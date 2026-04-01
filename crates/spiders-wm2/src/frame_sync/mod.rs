@@ -135,7 +135,6 @@ pub(crate) struct OverlayPushResult {
 #[derive(Debug)]
 pub(crate) struct BeginUnmapResult {
     pub(crate) snapshot: Option<CapturedCloseSnapshot>,
-    pub(crate) had_pending_configures: bool,
 }
 
 #[derive(Debug)]
@@ -143,6 +142,7 @@ struct ClosingWindowOverlay {
     snapshot: WindowSnapshot,
     location: Point<i32, Logical>,
     transaction: transaction::Transaction,
+    presented_once: bool,
 }
 
 pub(crate) fn capture_close_snapshot(
@@ -164,11 +164,9 @@ impl WindowFrameSyncState {
     }
 
     pub(crate) fn begin_unmap(&mut self) -> BeginUnmapResult {
-        let had_pending_configures = self.pending_configures.has_pending();
         self.pending_configures.clear();
         BeginUnmapResult {
             snapshot: self.close_snapshot.take(),
-            had_pending_configures,
         }
     }
 
@@ -267,7 +265,7 @@ impl FrameSyncState {
 
     pub(crate) fn prune_completed_closing_overlays(&mut self) {
         self.closing_overlays
-            .retain(|overlay| !overlay.transaction.is_completed());
+            .retain(|overlay| !overlay.transaction.is_completed() || !overlay.presented_once);
     }
 
     pub(crate) fn push_closing_overlay(
@@ -292,6 +290,7 @@ impl FrameSyncState {
             snapshot,
             location,
             transaction,
+            presented_once: false,
         });
 
         Some(OverlayPushResult {
@@ -315,5 +314,11 @@ impl FrameSyncState {
                     .render_element(renderer, location, scale, alpha)
             })
             .collect()
+    }
+
+    pub(crate) fn mark_closing_overlays_presented(&mut self) {
+        for overlay in &mut self.closing_overlays {
+            overlay.presented_once = true;
+        }
     }
 }
