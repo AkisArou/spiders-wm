@@ -45,8 +45,14 @@ impl SpidersWm {
             return;
         }
 
-        self.schedule_relayout();
         if let Some(window_id) = toggled_window_id {
+            if self.window_is_floating(&window_id)
+                && let Some(output_geometry) = self.current_output_geometry()
+            {
+                let _ = self.ensure_floating_window_geometry(&window_id, output_geometry);
+            }
+
+            self.schedule_relayout();
             let floating = self.window_is_floating(&window_id);
             self.emit_window_floating_change(window_id, floating);
         }
@@ -99,16 +105,19 @@ impl SpidersWm {
                 None
             } else {
                 record.mapped = false;
-                let snapshot = record.frame_sync.begin_unmap();
-                Some((record.id.clone(), record.window.clone(), snapshot))
+                let unmap = record.frame_sync.begin_unmap();
+                Some((record.id.clone(), record.window.clone(), unmap))
             }
         } else {
             None
         };
 
-        let Some((window_id, window, snapshot)) = window_update else {
+        let Some((window_id, window, unmap)) = window_update else {
             return;
         };
+        let snapshot = (!unmap.had_pending_configures)
+            .then_some(unmap.snapshot)
+            .flatten();
         let location = self
             .element_location(&window)
             .map(|location| location - window.geometry().loc);
@@ -133,7 +142,9 @@ impl SpidersWm {
         self.log_managed_window_state("after close start");
 
         self.apply_focus_update(focus_update);
-        let relayout_transaction = self.start_relayout();
+        let relayout_transaction = self
+            .start_relayout()
+            .or_else(|| self.live_frame_sync_transaction());
 
         if let Some(result) =
             self.frame_sync
@@ -280,5 +291,11 @@ impl SpidersWm {
                 self.set_focus_with_new_serial(Some(surface.clone()));
             }
         }
+    }
+
+    fn live_frame_sync_transaction(&self) -> Option<frame_sync::SyncHandle> {
+        self.managed_windows()
+            .iter()
+            .find_map(|record| record.frame_sync.live_transaction())
     }
 }

@@ -1,5 +1,13 @@
 use super::{OutputId, WindowId, WorkspaceId};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WindowGeometry {
+    pub x: i32,
+    pub y: i32,
+    pub width: i32,
+    pub height: i32,
+}
+
 /// Stable window metadata owned by the compositor model.
 ///
 /// This should evolve toward the durable state needed by config, rules, scene layout,
@@ -14,6 +22,7 @@ pub struct WindowModel {
     pub mapped: bool,
     pub focused: bool,
     pub floating: bool,
+    pub floating_geometry: Option<WindowGeometry>,
     pub fullscreen: bool,
     pub closing: bool,
 }
@@ -29,6 +38,7 @@ impl Default for WindowModel {
             mapped: false,
             focused: false,
             floating: false,
+            floating_geometry: None,
             fullscreen: false,
             closing: false,
         }

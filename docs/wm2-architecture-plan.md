@@ -251,6 +251,13 @@ Important rule:
 
 - config, JS, IPC, and shortcut layers should target these high-level WM commands instead of calling compositor shell methods directly
 
+## Near-Term Feature Notes
+
+- Floating windows should use durable model-owned geometry before pointer-driven move and resize work lands.
+- Keyboard-driven floating move and resize commands remain deferred until close-transition/frame-sync behavior is stable.
+- Pointer-driven floating move and resize remains deferred until after keyboard-first floating geometry behavior is stable.
+- IPC exposure of floating rects remains deferred until the geometry shape is stable enough to freeze as a public interface.
+
 ## What To Port From `spiders-wm`
 
 Good ideas to reuse conceptually from `spiders-wm`:

@@ -35,11 +35,16 @@ impl SpidersWm {
                 self.ensure_and_select_workspace(workspace_id.0, serial)
             }
             WmCommand::CloseFocusedWindow => self.close_focused_window(),
-            WmCommand::ResizeDirection { direction }
-            | WmCommand::ResizeTiledDirection { direction } => {
+            WmCommand::ResizeDirection { direction } => {
                 warn!(
                     ?direction,
                     "resize wm command is intentionally stubbed for now"
+                )
+            }
+            WmCommand::ResizeTiledDirection { direction } => {
+                warn!(
+                    ?direction,
+                    "resize-tiled wm command is intentionally stubbed for now"
                 )
             }
             WmCommand::ReloadConfig => self.reload_config(),

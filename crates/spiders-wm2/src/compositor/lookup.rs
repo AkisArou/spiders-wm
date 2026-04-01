@@ -3,6 +3,7 @@ use smithay::output::Output;
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::utils::{Logical, Point, Rectangle};
 
+use crate::model::window::WindowGeometry;
 use crate::model::{WindowId, WorkspaceId};
 use crate::state::{ManagedWindow, SpidersWm};
 
@@ -106,6 +107,14 @@ impl SpidersWm {
             .windows
             .get(window_id)
             .is_some_and(|window| window.fullscreen)
+    }
+
+    pub fn window_floating_geometry(&self, window_id: &WindowId) -> Option<WindowGeometry> {
+        self.model.floating_geometry(window_id)
+    }
+
+    pub fn set_window_floating_geometry(&mut self, window_id: WindowId, geometry: WindowGeometry) {
+        self.model.set_window_floating_geometry(window_id, geometry);
     }
 
     pub fn current_output_geometry(&self) -> Option<Rectangle<i32, Logical>> {

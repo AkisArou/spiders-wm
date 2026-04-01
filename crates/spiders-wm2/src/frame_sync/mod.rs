@@ -133,6 +133,12 @@ pub(crate) struct OverlayPushResult {
 }
 
 #[derive(Debug)]
+pub(crate) struct BeginUnmapResult {
+    pub(crate) snapshot: Option<CapturedCloseSnapshot>,
+    pub(crate) had_pending_configures: bool,
+}
+
+#[derive(Debug)]
 struct ClosingWindowOverlay {
     snapshot: WindowSnapshot,
     location: Point<i32, Logical>,
@@ -157,13 +163,23 @@ impl WindowFrameSyncState {
         self.close_snapshot.is_some()
     }
 
-    pub(crate) fn begin_unmap(&mut self) -> Option<CapturedCloseSnapshot> {
+    pub(crate) fn begin_unmap(&mut self) -> BeginUnmapResult {
+        let had_pending_configures = self.pending_configures.has_pending();
         self.pending_configures.clear();
-        self.close_snapshot.take()
+        BeginUnmapResult {
+            snapshot: self.close_snapshot.take(),
+            had_pending_configures,
+        }
     }
 
     pub(crate) fn has_pending_configures(&self) -> bool {
         self.pending_configures.has_pending()
+    }
+
+    pub(crate) fn live_transaction(&self) -> Option<SyncHandle> {
+        self.pending_configures
+            .latest_live_transaction()
+            .map(SyncHandle)
     }
 
     pub(crate) fn track_pending_layout(

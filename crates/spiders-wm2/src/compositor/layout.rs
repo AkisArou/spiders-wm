@@ -6,6 +6,8 @@ use smithay::utils::{Logical, Point, Rectangle, Size};
 use tracing::{debug, info};
 
 use crate::frame_sync::SyncHandle;
+use crate::model::WindowId;
+use crate::model::window::WindowGeometry;
 use crate::state::SpidersWm;
 
 impl SpidersWm {
@@ -34,17 +36,23 @@ impl SpidersWm {
                 .then_some((output_geometry.loc, output_geometry.size));
         }
 
+        if self.window_is_floating(&window_id) {
+            return self.floating_layout_for_window(&window_id, output_geometry);
+        }
+
+        let tiled_window_ids = self.tiled_visible_window_ids(&visible_window_ids);
+
         if let Some(target) = self.scene.compute_layout_target(
             &self.config,
             &self.model,
-            &visible_window_ids,
+            &tiled_window_ids,
             &window_id,
         ) {
             return Some(target);
         }
 
-        let visible_index = visible_window_ids.iter().position(|id| id == &window_id)?;
-        let fallback = plan_tiled_slot(output_geometry, visible_window_ids.len(), visible_index)?;
+        let visible_index = tiled_window_ids.iter().position(|id| id == &window_id)?;
+        let fallback = plan_tiled_slot(output_geometry, tiled_window_ids.len(), visible_index)?;
 
         Some((fallback.location, fallback.size))
     }
@@ -58,6 +66,7 @@ impl SpidersWm {
             .expect("output geometry missing during relayout");
 
         let visible_window_ids = self.visible_managed_window_ids();
+        let tiled_window_ids = self.tiled_visible_window_ids(&visible_window_ids);
         let fullscreen_window_id = self
             .model
             .fullscreen_window_on_current_workspace(visible_window_ids.iter().cloned());
@@ -118,8 +127,23 @@ impl SpidersWm {
                 })
                 .collect::<Vec<_>>()
         } else {
-            self.scene
-                .compute_layout_targets(&self.config, &self.model, &visible_window_ids)?
+            let floating_window_ids = visible_window_ids
+                .iter()
+                .filter(|window_id| self.window_is_floating(window_id))
+                .cloned()
+                .collect::<Vec<_>>();
+            let mut targets = if tiled_window_ids.is_empty() {
+                Vec::new()
+            } else {
+                self.scene
+                    .compute_layout_targets(&self.config, &self.model, &tiled_window_ids)?
+            };
+            targets.extend(
+                floating_window_ids.iter().filter_map(|window_id| {
+                    self.floating_layout_target(window_id, output_geometry)
+                }),
+            );
+            targets
         };
         let mut relayout_transaction: Option<SyncHandle> = None;
 
@@ -202,6 +226,68 @@ impl SpidersWm {
     }
 }
 
+impl SpidersWm {
+    fn tiled_visible_window_ids(&self, visible_window_ids: &[WindowId]) -> Vec<WindowId> {
+        visible_window_ids
+            .iter()
+            .filter(|window_id| !self.window_is_floating(window_id))
+            .cloned()
+            .collect()
+    }
+
+    fn floating_layout_for_window(
+        &mut self,
+        window_id: &WindowId,
+        output_geometry: Rectangle<i32, Logical>,
+    ) -> Option<(Point<i32, Logical>, Size<i32, Logical>)> {
+        let geometry = self.ensure_floating_window_geometry(window_id, output_geometry)?;
+        Some((
+            Point::from((geometry.x, geometry.y)),
+            Size::from((geometry.width, geometry.height)),
+        ))
+    }
+
+    fn floating_layout_target(
+        &mut self,
+        window_id: &WindowId,
+        output_geometry: Rectangle<i32, Logical>,
+    ) -> Option<crate::scene::adapter::LayoutTarget> {
+        let (location, size) = self.floating_layout_for_window(window_id, output_geometry)?;
+        Some(crate::scene::adapter::LayoutTarget {
+            window_id: window_id.clone(),
+            location,
+            size,
+            fullscreen: false,
+        })
+    }
+
+    pub(crate) fn ensure_floating_window_geometry(
+        &mut self,
+        window_id: &WindowId,
+        output_geometry: Rectangle<i32, Logical>,
+    ) -> Option<WindowGeometry> {
+        if let Some(geometry) = self.window_floating_geometry(window_id) {
+            return Some(geometry);
+        }
+
+        let geometry = self
+            .managed_window_for_id(window_id)
+            .and_then(|record| {
+                self.element_location(&record.window)
+                    .map(|location| WindowGeometry {
+                        x: location.x,
+                        y: location.y,
+                        width: record.window.geometry().size.w.max(1),
+                        height: record.window.geometry().size.h.max(1),
+                    })
+            })
+            .unwrap_or_else(|| default_floating_geometry(output_geometry));
+
+        self.set_window_floating_geometry(window_id.clone(), geometry);
+        Some(geometry)
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct RelayoutSlot {
     location: Point<i32, Logical>,
@@ -248,6 +334,24 @@ fn plan_tiled_slot(
         location: Point::from((output_geometry.loc.x + master_width, y)),
         size: Size::from((stack_width, height)),
     })
+}
+
+fn default_floating_geometry(output_geometry: Rectangle<i32, Logical>) -> WindowGeometry {
+    let width = ((output_geometry.size.w * 4) / 5)
+        .max(320)
+        .min(output_geometry.size.w.max(1));
+    let height = ((output_geometry.size.h * 4) / 5)
+        .max(240)
+        .min(output_geometry.size.h.max(1));
+    let x = output_geometry.loc.x + (output_geometry.size.w - width) / 2;
+    let y = output_geometry.loc.y + (output_geometry.size.h - height) / 2;
+
+    WindowGeometry {
+        x,
+        y,
+        width,
+        height,
+    }
 }
 
 fn sync_toplevel_fullscreen_state(
@@ -307,6 +411,18 @@ mod tests {
 
         assert_eq!(slot.location, Point::from((70, 54)));
         assert_eq!(slot.size, Size::from((40, 34)));
+    }
+
+    #[test]
+    fn default_floating_geometry_centers_window_on_output() {
+        let output = Rectangle::new((10, 20).into(), (1000, 800).into());
+
+        let geometry = default_floating_geometry(output);
+
+        assert_eq!(geometry.width, 800);
+        assert_eq!(geometry.height, 640);
+        assert_eq!(geometry.x, 110);
+        assert_eq!(geometry.y, 100);
     }
 
     #[test]

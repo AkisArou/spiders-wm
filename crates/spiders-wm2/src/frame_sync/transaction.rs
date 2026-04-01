@@ -87,6 +87,12 @@ impl PendingConfigureState {
         !self.pending.is_empty()
     }
 
+    pub(crate) fn latest_live_transaction(&self) -> Option<Transaction> {
+        self.pending.iter().rev().find_map(|(_, pending)| {
+            (!pending.transaction.is_completed()).then_some(pending.transaction.clone())
+        })
+    }
+
     pub(crate) fn mark_ready(&mut self, commit_serial: Serial) -> Option<MatchedConfigure> {
         let mut matched = None;
 
@@ -340,5 +346,20 @@ mod tests {
         assert!(state.mark_ready(Serial::from(3_u32)).is_none());
         assert_eq!(state.take_ready(), None);
         assert!(state.has_pending());
+    }
+
+    #[test]
+    fn latest_live_transaction_returns_latest_pending_transaction() {
+        let mut state = PendingConfigureState::default();
+        let event_loop = EventLoop::<()>::try_new().expect("event loop");
+        let first = Transaction::new(&event_loop.handle());
+        let second = Transaction::new(&event_loop.handle());
+
+        state.push(Serial::from(4_u32), layout(0, 0, 100, 100), first);
+        state.push(Serial::from(8_u32), layout(50, 0, 100, 100), second.clone());
+
+        let live = state.latest_live_transaction().expect("live transaction");
+
+        assert_eq!(live.debug_id(), second.debug_id());
     }
 }

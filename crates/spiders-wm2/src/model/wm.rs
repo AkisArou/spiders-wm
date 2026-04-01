@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use super::output::OutputModel;
 use super::seat::SeatModel;
-use super::window::WindowModel;
+use super::window::{WindowGeometry, WindowModel};
 use super::workspace::WorkspaceModel;
 use super::{OutputId, SeatId, WindowId, WorkspaceId};
 
@@ -61,6 +61,12 @@ impl WmModel {
             .filter(|window| window.mapped)
             .map(|window| window.id.clone())
             .collect()
+    }
+
+    pub fn floating_geometry(&self, id: &WindowId) -> Option<WindowGeometry> {
+        self.windows
+            .get(id)
+            .and_then(|window| window.floating_geometry)
     }
 
     pub fn active_workspace_names(&self, workspace: &WorkspaceModel) -> Vec<String> {
@@ -312,6 +318,12 @@ impl WmModel {
         }
     }
 
+    pub fn set_window_floating_geometry(&mut self, id: WindowId, geometry: WindowGeometry) {
+        if let Some(window) = self.windows.get_mut(&id) {
+            window.floating_geometry = Some(geometry);
+        }
+    }
+
     pub fn set_window_fullscreen(&mut self, id: WindowId, fullscreen: bool) {
         if let Some(window) = self.windows.get_mut(&id) {
             window.fullscreen = fullscreen;
@@ -428,6 +440,61 @@ mod tests {
                 .get(&window_id(10))
                 .map(|window| window.floating),
             Some(true)
+        );
+    }
+
+    #[test]
+    fn setting_window_floating_geometry_updates_that_window() {
+        let mut model = WmModel::default();
+        model.insert_window(window_id(12), None, None);
+
+        model.set_window_floating_geometry(
+            window_id(12),
+            WindowGeometry {
+                x: 40,
+                y: 50,
+                width: 800,
+                height: 600,
+            },
+        );
+
+        assert_eq!(
+            model.floating_geometry(&window_id(12)),
+            Some(WindowGeometry {
+                x: 40,
+                y: 50,
+                width: 800,
+                height: 600,
+            })
+        );
+    }
+
+    #[test]
+    fn floating_geometry_persists_across_floating_toggles() {
+        let mut model = WmModel::default();
+        model.insert_window(window_id(13), None, None);
+        model.set_window_floating(window_id(13), true);
+        model.set_window_floating_geometry(
+            window_id(13),
+            WindowGeometry {
+                x: 10,
+                y: 20,
+                width: 900,
+                height: 700,
+            },
+        );
+
+        model.set_window_floating(window_id(13), false);
+        model.set_window_floating(window_id(13), true);
+
+        assert_eq!(
+            model.floating_geometry(&window_id(13)),
+            Some(WindowGeometry {
+                x: 10,
+                y: 20,
+                width: 900,
+                height: 700,
+            })
         );
     }
 
