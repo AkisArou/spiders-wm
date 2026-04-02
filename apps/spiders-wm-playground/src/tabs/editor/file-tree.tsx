@@ -1,5 +1,6 @@
 import { cn } from "../../utils/cn.ts";
 
+import { getDownloadButtonTitle } from "./download.ts";
 import type {
   EditorFile,
   EditorFileId,
@@ -60,6 +61,7 @@ export function FileTree({
           <button
             type="button"
             className="border-terminal-border bg-terminal-bg-panel text-terminal-dim hover:bg-terminal-bg-hover hover:text-terminal-fg ml-auto border px-1.5 py-0 text-[11px] opacity-0 transition-opacity group-hover:opacity-100"
+            title={getDownloadButtonTitle(node)}
             onClick={(event) => {
               event.stopPropagation();
               onDownloadDirectory(node);
