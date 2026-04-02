@@ -50,25 +50,19 @@ export function FileTree({
   }
 
   return (
-    <div>
+    <div className={node.downloadRootPath ? "group/layout-subtree" : undefined}>
       <div
-        className="text-terminal-dim group flex items-center gap-1 px-2 py-1 text-sm leading-5"
+        className="text-terminal-dim flex w-full items-center gap-1 px-2 py-1 text-sm leading-5"
         style={{ paddingLeft: `${depth * 14 + 8}px` }}
       >
         <span>{node.defaultOpen === false ? "▸" : "▾"}</span>
-        <span className="truncate">{node.name}</span>
+        <span className="min-w-0 flex-1 truncate">{node.name}</span>
         {node.downloadRootPath && onDownloadDirectory ? (
-          <button
-            type="button"
-            className="border-terminal-border bg-terminal-bg-panel text-terminal-dim hover:bg-terminal-bg-hover hover:text-terminal-fg ml-auto border px-1.5 py-0 text-[11px] opacity-0 transition-opacity group-hover:opacity-100"
-            title={getDownloadButtonTitle(node)}
-            onClick={(event) => {
-              event.stopPropagation();
-              onDownloadDirectory(node);
-            }}
-          >
-            download
-          </button>
+          <DownloadDirectoryControl
+            node={node}
+            onDownloadDirectory={onDownloadDirectory}
+            revealClassName="ml-auto opacity-0 transition-opacity group-hover/layout-subtree:opacity-100 group-focus-within/layout-subtree:opacity-100"
+          />
         ) : null}
       </div>
 
@@ -89,6 +83,38 @@ export function FileTree({
           />
         </div>
       ))}
+    </div>
+  );
+}
+
+function DownloadDirectoryControl({
+  node,
+  onDownloadDirectory,
+  revealClassName,
+}: {
+  node: FileTreeDirectoryNode;
+  onDownloadDirectory: (node: FileTreeDirectoryNode) => void;
+  revealClassName?: string;
+}) {
+  return (
+    <div className="group/download relative flex items-center">
+      <button
+        type="button"
+        aria-label={getDownloadButtonTitle(node)}
+        className={cn(
+          "border-terminal-border bg-terminal-bg-panel text-terminal-dim hover:bg-terminal-bg-hover hover:text-terminal-fg border px-1.5 py-0 text-[11px]",
+          revealClassName,
+        )}
+        onClick={(event) => {
+          event.stopPropagation();
+          onDownloadDirectory(node);
+        }}
+      >
+        download
+      </button>
+      <div className="border-terminal-border bg-terminal-bg-panel text-terminal-fg pointer-events-none absolute top-full right-0 z-10 mt-1 hidden w-56 max-w-[calc(100vw-2rem)] border px-2 py-1 text-[11px] leading-4 wrap-break-word shadow-[0_14px_40px_rgba(0,0,0,0.45)] group-focus-within/download:block group-hover/download:block">
+        {getDownloadButtonTitle(node)}
+      </div>
     </div>
   );
 }

@@ -119,9 +119,11 @@ impl SpidersWm {
         let location = self
             .element_location(&window)
             .map(|location| location - window.geometry().loc);
+        let window_order = self.managed_window_ids();
 
         let focus_update = match self.runtime().execute(RuntimeCommand::UnmapWindow {
             window_id: window_id.clone(),
+            window_order,
         }) {
             RuntimeResult::FocusUpdate(focus_update) => focus_update,
             _ => FocusUpdate::Unchanged,
@@ -183,6 +185,7 @@ impl SpidersWm {
             (window, location, snapshot)
         });
 
+        let window_order = self.managed_window_ids();
         let record = self.remove_managed_window_at(position);
         let window_id = record.id.clone();
         let mut focus_update = FocusUpdate::Unchanged;
@@ -191,6 +194,7 @@ impl SpidersWm {
             self.unmap_window_element(&record.window);
             focus_update = match self.runtime().execute(RuntimeCommand::UnmapWindow {
                 window_id: window_id.clone(),
+                window_order: window_order.clone(),
             }) {
                 RuntimeResult::FocusUpdate(focus_update) => focus_update,
                 _ => FocusUpdate::Unchanged,
@@ -199,6 +203,7 @@ impl SpidersWm {
 
         let remove_update = match self.runtime().execute(RuntimeCommand::RemoveWindow {
             window_id: window_id.clone(),
+            window_order,
         }) {
             RuntimeResult::FocusUpdate(focus_update) => focus_update,
             _ => FocusUpdate::Unchanged,

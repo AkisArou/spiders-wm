@@ -22,7 +22,9 @@
   --color-file-ts: #519aba;
   --color-file-tsx: #1354bf;
   --color-file-css: #663399;
-  --font-mono: "JetBrainsMono Nerd Font", "Symbols Nerd Font Mono", "IBM Plex Mono", monospace;
+  --font-mono:
+    "JetBrainsMono Nerd Font", "Symbols Nerd Font Mono", "IBM Plex Mono",
+    monospace;
 }
 
 :root {
@@ -60,6 +62,76 @@ body {
   button:focus-visible {
     outline: none;
     box-shadow: none;
+  }
+
+  .preview-layout-select {
+    appearance: none;
+    min-width: 12rem;
+    border: 1px solid var(--color-terminal-border);
+    background: linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--color-terminal-bg-subtle) 88%, white 12%),
+      var(--color-terminal-bg-subtle)
+    );
+    color: var(--color-terminal-fg-strong);
+    padding: 0.25rem 2rem 0.25rem 0.625rem;
+    font-size: 0.75rem;
+    line-height: 1.1;
+    letter-spacing: 0.01em;
+  }
+
+  .preview-layout-select:focus,
+  .preview-layout-select:focus-visible {
+    outline: none;
+    border-color: color-mix(
+      in srgb,
+      var(--color-terminal-info) 78%,
+      var(--color-terminal-border) 22%
+    );
+    box-shadow: inset 0 0 0 1px
+      color-mix(in srgb, var(--color-terminal-info) 35%, transparent);
+  }
+
+  .preview-layout-select-wrap {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+  }
+
+  .preview-layout-select-wrap::after {
+    content: "▾";
+    position: absolute;
+    right: 0.65rem;
+    top: 50%;
+    color: var(--color-terminal-dim);
+    transform: translateY(-52%);
+    pointer-events: none;
+    font-size: 0.7rem;
+  }
+
+  .preview-layout-select option {
+    background: var(--color-terminal-bg-subtle);
+    color: var(--color-terminal-fg-strong);
+  }
+
+  @supports (appearance: base-select) {
+    .preview-layout-select {
+      appearance: base-select;
+    }
+
+    .preview-layout-select::picker(select) {
+      appearance: base-select;
+      border: 1px solid var(--color-terminal-border-strong);
+      background: color-mix(
+        in srgb,
+        var(--color-terminal-bg-panel) 92%,
+        black 8%
+      );
+      color: var(--color-terminal-fg-strong);
+      margin-top: 0.35rem;
+      padding: 0.25rem;
+      box-shadow: 0 18px 44px rgba(0, 0, 0, 0.42);
+    }
   }
 }
 

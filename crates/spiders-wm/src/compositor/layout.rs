@@ -8,6 +8,7 @@ use tracing::{debug, info};
 use crate::frame_sync::SyncHandle;
 use spiders_core::WindowId;
 use spiders_core::wm::WindowGeometry;
+use spiders_core::workspace::flat_workspace_root;
 use crate::state::SpidersWm;
 
 impl SpidersWm {
@@ -44,7 +45,7 @@ impl SpidersWm {
 
         if let Some(target) = self.scene.compute_layout_target(
             &self.config,
-            &self.model,
+            &mut self.model,
             &tiled_window_ids,
             &window_id,
         ) {
@@ -94,6 +95,7 @@ impl SpidersWm {
         }
 
         if visible_window_ids.is_empty() {
+            self.model.set_focus_tree(None);
             debug!("wm relayout skipped because there are no visible windows");
             return None;
         }
@@ -115,6 +117,8 @@ impl SpidersWm {
         }
 
         let relayout_targets = if let Some(fullscreen_window_id) = fullscreen_window_id.as_ref() {
+            let focus_root = flat_workspace_root([fullscreen_window_id.clone()]);
+            self.model.set_focus_tree(Some(&focus_root));
             visible_window_ids
                 .iter()
                 .filter(|window_id| *window_id == fullscreen_window_id)
@@ -133,10 +137,12 @@ impl SpidersWm {
                 .cloned()
                 .collect::<Vec<_>>();
             let mut targets = if tiled_window_ids.is_empty() {
+                let focus_root = flat_workspace_root(floating_window_ids.iter().cloned());
+                self.model.set_focus_tree(Some(&focus_root));
                 Vec::new()
             } else {
                 self.scene
-                    .compute_layout_targets(&self.config, &self.model, &tiled_window_ids)?
+                    .compute_layout_targets(&self.config, &mut self.model, &tiled_window_ids)?
             };
             targets.extend(
                 floating_window_ids.iter().filter_map(|window_id| {

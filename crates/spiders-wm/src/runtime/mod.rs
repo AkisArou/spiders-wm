@@ -46,9 +46,11 @@ pub enum RuntimeCommand {
     },
     RequestFocusNextWindowSelection {
         seat_id: SeatId,
+        window_order: Vec<WindowId>,
     },
     RequestFocusPreviousWindowSelection {
         seat_id: SeatId,
+        window_order: Vec<WindowId>,
     },
     SyncHoveredWindow {
         seat_id: SeatId,
@@ -60,9 +62,11 @@ pub enum RuntimeCommand {
     },
     UnmapWindow {
         window_id: WindowId,
+        window_order: Vec<WindowId>,
     },
     RemoveWindow {
         window_id: WindowId,
+        window_order: Vec<WindowId>,
     },
     RequestCloseFocusedWindowSelection,
     AssignFocusedWindowToWorkspace {
@@ -153,12 +157,18 @@ impl<'a> WmRuntime<'a> {
                     self.request_focus_window_selection(seat_id, window_id),
                 )
             }
-            RuntimeCommand::RequestFocusNextWindowSelection { seat_id } => {
-                RuntimeResult::FocusSelection(self.request_focus_next_window_selection(seat_id))
-            }
-            RuntimeCommand::RequestFocusPreviousWindowSelection { seat_id } => {
-                RuntimeResult::FocusSelection(self.request_focus_previous_window_selection(seat_id))
-            }
+            RuntimeCommand::RequestFocusNextWindowSelection {
+                seat_id,
+                window_order,
+            } => RuntimeResult::FocusSelection(
+                self.request_focus_next_window_selection(seat_id, window_order),
+            ),
+            RuntimeCommand::RequestFocusPreviousWindowSelection {
+                seat_id,
+                window_order,
+            } => RuntimeResult::FocusSelection(
+                self.request_focus_previous_window_selection(seat_id, window_order),
+            ),
             RuntimeCommand::SyncHoveredWindow {
                 seat_id,
                 hovered_window_id,
@@ -167,12 +177,14 @@ impl<'a> WmRuntime<'a> {
                 seat_id,
                 interacted_window_id,
             } => RuntimeResult::Window(self.sync_interacted_window(seat_id, interacted_window_id)),
-            RuntimeCommand::UnmapWindow { window_id } => {
-                RuntimeResult::FocusUpdate(self.unmap_window(window_id))
-            }
-            RuntimeCommand::RemoveWindow { window_id } => {
-                RuntimeResult::FocusUpdate(self.remove_window(window_id))
-            }
+            RuntimeCommand::UnmapWindow {
+                window_id,
+                window_order,
+            } => RuntimeResult::FocusUpdate(self.unmap_window(window_id, window_order)),
+            RuntimeCommand::RemoveWindow {
+                window_id,
+                window_order,
+            } => RuntimeResult::FocusUpdate(self.remove_window(window_id, window_order)),
             RuntimeCommand::RequestCloseFocusedWindowSelection => {
                 RuntimeResult::CloseSelection(self.request_close_focused_window_selection())
             }
@@ -276,16 +288,19 @@ impl<'a> WmRuntime<'a> {
     pub fn request_focus_next_window_selection(
         &mut self,
         seat_id: impl Into<SeatId>,
+        window_order: impl IntoIterator<Item = WindowId>,
     ) -> FocusSelection {
-        self.actions.request_focus_next_window_selection(seat_id)
+        self.actions
+            .request_focus_next_window_selection(seat_id, window_order)
     }
 
     pub fn request_focus_previous_window_selection(
         &mut self,
         seat_id: impl Into<SeatId>,
+        window_order: impl IntoIterator<Item = WindowId>,
     ) -> FocusSelection {
         self.actions
-            .request_focus_previous_window_selection(seat_id)
+            .request_focus_previous_window_selection(seat_id, window_order)
     }
 
     pub fn sync_hovered_window(
@@ -305,12 +320,20 @@ impl<'a> WmRuntime<'a> {
             .sync_interacted_window(seat_id, interacted_window_id)
     }
 
-    pub fn remove_window(&mut self, window_id: WindowId) -> FocusUpdate {
-        self.actions.remove_window(window_id)
+    pub fn remove_window(
+        &mut self,
+        window_id: WindowId,
+        window_order: impl IntoIterator<Item = WindowId>,
+    ) -> FocusUpdate {
+        self.actions.remove_window(window_id, window_order)
     }
 
-    pub fn unmap_window(&mut self, window_id: WindowId) -> FocusUpdate {
-        self.actions.unmap_window(window_id)
+    pub fn unmap_window(
+        &mut self,
+        window_id: WindowId,
+        window_order: impl IntoIterator<Item = WindowId>,
+    ) -> FocusUpdate {
+        self.actions.unmap_window(window_id, window_order)
     }
 
     pub fn request_close_focused_window_selection(&mut self) -> CloseSelection {
@@ -503,6 +526,14 @@ mod tests {
         runtime.ensure_seat("winit");
         runtime.place_new_window(window_id(3));
         runtime.place_new_window(window_id(4));
+        runtime.execute(RuntimeCommand::SyncWindowMapped {
+            window_id: window_id(3),
+            mapped: true,
+        });
+        runtime.execute(RuntimeCommand::SyncWindowMapped {
+            window_id: window_id(4),
+            mapped: true,
+        });
 
         let focused = runtime.execute(RuntimeCommand::RequestFocusWindowSelection {
             seat_id: SeatId("winit".to_string()),
@@ -510,10 +541,12 @@ mod tests {
         });
         let next_focused = runtime.execute(RuntimeCommand::RequestFocusNextWindowSelection {
             seat_id: SeatId("winit".to_string()),
+            window_order: vec![window_id(3), window_id(4)],
         });
         let previous_focused =
             runtime.execute(RuntimeCommand::RequestFocusPreviousWindowSelection {
                 seat_id: SeatId("winit".to_string()),
+                window_order: vec![window_id(3), window_id(4)],
             });
         let closing = runtime.execute(RuntimeCommand::RequestCloseFocusedWindowSelection);
 

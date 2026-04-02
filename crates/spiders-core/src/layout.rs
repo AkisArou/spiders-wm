@@ -193,4 +193,11 @@ impl ResolvedLayoutNode {
             | Self::Window { meta, .. } => meta,
         }
     }
+
+    pub fn children(&self) -> &[ResolvedLayoutNode] {
+        match self {
+            Self::Workspace { children, .. } | Self::Group { children, .. } => children,
+            Self::Window { .. } => &[],
+        }
+    }
 }

@@ -37,6 +37,8 @@ export interface PreviewSnapshotNode {
   className: string | null;
   rect: PreviewRect;
   windowId: string | null;
+  axis?: "horizontal" | "vertical";
+  reverse?: boolean;
   children: PreviewSnapshotNode[];
 }
 
@@ -55,6 +57,7 @@ export interface PreviewSessionState {
   activeWorkspaceName: string;
   workspaceNames: string[];
   windows: PreviewSessionWindow[];
+  rememberedFocusByScope?: Record<string, string>;
   masterRatioByWorkspace?: Record<string, number>;
   stackWeightsByWorkspace?: Record<string, Record<string, number>>;
 }
@@ -86,6 +89,8 @@ interface RawSnapshotNode {
   rect: PreviewRect;
   window_id?: string | null;
   windowId?: string | null;
+  axis?: "horizontal" | "vertical";
+  reverse?: boolean;
   children?: RawSnapshotNode[];
 }
 
@@ -132,7 +137,9 @@ export async function computePreview(
     height,
   ) as RawComputePreviewResult;
   const windowsById = new Map(windows.map((window) => [window.id, window]));
-  const resolvedRoot = toPlainValue(raw.resolved_root) as RawResolvedNode | null;
+  const resolvedRoot = toPlainValue(
+    raw.resolved_root,
+  ) as RawResolvedNode | null;
   let snapshotRoot = toPlainValue(raw.snapshot_root) as RawSnapshotNode | null;
 
   if (sessionState && snapshotRoot) {
@@ -156,7 +163,9 @@ export async function applyPreviewCommand(
 ): Promise<PreviewSessionState> {
   await ensureBindings();
 
-  return apply_preview_command(state, command, snapshotRoot) as PreviewSessionState;
+  return toPlainValue(
+    apply_preview_command(state, command, snapshotRoot) as PreviewSessionState,
+  ) as PreviewSessionState;
 }
 
 function toPlainValue<T>(value: T): T {
@@ -210,7 +219,8 @@ function normalizeTree(
 
   const ownWindow =
     typeof (rawNode.window_id ?? rawNode.windowId) === "string"
-      ? windowsById.get((rawNode.window_id ?? rawNode.windowId) as string) ?? null
+      ? (windowsById.get((rawNode.window_id ?? rawNode.windowId) as string) ??
+        null)
       : null;
   const claimedWindows = ownWindow
     ? [ownWindow]
@@ -227,7 +237,9 @@ function normalizeTree(
   };
 }
 
-function unwrapResolvedNode(node: RawResolvedNode | null): RawResolvedNode | null {
+function unwrapResolvedNode(
+  node: RawResolvedNode | null,
+): RawResolvedNode | null {
   if (!node) {
     return null;
   }
@@ -262,7 +274,9 @@ function unwrapResolvedNode(node: RawResolvedNode | null): RawResolvedNode | nul
   return null;
 }
 
-function normalizeSnapshot(node: RawSnapshotNode | null): PreviewSnapshotNode | null {
+function normalizeSnapshot(
+  node: RawSnapshotNode | null,
+): PreviewSnapshotNode | null {
   const rawNode = unwrapSnapshotNode(node);
 
   if (!rawNode || !rawNode.rect) {
@@ -278,13 +292,17 @@ function normalizeSnapshot(node: RawSnapshotNode | null): PreviewSnapshotNode | 
       typeof (rawNode.window_id ?? rawNode.windowId) === "string"
         ? ((rawNode.window_id ?? rawNode.windowId) as string)
         : null,
+    axis: rawNode.axis,
+    reverse: Boolean(rawNode.reverse),
     children: (rawNode.children ?? [])
       .map((child) => normalizeSnapshot(child))
       .filter((child): child is PreviewSnapshotNode => child !== null),
   };
 }
 
-function unwrapSnapshotNode(node: RawSnapshotNode | null): RawSnapshotNode | null {
+function unwrapSnapshotNode(
+  node: RawSnapshotNode | null,
+): RawSnapshotNode | null {
   if (!node) {
     return null;
   }

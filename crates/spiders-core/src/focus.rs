@@ -1,5 +1,93 @@
+use std::collections::BTreeMap;
+
 use crate::wm::WmModel;
-use crate::WindowId;
+use crate::{LayoutNodeMeta, ResolvedLayoutNode, WindowId};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FocusAxis {
+    Horizontal,
+    Vertical,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FocusBranchKey {
+    Scope(String),
+    Window(WindowId),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FocusScopeNavigation {
+    pub axis: FocusAxis,
+    pub branches: Vec<FocusBranchKey>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct FocusTree {
+    ordered_window_ids: Vec<WindowId>,
+    scope_path_by_window: BTreeMap<WindowId, Vec<String>>,
+    descendant_window_ids_by_scope: BTreeMap<String, Vec<WindowId>>,
+    navigation_by_scope: BTreeMap<String, FocusScopeNavigation>,
+}
+
+impl FocusTree {
+    pub fn from_resolved_root(root: &ResolvedLayoutNode) -> Self {
+        let mut tree = Self {
+            descendant_window_ids_by_scope: BTreeMap::from([(
+                Self::workspace_scope_key().to_string(),
+                Vec::new(),
+            )]),
+            ..Self::default()
+        };
+        let mut scope_path = vec![Self::workspace_scope_key().to_string()];
+
+        collect_focus_tree_children(root.children(), &mut scope_path, &mut tree);
+        tree
+    }
+
+    pub fn workspace_scope_key() -> &'static str {
+        "$workspace"
+    }
+
+    pub fn scope_key_for_child(parent_scope: &str, meta: &LayoutNodeMeta, child_index: usize) -> String {
+        let label = meta
+            .id
+            .as_deref()
+            .or(meta.name.as_deref())
+            .unwrap_or("group");
+
+        format!("{parent_scope}/group[{child_index}]:{label}")
+    }
+
+    pub fn ordered_window_ids(&self) -> &[WindowId] {
+        &self.ordered_window_ids
+    }
+
+    pub fn scope_path(&self, window_id: &WindowId) -> Option<&[String]> {
+        self.scope_path_by_window.get(window_id).map(Vec::as_slice)
+    }
+
+    pub fn descendants(&self, scope_key: &str) -> Option<&[WindowId]> {
+        self.descendant_window_ids_by_scope
+            .get(scope_key)
+            .map(Vec::as_slice)
+    }
+
+    pub fn scope_keys(&self) -> impl Iterator<Item = &String> {
+        self.descendant_window_ids_by_scope.keys()
+    }
+
+    pub fn navigation(&self, scope_key: &str) -> Option<&FocusScopeNavigation> {
+        self.navigation_by_scope.get(scope_key)
+    }
+
+    pub fn set_navigation(&mut self, navigation_by_scope: BTreeMap<String, FocusScopeNavigation>) {
+        self.navigation_by_scope = navigation_by_scope;
+    }
+
+    pub fn contains_window(&self, window_id: &WindowId) -> bool {
+        self.scope_path_by_window.contains_key(window_id)
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FocusUpdate {
@@ -18,39 +106,22 @@ pub fn set_focused_window(model: &mut WmModel, focused_id: Option<WindowId>) -> 
     focused_id
 }
 
-pub fn focus_next_window(model: &mut WmModel) -> Option<WindowId> {
-    let focusable_window_ids = model.focusable_window_ids();
-    let next_focus = match model
-        .focused_window_id
-        .clone()
-        .filter(|window_id| focusable_window_ids.contains(window_id))
-    {
-        Some(current_id) => focusable_window_ids
-            .iter()
-            .find(|window_id| **window_id > current_id)
-            .cloned()
-            .or_else(|| focusable_window_ids.first().cloned()),
-        None => focusable_window_ids.first().cloned(),
-    };
+pub fn focus_next_window<I>(model: &mut WmModel, hinted_window_ids: I) -> Option<WindowId>
+where
+    I: IntoIterator<Item = WindowId>,
+{
+    let focusable_window_ids = model.ordered_focusable_window_ids_on_current_workspace(hinted_window_ids);
+    let next_focus = next_focus_in_order(&focusable_window_ids, model.focused_window_id.clone());
 
     set_focused_window(model, next_focus)
 }
 
-pub fn focus_previous_window(model: &mut WmModel) -> Option<WindowId> {
-    let focusable_window_ids = model.focusable_window_ids();
-    let previous_focus = match model
-        .focused_window_id
-        .clone()
-        .filter(|window_id| focusable_window_ids.contains(window_id))
-    {
-        Some(current_id) => focusable_window_ids
-            .iter()
-            .rev()
-            .find(|window_id| **window_id < current_id)
-            .cloned()
-            .or_else(|| focusable_window_ids.last().cloned()),
-        None => focusable_window_ids.last().cloned(),
-    };
+pub fn focus_previous_window<I>(model: &mut WmModel, hinted_window_ids: I) -> Option<WindowId>
+where
+    I: IntoIterator<Item = WindowId>,
+{
+    let focusable_window_ids = model.ordered_focusable_window_ids_on_current_workspace(hinted_window_ids);
+    let previous_focus = previous_focus_in_order(&focusable_window_ids, model.focused_window_id.clone());
 
     set_focused_window(model, previous_focus)
 }
@@ -61,54 +132,281 @@ pub fn request_focus_window(model: &mut WmModel, window_id: Option<WindowId>) ->
     }
 }
 
-pub fn request_focus_next_window(model: &mut WmModel) -> FocusSelection {
+pub fn request_focus_next_window<I>(model: &mut WmModel, hinted_window_ids: I) -> FocusSelection
+where
+    I: IntoIterator<Item = WindowId>,
+{
     FocusSelection {
-        focused_window_id: focus_next_window(model),
+        focused_window_id: focus_next_window(model, hinted_window_ids),
     }
 }
 
-pub fn request_focus_previous_window(model: &mut WmModel) -> FocusSelection {
+pub fn request_focus_previous_window<I>(model: &mut WmModel, hinted_window_ids: I) -> FocusSelection
+where
+    I: IntoIterator<Item = WindowId>,
+{
     FocusSelection {
-        focused_window_id: focus_previous_window(model),
+        focused_window_id: focus_previous_window(model, hinted_window_ids),
     }
 }
 
-pub fn remove_window(model: &mut WmModel, removed_id: WindowId) -> FocusUpdate {
+pub fn remove_window<I>(model: &mut WmModel, removed_id: WindowId, hinted_window_ids: I) -> FocusUpdate
+where
+    I: IntoIterator<Item = WindowId>,
+{
     let removed_was_focused = model.focused_window_id.as_ref() == Some(&removed_id);
+    let hinted_window_ids = hinted_window_ids.into_iter().collect::<Vec<_>>();
+    let next_focus = removed_was_focused
+        .then(|| preferred_focus_after_focus_loss(model, &removed_id, hinted_window_ids.iter().cloned()))
+        .flatten();
+
     model.remove_window(removed_id);
 
     if !removed_was_focused {
         return FocusUpdate::Unchanged;
     }
 
-    let next_focus = model.preferred_focusable_window_id();
     let next_focus = set_focused_window(model, next_focus);
     FocusUpdate::Set(next_focus)
 }
 
-pub fn unmap_window(model: &mut WmModel, unmapped_id: WindowId) -> FocusUpdate {
+pub fn unmap_window<I>(model: &mut WmModel, unmapped_id: WindowId, hinted_window_ids: I) -> FocusUpdate
+where
+    I: IntoIterator<Item = WindowId>,
+{
     if !model.windows.contains_key(&unmapped_id) {
         return FocusUpdate::Unchanged;
     }
 
     let unmapped_was_focused = model.focused_window_id.as_ref() == Some(&unmapped_id);
+    let hinted_window_ids = hinted_window_ids.into_iter().collect::<Vec<_>>();
     model.set_window_mapped(unmapped_id.clone(), false);
 
     if !unmapped_was_focused {
         return FocusUpdate::Unchanged;
     }
 
-    let next_focus = model.windows.iter().rev().find_map(|(window_id, window)| {
-        (*window_id != unmapped_id && !window.closing).then_some(window_id.clone())
-    });
+    let next_focus = preferred_focus_after_focus_loss(model, &unmapped_id, hinted_window_ids);
     let next_focus = set_focused_window(model, next_focus);
     FocusUpdate::Set(next_focus)
+}
+
+fn collect_focus_tree_children(
+    children: &[ResolvedLayoutNode],
+    scope_path: &mut Vec<String>,
+    tree: &mut FocusTree,
+) {
+    for (child_index, child) in children.iter().enumerate() {
+        collect_focus_tree_node(child, child_index, scope_path, tree);
+    }
+}
+
+fn collect_focus_tree_node(
+    node: &ResolvedLayoutNode,
+    child_index: usize,
+    scope_path: &mut Vec<String>,
+    tree: &mut FocusTree,
+) {
+    match node {
+        ResolvedLayoutNode::Workspace { children, .. } => {
+            collect_focus_tree_children(children, scope_path, tree);
+        }
+        ResolvedLayoutNode::Group { meta, children, .. } => {
+            let parent_scope = scope_path
+                .last()
+                .map(String::as_str)
+                .unwrap_or(FocusTree::workspace_scope_key());
+            let scope_key = FocusTree::scope_key_for_child(parent_scope, meta, child_index);
+            tree.descendant_window_ids_by_scope
+                .entry(scope_key.clone())
+                .or_default();
+            scope_path.push(scope_key);
+            collect_focus_tree_children(children, scope_path, tree);
+            scope_path.pop();
+        }
+        ResolvedLayoutNode::Window {
+            window_id: Some(window_id),
+            ..
+        } => {
+            tree.ordered_window_ids.push(window_id.clone());
+            tree.scope_path_by_window
+                .insert(window_id.clone(), scope_path.clone());
+
+            for scope_key in scope_path.iter() {
+                tree.descendant_window_ids_by_scope
+                    .entry(scope_key.clone())
+                    .or_default()
+                    .push(window_id.clone());
+            }
+        }
+        ResolvedLayoutNode::Window { window_id: None, .. } => {}
+    }
+}
+
+fn next_focus_in_order(
+    ordered_window_ids: &[WindowId],
+    current_window_id: Option<WindowId>,
+) -> Option<WindowId> {
+    match current_window_id
+        .filter(|window_id| ordered_window_ids.contains(window_id))
+        .and_then(|current_window_id| {
+            ordered_window_ids
+                .iter()
+                .position(|window_id| *window_id == current_window_id)
+        })
+    {
+        Some(current_index) if !ordered_window_ids.is_empty() => ordered_window_ids
+            .get((current_index + 1) % ordered_window_ids.len())
+            .cloned(),
+        _ => ordered_window_ids.first().cloned(),
+    }
+}
+
+fn previous_focus_in_order(
+    ordered_window_ids: &[WindowId],
+    current_window_id: Option<WindowId>,
+) -> Option<WindowId> {
+    match current_window_id
+        .filter(|window_id| ordered_window_ids.contains(window_id))
+        .and_then(|current_window_id| {
+            ordered_window_ids
+                .iter()
+                .position(|window_id| *window_id == current_window_id)
+        })
+    {
+        Some(current_index) if !ordered_window_ids.is_empty() => ordered_window_ids
+            .get((current_index + ordered_window_ids.len() - 1) % ordered_window_ids.len())
+            .cloned(),
+        _ => ordered_window_ids.last().cloned(),
+    }
+}
+
+fn preferred_focus_after_focus_loss<I>(
+    model: &WmModel,
+    lost_window_id: &WindowId,
+    hinted_window_ids: I,
+) -> Option<WindowId>
+where
+    I: IntoIterator<Item = WindowId>,
+{
+    if let Some(scope_path) = model.focus_scope_path(lost_window_id) {
+        for scope_key in scope_path.iter().rev() {
+            if let Some(candidate) = preferred_focus_for_scope(model, scope_key, lost_window_id) {
+                return Some(candidate);
+            }
+        }
+    }
+
+    let ordered_window_ids = model.ordered_window_ids_on_current_workspace(hinted_window_ids);
+    preferred_focus_from_order(
+        model,
+        FocusTree::workspace_scope_key(),
+        &ordered_window_ids,
+        lost_window_id,
+    )
+}
+
+fn preferred_focus_for_scope(
+    model: &WmModel,
+    scope_key: &str,
+    lost_window_id: &WindowId,
+) -> Option<WindowId> {
+    let ordered_window_ids = model.focus_scope_descendants(scope_key)?;
+    preferred_focus_from_order(model, scope_key, ordered_window_ids, lost_window_id)
+}
+
+fn preferred_focus_from_order(
+    model: &WmModel,
+    scope_key: &str,
+    ordered_window_ids: &[WindowId],
+    lost_window_id: &WindowId,
+) -> Option<WindowId> {
+    let focusable_candidates = ordered_window_ids
+        .iter()
+        .filter(|window_id| *window_id != lost_window_id && model.window_is_focus_cycle_candidate(window_id))
+        .cloned()
+        .collect::<Vec<_>>();
+
+    if focusable_candidates.is_empty() {
+        return None;
+    }
+
+    if let Some(remembered_window_id) = model.remembered_focus_for_scope(scope_key)
+        && remembered_window_id != lost_window_id
+        && focusable_candidates.contains(remembered_window_id)
+    {
+        return Some(remembered_window_id.clone());
+    }
+
+    if let Some(lost_index) = ordered_window_ids
+        .iter()
+        .position(|window_id| window_id == lost_window_id)
+    {
+        for window_id in ordered_window_ids
+            .iter()
+            .skip(lost_index + 1)
+            .chain(ordered_window_ids.iter().take(lost_index))
+        {
+            if window_id != lost_window_id && model.window_is_focus_cycle_candidate(window_id) {
+                return Some(window_id.clone());
+            }
+        }
+    }
+
+    focusable_candidates.last().cloned()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::window_id;
+    use crate::{window_id, LayoutNodeMeta, ResolvedLayoutNode, WorkspaceId};
+
+    fn flat_root(window_ids: &[u64]) -> ResolvedLayoutNode {
+        ResolvedLayoutNode::Workspace {
+            meta: LayoutNodeMeta::default(),
+            children: window_ids
+                .iter()
+                .map(|id| ResolvedLayoutNode::Window {
+                    meta: LayoutNodeMeta::default(),
+                    window_id: Some(window_id(*id)),
+                })
+                .collect(),
+        }
+    }
+
+    fn grouped_root() -> ResolvedLayoutNode {
+        ResolvedLayoutNode::Workspace {
+            meta: LayoutNodeMeta::default(),
+            children: vec![
+                ResolvedLayoutNode::Group {
+                    meta: LayoutNodeMeta {
+                        id: Some("main".into()),
+                        ..LayoutNodeMeta::default()
+                    },
+                    children: vec![
+                        ResolvedLayoutNode::Window {
+                            meta: LayoutNodeMeta::default(),
+                            window_id: Some(window_id(1)),
+                        },
+                        ResolvedLayoutNode::Window {
+                            meta: LayoutNodeMeta::default(),
+                            window_id: Some(window_id(2)),
+                        },
+                    ],
+                },
+                ResolvedLayoutNode::Group {
+                    meta: LayoutNodeMeta {
+                        id: Some("stack".into()),
+                        ..LayoutNodeMeta::default()
+                    },
+                    children: vec![ResolvedLayoutNode::Window {
+                        meta: LayoutNodeMeta::default(),
+                        window_id: Some(window_id(3)),
+                    }],
+                },
+            ],
+        }
+    }
 
     #[test]
     fn focusing_unknown_window_clears_focus() {
@@ -162,7 +460,7 @@ mod tests {
         model.insert_window(window_id(2), None, None);
         model.set_window_focused(Some(window_id(2)));
 
-        let update = remove_window(&mut model, window_id(1));
+        let update = remove_window(&mut model, window_id(1), Vec::new());
 
         assert_eq!(update, FocusUpdate::Unchanged);
         assert_eq!(model.focused_window_id, Some(window_id(2)));
@@ -175,9 +473,17 @@ mod tests {
         model.insert_window(window_id(1), None, None);
         model.insert_window(window_id(2), None, None);
         model.insert_window(window_id(3), None, None);
+        model.set_current_workspace(WorkspaceId::from("1"));
+        model.set_window_workspace(window_id(1), Some(WorkspaceId::from("1")));
+        model.set_window_workspace(window_id(2), Some(WorkspaceId::from("1")));
+        model.set_window_workspace(window_id(3), Some(WorkspaceId::from("1")));
+        model.set_window_mapped(window_id(1), true);
+        model.set_window_mapped(window_id(2), true);
+        model.set_window_mapped(window_id(3), true);
+        model.set_focus_tree(Some(&flat_root(&[1, 2, 3])));
         model.set_window_focused(Some(window_id(2)));
 
-        let update = remove_window(&mut model, window_id(2));
+        let update = remove_window(&mut model, window_id(2), Vec::new());
 
         assert_eq!(update, FocusUpdate::Set(Some(window_id(3))));
         assert_eq!(model.focused_window_id, Some(window_id(3)));
@@ -203,7 +509,7 @@ mod tests {
         model.insert_window(window_id(4), None, None);
         model.set_window_focused(Some(window_id(4)));
 
-        let update = remove_window(&mut model, window_id(4));
+        let update = remove_window(&mut model, window_id(4), Vec::new());
 
         assert_eq!(update, FocusUpdate::Set(None));
         assert_eq!(model.focused_window_id, None);
@@ -216,13 +522,21 @@ mod tests {
         model.insert_window(window_id(1), None, None);
         model.insert_window(window_id(3), None, None);
         model.insert_window(window_id(8), None, None);
+        model.set_current_workspace(WorkspaceId::from("1"));
+        model.set_window_workspace(window_id(1), Some(WorkspaceId::from("1")));
+        model.set_window_workspace(window_id(3), Some(WorkspaceId::from("1")));
+        model.set_window_workspace(window_id(8), Some(WorkspaceId::from("1")));
+        model.set_window_mapped(window_id(1), true);
+        model.set_window_mapped(window_id(3), true);
+        model.set_window_mapped(window_id(8), true);
+        model.set_focus_tree(Some(&flat_root(&[3, 1, 8])));
         model.set_window_focused(Some(window_id(3)));
 
-        let next = focus_next_window(&mut model);
-        assert_eq!(next, Some(window_id(8)));
+        let next = focus_next_window(&mut model, Vec::new());
+        assert_eq!(next, Some(window_id(1)));
 
-        let wrapped = focus_next_window(&mut model);
-        assert_eq!(wrapped, Some(window_id(1)));
+        let wrapped = focus_next_window(&mut model, Vec::new());
+        assert_eq!(wrapped, Some(window_id(8)));
     }
 
     #[test]
@@ -231,13 +545,21 @@ mod tests {
         model.insert_window(window_id(1), None, None);
         model.insert_window(window_id(3), None, None);
         model.insert_window(window_id(8), None, None);
+        model.set_current_workspace(WorkspaceId::from("1"));
+        model.set_window_workspace(window_id(1), Some(WorkspaceId::from("1")));
+        model.set_window_workspace(window_id(3), Some(WorkspaceId::from("1")));
+        model.set_window_workspace(window_id(8), Some(WorkspaceId::from("1")));
+        model.set_window_mapped(window_id(1), true);
+        model.set_window_mapped(window_id(3), true);
+        model.set_window_mapped(window_id(8), true);
+        model.set_focus_tree(Some(&flat_root(&[3, 1, 8])));
         model.set_window_focused(Some(window_id(3)));
 
-        let previous = focus_previous_window(&mut model);
-        assert_eq!(previous, Some(window_id(1)));
+        let previous = focus_previous_window(&mut model, Vec::new());
+        assert_eq!(previous, Some(window_id(8)));
 
-        let wrapped = focus_previous_window(&mut model);
-        assert_eq!(wrapped, Some(window_id(8)));
+        let wrapped = focus_previous_window(&mut model, Vec::new());
+        assert_eq!(wrapped, Some(window_id(1)));
     }
 
     #[test]
@@ -259,8 +581,12 @@ mod tests {
     fn request_focus_next_window_returns_selection() {
         let mut model = WmModel::default();
         model.insert_window(window_id(2), None, None);
+        model.set_current_workspace(WorkspaceId::from("1"));
+        model.set_window_workspace(window_id(2), Some(WorkspaceId::from("1")));
+        model.set_window_mapped(window_id(2), true);
+        model.set_focus_tree(Some(&flat_root(&[2])));
 
-        let selection = request_focus_next_window(&mut model);
+        let selection = request_focus_next_window(&mut model, Vec::new());
 
         assert_eq!(
             selection,
@@ -274,8 +600,12 @@ mod tests {
     fn request_focus_previous_window_returns_selection() {
         let mut model = WmModel::default();
         model.insert_window(window_id(2), None, None);
+        model.set_current_workspace(WorkspaceId::from("1"));
+        model.set_window_workspace(window_id(2), Some(WorkspaceId::from("1")));
+        model.set_window_mapped(window_id(2), true);
+        model.set_focus_tree(Some(&flat_root(&[2])));
 
-        let selection = request_focus_previous_window(&mut model);
+        let selection = request_focus_previous_window(&mut model, Vec::new());
 
         assert_eq!(
             selection,
@@ -290,9 +620,15 @@ mod tests {
         let mut model = WmModel::default();
         model.insert_window(window_id(1), None, None);
         model.insert_window(window_id(2), None, None);
+        model.set_current_workspace(WorkspaceId::from("1"));
+        model.set_window_workspace(window_id(1), Some(WorkspaceId::from("1")));
+        model.set_window_workspace(window_id(2), Some(WorkspaceId::from("1")));
+        model.set_window_mapped(window_id(1), true);
+        model.set_window_mapped(window_id(2), true);
+        model.set_focus_tree(Some(&flat_root(&[1, 2])));
         model.set_window_focused(Some(window_id(99)));
 
-        let next = focus_next_window(&mut model);
+        let next = focus_next_window(&mut model, Vec::new());
 
         assert_eq!(next, Some(window_id(1)));
     }
@@ -302,16 +638,42 @@ mod tests {
         let mut model = WmModel::default();
         model.insert_window(window_id(1), None, None);
         model.insert_window(window_id(2), None, None);
+        model.set_current_workspace(WorkspaceId::from("1"));
+        model.set_window_workspace(window_id(1), Some(WorkspaceId::from("1")));
+        model.set_window_workspace(window_id(2), Some(WorkspaceId::from("1")));
         model.set_window_mapped(window_id(1), true);
         model.set_window_mapped(window_id(2), true);
+        model.set_focus_tree(Some(&flat_root(&[1, 2])));
         model.set_window_focused(Some(window_id(2)));
 
-        let update = unmap_window(&mut model, window_id(2));
+        let update = unmap_window(&mut model, window_id(2), Vec::new());
 
         assert_eq!(update, FocusUpdate::Set(Some(window_id(1))));
         assert_eq!(
             model.windows.get(&window_id(2)).map(|window| window.mapped),
             Some(false)
         );
+    }
+
+    #[test]
+    fn removing_focused_window_prefers_same_group_memory_before_workspace_fallback() {
+        let mut model = WmModel::default();
+        let workspace_id = WorkspaceId::from("1");
+
+        for id in [1, 2, 3] {
+            model.insert_window(window_id(id), Some(workspace_id.clone()), None);
+            model.set_window_mapped(window_id(id), true);
+        }
+
+        model.set_current_workspace(workspace_id);
+        model.set_focus_tree(Some(&grouped_root()));
+        model.set_window_focused(Some(window_id(1)));
+        model.set_window_focused(Some(window_id(3)));
+        model.set_window_focused(Some(window_id(2)));
+
+        let update = remove_window(&mut model, window_id(2), Vec::new());
+
+        assert_eq!(update, FocusUpdate::Set(Some(window_id(1))));
+        assert_eq!(model.focused_window_id, Some(window_id(1)));
     }
 }

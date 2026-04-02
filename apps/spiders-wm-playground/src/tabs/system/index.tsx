@@ -20,6 +20,7 @@ export function SystemPane({
   dirtyFileCount,
   bindingsSource,
   context,
+  activeLayoutLabel,
 }: {
   preview: PreviewComputation | null;
   previewError: string | null;
@@ -27,6 +28,7 @@ export function SystemPane({
   dirtyFileCount: number;
   bindingsSource: string;
   context: LayoutContext;
+  activeLayoutLabel: string;
 }) {
   const bindingState = parseBindingsSource(bindingsSource);
   const logLines = [
@@ -102,6 +104,12 @@ export function SystemPane({
               <span>workspace</span>
               <span className="text-terminal-fg-strong">
                 {context.workspace.name}
+              </span>
+            </div>
+            <div className="border-terminal-border bg-terminal-bg-panel flex justify-between border px-2 py-1">
+              <span>layout</span>
+              <span className="text-terminal-fg-strong">
+                {activeLayoutLabel}
               </span>
             </div>
             <div className="border-terminal-border bg-terminal-bg-panel flex justify-between border px-2 py-1">

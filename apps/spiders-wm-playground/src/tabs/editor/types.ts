@@ -5,7 +5,9 @@ export type EditorFileId =
   | "config-layouts"
   | "root-css"
   | "layout-tsx"
-  | "layout-css";
+  | "layout-css"
+  | "focus-repro-layout-tsx"
+  | "focus-repro-layout-css";
 
 export interface EditorFile {
   id: EditorFileId;

@@ -15,9 +15,12 @@ import * as configInputsSourceModule from "./spiders-wm/config/inputs.ts?raw";
 import * as configLayoutsSourceModule from "./spiders-wm/config/layouts.ts?raw";
 import * as rootConfigSourceModule from "./spiders-wm/config.ts?raw";
 import * as rootStylesheetSourceModule from "./spiders-wm/index.css?raw";
-import * as layoutStylesheetSourceModule from "./spiders-wm/layouts/master-stack/index.css?raw";
-import * as layoutSourceModule from "./spiders-wm/layouts/master-stack/index.tsx?raw";
-import layout from "./spiders-wm/layouts/master-stack/index.tsx";
+import * as masterStackLayoutStylesheetSourceModule from "./spiders-wm/layouts/master-stack/index.css?raw";
+import * as masterStackLayoutSourceModule from "./spiders-wm/layouts/master-stack/index.tsx?raw";
+import * as focusReproLayoutStylesheetSourceModule from "./spiders-wm/layouts/focus-repro/index.css?raw";
+import * as focusReproLayoutSourceModule from "./spiders-wm/layouts/focus-repro/index.tsx?raw";
+import masterStackLayout from "./spiders-wm/layouts/master-stack/index.tsx";
+import focusReproLayout from "./spiders-wm/layouts/focus-repro/index.tsx";
 import {
   matchesBindingEvent,
   parseBindingsSource,
@@ -28,6 +31,7 @@ import {
   computePreview,
   type PreviewComputation,
   type PreviewSessionCommand,
+  type PreviewSessionState,
   type PreviewSessionWindow,
 } from "./wasm-preview.ts";
 
@@ -61,9 +65,58 @@ const configInputsSource = rawModuleSource(configInputsSourceModule);
 const configLayoutsSource = rawModuleSource(configLayoutsSourceModule);
 const rootConfigSource = rawModuleSource(rootConfigSourceModule);
 const rootStylesheetSource = rawModuleSource(rootStylesheetSourceModule);
-const layoutStylesheetSource = rawModuleSource(layoutStylesheetSourceModule);
-const layoutSource = rawModuleSource(layoutSourceModule);
+const masterStackLayoutStylesheetSource = rawModuleSource(
+  masterStackLayoutStylesheetSourceModule,
+);
+const masterStackLayoutSource = rawModuleSource(masterStackLayoutSourceModule);
+const focusReproLayoutStylesheetSource = rawModuleSource(
+  focusReproLayoutStylesheetSourceModule,
+);
+const focusReproLayoutSource = rawModuleSource(focusReproLayoutSourceModule);
 const workspaceConfigRoot = "file:///home/demo/.config/spiders-wm";
+
+type PreviewLayoutId = "master-stack" | "focus-repro";
+
+const previewLayouts: Array<{
+  id: PreviewLayoutId;
+  label: string;
+  layoutSource: string;
+  stylesheetSource: string;
+  render: (ctx: LayoutContext) => ReturnType<typeof masterStackLayout>;
+}> = [
+  {
+    id: "master-stack",
+    label: "master-stack",
+    layoutSource: masterStackLayoutSource,
+    stylesheetSource: masterStackLayoutStylesheetSource,
+    render: masterStackLayout,
+  },
+  {
+    id: "focus-repro",
+    label: "focus-repro",
+    layoutSource: focusReproLayoutSource,
+    stylesheetSource: focusReproLayoutStylesheetSource,
+    render: focusReproLayout,
+  },
+];
+
+function getPreviewLayout(layoutId: PreviewLayoutId) {
+  return (
+    previewLayouts.find((layout) => layout.id === layoutId) ??
+    previewLayouts[0]!
+  );
+}
+
+function getNextPreviewLayout(layoutId: PreviewLayoutId) {
+  const currentIndex = previewLayouts.findIndex(
+    (layout) => layout.id === layoutId,
+  );
+
+  return (
+    previewLayouts[(currentIndex + 1) % previewLayouts.length] ??
+    previewLayouts[0]!
+  );
+}
 
 const editorFiles: EditorFile[] = [
   {
@@ -122,7 +175,7 @@ const editorFiles: EditorFile[] = [
     path: "~/.config/spiders-wm/layouts/master-stack/index.tsx",
     modelPath: `${workspaceConfigRoot}/layouts/master-stack/index.tsx`,
     language: "typescript",
-    initialValue: layoutSource,
+    initialValue: masterStackLayoutSource,
     icon: "",
     iconTone: "text-file-tsx",
   },
@@ -132,7 +185,27 @@ const editorFiles: EditorFile[] = [
     path: "~/.config/spiders-wm/layouts/master-stack/index.css",
     modelPath: `${workspaceConfigRoot}/layouts/master-stack/index.css`,
     language: "css",
-    initialValue: layoutStylesheetSource,
+    initialValue: masterStackLayoutStylesheetSource,
+    icon: "",
+    iconTone: "text-file-css",
+  },
+  {
+    id: "focus-repro-layout-tsx",
+    label: "index.tsx",
+    path: "~/.config/spiders-wm/layouts/focus-repro/index.tsx",
+    modelPath: `${workspaceConfigRoot}/layouts/focus-repro/index.tsx`,
+    language: "typescript",
+    initialValue: focusReproLayoutSource,
+    icon: "",
+    iconTone: "text-file-tsx",
+  },
+  {
+    id: "focus-repro-layout-css",
+    label: "index.css",
+    path: "~/.config/spiders-wm/layouts/focus-repro/index.css",
+    modelPath: `${workspaceConfigRoot}/layouts/focus-repro/index.css`,
+    language: "css",
+    initialValue: focusReproLayoutStylesheetSource,
     icon: "",
     iconTone: "text-file-css",
   },
@@ -168,6 +241,16 @@ const fileTree: FileTreeDirectoryNode = {
           children: [
             { kind: "file", fileId: "layout-tsx" },
             { kind: "file", fileId: "layout-css" },
+          ],
+        },
+        {
+          kind: "directory",
+          name: "focus-repro",
+          defaultOpen: true,
+          downloadRootPath: "~/.config/spiders-wm/layouts/focus-repro",
+          children: [
+            { kind: "file", fileId: "focus-repro-layout-tsx" },
+            { kind: "file", fileId: "focus-repro-layout-css" },
           ],
         },
       ],
@@ -240,10 +323,13 @@ export default function App() {
   const [activeFileId, setActiveFileId] = useState<EditorFileId | null>(
     "config",
   );
-  const [openFileIds, setOpenFileIds] = useState<EditorFileId[]>(() =>
-    ["config", "root-css"],
-  );
+  const [openFileIds, setOpenFileIds] = useState<EditorFileId[]>(() => [
+    "config",
+    "root-css",
+  ]);
   const [vimEnabled, setVimEnabled] = useState(true);
+  const [activePreviewLayoutId, setActivePreviewLayoutId] =
+    useState<PreviewLayoutId>("focus-repro");
   const [activeWorkspaceName, setActiveWorkspaceName] = useState<string>(
     initialWorkspaceNames[0] ?? "1:dev",
   );
@@ -255,12 +341,23 @@ export default function App() {
     "config-inputs": configInputsSource,
     "config-layouts": configLayoutsSource,
     "root-css": rootStylesheetSource,
-    "layout-tsx": layoutSource,
-    "layout-css": layoutStylesheetSource,
+    "layout-tsx": masterStackLayoutSource,
+    "layout-css": masterStackLayoutStylesheetSource,
+    "focus-repro-layout-tsx": focusReproLayoutSource,
+    "focus-repro-layout-css": focusReproLayoutStylesheetSource,
   }));
   const [windows, setWindows] = useState<PlaygroundWindow[]>(
     () => initialWindows,
   );
+  const [rememberedFocusByScope, setRememberedFocusByScope] = useState<
+    Record<string, string>
+  >({});
+  const [masterRatioByWorkspace, setMasterRatioByWorkspace] = useState<
+    Record<string, number>
+  >({});
+  const [stackWeightsByWorkspace, setStackWeightsByWorkspace] = useState<
+    Record<string, Record<string, number>>
+  >({});
   const [preview, setPreview] = useState<PreviewComputation | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [lastAction, setLastAction] = useState<string>(
@@ -283,13 +380,23 @@ export default function App() {
         .map(stripWorkspaceName),
     [activeWorkspaceName, windows],
   );
-  const previewSessionState = useMemo(
+  const previewSessionState = useMemo<PreviewSessionState>(
     () => ({
       activeWorkspaceName,
       workspaceNames,
       windows,
+      rememberedFocusByScope,
+      masterRatioByWorkspace,
+      stackWeightsByWorkspace,
     }),
-    [activeWorkspaceName, workspaceNames, windows],
+    [
+      activeWorkspaceName,
+      masterRatioByWorkspace,
+      rememberedFocusByScope,
+      stackWeightsByWorkspace,
+      windows,
+      workspaceNames,
+    ],
   );
   const previewContext = useMemo<LayoutContext>(
     () => ({
@@ -307,6 +414,7 @@ export default function App() {
     }),
     [activeWorkspaceName, lastAction, visibleWindows, workspaceNames],
   );
+  const activePreviewLayout = getPreviewLayout(activePreviewLayoutId);
 
   useEffect(() => {
     if (!workspaceNames.includes(activeWorkspaceName) && workspaceNames[0]) {
@@ -316,9 +424,9 @@ export default function App() {
 
   const refreshPreview = useEffectEvent(async () => {
     const nextPreview = await computePreview(
-      layout(previewContext),
+      activePreviewLayout.render(previewContext),
       previewContext.windows,
-      layoutStylesheetSource,
+      activePreviewLayout.stylesheetSource,
       monitor.width,
       monitor.height,
       previewSessionState,
@@ -354,10 +462,24 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [activeTab, previewContext, previewSessionState]);
+  }, [activeTab, activePreviewLayoutId, previewContext, previewSessionState]);
 
   const dispatchPreviewCommand = useEffectEvent(
     async (command: PreviewSessionCommand, actionLabel?: string) => {
+      if (command.name === "cycle_layout") {
+        setActivePreviewLayoutId((current) => {
+          const nextLayout = getNextPreviewLayout(current);
+
+          if (actionLabel) {
+            setLastAction(`${actionLabel} -> ${nextLayout.label}`);
+          }
+
+          return nextLayout.id;
+        });
+
+        return;
+      }
+
       const pendingCommandKey = `${command.name}:${String(command.arg ?? "")}`;
 
       if (previewCommandGate.pendingCommandKey === pendingCommandKey) {
@@ -375,6 +497,9 @@ export default function App() {
 
         setWindows(nextState.windows);
         setActiveWorkspaceName(nextState.activeWorkspaceName);
+        setRememberedFocusByScope(nextState.rememberedFocusByScope ?? {});
+        setMasterRatioByWorkspace(nextState.masterRatioByWorkspace ?? {});
+        setStackWeightsByWorkspace(nextState.stackWeightsByWorkspace ?? {});
 
         if (actionLabel) {
           setLastAction(
@@ -545,6 +670,21 @@ export default function App() {
             preview={preview}
             previewError={previewError}
             context={previewContext}
+            layoutOptions={previewLayouts.map(({ id, label }) => ({
+              id,
+              label,
+            }))}
+            activeLayoutId={activePreviewLayout.id}
+            onSelectLayout={(layoutId) => {
+              if (layoutId === activePreviewLayout.id) {
+                return;
+              }
+
+              const nextLayout = getPreviewLayout(layoutId as PreviewLayoutId);
+
+              setActivePreviewLayoutId(nextLayout.id);
+              setLastAction(`click layout -> ${nextLayout.label}`);
+            }}
             onSelectWorkspace={(workspaceName) => {
               const workspaceIndex = workspaceNames.indexOf(workspaceName);
 
@@ -592,6 +732,7 @@ export default function App() {
             dirtyFileCount={dirtyFileCount}
             bindingsSource={editorBuffers["config-bindings"]}
             context={previewContext}
+            activeLayoutLabel={activePreviewLayout.label}
           />
         ) : null}
       </div>

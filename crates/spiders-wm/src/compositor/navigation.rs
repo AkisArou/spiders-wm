@@ -12,11 +12,13 @@ use crate::state::SpidersWm;
 
 impl SpidersWm {
     pub fn focus_next_window(&mut self, serial: smithay::utils::Serial) {
+        let window_order = self.managed_window_ids();
         let next_focus_window_id =
             match self
                 .runtime()
                 .execute(RuntimeCommand::RequestFocusNextWindowSelection {
                     seat_id: "winit".into(),
+                    window_order,
                 }) {
                 RuntimeResult::FocusSelection(selection) => selection.focused_window_id,
                 _ => None,
@@ -26,11 +28,13 @@ impl SpidersWm {
     }
 
     pub fn focus_previous_window(&mut self, serial: smithay::utils::Serial) {
+        let window_order = self.managed_window_ids();
         let previous_focus_window_id =
             match self
                 .runtime()
                 .execute(RuntimeCommand::RequestFocusPreviousWindowSelection {
                     seat_id: "winit".into(),
+                    window_order,
                 }) {
                 RuntimeResult::FocusSelection(selection) => selection.focused_window_id,
                 _ => None,
@@ -54,6 +58,8 @@ impl SpidersWm {
             &candidates,
             current_focused_window_id,
             navigation_direction(direction),
+            &self.model.last_focused_window_id_by_scope,
+            self.model.focus_tree.as_ref(),
         ) {
             Some(window_id) => Some(window_id),
             None => {
@@ -115,6 +121,8 @@ impl SpidersWm {
             &candidates,
             Some(current_focused_window_id.clone()),
             navigation_direction(direction),
+            &self.model.last_focused_window_id_by_scope,
+            self.model.focus_tree.as_ref(),
         ) else {
             return;
         };
@@ -152,6 +160,11 @@ impl SpidersWm {
                         width: record.window.geometry().size.w,
                         height: record.window.geometry().size.h,
                     },
+                    scope_path: self
+                        .model
+                        .focus_scope_path(&record.id)
+                        .map(|scope_path| scope_path.to_vec())
+                        .unwrap_or_default(),
                 })
             })
             .collect()

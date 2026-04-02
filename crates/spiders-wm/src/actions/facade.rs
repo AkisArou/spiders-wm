@@ -82,8 +82,9 @@ impl<'a> WmActions<'a> {
     pub fn request_focus_next_window_selection(
         &mut self,
         seat_id: impl Into<SeatId>,
+        window_order: impl IntoIterator<Item = WindowId>,
     ) -> FocusSelection {
-        let selection = focus::request_focus_next_window(self.model);
+        let selection = focus::request_focus_next_window(self.model, window_order);
         let focused_window_id =
             seat::sync_focused_window(self.model, seat_id, selection.focused_window_id);
         FocusSelection { focused_window_id }
@@ -92,8 +93,9 @@ impl<'a> WmActions<'a> {
     pub fn request_focus_previous_window_selection(
         &mut self,
         seat_id: impl Into<SeatId>,
+        window_order: impl IntoIterator<Item = WindowId>,
     ) -> FocusSelection {
-        let selection = focus::request_focus_previous_window(self.model);
+        let selection = focus::request_focus_previous_window(self.model, window_order);
         let focused_window_id =
             seat::sync_focused_window(self.model, seat_id, selection.focused_window_id);
         FocusSelection { focused_window_id }
@@ -115,12 +117,20 @@ impl<'a> WmActions<'a> {
         seat::sync_interacted_window(self.model, seat_id, interacted_window_id)
     }
 
-    pub fn remove_window(&mut self, window_id: WindowId) -> focus::FocusUpdate {
-        focus::remove_window(self.model, window_id)
+    pub fn remove_window(
+        &mut self,
+        window_id: WindowId,
+        window_order: impl IntoIterator<Item = WindowId>,
+    ) -> focus::FocusUpdate {
+        focus::remove_window(self.model, window_id, window_order)
     }
 
-    pub fn unmap_window(&mut self, window_id: WindowId) -> focus::FocusUpdate {
-        focus::unmap_window(self.model, window_id)
+    pub fn unmap_window(
+        &mut self,
+        window_id: WindowId,
+        window_order: impl IntoIterator<Item = WindowId>,
+    ) -> focus::FocusUpdate {
+        focus::unmap_window(self.model, window_id, window_order)
     }
 
     pub fn request_close_focused_window_selection(&mut self) -> CloseSelection {

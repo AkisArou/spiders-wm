@@ -370,6 +370,144 @@ fn resolve_later_nodes_only_see_unclaimed_windows() {
 }
 
 #[test]
+fn resolve_focus_repro_slots_keep_second_window_in_main_column() {
+    let tree = ValidatedLayoutTree::new(SourceLayoutNode::Workspace {
+        meta: LayoutNodeMeta::default(),
+        children: vec![
+            SourceLayoutNode::Group {
+                meta: LayoutNodeMeta {
+                    id: Some("main-column".into()),
+                    ..LayoutNodeMeta::default()
+                },
+                children: vec![
+                    SourceLayoutNode::Slot {
+                        meta: LayoutNodeMeta {
+                            id: Some("main-top".into()),
+                            ..LayoutNodeMeta::default()
+                        },
+                        window_match: None,
+                        take: SlotTake::Count(1),
+                    },
+                    SourceLayoutNode::Slot {
+                        meta: LayoutNodeMeta {
+                            id: Some("main-bottom".into()),
+                            ..LayoutNodeMeta::default()
+                        },
+                        window_match: None,
+                        take: SlotTake::Count(1),
+                    },
+                ],
+            },
+            SourceLayoutNode::Group {
+                meta: LayoutNodeMeta {
+                    id: Some("side-column".into()),
+                    ..LayoutNodeMeta::default()
+                },
+                children: vec![SourceLayoutNode::Slot {
+                    meta: LayoutNodeMeta {
+                        id: Some("side".into()),
+                        ..LayoutNodeMeta::default()
+                    },
+                    window_match: None,
+                    take: SlotTake::Remaining(RemainingTake::Remaining),
+                }],
+            },
+        ],
+    })
+    .unwrap();
+
+    let resolved = tree
+        .resolve(&[
+            window("w1", "foot", "Terminal 2"),
+            window("w2", "zen", "Reference"),
+            window("w3", "foot", "Terminal 4"),
+            window("w4", "foot", "Terminal 5"),
+        ])
+        .unwrap();
+
+    assert_eq!(
+        resolved.root,
+        ResolvedLayoutNode::Workspace {
+            meta: LayoutNodeMeta::default(),
+            children: vec![
+                ResolvedLayoutNode::Group {
+                    meta: LayoutNodeMeta {
+                        id: Some("main-column".into()),
+                        ..LayoutNodeMeta::default()
+                    },
+                    children: vec![
+                        ResolvedLayoutNode::Window {
+                            meta: LayoutNodeMeta {
+                                id: Some("main-top".into()),
+                                data: [
+                                    ("app_id".into(), "foot".into()),
+                                    ("shell".into(), "xdg_toplevel".into()),
+                                    ("title".into(), "Terminal 2".into()),
+                                ]
+                                .into_iter()
+                                .collect(),
+                                ..LayoutNodeMeta::default()
+                            },
+                            window_id: Some(WindowId::from("w1")),
+                        },
+                        ResolvedLayoutNode::Window {
+                            meta: LayoutNodeMeta {
+                                id: Some("main-bottom".into()),
+                                data: [
+                                    ("app_id".into(), "zen".into()),
+                                    ("shell".into(), "xdg_toplevel".into()),
+                                    ("title".into(), "Reference".into()),
+                                ]
+                                .into_iter()
+                                .collect(),
+                                ..LayoutNodeMeta::default()
+                            },
+                            window_id: Some(WindowId::from("w2")),
+                        },
+                    ],
+                },
+                ResolvedLayoutNode::Group {
+                    meta: LayoutNodeMeta {
+                        id: Some("side-column".into()),
+                        ..LayoutNodeMeta::default()
+                    },
+                    children: vec![
+                        ResolvedLayoutNode::Window {
+                            meta: LayoutNodeMeta {
+                                id: Some("side".into()),
+                                data: [
+                                    ("app_id".into(), "foot".into()),
+                                    ("shell".into(), "xdg_toplevel".into()),
+                                    ("title".into(), "Terminal 4".into()),
+                                ]
+                                .into_iter()
+                                .collect(),
+                                ..LayoutNodeMeta::default()
+                            },
+                            window_id: Some(WindowId::from("w3")),
+                        },
+                        ResolvedLayoutNode::Window {
+                            meta: LayoutNodeMeta {
+                                id: Some("side".into()),
+                                data: [
+                                    ("app_id".into(), "foot".into()),
+                                    ("shell".into(), "xdg_toplevel".into()),
+                                    ("title".into(), "Terminal 5".into()),
+                                ]
+                                .into_iter()
+                                .collect(),
+                                ..LayoutNodeMeta::default()
+                            },
+                            window_id: Some(WindowId::from("w4")),
+                        },
+                    ],
+                },
+            ],
+        }
+    );
+}
+
+#[test]
 fn resolve_window_meta_adds_runtime_state_classes() {
     let tree = ValidatedLayoutTree::new(SourceLayoutNode::Workspace {
         meta: LayoutNodeMeta::default(),

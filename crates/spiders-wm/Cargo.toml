@@ -10,21 +10,21 @@ anyhow.workspace = true
 spiders-config = { path = "../spiders-config" }
 spiders-ipc = { path = "../spiders-ipc" }
 spiders-scene = { path = "../spiders-scene" }
+spiders-css = { path = "../spiders-css" }
 spiders-runtime-js = { path = "../runtimes/js" }
 spiders-core = { path = "../spiders-core" }
 thiserror = { workspace = true }
 tracing = { workspace = true }
-tracing-subscriber = { workspace = true, features = ["env-filter", "fmt", "ansi"] }
+tracing-subscriber = { workspace = true, features = [
+  "env-filter",
+  "fmt",
+  "ansi",
+] }
 
 [dependencies.smithay]
 path = "../../../smithay"
 default-features = false
-features = [
-    "backend_drm",
-    "backend_winit",
-    "desktop",
-    "wayland_frontend",
-]
+features = ["backend_drm", "backend_winit", "desktop", "wayland_frontend"]
 
 [dev-dependencies]
 serde_json.workspace = true

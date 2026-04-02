@@ -1,6 +1,8 @@
 use std::collections::BTreeMap;
 
+use crate::focus::{FocusScopeNavigation, FocusTree};
 use crate::{OutputId, SeatId, WindowId, WorkspaceId};
+use crate::ResolvedLayoutNode;
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct OutputModel {
@@ -81,6 +83,8 @@ pub struct WmModel {
     pub focused_window_id: Option<WindowId>,
     pub current_workspace_id: Option<WorkspaceId>,
     pub current_output_id: Option<OutputId>,
+    pub focus_tree: Option<FocusTree>,
+    pub last_focused_window_id_by_scope: BTreeMap<String, WindowId>,
 }
 
 impl WmModel {
@@ -319,7 +323,7 @@ impl WmModel {
         I: IntoIterator<Item = WindowId>,
     {
         let visible_window_ids = self
-            .window_ids_on_current_workspace(window_ids)
+            .ordered_window_ids_on_current_workspace(window_ids)
             .into_iter()
             .filter(|window_id| self.window_is_focusable(window_id))
             .collect::<Vec<_>>();
@@ -328,6 +332,12 @@ impl WmModel {
             if visible_window_ids.contains(&focused_window_id) {
                 return Some(focused_window_id);
             }
+        }
+
+        if let Some(remembered_window_id) = self.remembered_focus_for_scope(FocusTree::workspace_scope_key())
+            && visible_window_ids.contains(remembered_window_id)
+        {
+            return Some(remembered_window_id.clone());
         }
 
         visible_window_ids.into_iter().last()
@@ -352,13 +362,100 @@ impl WmModel {
     }
 
     pub fn preferred_focusable_window_id(&self) -> Option<WindowId> {
+        let ordered_window_ids = self.ordered_focusable_window_ids_on_current_workspace(Vec::new());
+
         if let Some(focused_window_id) = self.focused_window_id.clone()
-            && self.window_is_focusable(&focused_window_id)
+            && ordered_window_ids.contains(&focused_window_id)
         {
             return Some(focused_window_id);
         }
 
-        self.focusable_window_ids().into_iter().next_back()
+        ordered_window_ids.into_iter().next_back()
+    }
+
+    pub fn ordered_window_ids_on_current_workspace<I>(&self, hinted_window_ids: I) -> Vec<WindowId>
+    where
+        I: IntoIterator<Item = WindowId>,
+    {
+        let mut ordered_window_ids = Vec::new();
+        let mut seen_window_ids = std::collections::BTreeSet::new();
+
+        if let Some(focus_tree) = self.focus_tree.as_ref() {
+            for window_id in focus_tree.ordered_window_ids() {
+                if self.has_window(window_id)
+                    && self.window_is_on_current_workspace(window_id.clone())
+                    && seen_window_ids.insert(window_id.clone())
+                {
+                    ordered_window_ids.push(window_id.clone());
+                }
+            }
+        }
+
+        for window_id in hinted_window_ids {
+            if self.has_window(&window_id)
+                && self.window_is_on_current_workspace(window_id.clone())
+                && seen_window_ids.insert(window_id.clone())
+            {
+                ordered_window_ids.push(window_id);
+            }
+        }
+
+        for window_id in self.windows.keys() {
+            if self.window_is_on_current_workspace(window_id.clone())
+                && seen_window_ids.insert(window_id.clone())
+            {
+                ordered_window_ids.push(window_id.clone());
+            }
+        }
+
+        ordered_window_ids
+    }
+
+    pub fn ordered_focusable_window_ids_on_current_workspace<I>(
+        &self,
+        hinted_window_ids: I,
+    ) -> Vec<WindowId>
+    where
+        I: IntoIterator<Item = WindowId>,
+    {
+        self.ordered_window_ids_on_current_workspace(hinted_window_ids)
+            .into_iter()
+            .filter(|window_id| self.window_is_focus_cycle_candidate(window_id))
+            .collect()
+    }
+
+    pub fn window_is_focus_cycle_candidate(&self, id: &WindowId) -> bool {
+        self.windows.get(id).is_some_and(|window| {
+            !window.closing
+                && window.mapped
+                && self
+                    .current_workspace_id
+                    .as_ref()
+                    .is_none_or(|workspace_id| window.workspace_id.as_ref() == Some(workspace_id))
+        })
+    }
+
+    pub fn set_focus_tree(&mut self, root: Option<&ResolvedLayoutNode>) {
+        self.focus_tree = root.map(FocusTree::from_resolved_root);
+        self.prune_focus_memory();
+    }
+
+    pub fn set_focus_navigation(&mut self, navigation_by_scope: BTreeMap<String, FocusScopeNavigation>) {
+        if let Some(focus_tree) = self.focus_tree.as_mut() {
+            focus_tree.set_navigation(navigation_by_scope);
+        }
+    }
+
+    pub fn focus_scope_path(&self, window_id: &WindowId) -> Option<&[String]> {
+        self.focus_tree.as_ref()?.scope_path(window_id)
+    }
+
+    pub fn focus_scope_descendants(&self, scope_key: &str) -> Option<&[WindowId]> {
+        self.focus_tree.as_ref()?.descendants(scope_key)
+    }
+
+    pub fn remembered_focus_for_scope(&self, scope_key: &str) -> Option<&WindowId> {
+        self.last_focused_window_id_by_scope.get(scope_key)
     }
 
     pub fn set_window_mapped(&mut self, id: WindowId, mapped: bool) {
@@ -397,6 +494,10 @@ impl WmModel {
         for (window_id, window) in &mut self.windows {
             window.focused = Some(window_id.clone()) == self.focused_window_id;
         }
+
+        if let Some(focused_window_id) = focused_id.as_ref() {
+            self.remember_focus_for_window(focused_window_id);
+        }
     }
 
     pub fn set_window_closing(&mut self, id: WindowId, closing: bool) {
@@ -422,6 +523,32 @@ impl WmModel {
         if self.focused_window_id == Some(id) {
             self.focused_window_id = None;
         }
+        self.prune_focus_memory();
+    }
+
+    fn remember_focus_for_window(&mut self, window_id: &WindowId) {
+        if let Some(focus_tree) = self.focus_tree.as_ref()
+            && let Some(scope_path) = focus_tree.scope_path(window_id)
+        {
+            for scope_key in scope_path {
+                self.last_focused_window_id_by_scope
+                    .insert(scope_key.clone(), window_id.clone());
+            }
+        }
+    }
+
+    fn prune_focus_memory(&mut self) {
+        let Some(focus_tree) = self.focus_tree.as_ref() else {
+            self.last_focused_window_id_by_scope.clear();
+            return;
+        };
+
+        let valid_scope_keys = focus_tree.scope_keys().cloned().collect::<std::collections::BTreeSet<_>>();
+        self.last_focused_window_id_by_scope.retain(|scope_key, window_id| {
+            valid_scope_keys.contains(scope_key)
+                && self.windows.contains_key(window_id)
+                && focus_tree.contains_window(window_id)
+        });
     }
 }
 

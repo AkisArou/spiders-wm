@@ -3095,6 +3095,7 @@ dependencies = [
  "smithay",
  "spiders-config",
  "spiders-core",
+ "spiders-css",
  "spiders-ipc",
  "spiders-runtime-js",
  "spiders-scene",

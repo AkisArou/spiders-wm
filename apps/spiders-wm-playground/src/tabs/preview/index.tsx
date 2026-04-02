@@ -19,6 +19,9 @@ export function previewPane({
   preview,
   previewError,
   context,
+  layoutOptions,
+  activeLayoutId,
+  onSelectLayout,
   showSidebar,
   onToggleSidebar,
   onSelectWorkspace,
@@ -26,6 +29,9 @@ export function previewPane({
   preview: PreviewComputation | null;
   previewError: string | null;
   context: LayoutContext;
+  layoutOptions: Array<{ id: string; label: string }>;
+  activeLayoutId: string;
+  onSelectLayout?: (layoutId: string) => void;
   showSidebar: boolean;
   onToggleSidebar: () => void;
   onSelectWorkspace?: (workspaceName: string) => void;
@@ -72,6 +78,22 @@ export function previewPane({
           </div>
 
           <div className="flex items-center gap-2 justify-self-end">
+            <div className="preview-layout-select-wrap">
+              <select
+                value={activeLayoutId}
+                aria-label="Select preview layout"
+                className="preview-layout-select"
+                onChange={(event) => {
+                  onSelectLayout?.(event.target.value);
+                }}
+              >
+                {layoutOptions.map((layoutOption) => (
+                  <option key={layoutOption.id} value={layoutOption.id}>
+                    {layoutOption.label}
+                  </option>
+                ))}
+              </select>
+            </div>
             <span>{context.windows.length} windows</span>
             <button
               type="button"
@@ -119,7 +141,7 @@ export function previewPane({
       </div>
 
       {showSidebar ? (
-        <div className="grid min-h-0 gap-2 xl:grid-rows-[auto_auto_minmax(10rem,0.85fr)_minmax(12rem,1fr)]">
+        <div className="grid min-h-0 gap-2 xl:grid-rows-[auto_auto_auto_minmax(10rem,0.8fr)_minmax(12rem,1fr)]">
           <div className={panelClass}>
             <div className={barClass}>session://windows</div>
             <div className="text-terminal-muted grid gap-3 p-2 text-sm">
@@ -133,6 +155,17 @@ export function previewPane({
               <WindowList
                 windows={preview?.unclaimedWindows ?? []}
                 emptyLabel="all claimed"
+              />
+            </div>
+          </div>
+
+          <div className={panelClass}>
+            <div className={barClass}>layout://order</div>
+            <div className="grid gap-3 p-2 text-sm">
+              <WindowOrderSummary label="input" windows={context.windows} />
+              <WindowOrderSummary
+                label="claimed"
+                windows={preview?.treeRoot?.claimedWindows ?? []}
               />
             </div>
           </div>
@@ -166,11 +199,17 @@ export function PreviewPane({
   preview,
   previewError,
   context,
+  layoutOptions,
+  activeLayoutId,
+  onSelectLayout,
   onSelectWorkspace,
 }: {
   preview: PreviewComputation | null;
   previewError: string | null;
   context: LayoutContext;
+  layoutOptions: Array<{ id: string; label: string }>;
+  activeLayoutId: string;
+  onSelectLayout?: (layoutId: string) => void;
   onSelectWorkspace?: (workspaceName: string) => void;
 }) {
   const [showSidebar, setShowSidebar] = useState(false);
@@ -179,6 +218,9 @@ export function PreviewPane({
     preview,
     previewError,
     context,
+    layoutOptions,
+    activeLayoutId,
+    onSelectLayout,
     showSidebar,
     onToggleSidebar: () => {
       setShowSidebar((current) => !current);
@@ -379,6 +421,27 @@ function WindowList({
           </span>
         </div>
       ))}
+    </div>
+  );
+}
+
+function WindowOrderSummary({
+  label,
+  windows,
+}: {
+  label: string;
+  windows: LayoutWindow[];
+}) {
+  return (
+    <div className="grid gap-1">
+      <div className="text-terminal-dim text-xs">{label}</div>
+      <div className="text-terminal-muted text-sm">
+        {windows.length === 0
+          ? "none"
+          : windows
+              .map((window, index) => `${index + 1}:${window.title ?? window.id}`)
+              .join("  ->  ")}
+      </div>
     </div>
   );
 }
