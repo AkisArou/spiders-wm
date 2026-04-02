@@ -6,6 +6,7 @@ import type {
   WorkspaceProps,
 } from "./layout";
 
+type Component<Props = Record<string, unknown>> = (props: Props) => unknown;
 type JSXChild = LayoutRenderable | string | number | boolean | null | undefined;
 type JSXChildren = JSXChild | JSXChild[];
 type JSXPropsWithChildren<T> = T & {
@@ -14,7 +15,11 @@ type JSXPropsWithChildren<T> = T & {
 
 declare global {
   const Fragment: unique symbol;
-  function sp(type: string | typeof Fragment, props: Record<string, unknown> | null, ...children: unknown[]): unknown;
+  function sp(
+    type: string | typeof Fragment | Component,
+    props: Record<string, unknown> | null,
+    ...children: unknown[]
+  ): unknown;
 
   namespace JSX {
     type Element = LayoutRenderable;
@@ -42,8 +47,21 @@ declare global {
   }
 }
 
-export declare function jsx(type: string | typeof Fragment, props: Record<string, unknown> | null, key?: unknown): unknown;
-export declare function jsxs(type: string | typeof Fragment, props: Record<string, unknown> | null, key?: unknown): unknown;
+export declare function sp(
+  type: string | typeof Fragment | Component,
+  props: Record<string, unknown> | null,
+  ...children: unknown[]
+): unknown;
+export declare function jsx(
+  type: string | typeof Fragment | Component,
+  props: Record<string, unknown> | null,
+  key?: unknown,
+): unknown;
+export declare function jsxs(
+  type: string | typeof Fragment | Component,
+  props: Record<string, unknown> | null,
+  key?: unknown,
+): unknown;
 export { Fragment };
 
 export {};

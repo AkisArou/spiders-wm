@@ -1,86 +1,57 @@
+@import "tailwindcss";
+
+@theme {
+  --color-terminal-bg: #08090d;
+  --color-terminal-bg-subtle: #0b0d12;
+  --color-terminal-bg-panel: #0e1117;
+  --color-terminal-bg-bar: #10131a;
+  --color-terminal-bg-hover: #141924;
+  --color-terminal-bg-active: #1a1f2c;
+  --color-terminal-border: #1c2230;
+  --color-terminal-border-strong: #374051;
+  --color-terminal-grid: #2e3440;
+  --color-terminal-fg: #d4d7dd;
+  --color-terminal-fg-strong: #eef3fb;
+  --color-terminal-muted: #aeb6c4;
+  --color-terminal-dim: #7f8797;
+  --color-terminal-faint: #6f788a;
+  --color-terminal-info: #94e2d5;
+  --color-terminal-warn: #f9e2af;
+  --color-terminal-error: #f38ba8;
+  --color-terminal-wait: #89b4fa;
+  --color-file-ts: #519aba;
+  --color-file-tsx: #1354bf;
+  --color-file-css: #663399;
+  --font-mono: "JetBrainsMono Nerd Font", "Symbols Nerd Font Mono", "IBM Plex Mono", monospace;
+}
+
 :root {
-  --bg: #f5efe5;
-  --bg-accent: #efe4d4;
-  --panel-bg: rgba(255, 251, 245, 0.84);
-  --panel-soft: rgba(255, 255, 255, 0.56);
-  --panel-border: rgba(30, 41, 59, 0.1);
-  --panel-shadow: rgba(15, 23, 42, 0.06) 0 18px 42px;
-  --text: #4e463d;
-  --text-strong: #1c1917;
-  --text-muted: #7a6d60;
-  --accent-strong: #0f766e;
-  --chip-bg: rgba(15, 118, 110, 0.1);
-  --chip-text: #115e59;
-  --code-bg: #f3ece2;
-  --sans: "Avenir Next", "Gill Sans", "Trebuchet MS", sans-serif;
-  --heading:
-    "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Georgia, serif;
-  --mono: "SFMono-Regular", "Cascadia Code", "Liberation Mono", monospace;
-  font: 17px/1.55 var(--sans);
-  color: var(--text);
-  background:
-    radial-gradient(
-      circle at top left,
-      rgba(15, 118, 110, 0.08),
-      transparent 32%
-    ),
-    radial-gradient(
-      circle at top right,
-      rgba(185, 87, 44, 0.08),
-      transparent 28%
-    ),
-    linear-gradient(180deg, var(--bg), var(--bg-accent));
+  color-scheme: dark;
   font-synthesis: none;
-  text-rendering: optimizeLegibility;
+  text-rendering: geometricPrecision;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
-* {
-  box-sizing: border-box;
+html,
+body,
+#root {
+  height: 100%;
 }
 
 body {
   margin: 0;
-  min-height: 100vh;
 }
 
-#root {
-  min-height: 100vh;
-}
+@layer base {
+  body {
+    @apply bg-terminal-bg text-terminal-fg font-mono;
+  }
 
-h1,
-h2,
-h3 {
-  margin: 0;
-  color: var(--text-strong);
-}
-
-h1,
-h2 {
-  font-family: var(--heading);
-  font-weight: 600;
-  line-height: 1.02;
-}
-
-h1 {
-  font-size: clamp(2.7rem, 6vw, 5.4rem);
-  letter-spacing: -0.04em;
-}
-
-h2 {
-  font-size: clamp(1.4rem, 2vw, 2rem);
-}
-
-h3 {
-  font-size: 1rem;
-}
-
-p {
-  margin: 0;
-}
-
-code,
-pre {
-  font-family: var(--mono);
+  button,
+  input,
+  textarea,
+  select {
+    font: inherit;
+  }
 }

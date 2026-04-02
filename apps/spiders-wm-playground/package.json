@@ -4,14 +4,21 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "build:bindings": "../../scripts/build-web-bindings.sh release",
+    "build:bindings:dev": "../../scripts/build-web-bindings.sh dev",
+    "predev": "pnpm run build:bindings:dev",
+    "prebuild": "pnpm run build:bindings",
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview"
   },
   "dependencies": {
+    "@monaco-editor/react": "^4.7.0",
+    "@spiders-wm/sdk": "workspace:*",
+    "monaco-editor": "^0.55.1",
+    "monaco-vim": "^0.4.4",
     "react": "catalog:",
-    "react-dom": "catalog:",
-    "@spiders-wm/sdk": "workspace:*"
+    "react-dom": "catalog:"
   },
   "devDependencies": {
     "@babel/core": "catalog:",
@@ -21,8 +28,10 @@
     "@types/react-dom": "catalog:",
     "@vitejs/plugin-react": "catalog:",
     "babel-plugin-react-compiler": "catalog:",
+    "tsconfig": "workspace:*",
     "typescript": "catalog:",
     "vite": "catalog:",
-    "tsconfig": "workspace:*"
+    "tailwindcss": "catalog:",
+    "@tailwindcss/vite": "catalog:"
   }
 }

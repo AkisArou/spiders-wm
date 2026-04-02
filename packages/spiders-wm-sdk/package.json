@@ -14,6 +14,10 @@
     },
     "./config": "./src/config.d.ts",
     "./css": "./src/css.d.ts",
+    "./jsx-dev-runtime": {
+      "types": "./src/jsx-dev-runtime.d.ts",
+      "default": "./src/jsx-dev-runtime.js"
+    },
     "./jsx-runtime": {
       "types": "./src/jsx-runtime.d.ts",
       "default": "./src/jsx-runtime.js"

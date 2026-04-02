@@ -1,4 +1,4 @@
-/** @jsxImportSource ../../layout-runtime */
+/** @jsxImportSource @spiders-wm/sdk */
 
 import type { LayoutContext } from "@spiders-wm/sdk/layout";
 

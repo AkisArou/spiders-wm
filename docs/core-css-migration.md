@@ -312,7 +312,7 @@ Add a dedicated wasm crate once the Rust boundaries are stable.
 
 Suggested crate:
 
-- `crates/spiders-authoring-wasm` or `crates/spiders-web-bindings`
+- `crates/spiders-web-bindings`
 
 It should expose:
 
