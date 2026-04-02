@@ -63,33 +63,34 @@ const rootConfigSource = rawModuleSource(rootConfigSourceModule);
 const rootStylesheetSource = rawModuleSource(rootStylesheetSourceModule);
 const layoutStylesheetSource = rawModuleSource(layoutStylesheetSourceModule);
 const layoutSource = rawModuleSource(layoutSourceModule);
+const workspaceConfigRoot = "file:///home/demo/.config/spiders-wm";
 
 const editorFiles: EditorFile[] = [
-  {
-    id: "root-css",
-    label: "index.css",
-    path: "~/.config/spiders-wm/index.css",
-    modelPath: "file:///home/demo/.config/spiders-wm/index.css",
-    language: "css",
-    initialValue: rootStylesheetSource,
-    icon: "",
-    iconTone: "text-file-css",
-  },
   {
     id: "config",
     label: "config.ts",
     path: "~/.config/spiders-wm/config.ts",
-    modelPath: "file:///home/demo/.config/spiders-wm/config.ts",
+    modelPath: `${workspaceConfigRoot}/config.ts`,
     language: "typescript",
     initialValue: rootConfigSource,
     icon: "",
     iconTone: "text-file-ts",
   },
   {
+    id: "root-css",
+    label: "index.css",
+    path: "~/.config/spiders-wm/index.css",
+    modelPath: `${workspaceConfigRoot}/index.css`,
+    language: "css",
+    initialValue: rootStylesheetSource,
+    icon: "",
+    iconTone: "text-file-css",
+  },
+  {
     id: "config-bindings",
     label: "bindings.ts",
     path: "~/.config/spiders-wm/config/bindings.ts",
-    modelPath: "file:///home/demo/.config/spiders-wm/config/bindings.ts",
+    modelPath: `${workspaceConfigRoot}/config/bindings.ts`,
     language: "typescript",
     initialValue: configBindingsSource,
     icon: "",
@@ -99,7 +100,7 @@ const editorFiles: EditorFile[] = [
     id: "config-inputs",
     label: "inputs.ts",
     path: "~/.config/spiders-wm/config/inputs.ts",
-    modelPath: "file:///home/demo/.config/spiders-wm/config/inputs.ts",
+    modelPath: `${workspaceConfigRoot}/config/inputs.ts`,
     language: "typescript",
     initialValue: configInputsSource,
     icon: "",
@@ -109,7 +110,7 @@ const editorFiles: EditorFile[] = [
     id: "config-layouts",
     label: "layouts.ts",
     path: "~/.config/spiders-wm/config/layouts.ts",
-    modelPath: "file:///home/demo/.config/spiders-wm/config/layouts.ts",
+    modelPath: `${workspaceConfigRoot}/config/layouts.ts`,
     language: "typescript",
     initialValue: configLayoutsSource,
     icon: "",
@@ -119,8 +120,7 @@ const editorFiles: EditorFile[] = [
     id: "layout-tsx",
     label: "index.tsx",
     path: "~/.config/spiders-wm/layouts/master-stack/index.tsx",
-    modelPath:
-      "file:///home/demo/.config/spiders-wm/layouts/master-stack/index.tsx",
+    modelPath: `${workspaceConfigRoot}/layouts/master-stack/index.tsx`,
     language: "typescript",
     initialValue: layoutSource,
     icon: "",
@@ -130,8 +130,7 @@ const editorFiles: EditorFile[] = [
     id: "layout-css",
     label: "index.css",
     path: "~/.config/spiders-wm/layouts/master-stack/index.css",
-    modelPath:
-      "file:///home/demo/.config/spiders-wm/layouts/master-stack/index.css",
+    modelPath: `${workspaceConfigRoot}/layouts/master-stack/index.css`,
     language: "css",
     initialValue: layoutStylesheetSource,
     icon: "",
@@ -144,8 +143,8 @@ const fileTree: FileTreeDirectoryNode = {
   name: "~/.config/spiders-wm",
   defaultOpen: true,
   children: [
-    { kind: "file", fileId: "root-css" },
     { kind: "file", fileId: "config" },
+    { kind: "file", fileId: "root-css" },
     {
       kind: "directory",
       name: "config",
@@ -165,6 +164,7 @@ const fileTree: FileTreeDirectoryNode = {
           kind: "directory",
           name: "master-stack",
           defaultOpen: true,
+          downloadRootPath: "~/.config/spiders-wm/layouts/master-stack",
           children: [
             { kind: "file", fileId: "layout-tsx" },
             { kind: "file", fileId: "layout-css" },
@@ -237,8 +237,13 @@ const initialWindows: PlaygroundWindow[] = [
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<TabId>("preview");
-  const [activeFileId, setActiveFileId] =
-    useState<EditorFileId>("config-bindings");
+  const [activeFileId, setActiveFileId] = useState<EditorFileId | null>(
+    "config",
+  );
+  const [openFileIds, setOpenFileIds] = useState<EditorFileId[]>(() =>
+    ["config", "root-css"],
+  );
+  const [vimEnabled, setVimEnabled] = useState(true);
   const [activeWorkspaceName, setActiveWorkspaceName] = useState<string>(
     initialWorkspaceNames[0] ?? "1:dev",
   );
@@ -465,6 +470,41 @@ export default function App() {
   const activeFile =
     editorFiles.find((file) => file.id === activeFileId) ?? editorFiles[0];
 
+  const openEditorFile = (fileId: EditorFileId) => {
+    setOpenFileIds((current) =>
+      current.includes(fileId) ? current : [...current, fileId],
+    );
+    setActiveFileId(fileId);
+  };
+
+  const closeEditorFile = (fileId: EditorFileId) => {
+    setOpenFileIds((current) => {
+      const nextOpenFiles = current.filter(
+        (currentFileId) => currentFileId !== fileId,
+      );
+
+      setActiveFileId((currentActiveFileId) => {
+        if (currentActiveFileId !== fileId) {
+          return currentActiveFileId;
+        }
+
+        return nextOpenFiles[nextOpenFiles.length - 1] ?? null;
+      });
+
+      return nextOpenFiles;
+    });
+  };
+
+  const closeOtherEditorFiles = (fileId: EditorFileId) => {
+    setOpenFileIds([fileId]);
+    setActiveFileId(fileId);
+  };
+
+  const closeAllEditorFiles = () => {
+    setOpenFileIds([]);
+    setActiveFileId(null);
+  };
+
   if (!activeFile) {
     return null;
   }
@@ -488,7 +528,7 @@ export default function App() {
                   "border border-b-0 px-2 py-1 font-medium tracking-tight transition-opacity",
                   active
                     ? "border-terminal-border-strong bg-terminal-bg text-terminal-fg-strong"
-                    : "border-terminal-border bg-terminal-bg-bar text-terminal-dim opacity-70 hover:opacity-100 hover:text-terminal-fg",
+                    : "border-terminal-border bg-terminal-bg-bar text-terminal-dim hover:text-terminal-fg opacity-70 hover:opacity-100",
                 )}
                 onClick={() => setActiveTab(tab.id)}
               >
@@ -523,10 +563,18 @@ export default function App() {
         {activeTab === "editor" ? (
           <EditorPane
             files={editorFiles}
+            openFileIds={openFileIds}
             fileTree={fileTree}
             activeFileId={activeFileId}
             buffers={editorBuffers}
-            onSelectFile={setActiveFileId}
+            vimEnabled={vimEnabled}
+            onSelectFile={openEditorFile}
+            onToggleVimMode={() => {
+              setVimEnabled((current) => !current);
+            }}
+            onCloseFile={closeEditorFile}
+            onCloseOtherFiles={closeOtherEditorFiles}
+            onCloseAllFiles={closeAllEditorFiles}
             onChangeBuffer={(fileId, value) => {
               setEditorBuffers((current) => ({
                 ...current,

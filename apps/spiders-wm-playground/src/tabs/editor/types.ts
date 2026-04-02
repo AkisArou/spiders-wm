@@ -12,7 +12,7 @@ export interface EditorFile {
   label: string;
   path: string;
   modelPath: string;
-  language: "typescript" | "css";
+  language: "typescript" | "typescriptreact" | "css";
   initialValue: string;
   icon: string;
   iconTone: "text-file-ts" | "text-file-tsx" | "text-file-css";
@@ -22,6 +22,7 @@ export interface FileTreeDirectoryNode {
   kind: "directory";
   name: string;
   defaultOpen?: boolean;
+  downloadRootPath?: string;
   children: FileTreeNode[];
 }
 

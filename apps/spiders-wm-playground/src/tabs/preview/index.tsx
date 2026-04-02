@@ -383,11 +383,7 @@ function WindowList({
   );
 }
 
-function WindowSurface({
-  window,
-}: {
-  window: LayoutWindow | null;
-}) {
+function WindowSurface({ window }: { window: LayoutWindow | null }) {
   return (
     <div className="text-terminal-muted flex h-[calc(100%-1.5rem)] flex-col p-2 text-sm">
       <div>
@@ -406,13 +402,15 @@ function FootTerminal({ focused }: { focused: boolean }) {
   return (
     <div className="bg-terminal-bg text-terminal-fg flex h-[calc(100%-1.5rem)] items-start px-2 py-2 text-sm">
       <div>
-        <span className={focused ? "text-terminal-info" : "text-terminal-faint"}>
+        <span
+          className={focused ? "text-terminal-info" : "text-terminal-faint"}
+        >
           akisarou@spiders
         </span>
-        <span className="text-terminal-dim">:</span>
-        <span className="text-terminal-wait">~/.config/spiders-wm</span>
-        <span className="text-terminal-dim">$ </span>
-        <span className="foot-cursor bg-terminal-fg-strong inline-block h-4 w-2 align-[-0.125rem]" />
+        <span className="text-terminal-dim">:$ </span>
+        {focused ? (
+          <span className="foot-cursor bg-terminal-fg-strong inline-block h-4 w-2 align-[-0.125rem]" />
+        ) : null}
       </div>
     </div>
   );
