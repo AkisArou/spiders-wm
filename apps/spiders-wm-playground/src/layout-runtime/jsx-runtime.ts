@@ -4,8 +4,9 @@ import type {
   SlotProps,
   WindowProps,
   WorkspaceProps,
-} from "./layout";
+} from "./layout.js";
 
+type Component = (props: Record<string, unknown>) => unknown;
 type JSXChild = LayoutRenderable | string | number | boolean | null | undefined;
 type JSXChildren = JSXChild | JSXChild[];
 type JSXPropsWithChildren<T> = T & {
@@ -35,7 +36,7 @@ function createNode(
   type:
     | string
     | typeof Fragment
-    | ((props: Record<string, unknown>) => unknown),
+    | Component,
   props: RuntimeProps,
   ...children: unknown[]
 ) {
@@ -63,7 +64,7 @@ function createNode(
 }
 
 export function jsx(
-  type: string | typeof Fragment,
+  type: string | typeof Fragment | Component,
   props: RuntimeProps,
   key?: unknown,
 ) {
@@ -80,7 +81,7 @@ export function jsx(
 }
 
 export function jsxs(
-  type: string | typeof Fragment,
+  type: string | typeof Fragment | Component,
   props: RuntimeProps,
   key?: unknown,
 ) {

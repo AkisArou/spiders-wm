@@ -5,16 +5,13 @@ import layout from "./layouts/master-stack/index.tsx";
 import {
   ALLOWED_LAYOUT_PROPERTIES,
   validateLayoutStylesheet,
-} from "./layout-runtime/css-subset";
+} from "./layout-runtime/css-subset.js";
 import {
   resolveLayout,
   type ResolvedLayoutNode,
-} from "./layout-runtime/resolve";
-import type {
-  LayoutContext,
-  LayoutDiagnostic,
-  LayoutWindow,
-} from "@spiders-wm/sdk/layout";
+} from "./layout-runtime/resolve.js";
+import type { LayoutDiagnostic } from "./layout-runtime/layout.js";
+import type { LayoutContext, LayoutWindow } from "@spiders-wm/sdk/layout";
 
 const mockWindows: LayoutWindow[] = [
   {

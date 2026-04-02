@@ -1,3 +1,5 @@
+/** @jsxImportSource @spiders-wm/sdk */
+
 import type { SlotProps } from "@spiders-wm/sdk/layout";
 
 type MasterSlotProps = Omit<SlotProps, "id" | "class">;

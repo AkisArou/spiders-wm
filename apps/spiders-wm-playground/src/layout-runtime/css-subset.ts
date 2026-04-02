@@ -1,4 +1,4 @@
-import type { LayoutDiagnostic } from "./layout";
+import type { LayoutDiagnostic } from "./layout.js";
 
 export const ALLOWED_LAYOUT_PROPERTIES = [
   "align-content",

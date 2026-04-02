@@ -10,9 +10,9 @@ use spiders_scene::{LayoutSnapshotNode, SceneRequest};
 use spiders_core::runtime::prepared_layout::{PreparedStylesheet, PreparedStylesheets};
 use spiders_core::snapshot::{StateSnapshot, WindowSnapshot};
 use spiders_core::types::LayoutRef;
+use spiders_core::workspace::{fallback_master_stack_layout_tree, flat_workspace_root};
 use spiders_core::{
-    LayoutNodeMeta, LayoutRect, LayoutSpace, RemainingTake, ResolvedLayoutNode, SlotTake,
-    SourceLayoutNode, WindowId,
+    LayoutRect, LayoutSpace, ResolvedLayoutNode, SourceLayoutNode, WindowId,
 };
 use tracing::{debug, warn};
 
@@ -173,7 +173,7 @@ impl SceneLayoutState {
             .and_then(|output_id| snapshot.output_by_id(output_id));
         let windows = visible_window_snapshots(&snapshot, visible_window_ids);
         let resolved_root =
-            resolve_layout_root(fallback_source_layout_tree(), &windows, visible_window_ids);
+            resolve_layout_root(fallback_master_stack_layout_tree(), &windows, visible_window_ids);
 
         let request = SceneRequest {
             workspace_id: workspace.id,
@@ -228,36 +228,6 @@ fn scene_input_snapshot(
     snapshot
 }
 
-fn fallback_source_layout_tree() -> SourceLayoutNode {
-    SourceLayoutNode::Workspace {
-        meta: LayoutNodeMeta::default(),
-        children: vec![
-            SourceLayoutNode::Group {
-                meta: LayoutNodeMeta {
-                    id: Some("main".into()),
-                    ..LayoutNodeMeta::default()
-                },
-                children: vec![SourceLayoutNode::Slot {
-                    meta: LayoutNodeMeta::default(),
-                    window_match: None,
-                    take: SlotTake::Count(1),
-                }],
-            },
-            SourceLayoutNode::Group {
-                meta: LayoutNodeMeta {
-                    id: Some("stack".into()),
-                    ..LayoutNodeMeta::default()
-                },
-                children: vec![SourceLayoutNode::Slot {
-                    meta: LayoutNodeMeta::default(),
-                    window_match: None,
-                    take: SlotTake::Remaining(RemainingTake::Remaining),
-                }],
-            },
-        ],
-    }
-}
-
 fn selected_layout_name(config: &Config, state: &StateSnapshot) -> Option<String> {
     let workspace = state.current_workspace()?;
 
@@ -305,7 +275,7 @@ fn resolve_layout_root(
         Ok(validated) => validated,
         Err(error) => {
             warn!(%error, window_count = windows.len(), "scene layout validation failed");
-            return flat_workspace_root(visible_window_ids);
+            return flat_workspace_root(visible_window_ids.iter().cloned());
         }
     };
 
@@ -313,22 +283,8 @@ fn resolve_layout_root(
         Ok(resolved) => resolved.root,
         Err(error) => {
             warn!(%error, window_count = windows.len(), "scene layout resolve failed");
-            flat_workspace_root(visible_window_ids)
+            flat_workspace_root(visible_window_ids.iter().cloned())
         }
-    }
-}
-
-fn flat_workspace_root(visible_window_ids: &[WindowId]) -> ResolvedLayoutNode {
-    ResolvedLayoutNode::Workspace {
-        meta: LayoutNodeMeta::default(),
-        children: visible_window_ids
-            .iter()
-            .cloned()
-            .map(|window_id| ResolvedLayoutNode::Window {
-                meta: LayoutNodeMeta::default(),
-                window_id: Some(window_id),
-            })
-            .collect(),
     }
 }
 

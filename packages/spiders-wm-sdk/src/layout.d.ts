@@ -3,8 +3,15 @@ export interface LayoutBaseProps {
   class?: string;
 }
 
-export type LayoutRenderable = LayoutNode | LayoutRenderable[] | null;
-export type LayoutChildren = LayoutRenderable | LayoutRenderable[];
+export type LayoutRenderable =
+  | LayoutNode
+  | string
+  | number
+  | boolean
+  | null
+  | undefined
+  | LayoutRenderable[];
+export type LayoutChildren = LayoutRenderable;
 
 export interface LayoutComponentProps {
   children?: LayoutChildren;

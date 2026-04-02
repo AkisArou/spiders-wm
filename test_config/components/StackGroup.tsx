@@ -1,3 +1,5 @@
+/** @jsxImportSource @spiders-wm/sdk */
+
 import "./StackGroup.css";
 import type { GroupProps, LayoutContext } from "@spiders-wm/sdk/layout";
 

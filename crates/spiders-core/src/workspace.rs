@@ -1,5 +1,8 @@
 use crate::wm::WmModel;
-use crate::{WindowId, WorkspaceId};
+use crate::{
+    LayoutNodeMeta, RemainingTake, ResolvedLayoutNode, SlotTake, SourceLayoutNode, WindowId,
+    WorkspaceId,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkspaceSelection {
@@ -90,6 +93,52 @@ pub fn place_new_window(model: &mut WmModel, window_id: WindowId) -> WindowId {
     let output_id = model.current_output_id.clone();
     model.insert_window(window_id.clone(), workspace_id, output_id);
     window_id
+}
+
+pub fn fallback_master_stack_layout_tree() -> SourceLayoutNode {
+    SourceLayoutNode::Workspace {
+        meta: LayoutNodeMeta::default(),
+        children: vec![
+            SourceLayoutNode::Group {
+                meta: LayoutNodeMeta {
+                    id: Some("main".into()),
+                    ..LayoutNodeMeta::default()
+                },
+                children: vec![SourceLayoutNode::Slot {
+                    meta: LayoutNodeMeta::default(),
+                    window_match: None,
+                    take: SlotTake::Count(1),
+                }],
+            },
+            SourceLayoutNode::Group {
+                meta: LayoutNodeMeta {
+                    id: Some("stack".into()),
+                    ..LayoutNodeMeta::default()
+                },
+                children: vec![SourceLayoutNode::Slot {
+                    meta: LayoutNodeMeta::default(),
+                    window_match: None,
+                    take: SlotTake::Remaining(RemainingTake::Remaining),
+                }],
+            },
+        ],
+    }
+}
+
+pub fn flat_workspace_root<I>(visible_window_ids: I) -> ResolvedLayoutNode
+where
+    I: IntoIterator<Item = WindowId>,
+{
+    ResolvedLayoutNode::Workspace {
+        meta: LayoutNodeMeta::default(),
+        children: visible_window_ids
+            .into_iter()
+            .map(|window_id| ResolvedLayoutNode::Window {
+                meta: LayoutNodeMeta::default(),
+                window_id: Some(window_id),
+            })
+            .collect(),
+    }
 }
 
 #[cfg(test)]
@@ -250,5 +299,41 @@ mod tests {
         let window = model.windows.get(&window_id(6)).expect("window missing");
         assert_eq!(window.workspace_id, None);
         assert_eq!(window.output_id, None);
+    }
+
+    #[test]
+    fn fallback_master_stack_layout_tree_contains_main_and_stack_groups() {
+        let SourceLayoutNode::Workspace { children, .. } = fallback_master_stack_layout_tree() else {
+            panic!("expected workspace root");
+        };
+
+        assert_eq!(children.len(), 2);
+        assert!(matches!(
+            &children[0],
+            SourceLayoutNode::Group { meta, .. } if meta.id.as_deref() == Some("main")
+        ));
+        assert!(matches!(
+            &children[1],
+            SourceLayoutNode::Group { meta, .. } if meta.id.as_deref() == Some("stack")
+        ));
+    }
+
+    #[test]
+    fn flat_workspace_root_materializes_windows_in_order() {
+        let ResolvedLayoutNode::Workspace { children, .. } =
+            flat_workspace_root([window_id(1), window_id(2)])
+        else {
+            panic!("expected workspace root");
+        };
+
+        assert_eq!(children.len(), 2);
+        assert!(matches!(
+            &children[0],
+            ResolvedLayoutNode::Window { window_id: Some(id), .. } if id == &window_id(1)
+        ));
+        assert!(matches!(
+            &children[1],
+            ResolvedLayoutNode::Window { window_id: Some(id), .. } if id == &window_id(2)
+        ));
     }
 }

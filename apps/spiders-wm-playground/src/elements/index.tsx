@@ -9,7 +9,7 @@ import type {
   WindowProps,
   WorkspaceNode,
   WorkspaceProps,
-} from "../layout-runtime/layout";
+} from "../layout-runtime/layout.js";
 
 function normalizeChildren(
   children: LayoutChildren | undefined,

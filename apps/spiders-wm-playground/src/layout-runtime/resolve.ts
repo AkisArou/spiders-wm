@@ -5,7 +5,7 @@ import type {
   LayoutNode,
   LayoutRenderable,
   LayoutWindow,
-} from "./layout";
+} from "./layout.js";
 
 const supportedMatchKeys = new Set([
   "app_id",
@@ -67,7 +67,7 @@ export function resolveLayout(
     });
   }
 
-  const root = rootNodes[0];
+  const root = rootNodes[0]!;
   if (root.type !== "workspace") {
     diagnostics.push({
       source: "layout",
@@ -226,6 +226,11 @@ function parseMatchClauses(
   for (const result of match.matchAll(pattern)) {
     const key = result[1];
     const value = result[2];
+
+    if (!key || value === undefined) {
+      continue;
+    }
+
     consumed += result[0] + " ";
 
     if (!supportedMatchKeys.has(key)) {

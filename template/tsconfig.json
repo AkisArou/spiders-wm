@@ -1,3 +1,18 @@
 {
-  "extends": "./.spiders-wm/tsconfig.base.json"
+  "extends": "../packages/tsconfig/tsconfig.react.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "ignoreDeprecations": "6.0",
+    "jsxImportSource": "@spiders-wm/sdk",
+    "noEmit": true,
+    "declaration": false,
+    "declarationMap": false,
+    "emitDeclarationOnly": false,
+    "composite": false,
+    "paths": {
+      "@spiders-wm/sdk/*": ["../packages/spiders-wm-sdk/src/*"]
+    },
+    "tsBuildInfoFile": "./node_modules/.tsbuild/template.tsbuildinfo"
+  },
+  "include": ["./**/*.ts", "./**/*.tsx", "./**/*.d.ts"]
 }
