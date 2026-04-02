@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use spiders_css::style::FlexDirectionValue;
 use spiders_core::command::FocusDirection;
 use spiders_core::focus::{
-    FocusTree, FocusTreeWindowGeometry, remove_window, set_focused_window,
+    FocusScopePath, FocusTree, FocusTreeWindowGeometry, remove_window, set_focused_window,
 };
 use spiders_core::navigation::{
     NavigationDirection, WindowGeometryCandidate, managed_window_swap_positions,
@@ -622,7 +622,7 @@ fn preview_model(state: &PreviewSessionState) -> WmModel {
         model.set_window_fullscreen(window_id.clone(), window.fullscreen);
     }
 
-    model.last_focused_window_id_by_scope = state.remembered_focus_by_scope.clone();
+    model.last_focused_window_id_by_scope = remembered_focus_from_serialized(&state.remembered_focus_by_scope);
 
     let focused_window_id = state
         .windows
@@ -895,7 +895,7 @@ fn snapshot_window_geometry_candidates(
             scope_path: model
                 .focus_scope_path(&entry.window_id)
                 .map(|scope_path| scope_path.to_vec())
-                .unwrap_or_else(|| vec![FocusTree::workspace_scope_key().to_string()]),
+                .unwrap_or_else(|| vec![FocusTree::workspace_scope()]),
             window_id: entry.window_id,
             geometry: entry.geometry,
         })
@@ -1122,7 +1122,7 @@ fn sync_preview_state(state: &mut PreviewSessionState, model: &WmModel) {
         state.active_workspace_name = current_workspace_id.as_str().to_string();
     }
 
-    state.remembered_focus_by_scope = model.last_focused_window_id_by_scope.clone();
+    state.remembered_focus_by_scope = remembered_focus_to_serialized(&model.last_focused_window_id_by_scope);
 
     for window in &mut state.windows {
         let window_id = WindowId::from(window.id.as_str());
@@ -1137,6 +1137,29 @@ fn sync_preview_state(state: &mut PreviewSessionState, model: &WmModel) {
             }
         }
     }
+}
+
+fn remembered_focus_from_serialized(
+    remembered_focus_by_scope: &BTreeMap<String, WindowId>,
+) -> BTreeMap<FocusScopePath, WindowId> {
+    remembered_focus_by_scope
+        .iter()
+        .filter_map(|(scope_key, window_id)| {
+            scope_key
+                .parse::<FocusScopePath>()
+                .ok()
+                .map(|scope_path| (scope_path, window_id.clone()))
+        })
+        .collect()
+}
+
+fn remembered_focus_to_serialized(
+    remembered_focus_by_scope: &BTreeMap<FocusScopePath, WindowId>,
+) -> BTreeMap<String, WindowId> {
+    remembered_focus_by_scope
+        .iter()
+        .map(|(scope_path, window_id)| (scope_path.to_string(), window_id.clone()))
+        .collect()
 }
 
 fn deserialize_windows(value: JsValue) -> Result<Vec<WindowSnapshot>, JsValue> {

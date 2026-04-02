@@ -1,7 +1,141 @@
 use std::collections::BTreeMap;
+use std::fmt;
+use std::str::FromStr;
 
+use crate::focus_visual::{infer_visual_scope, VisualChild, VisualEntry, VisualScope};
 use crate::wm::{WindowGeometry, WmModel};
 use crate::{LayoutNodeMeta, ResolvedLayoutNode, WindowId};
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum FocusScopeSegment {
+    Workspace,
+    Group { child_index: usize, label: String },
+    Visual { child_index: usize },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct FocusScopePath(Vec<FocusScopeSegment>);
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FocusScopePathParseError {
+    input: String,
+}
+
+impl FocusScopePath {
+    pub fn workspace() -> Self {
+        Self(vec![FocusScopeSegment::Workspace])
+    }
+
+    pub fn child_group(&self, meta: &LayoutNodeMeta, child_index: usize) -> Self {
+        let label = meta
+            .id
+            .as_deref()
+            .or(meta.name.as_deref())
+            .unwrap_or("group")
+            .to_string();
+
+        let mut segments = self.0.clone();
+        segments.push(FocusScopeSegment::Group { child_index, label });
+        Self(segments)
+    }
+
+    pub fn child_visual(&self, child_index: usize) -> Self {
+        let mut segments = self.0.clone();
+        segments.push(FocusScopeSegment::Visual { child_index });
+        Self(segments)
+    }
+}
+
+impl fmt::Display for FocusScopePath {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for (index, segment) in self.0.iter().enumerate() {
+            if index > 0 {
+                write!(f, "/")?;
+            }
+
+            match segment {
+                FocusScopeSegment::Workspace => write!(f, "$workspace")?,
+                FocusScopeSegment::Group { child_index, label } => {
+                    write!(f, "group[{child_index}]:{label}")?
+                }
+                FocusScopeSegment::Visual { child_index } => {
+                    write!(f, "visual[{child_index}]")?
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
+
+impl FromStr for FocusScopePath {
+    type Err = FocusScopePathParseError;
+
+    fn from_str(input: &str) -> Result<Self, Self::Err> {
+        let mut segments = Vec::new();
+
+        for (index, part) in input.split('/').enumerate() {
+            let segment = if index == 0 {
+                if part != "$workspace" {
+                    return Err(FocusScopePathParseError {
+                        input: input.to_string(),
+                    });
+                }
+
+                FocusScopeSegment::Workspace
+            } else if let Some(rest) = part.strip_prefix("group[") {
+                let Some((index_part, label)) = rest.split_once("]:") else {
+                    return Err(FocusScopePathParseError {
+                        input: input.to_string(),
+                    });
+                };
+                let Ok(child_index) = index_part.parse::<usize>() else {
+                    return Err(FocusScopePathParseError {
+                        input: input.to_string(),
+                    });
+                };
+
+                FocusScopeSegment::Group {
+                    child_index,
+                    label: label.to_string(),
+                }
+            } else if let Some(rest) = part.strip_prefix("visual[") {
+                let Some(index_part) = rest.strip_suffix(']') else {
+                    return Err(FocusScopePathParseError {
+                        input: input.to_string(),
+                    });
+                };
+                let Ok(child_index) = index_part.parse::<usize>() else {
+                    return Err(FocusScopePathParseError {
+                        input: input.to_string(),
+                    });
+                };
+
+                FocusScopeSegment::Visual { child_index }
+            } else {
+                return Err(FocusScopePathParseError {
+                    input: input.to_string(),
+                });
+            };
+
+            segments.push(segment);
+        }
+
+        if segments.is_empty() {
+            return Err(FocusScopePathParseError {
+                input: input.to_string(),
+            });
+        }
+
+        Ok(Self(segments))
+    }
+}
+
+impl fmt::Display for FocusScopePathParseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "invalid focus scope path: {}", self.input)
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FocusTreeWindowGeometry {
@@ -17,7 +151,7 @@ pub enum FocusAxis {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FocusBranchKey {
-    Scope(String),
+    Scope(FocusScopePath),
     Window(WindowId),
 }
 
@@ -30,21 +164,18 @@ pub struct FocusScopeNavigation {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct FocusTree {
     ordered_window_ids: Vec<WindowId>,
-    scope_path_by_window: BTreeMap<WindowId, Vec<String>>,
-    descendant_window_ids_by_scope: BTreeMap<String, Vec<WindowId>>,
-    navigation_by_scope: BTreeMap<String, FocusScopeNavigation>,
+    scope_path_by_window: BTreeMap<WindowId, Vec<FocusScopePath>>,
+    descendant_window_ids_by_scope: BTreeMap<FocusScopePath, Vec<WindowId>>,
+    navigation_by_scope: BTreeMap<FocusScopePath, FocusScopeNavigation>,
 }
 
 impl FocusTree {
     pub fn from_resolved_root(root: &ResolvedLayoutNode) -> Self {
         let mut tree = Self {
-            descendant_window_ids_by_scope: BTreeMap::from([(
-                Self::workspace_scope_key().to_string(),
-                Vec::new(),
-            )]),
+            descendant_window_ids_by_scope: BTreeMap::from([(Self::workspace_scope(), Vec::new())]),
             ..Self::default()
         };
-        let mut scope_path = vec![Self::workspace_scope_key().to_string()];
+        let mut scope_path = vec![Self::workspace_scope()];
 
         collect_focus_tree_children(root.children(), &mut scope_path, &mut tree);
         tree
@@ -52,10 +183,7 @@ impl FocusTree {
 
     pub fn from_window_geometries(entries: &[FocusTreeWindowGeometry]) -> Self {
         let mut tree = Self {
-            descendant_window_ids_by_scope: BTreeMap::from([(
-                Self::workspace_scope_key().to_string(),
-                Vec::new(),
-            )]),
+            descendant_window_ids_by_scope: BTreeMap::from([(Self::workspace_scope(), Vec::new())]),
             ..Self::default()
         };
 
@@ -74,10 +202,10 @@ impl FocusTree {
         }
 
         let root_scope = infer_visual_scope(&visual_entries);
-        let mut scope_path = vec![Self::workspace_scope_key().to_string()];
+        let mut scope_path = vec![Self::workspace_scope()];
         collect_visual_scope(
             &root_scope,
-            Self::workspace_scope_key(),
+            &Self::workspace_scope(),
             &mut scope_path,
             &mut tree,
             true,
@@ -85,43 +213,40 @@ impl FocusTree {
         tree
     }
 
-    pub fn workspace_scope_key() -> &'static str {
-        "$workspace"
+    pub fn workspace_scope() -> FocusScopePath {
+        FocusScopePath::workspace()
     }
 
-    pub fn scope_key_for_child(parent_scope: &str, meta: &LayoutNodeMeta, child_index: usize) -> String {
-        let label = meta
-            .id
-            .as_deref()
-            .or(meta.name.as_deref())
-            .unwrap_or("group");
-
-        format!("{parent_scope}/group[{child_index}]:{label}")
+    pub fn workspace_scope_key() -> &'static str {
+        "$workspace"
     }
 
     pub fn ordered_window_ids(&self) -> &[WindowId] {
         &self.ordered_window_ids
     }
 
-    pub fn scope_path(&self, window_id: &WindowId) -> Option<&[String]> {
+    pub fn scope_path(&self, window_id: &WindowId) -> Option<&[FocusScopePath]> {
         self.scope_path_by_window.get(window_id).map(Vec::as_slice)
     }
 
-    pub fn descendants(&self, scope_key: &str) -> Option<&[WindowId]> {
+    pub fn descendants(&self, scope_key: &FocusScopePath) -> Option<&[WindowId]> {
         self.descendant_window_ids_by_scope
             .get(scope_key)
             .map(Vec::as_slice)
     }
 
-    pub fn scope_keys(&self) -> impl Iterator<Item = &String> {
+    pub fn scope_keys(&self) -> impl Iterator<Item = &FocusScopePath> {
         self.descendant_window_ids_by_scope.keys()
     }
 
-    pub fn navigation(&self, scope_key: &str) -> Option<&FocusScopeNavigation> {
+    pub fn navigation(&self, scope_key: &FocusScopePath) -> Option<&FocusScopeNavigation> {
         self.navigation_by_scope.get(scope_key)
     }
 
-    pub fn set_navigation(&mut self, navigation_by_scope: BTreeMap<String, FocusScopeNavigation>) {
+    pub fn set_navigation(
+        &mut self,
+        navigation_by_scope: BTreeMap<FocusScopePath, FocusScopeNavigation>,
+    ) {
         self.navigation_by_scope = navigation_by_scope;
     }
 
@@ -130,160 +255,10 @@ impl FocusTree {
     }
 }
 
-#[derive(Debug, Clone)]
-struct VisualEntry {
-    window_id: WindowId,
-    geometry: WindowGeometry,
-    original_index: usize,
-}
-
-#[derive(Debug, Clone)]
-enum VisualChild {
-    Scope(VisualScope),
-    Window(VisualEntry),
-}
-
-#[derive(Debug, Clone)]
-struct VisualScope {
-    axis: Option<FocusAxis>,
-    children: Vec<VisualChild>,
-}
-
-fn infer_visual_scope(entries: &[VisualEntry]) -> VisualScope {
-    if entries.len() <= 1 {
-        return VisualScope {
-            axis: None,
-            children: entries
-                .iter()
-                .cloned()
-                .map(VisualChild::Window)
-                .collect(),
-        };
-    }
-
-    let horizontal_bands = cluster_visual_entries(entries, FocusAxis::Horizontal);
-    let vertical_bands = cluster_visual_entries(entries, FocusAxis::Vertical);
-
-    let selected_axis = match (
-        split_score(&horizontal_bands, entries.len()),
-        split_score(&vertical_bands, entries.len()),
-    ) {
-        (Some(horizontal_score), Some(vertical_score)) => {
-            if horizontal_score <= vertical_score {
-                Some((FocusAxis::Horizontal, horizontal_bands))
-            } else {
-                Some((FocusAxis::Vertical, vertical_bands))
-            }
-        }
-        (Some(_), None) => Some((FocusAxis::Horizontal, horizontal_bands)),
-        (None, Some(_)) => Some((FocusAxis::Vertical, vertical_bands)),
-        (None, None) => None,
-    };
-
-    let Some((axis, bands)) = selected_axis else {
-        let mut ordered_entries = entries.to_vec();
-        ordered_entries.sort_by_key(|entry| entry.original_index);
-        return VisualScope {
-            axis: None,
-            children: ordered_entries
-                .into_iter()
-                .map(VisualChild::Window)
-                .collect(),
-        };
-    };
-
-    VisualScope {
-        axis: Some(axis),
-        children: bands
-            .into_iter()
-            .map(|band| {
-                let scope = infer_visual_scope(&band);
-                if scope.axis.is_none() && scope.children.len() == 1 {
-                    scope.children.into_iter().next().expect("single child")
-                } else {
-                    VisualChild::Scope(scope)
-                }
-            })
-            .collect(),
-    }
-}
-
-fn split_score(bands: &[Vec<VisualEntry>], _total_entries: usize) -> Option<(usize, usize)> {
-    if bands.len() <= 1 {
-        return None;
-    }
-
-    Some((
-        bands.iter().map(|band| band_fragmentation(band)).sum(),
-        bands.len(),
-    ))
-}
-
-fn band_fragmentation(band: &[VisualEntry]) -> usize {
-    let mut indices = band
-        .iter()
-        .map(|entry| entry.original_index)
-        .collect::<Vec<_>>();
-    indices.sort_unstable();
-
-    let mut segments: usize = 0;
-    let mut previous_index = None;
-
-    for index in indices {
-        if previous_index.is_none_or(|previous| index != previous + 1) {
-            segments += 1;
-        }
-        previous_index = Some(index);
-    }
-
-    segments.saturating_sub(1)
-}
-
-fn cluster_visual_entries(entries: &[VisualEntry], axis: FocusAxis) -> Vec<Vec<VisualEntry>> {
-    let mut ordered_entries = entries.to_vec();
-    ordered_entries.sort_by_key(|entry| match axis {
-        FocusAxis::Horizontal => (
-            entry.geometry.x,
-            entry.geometry.y,
-            entry.original_index as i32,
-        ),
-        FocusAxis::Vertical => (
-            entry.geometry.y,
-            entry.geometry.x,
-            entry.original_index as i32,
-        ),
-    });
-
-    let mut bands: Vec<Vec<VisualEntry>> = Vec::new();
-    let mut current_band_end = None;
-
-    for entry in ordered_entries {
-        let (start, end) = axis_interval(entry.geometry, axis);
-
-        if current_band_end.is_some_and(|band_end| start < band_end) {
-            current_band_end = Some(current_band_end.unwrap().max(end));
-            bands.last_mut().expect("existing band").push(entry);
-            continue;
-        }
-
-        current_band_end = Some(end);
-        bands.push(vec![entry]);
-    }
-
-    bands
-}
-
-fn axis_interval(geometry: WindowGeometry, axis: FocusAxis) -> (i32, i32) {
-    match axis {
-        FocusAxis::Horizontal => (geometry.x, geometry.x + geometry.width),
-        FocusAxis::Vertical => (geometry.y, geometry.y + geometry.height),
-    }
-}
-
 fn collect_visual_scope(
     scope: &VisualScope,
-    current_scope_key: &str,
-    scope_path: &mut Vec<String>,
+    current_scope_key: &FocusScopePath,
+    scope_path: &mut Vec<FocusScopePath>,
     tree: &mut FocusTree,
     is_root: bool,
 ) {
@@ -295,16 +270,15 @@ fn collect_visual_scope(
             .iter()
             .enumerate()
             .map(|(child_index, child)| match child {
-                VisualChild::Scope(_) => FocusBranchKey::Scope(visual_scope_key(
-                    current_scope_key,
-                    child_index,
-                )),
+                VisualChild::Scope(_) => {
+                    FocusBranchKey::Scope(current_scope_key.child_visual(child_index))
+                }
                 VisualChild::Window(entry) => FocusBranchKey::Window(entry.window_id.clone()),
             })
             .collect::<Vec<_>>();
 
         tree.navigation_by_scope.insert(
-            current_scope_key.to_string(),
+            current_scope_key.clone(),
             FocusScopeNavigation { axis, branches },
         );
     }
@@ -312,7 +286,7 @@ fn collect_visual_scope(
     for (child_index, child) in scope.children.iter().enumerate() {
         match child {
             VisualChild::Scope(child_scope) => {
-                let child_scope_key = visual_scope_key(current_scope_key, child_index);
+                let child_scope_key = current_scope_key.child_visual(child_index);
                 tree.descendant_window_ids_by_scope
                     .entry(child_scope_key.clone())
                     .or_default();
@@ -337,13 +311,9 @@ fn collect_visual_scope(
 
     if is_root && scope.children.is_empty() {
         tree.descendant_window_ids_by_scope
-            .entry(current_scope_key.to_string())
+            .entry(current_scope_key.clone())
             .or_default();
     }
-}
-
-fn visual_scope_key(parent_scope: &str, child_index: usize) -> String {
-    format!("{parent_scope}/visual[{child_index}]")
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -450,7 +420,7 @@ where
 
 fn collect_focus_tree_children(
     children: &[ResolvedLayoutNode],
-    scope_path: &mut Vec<String>,
+    scope_path: &mut Vec<FocusScopePath>,
     tree: &mut FocusTree,
 ) {
     for (child_index, child) in children.iter().enumerate() {
@@ -461,7 +431,7 @@ fn collect_focus_tree_children(
 fn collect_focus_tree_node(
     node: &ResolvedLayoutNode,
     child_index: usize,
-    scope_path: &mut Vec<String>,
+    scope_path: &mut Vec<FocusScopePath>,
     tree: &mut FocusTree,
 ) {
     match node {
@@ -471,9 +441,9 @@ fn collect_focus_tree_node(
         ResolvedLayoutNode::Group { meta, children, .. } => {
             let parent_scope = scope_path
                 .last()
-                .map(String::as_str)
-                .unwrap_or(FocusTree::workspace_scope_key());
-            let scope_key = FocusTree::scope_key_for_child(parent_scope, meta, child_index);
+                .cloned()
+                .unwrap_or_else(FocusTree::workspace_scope);
+            let scope_key = parent_scope.child_group(meta, child_index);
             tree.descendant_window_ids_by_scope
                 .entry(scope_key.clone())
                 .or_default();
@@ -555,9 +525,10 @@ where
     }
 
     let ordered_window_ids = model.ordered_window_ids_on_current_workspace(hinted_window_ids);
+    let workspace_scope = FocusTree::workspace_scope();
     preferred_focus_from_order(
         model,
-        FocusTree::workspace_scope_key(),
+        &workspace_scope,
         &ordered_window_ids,
         lost_window_id,
     )
@@ -565,7 +536,7 @@ where
 
 fn preferred_focus_for_scope(
     model: &WmModel,
-    scope_key: &str,
+    scope_key: &FocusScopePath,
     lost_window_id: &WindowId,
 ) -> Option<WindowId> {
     let ordered_window_ids = model.focus_scope_descendants(scope_key)?;
@@ -574,7 +545,7 @@ fn preferred_focus_for_scope(
 
 fn preferred_focus_from_order(
     model: &WmModel,
-    scope_key: &str,
+    scope_key: &FocusScopePath,
     ordered_window_ids: &[WindowId],
     lost_window_id: &WindowId,
 ) -> Option<WindowId> {
@@ -617,6 +588,27 @@ fn preferred_focus_from_order(
 mod tests {
     use super::*;
     use crate::{window_id, LayoutNodeMeta, ResolvedLayoutNode, WorkspaceId};
+
+    #[test]
+    fn focus_scope_path_round_trips_through_string_format() {
+        let path = FocusTree::workspace_scope()
+            .child_visual(1)
+            .child_group(
+                &LayoutNodeMeta {
+                    id: Some("bottom-row".into()),
+                    ..LayoutNodeMeta::default()
+                },
+                2,
+            );
+
+        let encoded = path.to_string();
+        let decoded = encoded
+            .parse::<FocusScopePath>()
+            .expect("valid focus scope path");
+
+        assert_eq!(decoded, path);
+        assert_eq!(encoded, "$workspace/visual[1]/group[2]:bottom-row");
+    }
 
     fn flat_root(window_ids: &[u64]) -> ResolvedLayoutNode {
         ResolvedLayoutNode::Workspace {

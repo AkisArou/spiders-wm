@@ -1,4 +1,5 @@
 mod ids;
+mod focus_visual;
 mod layout;
 
 pub mod api;

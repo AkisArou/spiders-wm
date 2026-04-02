@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use crate::focus::{FocusAxis, FocusBranchKey, FocusTree};
+use crate::focus::{FocusAxis, FocusBranchKey, FocusScopePath, FocusTree};
 use crate::wm::WindowGeometry;
 use crate::WindowId;
 
@@ -16,14 +16,14 @@ pub enum NavigationDirection {
 pub struct WindowGeometryCandidate {
     pub window_id: WindowId,
     pub geometry: WindowGeometry,
-    pub scope_path: Vec<String>,
+    pub scope_path: Vec<FocusScopePath>,
 }
 
 pub fn select_directional_focus_candidate(
     candidates: &[WindowGeometryCandidate],
     current_focused_window_id: Option<WindowId>,
     direction: NavigationDirection,
-    remembered_focus_by_scope: &BTreeMap<String, WindowId>,
+    remembered_focus_by_scope: &BTreeMap<FocusScopePath, WindowId>,
     focus_tree: Option<&FocusTree>,
 ) -> Option<WindowId> {
     let current = current_focused_window_id.and_then(|window_id| {
@@ -116,7 +116,7 @@ struct ScopeBranch<'a> {
 fn select_directional_focus_candidate_from_tree(
     current: &WindowGeometryCandidate,
     direction: NavigationDirection,
-    remembered_focus_by_scope: &BTreeMap<String, WindowId>,
+    remembered_focus_by_scope: &BTreeMap<FocusScopePath, WindowId>,
     focus_tree: &FocusTree,
 ) -> Option<WindowId> {
     let scope_path = focus_tree.scope_path(&current.window_id)?;
@@ -192,7 +192,7 @@ fn adjacent_branch_index(
 
 fn scope_branches<'a>(
     candidates: &'a [WindowGeometryCandidate],
-    scope_key: &str,
+    scope_key: &FocusScopePath,
     scope_depth: usize,
 ) -> Vec<ScopeBranch<'a>> {
     let mut branches: Vec<ScopeBranch<'a>> = Vec::new();
@@ -327,7 +327,7 @@ fn resolve_tree_branch_target(
     focus_tree: &FocusTree,
     branch: &FocusBranchKey,
     direction: NavigationDirection,
-    remembered_focus_by_scope: &BTreeMap<String, WindowId>,
+    remembered_focus_by_scope: &BTreeMap<FocusScopePath, WindowId>,
 ) -> Option<WindowId> {
     match branch {
         FocusBranchKey::Window(window_id) => Some(window_id.clone()),
@@ -347,9 +347,9 @@ fn resolve_tree_branch_target(
 
 fn default_focus_in_tree_scope(
     focus_tree: &FocusTree,
-    scope_key: &str,
+    scope_key: &FocusScopePath,
     direction: NavigationDirection,
-    remembered_focus_by_scope: &BTreeMap<String, WindowId>,
+    remembered_focus_by_scope: &BTreeMap<FocusScopePath, WindowId>,
 ) -> Option<WindowId> {
     let Some(navigation) = focus_tree.navigation(scope_key) else {
         let descendants = focus_tree.descendants(scope_key)?;
@@ -371,7 +371,7 @@ fn resolve_branch_target(
     candidates: &[WindowGeometryCandidate],
     branch: &ScopeBranch<'_>,
     direction: NavigationDirection,
-    remembered_focus_by_scope: &BTreeMap<String, WindowId>,
+    remembered_focus_by_scope: &BTreeMap<FocusScopePath, WindowId>,
 ) -> Option<WindowId> {
     match &branch.key {
         FocusBranchKey::Window(window_id) => Some(window_id.clone()),
@@ -398,10 +398,10 @@ fn resolve_branch_target(
 
 fn default_focus_in_scope(
     candidates: &[WindowGeometryCandidate],
-    scope_key: &str,
+    scope_key: &FocusScopePath,
     scope_depth: usize,
     direction: NavigationDirection,
-    remembered_focus_by_scope: &BTreeMap<String, WindowId>,
+    remembered_focus_by_scope: &BTreeMap<FocusScopePath, WindowId>,
 ) -> Option<WindowId> {
     let mut branches = scope_branches(candidates, scope_key, scope_depth);
     if branches.is_empty() {
@@ -485,7 +485,45 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::*;
+    use crate::focus::{FocusAxis, FocusBranchKey, FocusScopeNavigation, FocusScopePath, FocusTree};
+    use crate::LayoutNodeMeta;
     use crate::window_id;
+
+    fn scope_path(scope_path: &[&str]) -> Vec<FocusScopePath> {
+        let mut resolved = Vec::new();
+        let mut current = FocusTree::workspace_scope();
+
+        for (depth, scope) in scope_path.iter().enumerate() {
+            let next = if depth == 0 && *scope == FocusTree::workspace_scope_key() {
+                FocusTree::workspace_scope()
+            } else if scope.starts_with(FocusTree::workspace_scope_key()) {
+                scope.parse().expect("valid focus scope path")
+            } else {
+                current.child_group(
+                    &LayoutNodeMeta {
+                        id: Some((*scope).to_string()),
+                        ..LayoutNodeMeta::default()
+                    },
+                    depth,
+                )
+            };
+
+            current = next.clone();
+            resolved.push(next);
+        }
+
+        resolved
+    }
+
+    fn remember(
+        remembered: &mut BTreeMap<FocusScopePath, WindowId>,
+        scopes: &[&str],
+        window_id: WindowId,
+    ) {
+        for scope_key in scope_path(scopes) {
+            remembered.insert(scope_key, window_id.clone());
+        }
+    }
 
     fn candidate(
         id: u64,
@@ -493,7 +531,7 @@ mod tests {
         y: i32,
         width: i32,
         height: i32,
-        scope_path: &[&str],
+        scopes: &[&str],
     ) -> WindowGeometryCandidate {
         WindowGeometryCandidate {
             window_id: window_id(id),
@@ -503,7 +541,7 @@ mod tests {
                 width,
                 height,
             },
-            scope_path: scope_path.iter().map(|scope| (*scope).to_string()).collect(),
+            scope_path: scope_path(scopes),
         }
     }
 
@@ -638,8 +676,7 @@ mod tests {
             Some(window_id(2))
         );
 
-        remembered.insert("$workspace".to_string(), window_id(2));
-        remembered.insert("right".to_string(), window_id(2));
+        remember(&mut remembered, &["$workspace", "right"], window_id(2));
 
         assert_eq!(
             select_directional_focus_candidate(
@@ -652,9 +689,7 @@ mod tests {
             Some(window_id(3))
         );
 
-        remembered.insert("$workspace".to_string(), window_id(4));
-        remembered.insert("right".to_string(), window_id(4));
-        remembered.insert("bottom".to_string(), window_id(4));
+        remember(&mut remembered, &["$workspace", "right", "bottom"], window_id(4));
 
         assert_eq!(
             select_directional_focus_candidate(
@@ -667,9 +702,7 @@ mod tests {
             Some(window_id(4))
         );
 
-        remembered.insert("$workspace".to_string(), window_id(3));
-        remembered.insert("right".to_string(), window_id(3));
-        remembered.insert("bottom".to_string(), window_id(3));
+        remember(&mut remembered, &["$workspace", "right", "bottom"], window_id(3));
 
         assert_eq!(
             select_directional_focus_candidate(
@@ -685,12 +718,10 @@ mod tests {
 
     #[test]
     fn directional_focus_replays_sway_memory_sequence() {
-        use crate::focus::{FocusAxis, FocusBranchKey, FocusScopeNavigation, FocusTree};
-
         fn step(
             candidates: &[WindowGeometryCandidate],
             focused: &mut WindowId,
-            remembered: &mut BTreeMap<String, WindowId>,
+            remembered: &mut BTreeMap<FocusScopePath, WindowId>,
             focus_tree: &FocusTree,
             direction: NavigationDirection,
             expected: u64,
@@ -786,29 +817,39 @@ mod tests {
         focus_tree.set_navigation(
             [
                 (
-                    "$workspace".to_string(),
+                    FocusTree::workspace_scope(),
                     FocusScopeNavigation {
                         axis: FocusAxis::Horizontal,
                         branches: vec![
                             FocusBranchKey::Window(window_id(1)),
-                            FocusBranchKey::Scope("$workspace/group[1]:right".to_string()),
-                        ],
-                    },
-                ),
-                (
-                    "$workspace/group[1]:right".to_string(),
-                    FocusScopeNavigation {
-                        axis: FocusAxis::Vertical,
-                        branches: vec![
-                            FocusBranchKey::Window(window_id(2)),
                             FocusBranchKey::Scope(
-                                "$workspace/group[1]:right/group[1]:bottom".to_string(),
+                                "$workspace/group[1]:right"
+                                    .parse()
+                                    .expect("valid focus scope path"),
                             ),
                         ],
                     },
                 ),
                 (
-                    "$workspace/group[1]:right/group[1]:bottom".to_string(),
+                    "$workspace/group[1]:right"
+                        .parse()
+                        .expect("valid focus scope path"),
+                    FocusScopeNavigation {
+                        axis: FocusAxis::Vertical,
+                        branches: vec![
+                            FocusBranchKey::Window(window_id(2)),
+                            FocusBranchKey::Scope(
+                                "$workspace/group[1]:right/group[1]:bottom"
+                                    .parse()
+                                    .expect("valid focus scope path"),
+                            ),
+                        ],
+                    },
+                ),
+                (
+                    "$workspace/group[1]:right/group[1]:bottom"
+                        .parse()
+                        .expect("valid focus scope path"),
                     FocusScopeNavigation {
                         axis: FocusAxis::Horizontal,
                         branches: vec![
@@ -833,7 +874,7 @@ mod tests {
             2,
         );
         focused = window_id(1);
-        remembered.insert("$workspace".to_string(), window_id(2));
+        remembered.insert(FocusTree::workspace_scope(), window_id(2));
 
         step(
             &candidates,
@@ -895,12 +936,10 @@ mod tests {
 
     #[test]
     fn directional_focus_wraps_within_axis_and_preserves_column_memory() {
-        use crate::focus::{FocusAxis, FocusBranchKey, FocusScopeNavigation, FocusTree};
-
         fn step(
             candidates: &[WindowGeometryCandidate],
             focused: &mut WindowId,
-            remembered: &mut BTreeMap<String, WindowId>,
+            remembered: &mut BTreeMap<FocusScopePath, WindowId>,
             focus_tree: &FocusTree,
             direction: NavigationDirection,
             expected: u64,
@@ -981,17 +1020,17 @@ mod tests {
         focus_tree.set_navigation(
             [
                 (
-                    "$workspace".to_string(),
+                    FocusTree::workspace_scope(),
                     FocusScopeNavigation {
                         axis: FocusAxis::Horizontal,
                         branches: vec![
-                            FocusBranchKey::Scope(main_scope.to_string()),
-                            FocusBranchKey::Scope(side_scope.to_string()),
+                            FocusBranchKey::Scope(main_scope.parse().expect("valid focus scope path")),
+                            FocusBranchKey::Scope(side_scope.parse().expect("valid focus scope path")),
                         ],
                     },
                 ),
                 (
-                    main_scope.to_string(),
+                    main_scope.parse().expect("valid focus scope path"),
                     FocusScopeNavigation {
                         axis: FocusAxis::Vertical,
                         branches: vec![
@@ -1001,7 +1040,7 @@ mod tests {
                     },
                 ),
                 (
-                    side_scope.to_string(),
+                    side_scope.parse().expect("valid focus scope path"),
                     FocusScopeNavigation {
                         axis: FocusAxis::Vertical,
                         branches: vec![
@@ -1017,8 +1056,8 @@ mod tests {
         );
         let mut remembered = BTreeMap::new();
         let mut focused = window_id(1);
-        remembered.insert("$workspace".to_string(), focused.clone());
-        remembered.insert(main_scope.to_string(), focused.clone());
+        remembered.insert(FocusTree::workspace_scope(), focused.clone());
+        remembered.insert(main_scope.parse().expect("valid focus scope path"), focused.clone());
 
         step(
             &candidates,
@@ -1088,7 +1127,7 @@ mod tests {
 
     #[test]
     fn directional_focus_prefers_visual_ancestor_neighbor_before_inner_wrap() {
-        use crate::focus::{FocusTree, FocusTreeWindowGeometry};
+        use crate::focus::FocusTreeWindowGeometry;
 
         let candidates = vec![
             candidate(1, 0, 0, 2052, 1416, &["$workspace", "$workspace/visual[0]"]),
@@ -1135,9 +1174,14 @@ mod tests {
             },
         ]);
         let mut remembered = BTreeMap::new();
-        remembered.insert(FocusTree::workspace_scope_key().to_string(), window_id(3));
-        remembered.insert("$workspace/visual[1]".to_string(), window_id(3));
-        remembered.insert("$workspace/visual[1]/visual[1]".to_string(), window_id(3));
+        remembered.insert(FocusTree::workspace_scope(), window_id(3));
+        remembered.insert("$workspace/visual[1]".parse().expect("valid focus scope path"), window_id(3));
+        remembered.insert(
+            "$workspace/visual[1]/visual[1]"
+                .parse()
+                .expect("valid focus scope path"),
+            window_id(3),
+        );
 
         assert_eq!(
             select_directional_focus_candidate(
@@ -1159,6 +1203,97 @@ mod tests {
                 Some(&focus_tree),
             ),
             Some(window_id(1))
+        );
+    }
+
+    #[test]
+    fn directional_focus_wraps_within_visual_grid_rows() {
+        use crate::focus::{FocusTree, FocusTreeWindowGeometry};
+
+        let candidates = vec![
+            candidate(1, 0, 0, 500, 400, &["$workspace", "$workspace/visual[0]", "$workspace/visual[0]/visual[0]"]),
+            candidate(2, 500, 0, 500, 400, &["$workspace", "$workspace/visual[0]", "$workspace/visual[0]/visual[1]"]),
+            candidate(3, 0, 400, 500, 400, &["$workspace", "$workspace/visual[1]", "$workspace/visual[1]/visual[0]"]),
+            candidate(4, 500, 400, 500, 400, &["$workspace", "$workspace/visual[1]", "$workspace/visual[1]/visual[1]"]),
+        ];
+        let focus_tree = FocusTree::from_window_geometries(&[
+            FocusTreeWindowGeometry { window_id: window_id(1), geometry: WindowGeometry { x: 0, y: 0, width: 500, height: 400 } },
+            FocusTreeWindowGeometry { window_id: window_id(2), geometry: WindowGeometry { x: 500, y: 0, width: 500, height: 400 } },
+            FocusTreeWindowGeometry { window_id: window_id(3), geometry: WindowGeometry { x: 0, y: 400, width: 500, height: 400 } },
+            FocusTreeWindowGeometry { window_id: window_id(4), geometry: WindowGeometry { x: 500, y: 400, width: 500, height: 400 } },
+        ]);
+
+        assert_eq!(
+            select_directional_focus_candidate(
+                &candidates,
+                Some(window_id(2)),
+                NavigationDirection::Right,
+                &BTreeMap::new(),
+                Some(&focus_tree),
+            ),
+            Some(window_id(1))
+        );
+
+        assert_eq!(
+            select_directional_focus_candidate(
+                &candidates,
+                Some(window_id(4)),
+                NavigationDirection::Right,
+                &BTreeMap::new(),
+                Some(&focus_tree),
+            ),
+            Some(window_id(3))
+        );
+    }
+
+    #[test]
+    fn directional_focus_preserves_memory_in_nested_wrap_rows() {
+        use crate::focus::{FocusTree, FocusTreeWindowGeometry};
+
+        let candidates = vec![
+            candidate(1, 0, 0, 1200, 900, &["$workspace", "$workspace/visual[0]"]),
+            candidate(2, 1200, 0, 1200, 300, &["$workspace", "$workspace/visual[1]", "$workspace/visual[1]/visual[0]"]),
+            candidate(3, 1200, 300, 600, 300, &["$workspace", "$workspace/visual[1]", "$workspace/visual[1]/visual[1]", "$workspace/visual[1]/visual[1]/visual[0]"]),
+            candidate(4, 1800, 300, 600, 300, &["$workspace", "$workspace/visual[1]", "$workspace/visual[1]/visual[1]", "$workspace/visual[1]/visual[1]/visual[1]"]),
+            candidate(5, 1200, 600, 1200, 300, &["$workspace", "$workspace/visual[1]", "$workspace/visual[1]/visual[2]"]),
+        ];
+        let focus_tree = FocusTree::from_window_geometries(&[
+            FocusTreeWindowGeometry { window_id: window_id(1), geometry: WindowGeometry { x: 0, y: 0, width: 1200, height: 900 } },
+            FocusTreeWindowGeometry { window_id: window_id(2), geometry: WindowGeometry { x: 1200, y: 0, width: 1200, height: 300 } },
+            FocusTreeWindowGeometry { window_id: window_id(3), geometry: WindowGeometry { x: 1200, y: 300, width: 600, height: 300 } },
+            FocusTreeWindowGeometry { window_id: window_id(4), geometry: WindowGeometry { x: 1800, y: 300, width: 600, height: 300 } },
+            FocusTreeWindowGeometry { window_id: window_id(5), geometry: WindowGeometry { x: 1200, y: 600, width: 1200, height: 300 } },
+        ]);
+        let mut remembered = BTreeMap::new();
+        remembered.insert(FocusTree::workspace_scope(), window_id(4));
+        remembered.insert("$workspace/visual[1]".parse().expect("valid focus scope path"), window_id(4));
+        remembered.insert(
+            "$workspace/visual[1]/visual[1]"
+                .parse()
+                .expect("valid focus scope path"),
+            window_id(4),
+        );
+
+        assert_eq!(
+            select_directional_focus_candidate(
+                &candidates,
+                Some(window_id(1)),
+                NavigationDirection::Right,
+                &remembered,
+                Some(&focus_tree),
+            ),
+            Some(window_id(4))
+        );
+
+        assert_eq!(
+            select_directional_focus_candidate(
+                &candidates,
+                Some(window_id(4)),
+                NavigationDirection::Down,
+                &remembered,
+                Some(&focus_tree),
+            ),
+            Some(window_id(5))
         );
     }
 

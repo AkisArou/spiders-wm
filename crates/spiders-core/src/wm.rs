@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use crate::focus::{FocusScopeNavigation, FocusTree};
+use crate::focus::{FocusScopeNavigation, FocusScopePath, FocusTree};
 use crate::{OutputId, SeatId, WindowId, WorkspaceId};
 use crate::ResolvedLayoutNode;
 
@@ -84,7 +84,7 @@ pub struct WmModel {
     pub current_workspace_id: Option<WorkspaceId>,
     pub current_output_id: Option<OutputId>,
     pub focus_tree: Option<FocusTree>,
-    pub last_focused_window_id_by_scope: BTreeMap<String, WindowId>,
+    pub last_focused_window_id_by_scope: BTreeMap<FocusScopePath, WindowId>,
 }
 
 impl WmModel {
@@ -334,7 +334,7 @@ impl WmModel {
             }
         }
 
-        if let Some(remembered_window_id) = self.remembered_focus_for_scope(FocusTree::workspace_scope_key())
+        if let Some(remembered_window_id) = self.remembered_focus_for_scope(&FocusTree::workspace_scope())
             && visible_window_ids.contains(remembered_window_id)
         {
             return Some(remembered_window_id.clone());
@@ -445,21 +445,24 @@ impl WmModel {
         self.prune_focus_memory();
     }
 
-    pub fn set_focus_navigation(&mut self, navigation_by_scope: BTreeMap<String, FocusScopeNavigation>) {
+    pub fn set_focus_navigation(
+        &mut self,
+        navigation_by_scope: BTreeMap<FocusScopePath, FocusScopeNavigation>,
+    ) {
         if let Some(focus_tree) = self.focus_tree.as_mut() {
             focus_tree.set_navigation(navigation_by_scope);
         }
     }
 
-    pub fn focus_scope_path(&self, window_id: &WindowId) -> Option<&[String]> {
+    pub fn focus_scope_path(&self, window_id: &WindowId) -> Option<&[FocusScopePath]> {
         self.focus_tree.as_ref()?.scope_path(window_id)
     }
 
-    pub fn focus_scope_descendants(&self, scope_key: &str) -> Option<&[WindowId]> {
+    pub fn focus_scope_descendants(&self, scope_key: &FocusScopePath) -> Option<&[WindowId]> {
         self.focus_tree.as_ref()?.descendants(scope_key)
     }
 
-    pub fn remembered_focus_for_scope(&self, scope_key: &str) -> Option<&WindowId> {
+    pub fn remembered_focus_for_scope(&self, scope_key: &FocusScopePath) -> Option<&WindowId> {
         self.last_focused_window_id_by_scope.get(scope_key)
     }
 
