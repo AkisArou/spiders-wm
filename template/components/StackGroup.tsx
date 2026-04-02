@@ -1,4 +1,4 @@
-import type { GroupProps, LayoutContext } from "spiders-wm/layout";
+import type { GroupProps, LayoutContext } from "@spiders-wm/sdk/layout";
 
 import { StackSlot } from "./common/StackSlot";
 

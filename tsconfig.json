@@ -1,0 +1,12 @@
+{
+  "files": [],
+  "include": [],
+  "references": [
+    {
+      "path": "apps/spiders-wm-playground"
+    },
+    {
+      "path": "packages/spiders-wm-sdk"
+    }
+  ]
+}

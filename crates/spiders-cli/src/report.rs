@@ -1,7 +1,7 @@
 use serde::Serialize;
-use spiders_shared::api::{CompositorEvent, QueryRequest, QueryResponse};
-use spiders_shared::command::WmCommand;
-use spiders_shared::runtime::runtime_error::RuntimeRefreshSummary;
+use spiders_core::api::{CompositorEvent, QueryRequest, QueryResponse};
+use spiders_core::command::WmCommand;
+use spiders_core::runtime::runtime_error::RuntimeRefreshSummary;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum OutputMode {

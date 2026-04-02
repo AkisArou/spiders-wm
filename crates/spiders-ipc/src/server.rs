@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
 use std::os::unix::net::UnixStream;
 
-use spiders_shared::api::{CompositorEvent, QueryRequest, QueryResponse};
-use spiders_shared::command::WmCommand;
+use spiders_core::api::{CompositorEvent, QueryRequest, QueryResponse};
+use spiders_core::command::WmCommand;
 use tracing::{debug, warn};
 
 use crate::{

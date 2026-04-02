@@ -51,8 +51,8 @@ where
 
 #[cfg(test)]
 mod tests {
-    use spiders_shared::api::{CompositorEvent, QueryRequest};
-    use spiders_tree::WindowId;
+    use spiders_core::api::{CompositorEvent, QueryRequest};
+    use spiders_core::WindowId;
 
     use crate::{IpcClientMessage, IpcEnvelope, IpcServerMessage, IpcSubscriptionTopic};
 

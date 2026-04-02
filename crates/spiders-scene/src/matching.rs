@@ -1,6 +1,6 @@
-use spiders_shared::snapshot::WindowSnapshot;
-use spiders_shared::types::ShellKind;
-use spiders_tree::{MatchClause, MatchKey, WindowMatch};
+use spiders_core::snapshot::WindowSnapshot;
+use spiders_core::types::ShellKind;
+use spiders_core::{MatchClause, MatchKey, WindowMatch};
 use thiserror::Error;
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -142,7 +142,7 @@ fn parse_key(input: &str) -> Result<MatchKey, MatchParseError> {
 
 #[cfg(test)]
 mod tests {
-    use spiders_tree::{OutputId, WindowId, WorkspaceId};
+    use spiders_core::{OutputId, WindowId, WorkspaceId};
 
     use super::*;
 
@@ -157,7 +157,7 @@ mod tests {
             role: Some("browser".into()),
             window_type: Some("normal".into()),
             mapped: true,
-            mode: spiders_shared::types::WindowMode::Tiled,
+            mode: spiders_core::types::WindowMode::Tiled,
             focused: false,
             urgent: false,
             closing: false,

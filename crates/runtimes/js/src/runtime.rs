@@ -5,13 +5,13 @@ use spiders_config::model::Config;
 use spiders_scene::ast::{
     AuthoredLayoutNode, AuthoredNodeMeta, LayoutValidationError, ValidatedLayoutTree,
 };
-use spiders_shared::runtime::layout_context::LayoutEvaluationContext;
-use spiders_shared::runtime::prepared_layout::{PreparedLayout, SelectedLayout};
-use spiders_shared::runtime::runtime_contract::{
+use spiders_core::runtime::layout_context::LayoutEvaluationContext;
+use spiders_core::runtime::prepared_layout::{PreparedLayout, SelectedLayout};
+use spiders_core::runtime::runtime_contract::{
     AuthoringLayoutRuntime, LayoutModuleContract, PreparedLayoutRuntime,
 };
-use spiders_shared::runtime::runtime_error::RuntimeError;
-use spiders_tree::{SlotTake, SourceLayoutNode};
+use spiders_core::runtime::runtime_error::RuntimeError;
+use spiders_core::{SlotTake, SourceLayoutNode};
 use tracing::{debug, warn};
 
 use crate::loader::{InlineLayoutSourceLoader, JsLayoutSourceLoader};
@@ -280,7 +280,7 @@ impl<L: JsLayoutSourceLoader> QuickJsPreparedLayoutRuntime<L> {
     pub fn prepare_layout(
         &self,
         config: &Config,
-        workspace: &spiders_shared::snapshot::WorkspaceSnapshot,
+        workspace: &spiders_core::snapshot::WorkspaceSnapshot,
     ) -> Result<Option<PreparedLayout>, RuntimeError> {
         debug!(workspace_id = %workspace.id, workspace_name = %workspace.name, "loading runtime source for layout preparation");
         let result = self.loader.load_runtime_source(config, workspace);
@@ -302,7 +302,7 @@ impl PreparedLayoutRuntime for StubPreparedLayoutRuntime {
     fn prepare_layout(
         &self,
         config: &Self::Config,
-        workspace: &spiders_shared::snapshot::WorkspaceSnapshot,
+        workspace: &spiders_core::snapshot::WorkspaceSnapshot,
     ) -> Result<Option<PreparedLayout>, RuntimeError> {
         Ok(config
             .resolve_selected_layout(workspace)
@@ -315,15 +315,15 @@ impl PreparedLayoutRuntime for StubPreparedLayoutRuntime {
                     entry: String::new(),
                     modules: Vec::new(),
                 }),
-                stylesheets: spiders_shared::runtime::prepared_layout::PreparedStylesheets::default(
+                stylesheets: spiders_core::runtime::prepared_layout::PreparedStylesheets::default(
                 ),
             }))
     }
 
     fn build_context(
         &self,
-        state: &spiders_shared::snapshot::StateSnapshot,
-        workspace: &spiders_shared::snapshot::WorkspaceSnapshot,
+        state: &spiders_core::snapshot::StateSnapshot,
+        workspace: &spiders_core::snapshot::WorkspaceSnapshot,
         artifact: Option<&PreparedLayout>,
     ) -> LayoutEvaluationContext {
         state.layout_context(
@@ -354,15 +354,15 @@ impl<L: JsLayoutSourceLoader> PreparedLayoutRuntime for QuickJsPreparedLayoutRun
     fn prepare_layout(
         &self,
         config: &Self::Config,
-        workspace: &spiders_shared::snapshot::WorkspaceSnapshot,
+        workspace: &spiders_core::snapshot::WorkspaceSnapshot,
     ) -> Result<Option<PreparedLayout>, RuntimeError> {
         QuickJsPreparedLayoutRuntime::prepare_layout(self, config, workspace)
     }
 
     fn build_context(
         &self,
-        state: &spiders_shared::snapshot::StateSnapshot,
-        workspace: &spiders_shared::snapshot::WorkspaceSnapshot,
+        state: &spiders_core::snapshot::StateSnapshot,
+        workspace: &spiders_core::snapshot::WorkspaceSnapshot,
         artifact: Option<&PreparedLayout>,
     ) -> LayoutEvaluationContext {
         state.layout_context(
@@ -421,7 +421,7 @@ impl<L: JsLayoutSourceLoader> AuthoringLayoutRuntime for QuickJsPreparedLayoutRu
         &self,
         authored: &std::path::Path,
         runtime: &std::path::Path,
-    ) -> Result<spiders_shared::runtime::runtime_error::RuntimeRefreshSummary, RuntimeError> {
+    ) -> Result<spiders_core::runtime::runtime_error::RuntimeRefreshSummary, RuntimeError> {
         debug!(authored = %authored.display(), runtime = %runtime.display(), "refreshing prepared config");
         crate::authored::refresh_prepared_config(authored, runtime)
             .map(runtime_refresh_summary)
@@ -434,7 +434,7 @@ impl<L: JsLayoutSourceLoader> AuthoringLayoutRuntime for QuickJsPreparedLayoutRu
         &self,
         authored: &std::path::Path,
         runtime: &std::path::Path,
-    ) -> Result<spiders_shared::runtime::runtime_error::RuntimeRefreshSummary, RuntimeError> {
+    ) -> Result<spiders_core::runtime::runtime_error::RuntimeRefreshSummary, RuntimeError> {
         debug!(authored = %authored.display(), runtime = %runtime.display(), "rebuilding prepared config");
         crate::authored::rebuild_prepared_config(authored, runtime)
             .map(runtime_refresh_summary)
@@ -461,7 +461,7 @@ impl AuthoringLayoutRuntime for StubPreparedLayoutRuntime {
         &self,
         _authored: &std::path::Path,
         _runtime: &std::path::Path,
-    ) -> Result<spiders_shared::runtime::runtime_error::RuntimeRefreshSummary, RuntimeError> {
+    ) -> Result<spiders_core::runtime::runtime_error::RuntimeRefreshSummary, RuntimeError> {
         Err(RuntimeError::NotImplemented(
             "prepared config refresh".into(),
         ))
@@ -471,7 +471,7 @@ impl AuthoringLayoutRuntime for StubPreparedLayoutRuntime {
         &self,
         _authored: &std::path::Path,
         _runtime: &std::path::Path,
-    ) -> Result<spiders_shared::runtime::runtime_error::RuntimeRefreshSummary, RuntimeError> {
+    ) -> Result<spiders_core::runtime::runtime_error::RuntimeRefreshSummary, RuntimeError> {
         Err(RuntimeError::NotImplemented(
             "prepared config rebuild".into(),
         ))
@@ -480,8 +480,8 @@ impl AuthoringLayoutRuntime for StubPreparedLayoutRuntime {
 
 fn runtime_refresh_summary(
     update: crate::authored::JsRuntimeCacheUpdate,
-) -> spiders_shared::runtime::runtime_error::RuntimeRefreshSummary {
-    spiders_shared::runtime::runtime_error::RuntimeRefreshSummary {
+) -> spiders_core::runtime::runtime_error::RuntimeRefreshSummary {
+    spiders_core::runtime::runtime_error::RuntimeRefreshSummary {
         refreshed_files: update.rebuilt_files + update.copied_stylesheets,
         pruned_files: update.pruned_files,
     }
@@ -578,9 +578,9 @@ mod tests {
 
     use serde_json::json;
     use spiders_config::model::{Config, LayoutDefinition};
-    use spiders_shared::snapshot::{OutputSnapshot, StateSnapshot, WorkspaceSnapshot};
-    use spiders_shared::types::{LayoutRef, OutputTransform};
-    use spiders_tree::{OutputId, WorkspaceId};
+    use spiders_core::snapshot::{OutputSnapshot, StateSnapshot, WorkspaceSnapshot};
+    use spiders_core::types::{LayoutRef, OutputTransform};
+    use spiders_core::{OutputId, WorkspaceId};
 
     use super::*;
 

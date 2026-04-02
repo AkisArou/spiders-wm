@@ -18,7 +18,7 @@ use taffy::style::{
 };
 
 use crate::style::*;
-use spiders_tree::ResolvedLayoutNode;
+use spiders_core::ResolvedLayoutNode;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct NodeComputedStyle {

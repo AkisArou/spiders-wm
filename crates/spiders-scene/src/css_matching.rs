@@ -1,43 +1,26 @@
-use spiders_tree::ResolvedLayoutNode;
+use spiders_core::ResolvedLayoutNode;
 
-use crate::css::stylo_adapter::{
-    LayoutDomTree, LayoutPseudoElement, LayoutSelectorImpl, selector_matches_element,
-};
-use crate::css::{CompiledStyleRule, CompiledStyleSheet};
+use crate::css::{CompiledStyleRule, CompiledStyleSheet, LayoutPseudoElement};
 
 pub fn matching_rules<'a>(
-    sheet: &'a CompiledStyleSheet,
-    node: &ResolvedLayoutNode,
+	sheet: &'a CompiledStyleSheet,
+	node: &ResolvedLayoutNode,
 ) -> Vec<&'a CompiledStyleRule> {
-    sheet
-        .rules
-        .iter()
-        .filter(|rule| rule.target_pseudo.is_none())
-        .filter(|rule| selector_matches(&rule.selectors, node))
-        .collect()
+	spiders_css::matching_rules(sheet, node)
 }
 
+#[cfg(test)]
 pub fn selector_matches(
-    selector: &selectors::parser::SelectorList<LayoutSelectorImpl>,
-    node: &ResolvedLayoutNode,
+	selector: &selectors::parser::SelectorList<spiders_css::LayoutSelectorImpl>,
+	node: &ResolvedLayoutNode,
 ) -> bool {
-    let tree = LayoutDomTree::from_resolved_root(node);
-    selector_matches_element(selector, tree.root_element())
+	spiders_css::selector_matches(selector, node)
 }
 
 pub fn matching_rules_for_pseudo<'a>(
-    sheet: &'a CompiledStyleSheet,
-    node: &ResolvedLayoutNode,
-    pseudo: LayoutPseudoElement,
+	sheet: &'a CompiledStyleSheet,
+	node: &ResolvedLayoutNode,
+	pseudo: LayoutPseudoElement,
 ) -> Vec<&'a CompiledStyleRule> {
-    sheet
-        .rules
-        .iter()
-        .filter(|rule| rule.target_pseudo.as_ref() == Some(&pseudo))
-        .filter(|rule| {
-            rule.pseudo_base_selectors
-                .as_ref()
-                .is_some_and(|selector| selector_matches(selector, node))
-        })
-        .collect()
+	spiders_css::matching_rules_for_pseudo(sheet, node, pseudo)
 }

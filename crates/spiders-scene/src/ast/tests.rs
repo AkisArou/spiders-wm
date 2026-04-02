@@ -1,11 +1,11 @@
-use spiders_shared::snapshot::WindowSnapshot;
-use spiders_shared::types::{ShellKind, WindowMode};
-use spiders_tree::WindowId;
-use spiders_tree::{LayoutNodeMeta, LayoutNodeType, MatchClause, MatchKey, RemainingTake};
+use spiders_core::snapshot::WindowSnapshot;
+use spiders_core::types::{ShellKind, WindowMode};
+use spiders_core::WindowId;
+use spiders_core::{LayoutNodeMeta, LayoutNodeType, MatchClause, MatchKey, RemainingTake};
 
 use super::*;
 use crate::matching::MatchParseError;
-use spiders_tree::{ResolvedLayoutNode, SlotTake, SourceLayoutNode, WindowMatch};
+use spiders_core::{ResolvedLayoutNode, SlotTake, SourceLayoutNode, WindowMatch};
 
 fn window(id: &str, app_id: &str, title: &str) -> WindowSnapshot {
     WindowSnapshot {

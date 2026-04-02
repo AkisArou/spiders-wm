@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
-use spiders_shared::api::{CompositorEvent, QueryRequest, QueryResponse};
-use spiders_shared::command::WmCommand;
+use spiders_core::api::{CompositorEvent, QueryRequest, QueryResponse};
+use spiders_core::command::WmCommand;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -182,8 +182,8 @@ pub fn subscription_matches_event(
 
 #[cfg(test)]
 mod tests {
-    use spiders_shared::snapshot::OutputSnapshot;
-    use spiders_tree::{OutputId, WindowId};
+    use spiders_core::snapshot::OutputSnapshot;
+    use spiders_core::{OutputId, WindowId};
 
     use super::*;
 
@@ -241,9 +241,9 @@ mod tests {
     #[test]
     fn server_event_round_trips_with_topics() {
         let response = IpcEnvelope::new(IpcServerMessage::event(CompositorEvent::WindowCreated {
-            window: spiders_shared::snapshot::WindowSnapshot {
+            window: spiders_core::snapshot::WindowSnapshot {
                 id: WindowId::from("w1"),
-                shell: spiders_shared::types::ShellKind::XdgToplevel,
+                shell: spiders_core::types::ShellKind::XdgToplevel,
                 title: Some("Terminal".into()),
                 app_id: Some("foot".into()),
                 class: None,
@@ -251,7 +251,7 @@ mod tests {
                 role: None,
                 window_type: None,
                 mapped: true,
-                mode: spiders_shared::types::WindowMode::Tiled,
+                mode: spiders_core::types::WindowMode::Tiled,
                 focused: true,
                 urgent: false,
                 closing: false,
@@ -325,7 +325,7 @@ mod tests {
                 logical_width: 1920,
                 logical_height: 1080,
                 scale: 1,
-                transform: spiders_shared::types::OutputTransform::Normal,
+                transform: spiders_core::types::OutputTransform::Normal,
                 enabled: true,
                 current_workspace_id: None,
             }),

@@ -1,4 +1,4 @@
-import type { LayoutsConfig } from "spiders-wm/config";
+import type { LayoutsConfig } from "@spiders-wm/sdk/config";
 
 export const layouts: LayoutsConfig = {
   default: "master-stack",
@@ -16,4 +16,4 @@ export const layouts: LayoutsConfig = {
   per_monitor: {
     "eDP-1": "master-stack",
   },
-}
+};

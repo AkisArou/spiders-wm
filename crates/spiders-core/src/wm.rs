@@ -1,0 +1,791 @@
+use std::collections::BTreeMap;
+
+use crate::{OutputId, SeatId, WindowId, WorkspaceId};
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct OutputModel {
+    pub id: OutputId,
+    pub name: String,
+    pub logical_x: i32,
+    pub logical_y: i32,
+    pub logical_width: u32,
+    pub logical_height: u32,
+    pub enabled: bool,
+    pub focused_workspace_id: Option<WorkspaceId>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct SeatModel {
+    pub id: SeatId,
+    pub focused_window_id: Option<WindowId>,
+    pub hovered_window_id: Option<WindowId>,
+    pub interacted_window_id: Option<WindowId>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WindowGeometry {
+    pub x: i32,
+    pub y: i32,
+    pub width: i32,
+    pub height: i32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WindowModel {
+    pub id: WindowId,
+    pub app_id: Option<String>,
+    pub title: Option<String>,
+    pub output_id: Option<OutputId>,
+    pub workspace_id: Option<WorkspaceId>,
+    pub mapped: bool,
+    pub focused: bool,
+    pub floating: bool,
+    pub floating_geometry: Option<WindowGeometry>,
+    pub fullscreen: bool,
+    pub closing: bool,
+}
+
+impl Default for WindowModel {
+    fn default() -> Self {
+        Self {
+            id: WindowId(String::new()),
+            app_id: None,
+            title: None,
+            output_id: None,
+            workspace_id: None,
+            mapped: false,
+            focused: false,
+            floating: false,
+            floating_geometry: None,
+            fullscreen: false,
+            closing: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct WorkspaceModel {
+    pub id: WorkspaceId,
+    pub name: String,
+    pub output_id: Option<OutputId>,
+    pub focused: bool,
+    pub visible: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct WmModel {
+    pub windows: BTreeMap<WindowId, WindowModel>,
+    pub workspaces: BTreeMap<WorkspaceId, WorkspaceModel>,
+    pub outputs: BTreeMap<OutputId, OutputModel>,
+    pub seats: BTreeMap<SeatId, SeatModel>,
+    pub focused_window_id: Option<WindowId>,
+    pub current_workspace_id: Option<WorkspaceId>,
+    pub current_output_id: Option<OutputId>,
+}
+
+impl WmModel {
+    pub fn focused_window_id(&self) -> Option<&WindowId> {
+        self.focused_window_id.as_ref()
+    }
+
+    pub fn current_workspace_id(&self) -> Option<&WorkspaceId> {
+        self.current_workspace_id.as_ref()
+    }
+
+    pub fn current_output_id(&self) -> Option<&OutputId> {
+        self.current_output_id.as_ref()
+    }
+
+    pub fn has_window(&self, id: &WindowId) -> bool {
+        self.windows.contains_key(id)
+    }
+
+    pub fn workspace_names_for_window(&self, id: &WindowId) -> Vec<String> {
+        self.windows
+            .get(id)
+            .and_then(|window| window.workspace_id.as_ref())
+            .and_then(|workspace_id| self.workspaces.get(workspace_id))
+            .map(|workspace| vec![workspace.name.clone()])
+            .unwrap_or_default()
+    }
+
+    pub fn workspace_names(&self) -> Vec<String> {
+        self.workspaces
+            .values()
+            .map(|workspace| workspace.name.clone())
+            .collect()
+    }
+
+    pub fn visible_window_ids(&self) -> Vec<WindowId> {
+        self.windows
+            .values()
+            .filter(|window| window.mapped)
+            .map(|window| window.id.clone())
+            .collect()
+    }
+
+    pub fn floating_geometry(&self, id: &WindowId) -> Option<WindowGeometry> {
+        self.windows
+            .get(id)
+            .and_then(|window| window.floating_geometry)
+    }
+
+    pub fn active_workspace_names(&self, workspace: &WorkspaceModel) -> Vec<String> {
+        workspace
+            .output_id
+            .as_ref()
+            .map(|output_id| {
+                self.workspaces
+                    .values()
+                    .filter(|candidate| {
+                        candidate.visible && candidate.output_id.as_ref() == Some(output_id)
+                    })
+                    .map(|candidate| candidate.name.clone())
+                    .collect()
+            })
+            .filter(|names: &Vec<String>| !names.is_empty())
+            .unwrap_or_else(|| {
+                if workspace.visible {
+                    vec![workspace.name.clone()]
+                } else {
+                    Vec::new()
+                }
+            })
+    }
+
+    pub fn upsert_seat(&mut self, seat_id: SeatId) {
+        self.seats
+            .entry(seat_id.clone())
+            .or_insert_with(|| SeatModel {
+                id: seat_id,
+                ..SeatModel::default()
+            });
+    }
+
+    pub fn upsert_workspace(&mut self, workspace_id: WorkspaceId, name: String) {
+        self.workspaces
+            .entry(workspace_id.clone())
+            .and_modify(|workspace| {
+                workspace.name = name.clone();
+            })
+            .or_insert_with(|| WorkspaceModel {
+                id: workspace_id,
+                name,
+                output_id: None,
+                focused: false,
+                visible: false,
+            });
+    }
+
+    pub fn set_current_workspace(&mut self, workspace_id: WorkspaceId) {
+        self.current_workspace_id = Some(workspace_id.clone());
+
+        for (candidate_id, workspace) in &mut self.workspaces {
+            let is_current = *candidate_id == workspace_id;
+            workspace.focused = is_current;
+            workspace.visible = is_current;
+        }
+    }
+
+    pub fn upsert_output(
+        &mut self,
+        output_id: impl Into<OutputId>,
+        name: impl Into<String>,
+        logical_width: u32,
+        logical_height: u32,
+        focused_workspace_id: Option<WorkspaceId>,
+    ) {
+        let output_id = output_id.into();
+        let name = name.into();
+
+        self.outputs
+            .entry(output_id.clone())
+            .and_modify(|output| {
+                output.name = name.clone();
+                output.logical_width = logical_width;
+                output.logical_height = logical_height;
+                output.enabled = true;
+                output.focused_workspace_id = focused_workspace_id.clone();
+            })
+            .or_insert_with(|| OutputModel {
+                id: output_id.clone(),
+                name,
+                logical_x: 0,
+                logical_y: 0,
+                logical_width,
+                logical_height,
+                enabled: true,
+                focused_workspace_id,
+            });
+    }
+
+    pub fn attach_workspace_to_output(&mut self, workspace_id: WorkspaceId, output_id: OutputId) {
+        if let Some(workspace) = self.workspaces.get_mut(&workspace_id) {
+            workspace.output_id = Some(output_id);
+            workspace.focused = true;
+            workspace.visible = true;
+        }
+    }
+
+    pub fn set_current_output(&mut self, output_id: OutputId) {
+        self.current_output_id = Some(output_id);
+    }
+
+    pub fn set_seat_focused_window(
+        &mut self,
+        seat_id: SeatId,
+        focused_window_id: Option<WindowId>,
+    ) {
+        if let Some(seat) = self.seats.get_mut(&seat_id) {
+            seat.focused_window_id = focused_window_id;
+        }
+    }
+
+    pub fn set_seat_hovered_window(
+        &mut self,
+        seat_id: SeatId,
+        hovered_window_id: Option<WindowId>,
+    ) {
+        if let Some(seat) = self.seats.get_mut(&seat_id) {
+            seat.hovered_window_id = hovered_window_id;
+        }
+    }
+
+    pub fn set_seat_interacted_window(
+        &mut self,
+        seat_id: SeatId,
+        interacted_window_id: Option<WindowId>,
+    ) {
+        if let Some(seat) = self.seats.get_mut(&seat_id) {
+            seat.interacted_window_id = interacted_window_id;
+        }
+    }
+
+    pub fn insert_window(
+        &mut self,
+        id: WindowId,
+        workspace_id: Option<WorkspaceId>,
+        output_id: Option<OutputId>,
+    ) {
+        self.windows.insert(
+            id.clone(),
+            WindowModel {
+                id,
+                output_id,
+                workspace_id,
+                ..WindowModel::default()
+            },
+        );
+    }
+
+    pub fn window_is_on_current_workspace(&self, id: WindowId) -> bool {
+        let Some(window) = self.windows.get(&id) else {
+            return false;
+        };
+
+        match self.current_workspace_id.as_ref() {
+            Some(current_workspace_id) => {
+                window.workspace_id.as_ref() == Some(current_workspace_id)
+            }
+            None => true,
+        }
+    }
+
+    pub fn window_ids_on_current_workspace<I>(&self, window_ids: I) -> Vec<WindowId>
+    where
+        I: IntoIterator<Item = WindowId>,
+    {
+        window_ids
+            .into_iter()
+            .filter(|window_id| self.window_is_on_current_workspace(window_id.clone()))
+            .collect()
+    }
+
+    pub fn fullscreen_window_on_current_workspace<I>(&self, window_ids: I) -> Option<WindowId>
+    where
+        I: IntoIterator<Item = WindowId>,
+    {
+        self.window_ids_on_current_workspace(window_ids)
+            .into_iter()
+            .find(|window_id| {
+                self.windows
+                    .get(window_id)
+                    .is_some_and(|window| window.fullscreen)
+            })
+    }
+
+    pub fn preferred_focus_window_on_current_workspace<I>(&self, window_ids: I) -> Option<WindowId>
+    where
+        I: IntoIterator<Item = WindowId>,
+    {
+        let visible_window_ids = self
+            .window_ids_on_current_workspace(window_ids)
+            .into_iter()
+            .filter(|window_id| self.window_is_focusable(window_id))
+            .collect::<Vec<_>>();
+
+        if let Some(focused_window_id) = self.focused_window_id.clone() {
+            if visible_window_ids.contains(&focused_window_id) {
+                return Some(focused_window_id);
+            }
+        }
+
+        visible_window_ids.into_iter().last()
+    }
+
+    pub fn window_is_focusable(&self, id: &WindowId) -> bool {
+        self.windows.get(id).is_some_and(|window| !window.closing)
+    }
+
+    pub fn window_is_layout_eligible(&self, id: &WindowId) -> bool {
+        self.windows.get(id).is_some_and(|window| {
+            window.workspace_id.as_ref() == self.current_workspace_id.as_ref()
+                && (!window.closing || window.mapped)
+        })
+    }
+
+    pub fn focusable_window_ids(&self) -> Vec<WindowId> {
+        self.windows
+            .iter()
+            .filter_map(|(window_id, window)| (!window.closing).then_some(window_id.clone()))
+            .collect()
+    }
+
+    pub fn preferred_focusable_window_id(&self) -> Option<WindowId> {
+        if let Some(focused_window_id) = self.focused_window_id.clone()
+            && self.window_is_focusable(&focused_window_id)
+        {
+            return Some(focused_window_id);
+        }
+
+        self.focusable_window_ids().into_iter().next_back()
+    }
+
+    pub fn set_window_mapped(&mut self, id: WindowId, mapped: bool) {
+        if let Some(window) = self.windows.get_mut(&id) {
+            window.mapped = mapped;
+        }
+    }
+
+    pub fn set_window_workspace(&mut self, id: WindowId, workspace_id: Option<WorkspaceId>) {
+        if let Some(window) = self.windows.get_mut(&id) {
+            window.workspace_id = workspace_id;
+        }
+    }
+
+    pub fn set_window_floating(&mut self, id: WindowId, floating: bool) {
+        if let Some(window) = self.windows.get_mut(&id) {
+            window.floating = floating;
+        }
+    }
+
+    pub fn set_window_floating_geometry(&mut self, id: WindowId, geometry: WindowGeometry) {
+        if let Some(window) = self.windows.get_mut(&id) {
+            window.floating_geometry = Some(geometry);
+        }
+    }
+
+    pub fn set_window_fullscreen(&mut self, id: WindowId, fullscreen: bool) {
+        if let Some(window) = self.windows.get_mut(&id) {
+            window.fullscreen = fullscreen;
+        }
+    }
+
+    pub fn set_window_focused(&mut self, focused_id: Option<WindowId>) {
+        self.focused_window_id = focused_id.clone();
+
+        for (window_id, window) in &mut self.windows {
+            window.focused = Some(window_id.clone()) == self.focused_window_id;
+        }
+    }
+
+    pub fn set_window_closing(&mut self, id: WindowId, closing: bool) {
+        if let Some(window) = self.windows.get_mut(&id) {
+            window.closing = closing;
+        }
+    }
+
+    pub fn set_window_identity(
+        &mut self,
+        id: WindowId,
+        title: Option<String>,
+        app_id: Option<String>,
+    ) {
+        if let Some(window) = self.windows.get_mut(&id) {
+            window.title = title;
+            window.app_id = app_id;
+        }
+    }
+
+    pub fn remove_window(&mut self, id: WindowId) {
+        self.windows.remove(&id);
+        if self.focused_window_id == Some(id) {
+            self.focused_window_id = None;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::window_id;
+
+    #[test]
+    fn setting_current_workspace_updates_focus_and_visibility() {
+        let mut model = WmModel::default();
+        model.upsert_workspace(WorkspaceId("1".to_string()), "1".to_string());
+        model.upsert_workspace(WorkspaceId("2".to_string()), "2".to_string());
+
+        model.set_current_workspace(WorkspaceId("2".to_string()));
+
+        assert_eq!(
+            model.current_workspace_id,
+            Some(WorkspaceId("2".to_string()))
+        );
+        assert_eq!(
+            model
+                .workspaces
+                .get(&WorkspaceId("1".to_string()))
+                .map(|workspace| workspace.focused),
+            Some(false)
+        );
+        assert_eq!(
+            model
+                .workspaces
+                .get(&WorkspaceId("2".to_string()))
+                .map(|workspace| workspace.focused),
+            Some(true)
+        );
+        assert_eq!(
+            model
+                .workspaces
+                .get(&WorkspaceId("1".to_string()))
+                .map(|workspace| workspace.visible),
+            Some(false)
+        );
+        assert_eq!(
+            model
+                .workspaces
+                .get(&WorkspaceId("2".to_string()))
+                .map(|workspace| workspace.visible),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn setting_window_workspace_updates_that_window() {
+        let mut model = WmModel::default();
+        model.insert_window(window_id(9), Some(WorkspaceId("1".to_string())), None);
+
+        model.set_window_workspace(window_id(9), Some(WorkspaceId("2".to_string())));
+
+        assert_eq!(
+            model
+                .windows
+                .get(&window_id(9))
+                .and_then(|window| window.workspace_id.clone()),
+            Some(WorkspaceId("2".to_string()))
+        );
+    }
+
+    #[test]
+    fn setting_window_floating_updates_that_window() {
+        let mut model = WmModel::default();
+        model.insert_window(window_id(10), None, None);
+
+        model.set_window_floating(window_id(10), true);
+
+        assert_eq!(
+            model
+                .windows
+                .get(&window_id(10))
+                .map(|window| window.floating),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn setting_window_floating_geometry_updates_that_window() {
+        let mut model = WmModel::default();
+        model.insert_window(window_id(12), None, None);
+
+        model.set_window_floating_geometry(
+            window_id(12),
+            WindowGeometry {
+                x: 40,
+                y: 50,
+                width: 800,
+                height: 600,
+            },
+        );
+
+        assert_eq!(
+            model.floating_geometry(&window_id(12)),
+            Some(WindowGeometry {
+                x: 40,
+                y: 50,
+                width: 800,
+                height: 600,
+            })
+        );
+    }
+
+    #[test]
+    fn floating_geometry_persists_across_floating_toggles() {
+        let mut model = WmModel::default();
+        model.insert_window(window_id(13), None, None);
+        model.set_window_floating(window_id(13), true);
+        model.set_window_floating_geometry(
+            window_id(13),
+            WindowGeometry {
+                x: 10,
+                y: 20,
+                width: 900,
+                height: 700,
+            },
+        );
+
+        model.set_window_floating(window_id(13), false);
+        model.set_window_floating(window_id(13), true);
+
+        assert_eq!(
+            model.floating_geometry(&window_id(13)),
+            Some(WindowGeometry {
+                x: 10,
+                y: 20,
+                width: 900,
+                height: 700,
+            })
+        );
+    }
+
+    #[test]
+    fn setting_window_fullscreen_updates_that_window() {
+        let mut model = WmModel::default();
+        model.insert_window(window_id(11), None, None);
+
+        model.set_window_fullscreen(window_id(11), true);
+
+        assert_eq!(
+            model
+                .windows
+                .get(&window_id(11))
+                .map(|window| window.fullscreen),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn fullscreen_window_on_current_workspace_returns_matching_visible_window() {
+        let mut model = WmModel::default();
+        model.upsert_workspace(WorkspaceId("1".to_string()), "1".to_string());
+        model.upsert_workspace(WorkspaceId("2".to_string()), "2".to_string());
+        model.set_current_workspace(WorkspaceId("1".to_string()));
+        model.insert_window(window_id(1), Some(WorkspaceId("1".to_string())), None);
+        model.insert_window(window_id(2), Some(WorkspaceId("2".to_string())), None);
+        model.set_window_fullscreen(window_id(1), true);
+        model.set_window_fullscreen(window_id(2), true);
+
+        assert_eq!(
+            model.fullscreen_window_on_current_workspace([window_id(1), window_id(2)]),
+            Some(window_id(1))
+        );
+    }
+
+    #[test]
+    fn setting_seat_focused_window_updates_that_seat() {
+        let mut model = WmModel::default();
+        model.upsert_seat(SeatId("winit".to_string()));
+
+        model.set_seat_focused_window(SeatId("winit".to_string()), Some(window_id(7)));
+
+        assert_eq!(
+            model
+                .seats
+                .get(&SeatId("winit".to_string()))
+                .and_then(|seat| seat.focused_window_id.clone()),
+            Some(window_id(7))
+        );
+    }
+
+    #[test]
+    fn setting_seat_hovered_and_interacted_window_updates_that_seat() {
+        let mut model = WmModel::default();
+        model.upsert_seat(SeatId("winit".to_string()));
+
+        model.set_seat_hovered_window(SeatId("winit".to_string()), Some(window_id(3)));
+        model.set_seat_interacted_window(SeatId("winit".to_string()), Some(window_id(4)));
+
+        let seat = model
+            .seats
+            .get(&SeatId("winit".to_string()))
+            .expect("seat missing");
+        assert_eq!(seat.hovered_window_id, Some(window_id(3)));
+        assert_eq!(seat.interacted_window_id, Some(window_id(4)));
+    }
+
+    #[test]
+    fn upserting_output_assigns_current_workspace() {
+        let mut model = WmModel::default();
+        model.upsert_workspace(WorkspaceId("1".to_string()), "1".to_string());
+        model.set_current_workspace(WorkspaceId("1".to_string()));
+
+        model.upsert_output(
+            "winit",
+            "winit",
+            1280,
+            720,
+            Some(WorkspaceId("1".to_string())),
+        );
+        model.attach_workspace_to_output(
+            WorkspaceId("1".to_string()),
+            OutputId("winit".to_string()),
+        );
+        model.set_current_output(OutputId("winit".to_string()));
+
+        assert_eq!(model.current_output_id, Some(OutputId("winit".to_string())));
+        assert_eq!(
+            model
+                .outputs
+                .get(&OutputId("winit".to_string()))
+                .map(|output| output.logical_width),
+            Some(1280)
+        );
+        assert_eq!(
+            model
+                .workspaces
+                .get(&WorkspaceId("1".to_string()))
+                .and_then(|workspace| workspace.output_id.clone()),
+            Some(OutputId("winit".to_string()))
+        );
+    }
+
+    #[test]
+    fn inserting_window_uses_current_workspace_and_output() {
+        let mut model = WmModel::default();
+        model.upsert_workspace(WorkspaceId("1".to_string()), "1".to_string());
+        model.set_current_workspace(WorkspaceId("1".to_string()));
+        model.upsert_output(
+            "winit",
+            "winit",
+            1280,
+            720,
+            Some(WorkspaceId("1".to_string())),
+        );
+        model.attach_workspace_to_output(
+            WorkspaceId("1".to_string()),
+            OutputId("winit".to_string()),
+        );
+        model.set_current_output(OutputId("winit".to_string()));
+
+        model.insert_window(
+            window_id(7),
+            model.current_workspace_id.clone(),
+            model.current_output_id.clone(),
+        );
+
+        let window = model.windows.get(&window_id(7)).expect("window missing");
+        assert_eq!(window.workspace_id, Some(WorkspaceId("1".to_string())));
+        assert_eq!(window.output_id, Some(OutputId("winit".to_string())));
+        assert!(!window.mapped);
+    }
+
+    #[test]
+    fn focusing_window_updates_focus_flags() {
+        let mut model = WmModel::default();
+        model.insert_window(window_id(1), None, None);
+        model.insert_window(window_id(2), None, None);
+
+        model.set_window_focused(Some(window_id(2)));
+
+        assert_eq!(model.focused_window_id, Some(window_id(2)));
+        assert_eq!(
+            model
+                .windows
+                .get(&window_id(1))
+                .map(|window| window.focused),
+            Some(false)
+        );
+        assert_eq!(
+            model
+                .windows
+                .get(&window_id(2))
+                .map(|window| window.focused),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn setting_window_identity_updates_title_and_app_id() {
+        let mut model = WmModel::default();
+        model.insert_window(window_id(3), None, None);
+
+        model.set_window_identity(
+            window_id(3),
+            Some("Terminal".to_string()),
+            Some("foot".to_string()),
+        );
+
+        let window = model.windows.get(&window_id(3)).expect("window missing");
+        assert_eq!(window.title.as_deref(), Some("Terminal"));
+        assert_eq!(window.app_id.as_deref(), Some("foot"));
+    }
+
+    #[test]
+    fn current_workspace_window_membership_is_explicit() {
+        let mut model = WmModel::default();
+        model.upsert_workspace(WorkspaceId("1".to_string()), "1".to_string());
+        model.upsert_workspace(WorkspaceId("2".to_string()), "2".to_string());
+        model.set_current_workspace(WorkspaceId("2".to_string()));
+        model.insert_window(
+            window_id(1),
+            Some(WorkspaceId("1".to_string())),
+            Some(OutputId("winit".to_string())),
+        );
+        model.insert_window(
+            window_id(2),
+            Some(WorkspaceId("2".to_string())),
+            Some(OutputId("winit".to_string())),
+        );
+
+        assert!(!model.window_is_on_current_workspace(window_id(1)));
+        assert!(model.window_is_on_current_workspace(window_id(2)));
+        assert!(!model.window_is_on_current_workspace(window_id(99)));
+    }
+
+    #[test]
+    fn current_workspace_window_order_preserves_stack_order_input() {
+        let mut model = WmModel::default();
+        model.upsert_workspace(WorkspaceId("1".to_string()), "1".to_string());
+        model.upsert_workspace(WorkspaceId("2".to_string()), "2".to_string());
+        model.set_current_workspace(WorkspaceId("2".to_string()));
+        model.insert_window(window_id(1), Some(WorkspaceId("1".to_string())), None);
+        model.insert_window(window_id(2), Some(WorkspaceId("2".to_string())), None);
+        model.insert_window(window_id(3), Some(WorkspaceId("2".to_string())), None);
+
+        let visible =
+            model.window_ids_on_current_workspace([window_id(3), window_id(1), window_id(2)]);
+
+        assert_eq!(visible, vec![window_id(3), window_id(2)]);
+    }
+
+    #[test]
+    fn preferred_focus_window_falls_back_to_last_visible_window() {
+        let mut model = WmModel::default();
+        model.upsert_workspace(WorkspaceId("1".to_string()), "1".to_string());
+        model.upsert_workspace(WorkspaceId("2".to_string()), "2".to_string());
+        model.set_current_workspace(WorkspaceId("2".to_string()));
+        model.insert_window(window_id(1), Some(WorkspaceId("1".to_string())), None);
+        model.insert_window(window_id(2), Some(WorkspaceId("2".to_string())), None);
+        model.insert_window(window_id(3), Some(WorkspaceId("2".to_string())), None);
+        model.set_window_focused(Some(window_id(1)));
+
+        let focused = model.preferred_focus_window_on_current_workspace([
+            window_id(1),
+            window_id(2),
+            window_id(3),
+        ]);
+
+        assert_eq!(focused, Some(window_id(3)));
+    }
+}

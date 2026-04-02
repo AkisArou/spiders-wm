@@ -1,4 +1,4 @@
-import type { InputsConfig } from "spiders-wm/config";
+import type { InputsConfig } from "@spiders-wm/sdk/config";
 
 export const inputs: InputsConfig = {
   "type:keyboard": {
@@ -16,4 +16,4 @@ export const inputs: InputsConfig = {
   "type:pointer": {
     accel_profile: "flat",
   },
-}
+};

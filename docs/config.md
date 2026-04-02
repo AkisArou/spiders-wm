@@ -37,7 +37,7 @@ You can override discovery with environment variables:
 ## Minimal Example
 
 ```ts
-import type { SpiderWMConfig } from "spiders-wm/config";
+import type { SpiderWMConfig } from "@spiders-wm/sdk/config";
 
 export default {
   workspaces: ["1", "2", "3", "4", "5"],
@@ -50,7 +50,7 @@ For details on layout JSX, bindings, and rules, see `configs/` in the template o
 ## Typical Example
 
 ```ts
-import type { SpiderWMConfig } from "spiders-wm/config";
+import type { SpiderWMConfig } from "@spiders-wm/sdk/config";
 
 import { bindings } from "./config/bindings";
 import { inputs } from "./config/inputs";
@@ -137,7 +137,7 @@ Supported keys:
 Example:
 
 ```ts
-import type { LayoutsConfig } from "spiders-wm/config";
+import type { LayoutsConfig } from "@spiders-wm/sdk/config";
 
 export const layouts = {
   default: "master-stack",
@@ -175,8 +175,8 @@ rules: [
 Bindings are declarative entries with a trigger and a command descriptor.
 
 ```ts
-import * as commands from "spiders-wm/commands";
-import type { BindingsConfig } from "spiders-wm/config";
+import * as commands from "@spiders-wm/sdk/commands";
+import type { BindingsConfig } from "@spiders-wm/sdk/config";
 
 export const bindings = {
   mod: "super",
@@ -194,7 +194,7 @@ Binding keys use XKB keysym names. `mod` is an alias resolved from `bindings.mod
 
 ## Supported Commands
 
-`spiders-wm/commands` currently exposes:
+`@spiders-wm/sdk/commands` currently exposes:
 
 - `spawn(command)`
 - `reload_config()`
@@ -239,7 +239,7 @@ Supported input fields include:
 
 ## Runtime API From Config
 
-`spiders-wm/api` exposes:
+`@spiders-wm/sdk/api` exposes:
 
 - `events.on`, `events.once`, `events.off`
 - `wm.spawn`, `wm.reloadConfig`, `wm.setLayout`, `wm.cycleLayout`

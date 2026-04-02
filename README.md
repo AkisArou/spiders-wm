@@ -56,7 +56,7 @@ The default authored config lives at `~/.config/spiders-wm/config.ts` or
 Minimal example:
 
 ```ts
-import type { SpiderWMConfig } from "spiders-wm/config";
+import type { SpiderWMConfig } from "@spiders-wm/sdk/config";
 import { bindings } from "./config/bindings";
 import { layouts } from "./config/layouts";
 
@@ -69,14 +69,15 @@ export default {
 
 ## Repository Layout
 
-- `crates/spiders-wm` - river compositor integration + window management runtime
+- `crates/spiders-wm` - smithay compositor integration + window management runtime
+- `crates/spiders-wm-river` - river compositor integration and compatibility path
+- `crates/spiders-core` - shared WM domain types, authored layout contracts, and core model logic
 - `crates/spiders-config` - config loading, authoring layout evaluation, prepared config caching
 - `crates/spiders-scene` - layout node scene graph and geometry resolution
 - `crates/spiders-ipc` - IPC protocol, transport, and server
 - `crates/runtimes/js` - JavaScript runtime bridge and config SDK surface
 - `crates/spiders-cli` - CLI tooling for config validation, building, and IPC queries
 - `crates/spiders-logging` - shared logging initialization and filter setup
-- `crates/spiders-shared` - shared types and utilities
 - `crates/spiders-tree` - tree/graph data structures for layout and window tracking
 
 ## Notes

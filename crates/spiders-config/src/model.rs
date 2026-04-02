@@ -3,11 +3,11 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use spiders_scene::SceneRequest;
-use spiders_shared::command::WmCommand;
-use spiders_shared::runtime::prepared_layout::{PreparedLayout, SelectedLayout};
-use spiders_shared::snapshot::{OutputSnapshot, StateSnapshot, WorkspaceSnapshot};
-use spiders_shared::types::LayoutRef;
-use spiders_tree::{LayoutSpace, ResolvedLayoutNode};
+use spiders_core::command::WmCommand;
+use spiders_core::runtime::prepared_layout::{PreparedLayout, SelectedLayout};
+use spiders_core::snapshot::{OutputSnapshot, StateSnapshot, WorkspaceSnapshot};
+use spiders_core::types::LayoutRef;
+use spiders_core::{LayoutSpace, ResolvedLayoutNode};
 use thiserror::Error;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -333,10 +333,10 @@ impl From<&LayoutDefinition> for LayoutRef {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use spiders_shared::runtime::prepared_layout::{PreparedLayout, PreparedStylesheets};
-    use spiders_shared::snapshot::OutputSnapshot;
-    use spiders_shared::types::{LayoutRef, OutputTransform};
-    use spiders_tree::{OutputId, WorkspaceId};
+    use spiders_core::runtime::prepared_layout::{PreparedLayout, PreparedStylesheets};
+    use spiders_core::snapshot::OutputSnapshot;
+    use spiders_core::types::{LayoutRef, OutputTransform};
+    use spiders_core::{OutputId, WorkspaceId};
     use std::fs;
 
     fn workspace(layout_name: &str) -> WorkspaceSnapshot {

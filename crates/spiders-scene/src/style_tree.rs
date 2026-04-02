@@ -2,7 +2,7 @@ use crate::css::{
     CssValueError, LayoutPseudoElement, NodeComputedStyle, StyledLayoutTree, compute_style,
     compute_style_for_pseudo, map_computed_style_to_taffy,
 };
-use spiders_tree::ResolvedLayoutNode;
+use spiders_core::ResolvedLayoutNode;
 
 pub fn build_styled_layout_tree_from_sheet(
     root: &ResolvedLayoutNode,

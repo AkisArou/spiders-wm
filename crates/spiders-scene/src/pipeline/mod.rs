@@ -2,7 +2,7 @@ use crate::CompiledKeyframesRule;
 use crate::css::{CssParseError, CssValueError, StyledLayoutTree, parse_stylesheet};
 pub use crate::layout_calc::{LaidOutNode, LaidOutTree};
 use crate::scene::{SceneRequest, SceneResponse};
-use spiders_tree::ResolvedLayoutNode;
+use spiders_core::ResolvedLayoutNode;
 use std::collections::HashMap;
 use tracing::debug;
 
@@ -184,12 +184,12 @@ pub fn build_styled_layout_tree_from_sheet(
 
 #[cfg(test)]
 mod tests {
-    use spiders_tree::{OutputId, WindowId, WorkspaceId};
+    use spiders_core::{OutputId, WindowId, WorkspaceId};
 
     use super::*;
     use crate::css::{Display, FlexDirectionValue, LengthPercentage, SizeValue};
     use crate::scene::{LayoutSnapshotNode, SceneNodeStyle, SceneResponse};
-    use spiders_tree::{LayoutNodeMeta, LayoutRect, LayoutSpace, ResolvedLayoutNode};
+    use spiders_core::{LayoutNodeMeta, LayoutRect, LayoutSpace, ResolvedLayoutNode};
 
     fn sample_tree() -> ResolvedLayoutNode {
         ResolvedLayoutNode::Workspace {
@@ -393,9 +393,9 @@ mod tests {
             output_id: Some(OutputId::from("out-1")),
             layout_name: Some("master-stack".into()),
             root: sample_tree(),
-            stylesheets: spiders_shared::runtime::prepared_layout::PreparedStylesheets {
+            stylesheets: spiders_core::runtime::prepared_layout::PreparedStylesheets {
                 global: None,
-                layout: Some(spiders_shared::runtime::prepared_layout::PreparedStylesheet {
+                layout: Some(spiders_core::runtime::prepared_layout::PreparedStylesheet {
                     path: "layouts/master-stack/index.css".into(),
                     source:
                         "workspace { display: flex; width: 320px; height: 200px; } #main { width: 100px; }"
@@ -508,10 +508,10 @@ mod tests {
             output_id: Some(OutputId::from("out-1")),
             layout_name: Some("master-stack".into()),
             root: sample_tree(),
-            stylesheets: spiders_shared::runtime::prepared_layout::PreparedStylesheets {
+            stylesheets: spiders_core::runtime::prepared_layout::PreparedStylesheets {
                 global: None,
                 layout: Some(
-                    spiders_shared::runtime::prepared_layout::PreparedStylesheet {
+                    spiders_core::runtime::prepared_layout::PreparedStylesheet {
                         path: "layouts/master-stack/index.css".into(),
                         source: stylesheet.into(),
                     },
@@ -538,9 +538,9 @@ mod tests {
             output_id: Some(OutputId::from("out-1")),
             layout_name: Some("master-stack".into()),
             root: sample_tree(),
-            stylesheets: spiders_shared::runtime::prepared_layout::PreparedStylesheets {
+            stylesheets: spiders_core::runtime::prepared_layout::PreparedStylesheets {
                 global: None,
-                layout: Some(spiders_shared::runtime::prepared_layout::PreparedStylesheet {
+                layout: Some(spiders_core::runtime::prepared_layout::PreparedStylesheet {
                     path: "layouts/master-stack/index.css".into(),
                     source:
                         "workspace { display: flex; width: 320px; height: 200px; } #main { width: 100px; }"
@@ -554,9 +554,9 @@ mod tests {
         };
 
         let request_b = SceneRequest {
-            stylesheets: spiders_shared::runtime::prepared_layout::PreparedStylesheets {
+            stylesheets: spiders_core::runtime::prepared_layout::PreparedStylesheets {
                 global: None,
-                layout: Some(spiders_shared::runtime::prepared_layout::PreparedStylesheet {
+                layout: Some(spiders_core::runtime::prepared_layout::PreparedStylesheet {
                     path: "layouts/master-stack/index.css".into(),
                     source:
                         "workspace { display: flex; width: 320px; height: 200px; } #main { width: 200px; }"

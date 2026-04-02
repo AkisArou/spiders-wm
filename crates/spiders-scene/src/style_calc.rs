@@ -1,4 +1,4 @@
-use spiders_tree::ResolvedLayoutNode;
+use spiders_core::ResolvedLayoutNode;
 
 use crate::css::apply::ApplyCompiledDeclaration;
 use crate::css::{CompiledStyleSheet, ComputedStyle, CssValueError, LayoutPseudoElement};

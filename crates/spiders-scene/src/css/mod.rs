@@ -1,21 +1,20 @@
 pub(crate) mod apply;
-mod compile;
-mod compiled;
-mod grid;
-mod parse_values;
-mod parsing;
-pub(crate) mod stylo_adapter;
-mod stylo_compile;
 mod taffy;
-mod tokenizer;
+
+#[cfg(test)]
+pub(crate) mod stylo_adapter {
+    #[cfg(test)]
+    pub(crate) use spiders_css::parse_selector_list;
+}
 
 pub use crate::style::*;
 pub use crate::style_calc::{compute_style, compute_style_for_pseudo};
-pub use compile::CompiledDeclaration;
-pub use compile::CssValueError;
-pub use compiled::*;
-pub use parsing::{CssParseError, parse_stylesheet};
-pub use stylo_adapter::LayoutPseudoElement;
+pub use spiders_css::compile;
+pub use spiders_css::compile::CompiledDeclaration;
+pub use spiders_css::compile::CssValueError;
+pub use spiders_css::compiled::*;
+pub use spiders_css::parsing::{CssParseError, parse_stylesheet};
+pub use spiders_css::LayoutPseudoElement;
 pub use taffy::{NodeComputedStyle, StyledLayoutTree, map_computed_style_to_taffy};
 
 #[cfg(test)]
@@ -24,8 +23,8 @@ mod tests {
     use super::*;
     use crate::css::compile::CompiledDeclaration;
     use crate::css_matching::{matching_rules, selector_matches};
-    use spiders_tree::WindowId;
-    use spiders_tree::{LayoutNodeMeta, ResolvedLayoutNode};
+    use spiders_core::WindowId;
+    use spiders_core::{LayoutNodeMeta, ResolvedLayoutNode};
 
     fn runtime_window_with_meta(meta: LayoutNodeMeta) -> ResolvedLayoutNode {
         ResolvedLayoutNode::Window {

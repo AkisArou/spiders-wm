@@ -1,0 +1,44 @@
+#frame {
+  display: flex;
+  flex-direction: row;
+  gap: 12px;
+  width: 100%;
+  height: 100%;
+  padding: 12px;
+}
+
+.column {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.column--primary {
+  flex-basis: 0;
+  flex-grow: 3;
+}
+
+.column--stack {
+  flex-basis: 0;
+  flex-grow: 2;
+}
+
+.pane {
+  min-height: 0;
+  border-width: 0;
+  padding: 12px;
+}
+
+#main-terminal {
+  border-color: #0f766e;
+}
+
+window:focused::titlebar {
+  background: #0f766e;
+  color: #f7f5ef;
+  height: 28px;
+  padding-left: 12px;
+  padding-right: 12px;
+  text-align: left;
+}

@@ -1,12 +1,12 @@
 use std::collections::BTreeSet;
 
-use spiders_shared::snapshot::WindowSnapshot;
-use spiders_shared::types::ShellKind;
+use spiders_core::snapshot::WindowSnapshot;
+use spiders_core::types::ShellKind;
 use thiserror::Error;
 
 use crate::ast::validate::ValidatedLayoutTree;
 use crate::matching::matches_window;
-use spiders_tree::{LayoutNodeMeta, ResolvedLayoutNode, SlotTake, SourceLayoutNode, WindowMatch};
+use spiders_core::{LayoutNodeMeta, ResolvedLayoutNode, SlotTake, SourceLayoutNode, WindowMatch};
 
 #[derive(Debug, Clone)]
 pub struct ResolvedLayoutTree {

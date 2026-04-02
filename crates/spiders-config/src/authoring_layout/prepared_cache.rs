@@ -1,5 +1,5 @@
-use spiders_shared::runtime::runtime_contract::AuthoringLayoutRuntime;
-use spiders_shared::runtime::runtime_error::{RuntimeError, RuntimeRefreshSummary};
+use spiders_core::runtime::runtime_contract::AuthoringLayoutRuntime;
+use spiders_core::runtime::runtime_error::{RuntimeError, RuntimeRefreshSummary};
 
 use crate::authoring_layout::AuthoringLayoutServiceError;
 use crate::model::{Config, ConfigPaths};

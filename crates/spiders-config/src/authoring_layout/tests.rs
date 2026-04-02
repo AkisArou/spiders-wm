@@ -1,14 +1,14 @@
 use std::fs;
 
-use spiders_shared::runtime::layout_context::LayoutEvaluationContext;
-use spiders_shared::runtime::prepared_layout::{PreparedLayout, SelectedLayout};
-use spiders_shared::runtime::runtime_contract::{
+use spiders_core::runtime::layout_context::LayoutEvaluationContext;
+use spiders_core::runtime::prepared_layout::{PreparedLayout, SelectedLayout};
+use spiders_core::runtime::runtime_contract::{
     AuthoringLayoutRuntime, LayoutModuleContract, PreparedLayoutRuntime,
 };
-use spiders_shared::runtime::runtime_error::{RuntimeError, RuntimeRefreshSummary};
-use spiders_shared::snapshot::{OutputSnapshot, StateSnapshot, WorkspaceSnapshot};
-use spiders_shared::types::{LayoutRef, OutputTransform};
-use spiders_tree::{OutputId, SourceLayoutNode, WorkspaceId};
+use spiders_core::runtime::runtime_error::{RuntimeError, RuntimeRefreshSummary};
+use spiders_core::snapshot::{OutputSnapshot, StateSnapshot, WorkspaceSnapshot};
+use spiders_core::types::{LayoutRef, OutputTransform};
+use spiders_core::{OutputId, SourceLayoutNode, WorkspaceId};
 use tempfile::TempDir;
 
 use super::*;

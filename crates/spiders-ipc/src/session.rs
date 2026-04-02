@@ -1,5 +1,5 @@
-use spiders_shared::api::{CompositorEvent, QueryRequest, QueryResponse};
-use spiders_shared::command::WmCommand;
+use spiders_core::api::{CompositorEvent, QueryRequest, QueryResponse};
+use spiders_core::command::WmCommand;
 use tracing::debug;
 
 use crate::protocol::{
@@ -134,7 +134,7 @@ fn unsubscribe_topics(
 
 #[cfg(test)]
 mod tests {
-    use spiders_shared::api::QueryResponse;
+    use spiders_core::api::QueryResponse;
 
     use super::*;
 

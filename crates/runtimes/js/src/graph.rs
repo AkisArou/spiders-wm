@@ -289,7 +289,7 @@ impl ModuleGraphBuilder {
         import: &ImportedModule,
     ) -> Result<ModuleId, GraphError> {
         if matches!(import.kind, ImportedModuleKind::Virtual)
-            || import.specifier.starts_with("spiders-wm/")
+            || is_virtual_sdk_specifier(&import.specifier)
         {
             return Ok(ModuleId::Virtual(import.specifier.clone()));
         }
@@ -356,7 +356,7 @@ fn parse_imports(path: &Path, source: &str) -> Result<Vec<ImportedModule>, Graph
 }
 
 fn classify_import_specifier(specifier: &str) -> ImportedModule {
-    let kind = if specifier.starts_with("spiders-wm/") {
+    let kind = if is_virtual_sdk_specifier(specifier) {
         ImportedModuleKind::Virtual
     } else if specifier.ends_with(".css") {
         ImportedModuleKind::Stylesheet
@@ -368,6 +368,10 @@ fn classify_import_specifier(specifier: &str) -> ImportedModule {
         specifier: specifier.to_owned(),
         kind,
     }
+}
+
+fn is_virtual_sdk_specifier(specifier: &str) -> bool {
+    specifier.starts_with("spiders-wm/") || specifier.starts_with("@spiders-wm/sdk/")
 }
 
 #[cfg(test)]
@@ -431,7 +435,7 @@ mod tests {
             r#"
                 import { bindings } from "./config/bindings";
                 import "./index.css";
-                import type { SpiderWMConfig } from "spiders-wm/config";
+                import type { SpiderWMConfig } from "@spiders-wm/sdk/config";
                 export default { bindings } satisfies SpiderWMConfig;
             "#,
         )
@@ -461,7 +465,7 @@ mod tests {
         assert!(
             graph
                 .modules
-                .contains_key(&ModuleId::Virtual("spiders-wm/config".into()))
+                .contains_key(&ModuleId::Virtual("@spiders-wm/sdk/config".into()))
         );
         assert!(
             graph

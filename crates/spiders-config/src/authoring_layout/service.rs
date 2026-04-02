@@ -1,12 +1,12 @@
 use std::collections::BTreeMap;
 
-use spiders_shared::runtime::layout_context::LayoutEvaluationContext;
-use spiders_shared::runtime::prepared_layout::PreparedLayout;
-use spiders_shared::runtime::runtime_contract::AuthoringLayoutRuntime;
-use spiders_shared::runtime::runtime_error::RuntimeError;
-use spiders_shared::snapshot::{StateSnapshot, WorkspaceSnapshot};
-use spiders_shared::types::LayoutRef;
-use spiders_tree::{SourceLayoutNode, WorkspaceId};
+use spiders_core::runtime::layout_context::LayoutEvaluationContext;
+use spiders_core::runtime::prepared_layout::PreparedLayout;
+use spiders_core::runtime::runtime_contract::AuthoringLayoutRuntime;
+use spiders_core::runtime::runtime_error::RuntimeError;
+use spiders_core::snapshot::{StateSnapshot, WorkspaceSnapshot};
+use spiders_core::types::LayoutRef;
+use spiders_core::{SourceLayoutNode, WorkspaceId};
 use tracing::{debug, info, warn};
 
 use super::config_paths;
@@ -75,7 +75,7 @@ where
     ) -> Result<
         (
             Config,
-            Option<spiders_shared::runtime::runtime_error::RuntimeRefreshSummary>,
+            Option<spiders_core::runtime::runtime_error::RuntimeRefreshSummary>,
         ),
         AuthoringLayoutServiceError,
     > {
@@ -94,7 +94,7 @@ where
         paths: &ConfigPaths,
         _config: &Config,
     ) -> Result<
-        spiders_shared::runtime::runtime_error::RuntimeRefreshSummary,
+        spiders_core::runtime::runtime_error::RuntimeRefreshSummary,
         AuthoringLayoutServiceError,
     > {
         prepared_cache::write_prepared_config(&self.runtime, paths)

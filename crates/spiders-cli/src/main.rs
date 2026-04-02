@@ -494,7 +494,7 @@ fn build_config_command(cli: &CliContext, output_mode: OutputMode) -> std::proce
 }
 
 fn describe_prepared_config_update(
-    update: Option<spiders_shared::runtime::runtime_error::RuntimeRefreshSummary>,
+    update: Option<spiders_core::runtime::runtime_error::RuntimeRefreshSummary>,
 ) -> String {
     match update {
         Some(update) if update.is_noop() => "noop".into(),
@@ -506,12 +506,12 @@ fn describe_prepared_config_update(
     }
 }
 
-fn synthetic_bootstrap_state() -> spiders_shared::snapshot::StateSnapshot {
-    use spiders_shared::snapshot::{
+fn synthetic_bootstrap_state() -> spiders_core::snapshot::StateSnapshot {
+    use spiders_core::snapshot::{
         OutputSnapshot, StateSnapshot, WindowSnapshot, WorkspaceSnapshot,
     };
-    use spiders_shared::types::{LayoutRef, OutputTransform, ShellKind};
-    use spiders_tree::{OutputId, WindowId, WorkspaceId};
+    use spiders_core::types::{LayoutRef, OutputTransform, ShellKind};
+    use spiders_core::{OutputId, WindowId, WorkspaceId};
 
     StateSnapshot {
         focused_window_id: Some(WindowId::from("bootstrap-window")),
@@ -550,7 +550,7 @@ fn synthetic_bootstrap_state() -> spiders_shared::snapshot::StateSnapshot {
             role: None,
             window_type: None,
             mapped: true,
-            mode: spiders_shared::types::WindowMode::Tiled,
+            mode: spiders_core::types::WindowMode::Tiled,
             focused: true,
             urgent: false,
             closing: false,
@@ -568,7 +568,7 @@ fn run_ipc_smoke() -> Result<IpcSmokeReport, String> {
         IpcClientMessage, IpcEnvelope, IpcServerHandleResult, IpcServerState, IpcSubscriptionTopic,
         decode_request_line, encode_request_line, encode_response_line,
     };
-    use spiders_shared::api::CompositorEvent;
+    use spiders_core::api::CompositorEvent;
 
     let mut server = IpcServerState::new();
     let client_id = server.add_client();
@@ -762,8 +762,8 @@ fn default_ipc_socket_path() -> Option<std::path::PathBuf> {
     std::env::var_os("SPIDERS_WM_IPC_SOCKET").map(std::path::PathBuf::from)
 }
 
-fn parse_query_request(name: &str) -> Result<spiders_shared::api::QueryRequest, String> {
-    use spiders_shared::api::QueryRequest;
+fn parse_query_request(name: &str) -> Result<spiders_core::api::QueryRequest, String> {
+    use spiders_core::api::QueryRequest;
 
     match name {
         "state" => Ok(QueryRequest::State),
@@ -776,8 +776,8 @@ fn parse_query_request(name: &str) -> Result<spiders_shared::api::QueryRequest, 
     }
 }
 
-fn parse_command_request(name: &str) -> Result<spiders_shared::command::WmCommand, String> {
-    use spiders_shared::command::{FocusDirection, LayoutCycleDirection, WmCommand};
+fn parse_command_request(name: &str) -> Result<spiders_core::command::WmCommand, String> {
+    use spiders_core::command::{FocusDirection, LayoutCycleDirection, WmCommand};
 
     if let Some(value) = name.strip_prefix("spawn:") {
         return Ok(WmCommand::Spawn {
@@ -854,8 +854,8 @@ fn parse_subscription_topic(name: &str) -> Result<spiders_ipc::IpcSubscriptionTo
     }
 }
 
-fn query_label(query: &spiders_shared::api::QueryRequest) -> &'static str {
-    use spiders_shared::api::QueryRequest;
+fn query_label(query: &spiders_core::api::QueryRequest) -> &'static str {
+    use spiders_core::api::QueryRequest;
 
     match query {
         QueryRequest::State => "state",
@@ -867,8 +867,8 @@ fn query_label(query: &spiders_shared::api::QueryRequest) -> &'static str {
     }
 }
 
-fn command_label(action: &spiders_shared::command::WmCommand) -> &'static str {
-    use spiders_shared::command::WmCommand;
+fn command_label(action: &spiders_core::command::WmCommand) -> &'static str {
+    use spiders_core::command::WmCommand;
 
     match action {
         WmCommand::Spawn { .. } => "spawn",
@@ -918,9 +918,9 @@ fn topic_label(topic: &spiders_ipc::IpcSubscriptionTopic) -> &'static str {
 }
 
 fn fallback_query_response(
-    query: spiders_shared::api::QueryRequest,
-) -> spiders_shared::api::QueryResponse {
-    use spiders_shared::api::{QueryRequest, QueryResponse};
+    query: spiders_core::api::QueryRequest,
+) -> spiders_core::api::QueryResponse {
+    use spiders_core::api::{QueryRequest, QueryResponse};
 
     let state = synthetic_bootstrap_state();
     let focused_window = state.focused_window_id.as_ref().and_then(|window_id| {
@@ -952,7 +952,7 @@ mod tests {
     use std::os::unix::net::UnixListener;
 
     use spiders_ipc::{IpcEnvelope, IpcServerMessage, encode_response_line};
-    use spiders_shared::api::{CompositorEvent, QueryResponse};
+    use spiders_core::api::{CompositorEvent, QueryResponse};
 
     #[test]
     fn ipc_smoke_report_contains_subscription_and_event_lines() {
@@ -993,7 +993,7 @@ mod tests {
 
         assert_eq!(
             report.query,
-            spiders_shared::api::QueryRequest::WorkspaceNames
+            spiders_core::api::QueryRequest::WorkspaceNames
         );
         assert_eq!(
             report.response,
@@ -1030,7 +1030,7 @@ mod tests {
 
         assert_eq!(
             report.command,
-            spiders_shared::command::WmCommand::CloseFocusedWindow
+            spiders_core::command::WmCommand::CloseFocusedWindow
         );
         assert_eq!(report.response_kind, "command-accepted");
 
@@ -1042,7 +1042,7 @@ mod tests {
     fn parse_ipc_command_supports_workspace_selection() {
         assert_eq!(
             parse_command_request("select-workspace:ws-2").unwrap(),
-            spiders_shared::command::WmCommand::SelectWorkspace {
+            spiders_core::command::WmCommand::SelectWorkspace {
                 workspace_id: "ws-2".into(),
             }
         );

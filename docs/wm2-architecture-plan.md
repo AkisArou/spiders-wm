@@ -406,9 +406,9 @@ Should enter through `scene/adapter.rs`.
 
 The adapter should translate wm2 model state into scene inputs and scene outputs back into layout targets.
 
-### `spiders-shared`
+### `spiders-core`
 
-Use as the shared typed interface for snapshots, layout/style payloads, and API-level state where it already fits.
+Use as the shared typed interface for snapshots, layout/style payloads, API-level state, and pure model/runtime-contract data.
 
 ## Risks To Avoid
 

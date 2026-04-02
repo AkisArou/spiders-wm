@@ -1,0 +1,26 @@
+{
+  "name": "@spiders-wm/sdk",
+  "private": true,
+  "version": "0.0.0",
+  "exports": {
+    ".": "./src",
+    "./api": {
+      "types": "./src/api.d.ts",
+      "default": "./src/api.js"
+    },
+    "./commands": {
+      "types": "./src/commands.d.ts",
+      "default": "./src/commands.js"
+    },
+    "./config": "./src/config.d.ts",
+    "./css": "./src/css.d.ts",
+    "./jsx-runtime": {
+      "types": "./src/jsx-runtime.d.ts",
+      "default": "./src/jsx-runtime.js"
+    },
+    "./layout": "./src/layout.d.ts"
+  },
+  "devDependencies": {
+    "tsconfig": "workspace:*"
+  }
+}

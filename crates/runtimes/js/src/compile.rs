@@ -117,9 +117,9 @@ impl AppBuildPlan {
         if needs_jsx_runtime
             && !virtual_modules
                 .iter()
-                .any(|name| name == "spiders-wm/jsx-runtime")
+                .any(|name| name == "@spiders-wm/sdk/jsx-runtime")
         {
-            virtual_modules.push("spiders-wm/jsx-runtime".into());
+            virtual_modules.push("@spiders-wm/sdk/jsx-runtime".into());
         }
 
         Self {
@@ -193,7 +193,7 @@ pub fn compile_app(plan: &AppBuildPlan) -> Result<CompiledApp, CompileError> {
             path.extension().and_then(|extension| extension.to_str()),
             Some("tsx" | "jsx")
         ) {
-            format!("import {{ sp, Fragment }} from \"spiders-wm/jsx-runtime\";\n{source}")
+            format!("import {{ sp, Fragment }} from \"@spiders-wm/sdk/jsx-runtime\";\n{source}")
         } else {
             source.clone()
         };
@@ -332,11 +332,15 @@ fn strip_stylesheet_imports(path: &Path, source: &str) -> Result<String, Compile
 
 fn read_virtual_module_source(specifier: &str) -> Result<String, CompileError> {
     let relative_path = match specifier {
-        "spiders-wm/commands" => PathBuf::from("sdk/commands.js"),
-        "spiders-wm/config" => PathBuf::from("src/virtual/config.js"),
-        "spiders-wm/jsx-runtime" => PathBuf::from("sdk/jsx-runtime.js"),
-        "spiders-wm/layout" => PathBuf::from("src/virtual/layout.js"),
-        "spiders-wm/api" => PathBuf::from("src/virtual/api.js"),
+        "spiders-wm/commands" | "@spiders-wm/sdk/commands" => {
+            PathBuf::from("../../../packages/spiders-wm-sdk/src/commands.js")
+        }
+        "spiders-wm/config" | "@spiders-wm/sdk/config" => PathBuf::from("src/virtual/config.js"),
+        "spiders-wm/jsx-runtime" | "@spiders-wm/sdk/jsx-runtime" => {
+            PathBuf::from("../../../packages/spiders-wm-sdk/src/jsx-runtime.js")
+        }
+        "spiders-wm/layout" | "@spiders-wm/sdk/layout" => PathBuf::from("src/virtual/layout.js"),
+        "spiders-wm/api" | "@spiders-wm/sdk/api" => PathBuf::from("src/virtual/api.js"),
         _ => {
             return Err(CompileError::UnsupportedVirtualModule {
                 specifier: specifier.into(),
@@ -480,7 +484,7 @@ mod tests {
     }
 
     #[test]
-    fn compile_app_uses_spider_wm_jsx_runtime_for_tsx_modules() {
+    fn compile_app_uses_sdk_jsx_runtime_for_tsx_modules() {
         let root = unique_root("tsx-runtime");
         fs::create_dir_all(root.join("layouts/master-stack")).unwrap();
         fs::write(root.join("config.ts"), "export default {};").unwrap();
@@ -501,7 +505,7 @@ mod tests {
         let plan = AppBuildPlan::from_graph(&graph);
         let compiled = compile_app(&plan).unwrap();
 
-        assert!(compiled.scripts[0].code.contains("spiders-wm/jsx-runtime"));
+        assert!(compiled.scripts[0].code.contains("@spiders-wm/sdk/jsx-runtime"));
         assert!(!compiled.scripts[0].code.contains("<workspace"));
     }
 
@@ -520,7 +524,7 @@ mod tests {
         fs::write(
             root.join("config/bindings.ts"),
             r#"
-                import { spawn } from "spiders-wm/commands";
+                import { spawn } from "@spiders-wm/sdk/commands";
                 export const bindings = { command: spawn("foot") };
             "#,
         )
@@ -545,7 +549,7 @@ mod tests {
             module_graph
                 .modules
                 .iter()
-                .any(|module| module.specifier == "spiders-wm/commands")
+                .any(|module| module.specifier == "@spiders-wm/sdk/commands")
         );
         let config_module = module_graph
             .modules

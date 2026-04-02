@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use thiserror::Error;
 
 use crate::matching::{MatchParseError, parse_window_match};
-use spiders_tree::{LayoutNodeMeta, LayoutNodeType, SlotTake, SourceLayoutNode, WindowMatch};
+use spiders_core::{LayoutNodeMeta, LayoutNodeType, SlotTake, SourceLayoutNode, WindowMatch};
 
 #[derive(Debug, Clone)]
 pub struct ValidatedLayoutTree {

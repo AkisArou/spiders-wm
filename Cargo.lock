@@ -2959,12 +2959,11 @@ dependencies = [
  "serde",
  "serde_json",
  "spiders-config",
+ "spiders-core",
  "spiders-ipc",
  "spiders-logging",
  "spiders-runtime-js",
  "spiders-scene",
- "spiders-shared",
- "spiders-tree",
  "tempfile",
  "tracing",
 ]
@@ -2976,12 +2975,36 @@ dependencies = [
  "anyhow",
  "serde",
  "serde_json",
+ "spiders-core",
  "spiders-scene",
- "spiders-shared",
- "spiders-tree",
  "tempfile",
  "thiserror 2.0.18",
  "tracing",
+]
+
+[[package]]
+name = "spiders-core"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "spiders-css"
+version = "0.1.0"
+dependencies = [
+ "cssparser",
+ "keyframe",
+ "precomputed-hash",
+ "selectors",
+ "serde",
+ "spiders-core",
+ "stylo",
+ "stylo_traits",
+ "thiserror 2.0.18",
+ "url",
 ]
 
 [[package]]
@@ -2990,8 +3013,7 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
- "spiders-shared",
- "spiders-tree",
+ "spiders-core",
  "thiserror 2.0.18",
  "tracing",
 ]
@@ -3015,9 +3037,8 @@ dependencies = [
  "serde",
  "serde_json",
  "spiders-config",
+ "spiders-core",
  "spiders-scene",
- "spiders-shared",
- "spiders-tree",
  "thiserror 2.0.18",
  "tracing",
 ]
@@ -3031,8 +3052,8 @@ dependencies = [
  "precomputed-hash",
  "selectors",
  "serde",
- "spiders-shared",
- "spiders-tree",
+ "spiders-core",
+ "spiders-css",
  "stylo",
  "stylo_traits",
  "taffy",
@@ -3042,24 +3063,24 @@ dependencies = [
 ]
 
 [[package]]
-name = "spiders-shared"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
- "spiders-tree",
- "thiserror 2.0.18",
-]
-
-[[package]]
-name = "spiders-tree"
-version = "0.1.0"
-dependencies = [
- "serde",
-]
-
-[[package]]
 name = "spiders-wm"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde_json",
+ "smithay",
+ "spiders-config",
+ "spiders-core",
+ "spiders-ipc",
+ "spiders-runtime-js",
+ "spiders-scene",
+ "thiserror 2.0.18",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "spiders-wm-river"
 version = "0.1.0"
 dependencies = [
  "ab_glyph",
@@ -3068,12 +3089,11 @@ dependencies = [
  "serde",
  "serde_json",
  "spiders-config",
+ "spiders-core",
  "spiders-ipc",
  "spiders-logging",
  "spiders-runtime-js",
  "spiders-scene",
- "spiders-shared",
- "spiders-tree",
  "tempfile",
  "thiserror 2.0.18",
  "tiny-skia",
@@ -3082,24 +3102,6 @@ dependencies = [
  "wayland-client",
  "wayland-scanner",
  "xkbcommon 0.8.0",
-]
-
-[[package]]
-name = "spiders-wm2"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "serde_json",
- "smithay",
- "spiders-config",
- "spiders-ipc",
- "spiders-runtime-js",
- "spiders-scene",
- "spiders-shared",
- "spiders-tree",
- "thiserror 2.0.18",
- "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]

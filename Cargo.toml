@@ -2,15 +2,15 @@
 resolver = "2"
 members = [
   "crates/spiders-cli",
+  "crates/spiders-core",
+  "crates/spiders-css",
     "crates/spiders-config",
   "crates/spiders-ipc",
   "crates/spiders-logging",
   "crates/spiders-wm",
-  "crates/spiders-wm2",
+  "crates/spiders-wm-river",
   "crates/spiders-scene",
-  "crates/spiders-tree",
   "crates/runtimes/js",
-  "crates/spiders-shared",
 ]
 
 [workspace.package]

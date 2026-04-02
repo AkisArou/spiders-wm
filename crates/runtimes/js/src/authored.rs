@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use oxc::span::SourceType;
 use serde_json::Value;
-use spiders_shared::command::{FocusDirection, WmCommand};
+use spiders_core::command::{FocusDirection, WmCommand};
 use tracing::debug;
 
 use crate::compile::{AppBuildPlan, compile_app, compiled_app_to_module_graph};
@@ -244,7 +244,7 @@ fn write_compiled_app(
 
     let mut written_files = 0usize;
     for module in &module_graph.modules {
-        if module.specifier.starts_with("spiders-wm/") {
+        if is_virtual_sdk_specifier(&module.specifier) {
             continue;
         }
         let destination = runtime_destination_for_specifier(
@@ -459,7 +459,7 @@ fn rewrite_module_for_runtime(
         .resolved_imports
         .iter()
         .map(|(specifier, target)| {
-            if target.starts_with("spiders-wm/") {
+            if is_virtual_sdk_specifier(target) {
                 return (specifier.clone(), target.clone());
             }
             let target_destination = runtime_destination_for_specifier(
@@ -532,6 +532,10 @@ fn rewrite_module_for_runtime(
     }
     out.push_str(&module.source[cursor..]);
     Ok(out)
+}
+
+fn is_virtual_sdk_specifier(specifier: &str) -> bool {
+    specifier.starts_with("spiders-wm/") || specifier.starts_with("@spiders-wm/sdk/")
 }
 
 fn relative_path_from(base: &Path, target: &Path) -> PathBuf {
@@ -1236,7 +1240,7 @@ mod tests {
         fs::write(
             root.join("config.ts"),
             r#"
-                import type { SpiderWMConfig } from "spiders-wm/config";
+                import type { SpiderWMConfig } from "@spiders-wm/sdk/config";
                 import { bindings } from "./config/bindings";
                 import { inputs } from "./config/inputs";
                 import { layouts } from "./config/layouts";
@@ -1254,7 +1258,7 @@ mod tests {
         fs::write(
             root.join("config/bindings.ts"),
             r#"
-                import * as commands from "spiders-wm/commands";
+                import * as commands from "@spiders-wm/sdk/commands";
                 export const bindings = {
                   mod: "alt",
                   entries: [
@@ -1413,7 +1417,7 @@ mod tests {
         fs::write(
             root.join("config.ts"),
             r#"
-                import type { SpiderWMConfig } from "spiders-wm/config";
+                import type { SpiderWMConfig } from "@spiders-wm/sdk/config";
                 import { bindings } from "./config/bindings";
 
                 export default {
@@ -1426,7 +1430,7 @@ mod tests {
         fs::write(
             root.join("config/bindings.ts"),
             r#"
-                                import * as commands from "spiders-wm/commands";
+                                import * as commands from "@spiders-wm/sdk/commands";
 
                 export const bindings = {
                   mod: "alt",
@@ -1449,7 +1453,7 @@ mod tests {
         rebuild_prepared_config(root.join("config.ts"), &runtime_entry).unwrap();
 
         let prepared_bindings = fs::read_to_string(cache_root.join("config/bindings.js")).unwrap();
-        assert!(prepared_bindings.contains("\"spiders-wm/commands\""));
+        assert!(prepared_bindings.contains("\"@spiders-wm/sdk/commands\""));
 
         let config = load_prepared_config(&runtime_entry).unwrap();
         assert_eq!(config.bindings.len(), 1);

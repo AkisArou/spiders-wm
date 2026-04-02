@@ -1,6 +1,6 @@
 use crate::style::ComputedStyle;
-use spiders_shared::runtime::prepared_layout::PreparedStylesheets;
-use spiders_tree::{
+use spiders_core::runtime::prepared_layout::PreparedStylesheets;
+use spiders_core::{
     LayoutNodeMeta, LayoutRect, LayoutSpace, OutputId, ResolvedLayoutNode, WindowId, WorkspaceId,
 };
 

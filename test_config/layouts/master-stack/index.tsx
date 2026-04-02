@@ -1,8 +1,8 @@
-import type { LayoutContext } from "spiders-wm/layout"
+import type { LayoutContext } from "@spiders-wm/sdk/layout";
 
-import { MasterSlot } from "./components/MasterSlot"
-import { StackGroup } from "../../components/StackGroup"
-import "./index.css"
+import { MasterSlot } from "./components/MasterSlot";
+import { StackGroup } from "../../components/StackGroup";
+import "./index.css";
 
 export default function layout(ctx: LayoutContext) {
   return (

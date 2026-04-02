@@ -3,7 +3,7 @@ use std::{io::Write, os::unix::net::UnixListener};
 use tempfile::TempDir;
 
 use spiders_ipc::{IpcEnvelope, IpcServerMessage, IpcSubscriptionTopic, encode_response_line};
-use spiders_shared::api::{CompositorEvent, QueryResponse};
+use spiders_core::api::{CompositorEvent, QueryResponse};
 
 fn cli_bin() -> String {
     env!("CARGO_BIN_EXE_spiders-cli").to_string()

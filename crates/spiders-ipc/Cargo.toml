@@ -8,9 +8,6 @@ publish.workspace = true
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
-spiders-shared = { path = "../spiders-shared" }
+spiders-core = { path = "../spiders-core" }
 thiserror.workspace = true
 tracing.workspace = true
-
-[dev-dependencies]
-spiders-tree = { path = "../spiders-tree" }
