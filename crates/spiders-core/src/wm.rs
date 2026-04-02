@@ -440,6 +440,11 @@ impl WmModel {
         self.prune_focus_memory();
     }
 
+    pub fn set_focus_tree_value(&mut self, focus_tree: Option<FocusTree>) {
+        self.focus_tree = focus_tree;
+        self.prune_focus_memory();
+    }
+
     pub fn set_focus_navigation(&mut self, navigation_by_scope: BTreeMap<String, FocusScopeNavigation>) {
         if let Some(focus_tree) = self.focus_tree.as_mut() {
             focus_tree.set_navigation(navigation_by_scope);

@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use spiders_css::style::FlexDirectionValue;
 use spiders_core::command::FocusDirection;
 use spiders_core::focus::{
-    FocusAxis, FocusBranchKey, FocusScopeNavigation, FocusTree, remove_window, set_focused_window,
+    FocusTree, FocusTreeWindowGeometry, remove_window, set_focused_window,
 };
 use spiders_core::navigation::{
     NavigationDirection, WindowGeometryCandidate, managed_window_swap_positions,
@@ -379,12 +379,8 @@ fn apply_preview_command_inner(
 
     let mut model = preview_model(&state);
     let current_focused_window_id = model.focused_window_id().cloned();
-    let snapshot_focus_root = snapshot_root
-        .as_ref()
-        .and_then(resolved_root_from_snapshot);
-    model.set_focus_tree(snapshot_focus_root.as_ref());
     if let Some(snapshot_root) = snapshot_root.as_ref() {
-        model.set_focus_navigation(focus_navigation_from_preview_snapshot(snapshot_root));
+        model.set_focus_tree_value(Some(focus_tree_from_preview_snapshot(snapshot_root)));
     }
     if let Some(focused_window_id) = current_focused_window_id {
         let _ = set_focused_window(&mut model, Some(focused_window_id));
@@ -846,9 +842,7 @@ fn directional_target_window(
     direction: FocusDirection,
 ) -> Option<WindowId> {
     let snapshot_root = snapshot_root?;
-    let mut candidates = Vec::new();
-    let mut scope_path = vec![FocusTree::workspace_scope_key().to_string()];
-    collect_snapshot_candidate_children(&snapshot_root.children, &mut scope_path, &mut candidates);
+    let candidates = snapshot_window_geometry_candidates(model, snapshot_root);
 
     select_directional_focus_candidate(
         &candidates,
@@ -859,152 +853,53 @@ fn directional_target_window(
     )
 }
 
-fn focus_navigation_from_preview_snapshot(
+fn focus_tree_from_preview_snapshot(root: &JsPreviewSnapshotNode) -> FocusTree {
+    let mut windows = Vec::new();
+    collect_preview_focus_tree_window_geometries(root, &mut windows);
+    FocusTree::from_window_geometries(&windows)
+}
+
+fn collect_preview_focus_tree_window_geometries(
+    node: &JsPreviewSnapshotNode,
+    out: &mut Vec<FocusTreeWindowGeometry>,
+) {
+    if node.node_type == "window"
+        && let (Some(window_id), Some(rect)) = (node.window_id.as_ref(), node.rect)
+    {
+        out.push(FocusTreeWindowGeometry {
+            window_id: window_id.clone(),
+            geometry: WindowGeometry {
+                x: rect.x.round() as i32,
+                y: rect.y.round() as i32,
+                width: rect.width.round() as i32,
+                height: rect.height.round() as i32,
+            },
+        });
+    }
+
+    for child in &node.children {
+        collect_preview_focus_tree_window_geometries(child, out);
+    }
+}
+
+fn snapshot_window_geometry_candidates(
+    model: &WmModel,
     root: &JsPreviewSnapshotNode,
-) -> BTreeMap<String, FocusScopeNavigation> {
-    let mut navigation_by_scope = BTreeMap::new();
-    let mut scope_path = vec![FocusTree::workspace_scope_key().to_string()];
-    collect_preview_focus_navigation(root, &mut scope_path, &mut navigation_by_scope, true, 0);
-    navigation_by_scope
-}
+) -> Vec<WindowGeometryCandidate> {
+    let mut windows = Vec::new();
+    collect_preview_focus_tree_window_geometries(root, &mut windows);
 
-fn collect_preview_focus_navigation(
-    node: &JsPreviewSnapshotNode,
-    scope_path: &mut Vec<String>,
-    navigation_by_scope: &mut BTreeMap<String, FocusScopeNavigation>,
-    is_root: bool,
-    child_index: usize,
-) {
-    let current_scope = if is_root {
-        FocusTree::workspace_scope_key().to_string()
-    } else {
-        let parent_scope = scope_path
-            .last()
-            .map(String::as_str)
-            .unwrap_or(FocusTree::workspace_scope_key());
-        let scope_key = FocusTree::scope_key_for_child(
-            parent_scope,
-            &LayoutNodeMeta {
-                id: node.id.clone(),
-                class: snapshot_classes(node.class_name.as_ref()),
-                ..LayoutNodeMeta::default()
-            },
-            child_index,
-        );
-        scope_path.push(scope_key.clone());
-        scope_key
-    };
-
-    if let Some(axis) = preview_snapshot_axis(node) {
-        let mut branches = node
-            .children
-            .iter()
-            .enumerate()
-            .filter_map(|(index, child)| preview_snapshot_branch_key(current_scope.as_str(), child, index))
-            .collect::<Vec<_>>();
-
-        if node.reverse {
-            branches.reverse();
-        }
-
-        if !branches.is_empty() {
-            navigation_by_scope.insert(current_scope.clone(), FocusScopeNavigation { axis, branches });
-        }
-    }
-
-    for (index, child) in node.children.iter().enumerate() {
-        if matches!(child.node_type.as_str(), "workspace" | "group") {
-            collect_preview_focus_navigation(child, scope_path, navigation_by_scope, false, index);
-        }
-    }
-
-    if !is_root {
-        scope_path.pop();
-    }
-}
-
-fn preview_snapshot_axis(node: &JsPreviewSnapshotNode) -> Option<FocusAxis> {
-    match node.axis.as_deref() {
-        Some("horizontal") => Some(FocusAxis::Horizontal),
-        Some("vertical") => Some(FocusAxis::Vertical),
-        _ => None,
-    }
-}
-
-fn preview_snapshot_branch_key(
-    parent_scope: &str,
-    child: &JsPreviewSnapshotNode,
-    child_index: usize,
-) -> Option<FocusBranchKey> {
-    match child.node_type.as_str() {
-        "workspace" | "group" => Some(FocusBranchKey::Scope(FocusTree::scope_key_for_child(
-            parent_scope,
-            &LayoutNodeMeta {
-                id: child.id.clone(),
-                class: snapshot_classes(child.class_name.as_ref()),
-                ..LayoutNodeMeta::default()
-            },
-            child_index,
-        ))),
-        "window" => child.window_id.clone().map(FocusBranchKey::Window),
-        _ => None,
-    }
-}
-
-fn collect_snapshot_candidates(
-    node: &JsPreviewSnapshotNode,
-    child_index: usize,
-    scope_path: &mut Vec<String>,
-    out: &mut Vec<WindowGeometryCandidate>,
-) {
-    match node.node_type.as_str() {
-        "workspace" => collect_snapshot_candidate_children(&node.children, scope_path, out),
-        "group" => {
-            let scope_key = snapshot_scope_key(node, child_index, scope_path);
-            scope_path.push(scope_key);
-            collect_snapshot_candidate_children(&node.children, scope_path, out);
-            scope_path.pop();
-        }
-        "window" => {
-            if let (Some(window_id), Some(rect)) = (node.window_id.as_ref(), node.rect) {
-                out.push(WindowGeometryCandidate {
-                    window_id: window_id.clone(),
-                    geometry: WindowGeometry {
-                        x: rect.x.round() as i32,
-                        y: rect.y.round() as i32,
-                        width: rect.width.round() as i32,
-                        height: rect.height.round() as i32,
-                    },
-                    scope_path: scope_path.clone(),
-                });
-            }
-        }
-        _ => {}
-    }
-}
-
-fn collect_snapshot_candidate_children(
-    children: &[JsPreviewSnapshotNode],
-    scope_path: &mut Vec<String>,
-    out: &mut Vec<WindowGeometryCandidate>,
-) {
-    for (child_index, child) in children.iter().enumerate() {
-        collect_snapshot_candidates(child, child_index, scope_path, out);
-    }
-}
-
-fn snapshot_scope_key(
-    node: &JsPreviewSnapshotNode,
-    child_index: usize,
-    scope_path: &[String],
-) -> String {
-    let parent_scope = scope_path
-        .last()
-        .map(String::as_str)
-        .unwrap_or(FocusTree::workspace_scope_key());
-    let label = node.id.as_deref().unwrap_or("group");
-
-    format!("{parent_scope}/group[{child_index}]:{label}")
+    windows
+        .into_iter()
+        .map(|entry| WindowGeometryCandidate {
+            scope_path: model
+                .focus_scope_path(&entry.window_id)
+                .map(|scope_path| scope_path.to_vec())
+                .unwrap_or_else(|| vec![FocusTree::workspace_scope_key().to_string()]),
+            window_id: entry.window_id,
+            geometry: entry.geometry,
+        })
+        .collect()
 }
 
 fn collect_snapshot_window_ids(node: &JsPreviewSnapshotNode, out: &mut Vec<WindowId>) {
@@ -1382,46 +1277,6 @@ fn collect_claimed_window_ids_inner(root: &ResolvedLayoutNode, out: &mut BTreeSe
     }
 }
 
-fn resolved_root_from_snapshot(node: &JsPreviewSnapshotNode) -> Option<ResolvedLayoutNode> {
-    let meta = LayoutNodeMeta {
-        id: node.id.clone(),
-        class: snapshot_classes(node.class_name.as_ref()),
-        ..LayoutNodeMeta::default()
-    };
-
-    match node.node_type.as_str() {
-        "workspace" => Some(ResolvedLayoutNode::Workspace {
-            meta,
-            children: node
-                .children
-                .iter()
-                .filter_map(resolved_root_from_snapshot)
-                .collect(),
-        }),
-        "group" => Some(ResolvedLayoutNode::Group {
-            meta,
-            children: node
-                .children
-                .iter()
-                .filter_map(resolved_root_from_snapshot)
-                .collect(),
-        }),
-        "window" => Some(ResolvedLayoutNode::Window {
-            meta,
-            window_id: node.window_id.clone(),
-        }),
-        _ => None,
-    }
-}
-
-fn snapshot_classes(classes: Option<&JsPreviewSnapshotClasses>) -> Vec<String> {
-    match classes {
-        Some(JsPreviewSnapshotClasses::One(value)) => vec![value.clone()],
-        Some(JsPreviewSnapshotClasses::Many(values)) => values.clone(),
-        None => Vec::new(),
-    }
-}
-
 fn snapshot_node(node: LayoutSnapshotNode) -> PreviewSnapshotNode {
     match node {
         LayoutSnapshotNode::Workspace {
@@ -1612,6 +1467,22 @@ mod tests {
         }
     }
 
+    fn abcd_preview_state() -> PreviewSessionState {
+        PreviewSessionState {
+            active_workspace_name: "1".to_string(),
+            workspace_names: vec!["1".to_string()],
+            windows: vec![
+                preview_window("win-1", "Terminal 1", false),
+                preview_window("win-2", "Spec Draft", false),
+                preview_window("win-3", "Engineering", false),
+                preview_window("win-4", "Terminal 4", true),
+            ],
+            remembered_focus_by_scope: BTreeMap::new(),
+            master_ratio_by_workspace: BTreeMap::new(),
+            stack_weights_by_workspace: BTreeMap::new(),
+        }
+    }
+
     fn focused_window_id(state: &PreviewSessionState) -> &str {
         state
             .windows
@@ -1624,8 +1495,8 @@ mod tests {
     #[test]
     fn preview_focus_commands_preserve_side_memory_across_multiple_steps() {
         let snapshot_root = focus_repro_snapshot();
-        let main_scope = "$workspace/group[0]:main-column";
-        let side_scope = "$workspace/group[1]:side-column";
+        let main_scope = "$workspace/visual[0]";
+        let side_scope = "$workspace/visual[1]";
 
         let state = apply_preview_command_inner(
             initial_preview_state(),
@@ -1662,6 +1533,72 @@ mod tests {
             state.remembered_focus_by_scope.get(main_scope),
             Some(&WindowId::from("win-1"))
         );
+    }
+
+    #[test]
+    fn preview_focus_commands_follow_visual_abcd_neighbors() {
+        let snapshot_root = JsPreviewSnapshotNode {
+            node_type: "workspace".to_string(),
+            id: Some("frame".to_string()),
+            class_name: None,
+            rect: Some(LayoutRect {
+                x: 0.0,
+                y: 0.0,
+                width: 3440.0,
+                height: 1440.0,
+            }),
+            window_id: None,
+            axis: Some("horizontal".to_string()),
+            reverse: false,
+            children: vec![
+                window_node("win-1", 0.0, 0.0, 2052.0, 1416.0),
+                JsPreviewSnapshotNode {
+                    node_type: "group".to_string(),
+                    id: Some("right-column".to_string()),
+                    class_name: None,
+                    rect: Some(LayoutRect {
+                        x: 2052.0,
+                        y: 0.0,
+                        width: 1352.0,
+                        height: 1416.0,
+                    }),
+                    window_id: None,
+                    axis: Some("vertical".to_string()),
+                    reverse: false,
+                    children: vec![
+                        window_node("win-2", 2052.0, 0.0, 1352.0, 714.0),
+                        JsPreviewSnapshotNode {
+                            node_type: "group".to_string(),
+                            id: Some("bottom-row".to_string()),
+                            class_name: None,
+                            rect: Some(LayoutRect {
+                                x: 2052.0,
+                                y: 714.0,
+                                width: 1352.0,
+                                height: 690.0,
+                            }),
+                            window_id: None,
+                            axis: Some("horizontal".to_string()),
+                            reverse: false,
+                            children: vec![
+                                window_node("win-3", 2052.0, 714.0, 670.0, 690.0),
+                                window_node("win-4", 2734.0, 714.0, 670.0, 690.0),
+                            ],
+                        },
+                    ],
+                },
+            ],
+        };
+
+        let state = apply_preview_command_inner(
+            abcd_preview_state(),
+            focus_command("left"),
+            Some(snapshot_root.clone()),
+        );
+        assert_eq!(focused_window_id(&state), "win-3");
+
+        let state = apply_preview_command_inner(state, focus_command("left"), Some(snapshot_root));
+        assert_eq!(focused_window_id(&state), "win-1");
     }
 }
 

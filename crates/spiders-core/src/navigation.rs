@@ -120,6 +120,7 @@ fn select_directional_focus_candidate_from_tree(
     focus_tree: &FocusTree,
 ) -> Option<WindowId> {
     let scope_path = focus_tree.scope_path(&current.window_id)?;
+    let mut wrap_candidate = None;
 
     for scope_depth in (0..scope_path.len()).rev() {
         let scope_key = &scope_path[scope_depth];
@@ -142,27 +143,51 @@ fn select_directional_focus_candidate_from_tree(
             continue;
         };
 
-        let Some(target_index) =
-            wrapped_branch_index(current_index, navigation.branches.len(), direction)
-        else {
-            continue;
-        };
-
-        let Some(target_branch) = navigation.branches.get(target_index) else {
-            continue;
-        };
-
-        if let Some(window_id) = resolve_tree_branch_target(
-            focus_tree,
-            target_branch,
-            direction,
-            remembered_focus_by_scope,
-        ) {
+        if let Some(target_index) = adjacent_branch_index(current_index, navigation.branches.len(), direction)
+            && let Some(target_branch) = navigation.branches.get(target_index)
+            && let Some(window_id) = resolve_tree_branch_target(
+                focus_tree,
+                target_branch,
+                direction,
+                remembered_focus_by_scope,
+            )
+        {
             return Some(window_id);
         }
+
+        wrap_candidate.get_or_insert((scope_key.clone(), current_index, navigation.branches.len()));
     }
 
-    None
+    let Some((scope_key, current_index, branch_count)) = wrap_candidate else {
+        return None;
+    };
+    let navigation = focus_tree.navigation(&scope_key)?;
+    let target_index = wrapped_branch_index(current_index, branch_count, direction)?;
+    let target_branch = navigation.branches.get(target_index)?;
+
+    resolve_tree_branch_target(
+        focus_tree,
+        target_branch,
+        direction,
+        remembered_focus_by_scope,
+    )
+}
+
+fn adjacent_branch_index(
+    current_index: usize,
+    branch_count: usize,
+    direction: NavigationDirection,
+) -> Option<usize> {
+    if branch_count < 2 {
+        return None;
+    }
+
+    match direction {
+        NavigationDirection::Left | NavigationDirection::Up => current_index.checked_sub(1),
+        NavigationDirection::Right | NavigationDirection::Down => {
+            (current_index + 1 < branch_count).then_some(current_index + 1)
+        }
+    }
 }
 
 fn scope_branches<'a>(
@@ -856,7 +881,7 @@ mod tests {
             &mut remembered,
             &focus_tree,
             NavigationDirection::Left,
-            4,
+            1,
         );
         step(
             &candidates,
@@ -1058,6 +1083,71 @@ mod tests {
             &focus_tree,
             NavigationDirection::Right,
             1,
+        );
+    }
+
+    #[test]
+    fn directional_focus_prefers_visual_ancestor_neighbor_before_inner_wrap() {
+        use crate::focus::{FocusTree, FocusTreeWindowGeometry};
+
+        let candidates = vec![
+            candidate(1, 0, 0, 2052, 1416, &["$workspace", "$workspace/visual[0]"]),
+            candidate(2, 2052, 0, 1352, 714, &["$workspace", "$workspace/visual[1]", "$workspace/visual[1]/visual[0]"]),
+            candidate(3, 2052, 714, 670, 690, &["$workspace", "$workspace/visual[1]", "$workspace/visual[1]/visual[1]", "$workspace/visual[1]/visual[1]/visual[0]"]),
+            candidate(4, 2734, 714, 670, 690, &["$workspace", "$workspace/visual[1]", "$workspace/visual[1]/visual[1]", "$workspace/visual[1]/visual[1]/visual[1]"]),
+        ];
+        let focus_tree = FocusTree::from_window_geometries(&[
+            FocusTreeWindowGeometry {
+                window_id: window_id(1),
+                geometry: WindowGeometry {
+                    x: 0,
+                    y: 0,
+                    width: 2052,
+                    height: 1416,
+                },
+            },
+            FocusTreeWindowGeometry {
+                window_id: window_id(2),
+                geometry: WindowGeometry {
+                    x: 2052,
+                    y: 0,
+                    width: 1352,
+                    height: 714,
+                },
+            },
+            FocusTreeWindowGeometry {
+                window_id: window_id(3),
+                geometry: WindowGeometry {
+                    x: 2052,
+                    y: 714,
+                    width: 670,
+                    height: 690,
+                },
+            },
+            FocusTreeWindowGeometry {
+                window_id: window_id(4),
+                geometry: WindowGeometry {
+                    x: 2734,
+                    y: 714,
+                    width: 670,
+                    height: 690,
+                },
+            },
+        ]);
+        let mut remembered = BTreeMap::new();
+        remembered.insert(FocusTree::workspace_scope_key().to_string(), window_id(3));
+        remembered.insert("$workspace/visual[1]".to_string(), window_id(3));
+        remembered.insert("$workspace/visual[1]/visual[1]".to_string(), window_id(3));
+
+        assert_eq!(
+            select_directional_focus_candidate(
+                &candidates,
+                Some(window_id(3)),
+                NavigationDirection::Left,
+                &remembered,
+                Some(&focus_tree),
+            ),
+            Some(window_id(1))
         );
     }
 

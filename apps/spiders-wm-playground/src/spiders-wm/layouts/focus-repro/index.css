@@ -7,19 +7,19 @@
   height: 100%;
 }
 
-#main-column {
+#right-column {
   display: flex;
   flex-direction: column;
   flex-basis: 0;
-  flex-grow: 3;
+  flex-grow: 2;
   gap: 12px;
   min-width: 0;
   min-height: 0;
 }
 
-#side-column {
+#bottom-row {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   gap: 12px;
   flex-basis: 0;
   flex-grow: 1;
@@ -29,14 +29,15 @@
 
 .main-pane {
   flex-basis: 0;
-  flex-grow: 1;
+  flex-grow: 3;
   min-width: 0;
   min-height: 0;
   border-width: 0;
   padding: 12px;
 }
 
-.side-pane {
+.top-pane,
+.bottom-pane {
   flex-basis: 0;
   flex-grow: 1;
   min-height: 0;

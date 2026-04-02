@@ -1,7 +1,13 @@
 use std::collections::BTreeMap;
 
-use crate::wm::WmModel;
+use crate::wm::{WindowGeometry, WmModel};
 use crate::{LayoutNodeMeta, ResolvedLayoutNode, WindowId};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FocusTreeWindowGeometry {
+    pub window_id: WindowId,
+    pub geometry: WindowGeometry,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FocusAxis {
@@ -41,6 +47,41 @@ impl FocusTree {
         let mut scope_path = vec![Self::workspace_scope_key().to_string()];
 
         collect_focus_tree_children(root.children(), &mut scope_path, &mut tree);
+        tree
+    }
+
+    pub fn from_window_geometries(entries: &[FocusTreeWindowGeometry]) -> Self {
+        let mut tree = Self {
+            descendant_window_ids_by_scope: BTreeMap::from([(
+                Self::workspace_scope_key().to_string(),
+                Vec::new(),
+            )]),
+            ..Self::default()
+        };
+
+        let visual_entries = entries
+            .iter()
+            .enumerate()
+            .map(|(original_index, entry)| VisualEntry {
+                window_id: entry.window_id.clone(),
+                geometry: entry.geometry,
+                original_index,
+            })
+            .collect::<Vec<_>>();
+
+        if visual_entries.is_empty() {
+            return tree;
+        }
+
+        let root_scope = infer_visual_scope(&visual_entries);
+        let mut scope_path = vec![Self::workspace_scope_key().to_string()];
+        collect_visual_scope(
+            &root_scope,
+            Self::workspace_scope_key(),
+            &mut scope_path,
+            &mut tree,
+            true,
+        );
         tree
     }
 
@@ -87,6 +128,222 @@ impl FocusTree {
     pub fn contains_window(&self, window_id: &WindowId) -> bool {
         self.scope_path_by_window.contains_key(window_id)
     }
+}
+
+#[derive(Debug, Clone)]
+struct VisualEntry {
+    window_id: WindowId,
+    geometry: WindowGeometry,
+    original_index: usize,
+}
+
+#[derive(Debug, Clone)]
+enum VisualChild {
+    Scope(VisualScope),
+    Window(VisualEntry),
+}
+
+#[derive(Debug, Clone)]
+struct VisualScope {
+    axis: Option<FocusAxis>,
+    children: Vec<VisualChild>,
+}
+
+fn infer_visual_scope(entries: &[VisualEntry]) -> VisualScope {
+    if entries.len() <= 1 {
+        return VisualScope {
+            axis: None,
+            children: entries
+                .iter()
+                .cloned()
+                .map(VisualChild::Window)
+                .collect(),
+        };
+    }
+
+    let horizontal_bands = cluster_visual_entries(entries, FocusAxis::Horizontal);
+    let vertical_bands = cluster_visual_entries(entries, FocusAxis::Vertical);
+
+    let selected_axis = match (
+        split_score(&horizontal_bands, entries.len()),
+        split_score(&vertical_bands, entries.len()),
+    ) {
+        (Some(horizontal_score), Some(vertical_score)) => {
+            if horizontal_score <= vertical_score {
+                Some((FocusAxis::Horizontal, horizontal_bands))
+            } else {
+                Some((FocusAxis::Vertical, vertical_bands))
+            }
+        }
+        (Some(_), None) => Some((FocusAxis::Horizontal, horizontal_bands)),
+        (None, Some(_)) => Some((FocusAxis::Vertical, vertical_bands)),
+        (None, None) => None,
+    };
+
+    let Some((axis, bands)) = selected_axis else {
+        let mut ordered_entries = entries.to_vec();
+        ordered_entries.sort_by_key(|entry| entry.original_index);
+        return VisualScope {
+            axis: None,
+            children: ordered_entries
+                .into_iter()
+                .map(VisualChild::Window)
+                .collect(),
+        };
+    };
+
+    VisualScope {
+        axis: Some(axis),
+        children: bands
+            .into_iter()
+            .map(|band| {
+                let scope = infer_visual_scope(&band);
+                if scope.axis.is_none() && scope.children.len() == 1 {
+                    scope.children.into_iter().next().expect("single child")
+                } else {
+                    VisualChild::Scope(scope)
+                }
+            })
+            .collect(),
+    }
+}
+
+fn split_score(bands: &[Vec<VisualEntry>], _total_entries: usize) -> Option<(usize, usize)> {
+    if bands.len() <= 1 {
+        return None;
+    }
+
+    Some((
+        bands.iter().map(|band| band_fragmentation(band)).sum(),
+        bands.len(),
+    ))
+}
+
+fn band_fragmentation(band: &[VisualEntry]) -> usize {
+    let mut indices = band
+        .iter()
+        .map(|entry| entry.original_index)
+        .collect::<Vec<_>>();
+    indices.sort_unstable();
+
+    let mut segments: usize = 0;
+    let mut previous_index = None;
+
+    for index in indices {
+        if previous_index.is_none_or(|previous| index != previous + 1) {
+            segments += 1;
+        }
+        previous_index = Some(index);
+    }
+
+    segments.saturating_sub(1)
+}
+
+fn cluster_visual_entries(entries: &[VisualEntry], axis: FocusAxis) -> Vec<Vec<VisualEntry>> {
+    let mut ordered_entries = entries.to_vec();
+    ordered_entries.sort_by_key(|entry| match axis {
+        FocusAxis::Horizontal => (
+            entry.geometry.x,
+            entry.geometry.y,
+            entry.original_index as i32,
+        ),
+        FocusAxis::Vertical => (
+            entry.geometry.y,
+            entry.geometry.x,
+            entry.original_index as i32,
+        ),
+    });
+
+    let mut bands: Vec<Vec<VisualEntry>> = Vec::new();
+    let mut current_band_end = None;
+
+    for entry in ordered_entries {
+        let (start, end) = axis_interval(entry.geometry, axis);
+
+        if current_band_end.is_some_and(|band_end| start < band_end) {
+            current_band_end = Some(current_band_end.unwrap().max(end));
+            bands.last_mut().expect("existing band").push(entry);
+            continue;
+        }
+
+        current_band_end = Some(end);
+        bands.push(vec![entry]);
+    }
+
+    bands
+}
+
+fn axis_interval(geometry: WindowGeometry, axis: FocusAxis) -> (i32, i32) {
+    match axis {
+        FocusAxis::Horizontal => (geometry.x, geometry.x + geometry.width),
+        FocusAxis::Vertical => (geometry.y, geometry.y + geometry.height),
+    }
+}
+
+fn collect_visual_scope(
+    scope: &VisualScope,
+    current_scope_key: &str,
+    scope_path: &mut Vec<String>,
+    tree: &mut FocusTree,
+    is_root: bool,
+) {
+    if let Some(axis) = scope.axis
+        && scope.children.len() > 1
+    {
+        let branches = scope
+            .children
+            .iter()
+            .enumerate()
+            .map(|(child_index, child)| match child {
+                VisualChild::Scope(_) => FocusBranchKey::Scope(visual_scope_key(
+                    current_scope_key,
+                    child_index,
+                )),
+                VisualChild::Window(entry) => FocusBranchKey::Window(entry.window_id.clone()),
+            })
+            .collect::<Vec<_>>();
+
+        tree.navigation_by_scope.insert(
+            current_scope_key.to_string(),
+            FocusScopeNavigation { axis, branches },
+        );
+    }
+
+    for (child_index, child) in scope.children.iter().enumerate() {
+        match child {
+            VisualChild::Scope(child_scope) => {
+                let child_scope_key = visual_scope_key(current_scope_key, child_index);
+                tree.descendant_window_ids_by_scope
+                    .entry(child_scope_key.clone())
+                    .or_default();
+                scope_path.push(child_scope_key.clone());
+                collect_visual_scope(child_scope, &child_scope_key, scope_path, tree, false);
+                scope_path.pop();
+            }
+            VisualChild::Window(entry) => {
+                tree.ordered_window_ids.push(entry.window_id.clone());
+                tree.scope_path_by_window
+                    .insert(entry.window_id.clone(), scope_path.clone());
+
+                for scope_key in scope_path.iter() {
+                    tree.descendant_window_ids_by_scope
+                        .entry(scope_key.clone())
+                        .or_default()
+                        .push(entry.window_id.clone());
+                }
+            }
+        }
+    }
+
+    if is_root && scope.children.is_empty() {
+        tree.descendant_window_ids_by_scope
+            .entry(current_scope_key.to_string())
+            .or_default();
+    }
+}
+
+fn visual_scope_key(parent_scope: &str, child_index: usize) -> String {
+    format!("{parent_scope}/visual[{child_index}]")
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

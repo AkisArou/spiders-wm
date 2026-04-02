@@ -3,8 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use smithay::utils::{Logical, Point, Size};
 use spiders_config::authoring_layout::AuthoringLayoutService;
 use spiders_config::model::{Config, ConfigPaths};
-use spiders_css::style::FlexDirectionValue;
-use spiders_core::focus::{FocusAxis, FocusBranchKey, FocusScopeNavigation, FocusTree};
+use spiders_core::focus::{FocusTree, FocusTreeWindowGeometry};
 use spiders_runtime_js::DefaultLayoutRuntime;
 use spiders_scene::ast::ValidatedLayoutTree;
 use spiders_scene::pipeline::SceneCache;
@@ -135,8 +134,6 @@ impl SceneLayoutState {
 
         let windows = visible_window_snapshots(&snapshot, visible_window_ids);
         let resolved_root = resolve_layout_root(evaluation.layout, &windows, visible_window_ids);
-        model.set_focus_tree(Some(&resolved_root));
-
         let request = match config.build_scene_request_from_state(
             &snapshot,
             resolved_root,
@@ -155,7 +152,7 @@ impl SceneLayoutState {
 
         match self.cache.compute_layout_from_request(&request) {
             Ok(response) => {
-                model.set_focus_navigation(focus_navigation_from_snapshot(&response.root));
+                model.set_focus_tree_value(Some(focus_tree_from_snapshot(&response.root)));
                 Some(response.root)
             }
             Err(error) => {
@@ -180,8 +177,6 @@ impl SceneLayoutState {
         let windows = visible_window_snapshots(&snapshot, visible_window_ids);
         let resolved_root =
             resolve_layout_root(fallback_master_stack_layout_tree(), &windows, visible_window_ids);
-        model.set_focus_tree(Some(&resolved_root));
-
         let request = SceneRequest {
             workspace_id: workspace.id,
             output_id: output.map(|output| output.id.clone()),
@@ -206,7 +201,7 @@ impl SceneLayoutState {
 
         match self.cache.compute_layout_from_request(&request) {
             Ok(response) => {
-                model.set_focus_navigation(focus_navigation_from_snapshot(&response.root));
+                model.set_focus_tree_value(Some(focus_tree_from_snapshot(&response.root)));
                 Some(response.root)
             }
             Err(error) => {
@@ -317,85 +312,36 @@ fn scene_targets_from_snapshot(root: &LayoutSnapshotNode) -> Vec<LayoutTarget> {
         .collect()
 }
 
-fn focus_navigation_from_snapshot(root: &LayoutSnapshotNode) -> BTreeMap<String, FocusScopeNavigation> {
-    let mut navigation_by_scope = BTreeMap::new();
-    let mut scope_path = vec![FocusTree::workspace_scope_key().to_string()];
-    collect_focus_navigation(root, &mut scope_path, &mut navigation_by_scope, true, 0);
-    navigation_by_scope
+fn focus_tree_from_snapshot(root: &LayoutSnapshotNode) -> FocusTree {
+    let mut windows = Vec::new();
+    collect_focus_tree_window_geometries(root, &mut windows);
+    FocusTree::from_window_geometries(&windows)
 }
 
-fn collect_focus_navigation(
+fn collect_focus_tree_window_geometries(
     node: &LayoutSnapshotNode,
-    scope_path: &mut Vec<String>,
-    navigation_by_scope: &mut BTreeMap<String, FocusScopeNavigation>,
-    is_root: bool,
-    child_index: usize,
+    out: &mut Vec<FocusTreeWindowGeometry>,
 ) {
-    let current_scope = if is_root {
-        FocusTree::workspace_scope_key().to_string()
-    } else {
-        let parent_scope = scope_path
-            .last()
-            .map(String::as_str)
-            .unwrap_or(FocusTree::workspace_scope_key());
-        let scope_key = FocusTree::scope_key_for_child(parent_scope, node.meta(), child_index);
-        scope_path.push(scope_key.clone());
-        scope_key
-    };
-
-    if let Some((axis, reverse)) = snapshot_axis(node) {
-        let mut branches = node
-            .children()
-            .iter()
-            .enumerate()
-            .filter_map(|(index, child)| snapshot_branch_key(current_scope.as_str(), child, index))
-            .collect::<Vec<_>>();
-
-        if reverse {
-            branches.reverse();
-        }
-
-        if !branches.is_empty() {
-            navigation_by_scope.insert(current_scope.clone(), FocusScopeNavigation { axis, branches });
-        }
-    }
-
-    for (index, child) in node.children().iter().enumerate() {
-        if matches!(child, LayoutSnapshotNode::Workspace { .. } | LayoutSnapshotNode::Group { .. }) {
-            collect_focus_navigation(child, scope_path, navigation_by_scope, false, index);
-        }
-    }
-
-    if !is_root {
-        scope_path.pop();
-    }
-}
-
-fn snapshot_axis(node: &LayoutSnapshotNode) -> Option<(FocusAxis, bool)> {
-    let direction = node.styles()?.layout.flex_direction?;
-
-    match direction {
-        FlexDirectionValue::Row => Some((FocusAxis::Horizontal, false)),
-        FlexDirectionValue::RowReverse => Some((FocusAxis::Horizontal, true)),
-        FlexDirectionValue::Column => Some((FocusAxis::Vertical, false)),
-        FlexDirectionValue::ColumnReverse => Some((FocusAxis::Vertical, true)),
-    }
-}
-
-fn snapshot_branch_key(
-    parent_scope: &str,
-    child: &LayoutSnapshotNode,
-    child_index: usize,
-) -> Option<FocusBranchKey> {
-    match child {
-        LayoutSnapshotNode::Workspace { meta, .. } | LayoutSnapshotNode::Group { meta, .. } => {
-            Some(FocusBranchKey::Scope(FocusTree::scope_key_for_child(parent_scope, meta, child_index)))
+    match node {
+        LayoutSnapshotNode::Workspace { children, .. } | LayoutSnapshotNode::Group { children, .. } => {
+            for child in children {
+                collect_focus_tree_window_geometries(child, out);
+            }
         }
         LayoutSnapshotNode::Window {
+            rect,
             window_id: Some(window_id),
             ..
-        } => Some(FocusBranchKey::Window(window_id.clone())),
-        LayoutSnapshotNode::Window { window_id: None, .. } => None,
+        } => out.push(FocusTreeWindowGeometry {
+            window_id: window_id.clone(),
+            geometry: spiders_core::wm::WindowGeometry {
+                x: rect.x.round() as i32,
+                y: rect.y.round() as i32,
+                width: rect.width.round() as i32,
+                height: rect.height.round() as i32,
+            },
+        }),
+        LayoutSnapshotNode::Window { window_id: None, .. } => {}
     }
 }
 
