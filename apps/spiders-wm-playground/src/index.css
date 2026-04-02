@@ -1,24 +1,24 @@
 @import "tailwindcss";
 
 @theme {
-  --color-terminal-bg: #08090d;
-  --color-terminal-bg-subtle: #0b0d12;
-  --color-terminal-bg-panel: #0e1117;
-  --color-terminal-bg-bar: #10131a;
-  --color-terminal-bg-hover: #141924;
-  --color-terminal-bg-active: #1a1f2c;
-  --color-terminal-border: #1c2230;
-  --color-terminal-border-strong: #374051;
-  --color-terminal-grid: #2e3440;
-  --color-terminal-fg: #d4d7dd;
-  --color-terminal-fg-strong: #eef3fb;
-  --color-terminal-muted: #aeb6c4;
-  --color-terminal-dim: #7f8797;
-  --color-terminal-faint: #6f788a;
-  --color-terminal-info: #94e2d5;
-  --color-terminal-warn: #f9e2af;
-  --color-terminal-error: #f38ba8;
-  --color-terminal-wait: #89b4fa;
+  --color-terminal-bg: #181818;
+  --color-terminal-bg-subtle: #1f1f1f;
+  --color-terminal-bg-panel: #1f1f1f;
+  --color-terminal-bg-bar: #181818;
+  --color-terminal-bg-hover: #2b2b2b;
+  --color-terminal-bg-active: #1f1f1f;
+  --color-terminal-border: #2b2b2b;
+  --color-terminal-border-strong: #3c3c3c;
+  --color-terminal-grid: #313131;
+  --color-terminal-fg: #cccccc;
+  --color-terminal-fg-strong: #ffffff;
+  --color-terminal-muted: #9d9d9d;
+  --color-terminal-dim: #989898;
+  --color-terminal-faint: #6e7681;
+  --color-terminal-info: #0078d4;
+  --color-terminal-warn: #e2c08d;
+  --color-terminal-error: #f85149;
+  --color-terminal-wait: #4daafc;
   --color-file-ts: #519aba;
   --color-file-tsx: #1354bf;
   --color-file-css: #663399;
@@ -53,5 +53,30 @@ body {
   textarea,
   select {
     font: inherit;
+  }
+
+  button,
+  button:focus,
+  button:focus-visible {
+    outline: none;
+    box-shadow: none;
+  }
+}
+
+@keyframes foot-cursor-blink {
+  0%,
+  49% {
+    opacity: 1;
+  }
+
+  50%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@layer utilities {
+  .foot-cursor {
+    animation: foot-cursor-blink 1.05s steps(1) infinite;
   }
 }

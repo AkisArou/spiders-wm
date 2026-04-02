@@ -1,8 +1,11 @@
 import type { LayoutWindow } from "@spiders-wm/sdk/layout";
 
 import initBindings, {
+  apply_preview_command,
+  apply_preview_snapshot_overrides,
   compute_layout_preview,
 } from "./generated/spiders-web-bindings/spiders_web_bindings.js";
+import wasmUrl from "./generated/spiders-web-bindings/spiders_web_bindings_bg.wasm?url";
 
 export interface PreviewDiagnostic {
   source: "layout" | "css";
@@ -44,11 +47,29 @@ export interface PreviewComputation {
   unclaimedWindows: LayoutWindow[];
 }
 
+export interface PreviewSessionWindow extends LayoutWindow {
+  workspaceName: string;
+}
+
+export interface PreviewSessionState {
+  activeWorkspaceName: string;
+  workspaceNames: string[];
+  windows: PreviewSessionWindow[];
+  masterRatioByWorkspace?: Record<string, number>;
+  stackWeightsByWorkspace?: Record<string, Record<string, number>>;
+}
+
+export interface PreviewSessionCommand {
+  name: string;
+  arg?: string | number;
+}
+
 interface RawResolvedNode {
   type: "workspace" | "group" | "window";
   id?: string;
   class?: string[];
   window_id?: string | null;
+  windowId?: string | null;
   children?: RawResolvedNode[];
 }
 
@@ -64,6 +85,7 @@ interface RawSnapshotNode {
   class?: string[];
   rect: PreviewRect;
   window_id?: string | null;
+  windowId?: string | null;
   children?: RawSnapshotNode[];
 }
 
@@ -84,7 +106,9 @@ let initPromise: Promise<void> | null = null;
 
 function ensureBindings() {
   if (!initPromise) {
-    initPromise = initBindings().then(() => undefined);
+    initPromise = initBindings({ module_or_path: wasmUrl }).then(
+      () => undefined,
+    );
   }
 
   return initPromise;
@@ -96,6 +120,7 @@ export async function computePreview(
   stylesheetSource: string,
   width: number,
   height: number,
+  sessionState?: PreviewSessionState | null,
 ): Promise<PreviewComputation> {
   await ensureBindings();
 
@@ -107,13 +132,51 @@ export async function computePreview(
     height,
   ) as RawComputePreviewResult;
   const windowsById = new Map(windows.map((window) => [window.id, window]));
+  const resolvedRoot = toPlainValue(raw.resolved_root) as RawResolvedNode | null;
+  let snapshotRoot = toPlainValue(raw.snapshot_root) as RawSnapshotNode | null;
+
+  if (sessionState && snapshotRoot) {
+    snapshotRoot = toPlainValue(
+      apply_preview_snapshot_overrides(sessionState, snapshotRoot),
+    ) as RawSnapshotNode | null;
+  }
 
   return {
-    treeRoot: normalizeTree(raw.resolved_root, raw.snapshot_root, windowsById),
-    snapshotRoot: normalizeSnapshot(raw.snapshot_root),
+    treeRoot: normalizeTree(resolvedRoot, snapshotRoot, windowsById),
+    snapshotRoot: normalizeSnapshot(snapshotRoot),
     diagnostics: raw.diagnostics,
     unclaimedWindows: raw.unclaimed_windows,
   };
+}
+
+export async function applyPreviewCommand(
+  state: PreviewSessionState,
+  command: PreviewSessionCommand,
+  snapshotRoot: PreviewSnapshotNode | null,
+): Promise<PreviewSessionState> {
+  await ensureBindings();
+
+  return apply_preview_command(state, command, snapshotRoot) as PreviewSessionState;
+}
+
+function toPlainValue<T>(value: T): T {
+  if (value instanceof Map) {
+    return Object.fromEntries(
+      Array.from(value.entries(), ([key, entry]) => [key, toPlainValue(entry)]),
+    ) as T;
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((entry) => toPlainValue(entry)) as T;
+  }
+
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, entry]) => [key, toPlainValue(entry)]),
+    ) as T;
+  }
+
+  return value;
 }
 
 function normalizeTree(
@@ -146,8 +209,8 @@ function normalizeTree(
     .filter((child): child is PreviewTreeNode => child !== null);
 
   const ownWindow =
-    typeof rawNode.window_id === "string"
-      ? windowsById.get(rawNode.window_id) ?? null
+    typeof (rawNode.window_id ?? rawNode.windowId) === "string"
+      ? windowsById.get((rawNode.window_id ?? rawNode.windowId) as string) ?? null
       : null;
   const claimedWindows = ownWindow
     ? [ownWindow]
@@ -211,7 +274,10 @@ function normalizeSnapshot(node: RawSnapshotNode | null): PreviewSnapshotNode | 
     id: typeof rawNode.id === "string" ? rawNode.id : null,
     className: rawNode.class?.join(" ") ?? null,
     rect: rawNode.rect,
-    windowId: typeof rawNode.window_id === "string" ? rawNode.window_id : null,
+    windowId:
+      typeof (rawNode.window_id ?? rawNode.windowId) === "string"
+        ? ((rawNode.window_id ?? rawNode.windowId) as string)
+        : null,
     children: (rawNode.children ?? [])
       .map((child) => normalizeSnapshot(child))
       .filter((child): child is PreviewSnapshotNode => child !== null),

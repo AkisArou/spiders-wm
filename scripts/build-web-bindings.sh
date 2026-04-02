@@ -8,6 +8,8 @@ repo_root="$(cd "${script_dir}/.." && pwd)"
 crate_dir="${repo_root}/crates/spiders-web-bindings"
 out_dir="${repo_root}/apps/spiders-wm-playground/src/generated/spiders-web-bindings"
 
+rm -rf "${out_dir}"
+
 if ! command -v wasm-pack >/dev/null 2>&1; then
   echo "error: wasm-pack is required to build spiders-web-bindings" >&2
   echo "install it with: cargo install wasm-pack" >&2
@@ -35,3 +37,5 @@ case "${profile}" in
 esac
 
 wasm-pack "${args[@]}"
+
+rm -f "${out_dir}/package.json" "${out_dir}/.gitignore"

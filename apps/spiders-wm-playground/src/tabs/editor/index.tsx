@@ -1,21 +1,32 @@
 import { createElement, useEffect, useRef, type ComponentType } from "react";
 
-import MonacoReactEditor, { type BeforeMount, type OnMount } from "@monaco-editor/react";
+import MonacoReactEditor, {
+  type BeforeMount,
+  type OnMount,
+} from "@monaco-editor/react";
 import { initVimMode, type VimAdapterInstance } from "monaco-vim";
 
 import { FileTree } from "./file-tree.tsx";
-import type { EditorFile, EditorFileId, FileTreeDirectoryNode } from "./playground-types.ts";
+import type {
+  EditorFile,
+  EditorFileId,
+  FileTreeDirectoryNode,
+} from "./types.ts";
+import { cn } from "../../utils/cn.ts";
 
 const monacoTheme = "spiders-terminal";
-const MonacoEditor = MonacoReactEditor as unknown as ComponentType<Record<string, unknown>>;
+const MonacoEditor = MonacoReactEditor as unknown as ComponentType<
+  Record<string, unknown>
+>;
 
 function themeColor(name: string) {
   if (typeof window === "undefined") {
     return "";
   }
 
-  const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-  return value;
+  return getComputedStyle(document.documentElement)
+    .getPropertyValue(name)
+    .trim();
 }
 
 const beforeMonacoMount: BeforeMount = (monaco) => {
@@ -37,10 +48,14 @@ const beforeMonacoMount: BeforeMount = (monaco) => {
       "editorLineNumber.activeForeground": themeColor("--color-terminal-dim"),
       "editorCursor.foreground": themeColor("--color-terminal-fg-strong"),
       "editor.selectionBackground": themeColor("--color-terminal-bg-active"),
-      "editor.inactiveSelectionBackground": themeColor("--color-terminal-bg-hover"),
-      "editorLineHighlightBackground": themeColor("--color-terminal-bg-bar"),
+      "editor.inactiveSelectionBackground": themeColor(
+        "--color-terminal-bg-hover",
+      ),
+      editorLineHighlightBackground: themeColor("--color-terminal-bg-bar"),
       "editorIndentGuide.background1": themeColor("--color-terminal-border"),
-      "editorIndentGuide.activeBackground1": themeColor("--color-terminal-border-strong"),
+      "editorIndentGuide.activeBackground1": themeColor(
+        "--color-terminal-border-strong",
+      ),
       "editorWhitespace.foreground": themeColor("--color-terminal-border"),
       "editorGutter.background": themeColor("--color-terminal-bg-subtle"),
     },
@@ -64,13 +79,14 @@ export function EditorPane({
 }) {
   const vimStatusRef = useRef<HTMLDivElement | null>(null);
   const vimAdapterRef = useRef<VimAdapterInstance | null>(null);
-  const filesById = Object.fromEntries(files.map((file) => [file.id, file])) as Record<
-    EditorFileId,
-    EditorFile
-  >;
+  const filesById = Object.fromEntries(
+    files.map((file) => [file.id, file]),
+  ) as Record<EditorFileId, EditorFile>;
   const activeFile = filesById[activeFileId]!;
   const dirtyFiles = new Set(
-    files.filter((file) => buffers[file.id] !== file.initialValue).map((file) => file.id),
+    files
+      .filter((file) => buffers[file.id] !== file.initialValue)
+      .map((file) => file.id),
   );
 
   const handleEditorMount: OnMount = (editor, monaco) => {
@@ -91,8 +107,8 @@ export function EditorPane({
   }, []);
 
   return (
-    <section className="grid h-full min-h-0 w-full min-w-0 grid-cols-1 overflow-hidden border border-terminal-border bg-terminal-bg-subtle lg:grid-cols-[16rem_minmax(0,1fr)]">
-      <aside className="min-h-0 overflow-auto border-b border-terminal-border bg-terminal-bg-subtle lg:border-r lg:border-b-0">
+    <section className="border-terminal-border bg-terminal-bg-subtle grid h-full min-h-0 w-full min-w-0 grid-cols-1 overflow-hidden border lg:grid-cols-[16rem_minmax(0,1fr)]">
+      <aside className="border-terminal-border bg-terminal-bg-subtle min-h-0 overflow-auto border-b lg:border-r lg:border-b-0">
         <div className="py-1">
           <FileTree
             node={root}
@@ -105,7 +121,7 @@ export function EditorPane({
       </aside>
 
       <div className="flex min-h-0 flex-col overflow-hidden">
-        <div className="flex items-center gap-px border-b border-terminal-border bg-terminal-bg-bar px-1 pt-1 text-xs">
+        <div className="border-terminal-border bg-terminal-bg-bar flex items-center gap-px border-b px-1 pt-1 text-xs">
           {files.map((file) => {
             const active = file.id === activeFileId;
 
@@ -113,23 +129,25 @@ export function EditorPane({
               <button
                 key={file.id}
                 type="button"
-                className={[
+                className={cn(
                   "flex items-center gap-1 border border-b-0 px-2 py-1",
                   active
                     ? "border-terminal-border-strong bg-terminal-bg-subtle text-terminal-fg-strong"
                     : "border-terminal-border bg-terminal-bg-panel text-terminal-dim hover:text-terminal-fg",
-                ].join(" ")}
+                )}
                 onClick={() => onSelectFile(file.id)}
               >
                 <span className={file.iconTone}>{file.icon}</span>
                 <span>{file.label}</span>
-                {dirtyFiles.has(file.id) ? <span className="text-terminal-warn">+</span> : null}
+                {dirtyFiles.has(file.id) ? (
+                  <span className="text-terminal-warn">+</span>
+                ) : null}
               </button>
             );
           })}
         </div>
 
-        <div className="border-b border-terminal-border bg-terminal-bg-panel px-2 py-1 text-xs text-terminal-faint">
+        <div className="border-terminal-border bg-terminal-bg-panel text-terminal-faint border-b px-2 py-1 text-xs">
           {activeFile.path}
         </div>
 
@@ -139,7 +157,8 @@ export function EditorPane({
             defaultLanguage: activeFile.language,
             height: "100%",
             language: activeFile.language,
-            onChange: (value: string | undefined) => onChangeBuffer(activeFile.id, value ?? ""),
+            onChange: (value: string | undefined) =>
+              onChangeBuffer(activeFile.id, value ?? ""),
             onMount: handleEditorMount,
             options: {
               automaticLayout: true,
@@ -173,7 +192,7 @@ export function EditorPane({
 
         <div
           ref={vimStatusRef}
-          className="border-t border-terminal-border bg-terminal-bg-bar px-2 py-1 text-xs text-terminal-muted"
+          className="border-terminal-border bg-terminal-bg-bar text-terminal-muted border-t px-2 py-1 text-xs"
         />
       </div>
     </section>

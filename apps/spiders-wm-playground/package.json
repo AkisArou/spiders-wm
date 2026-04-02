@@ -13,12 +13,14 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@monaco-editor/react": "^4.7.0",
+    "@monaco-editor/react": "catalog:",
     "@spiders-wm/sdk": "workspace:*",
-    "monaco-editor": "^0.55.1",
-    "monaco-vim": "^0.4.4",
+    "monaco-editor": "catalog:",
+    "monaco-vim": "catalog:",
     "react": "catalog:",
-    "react-dom": "catalog:"
+    "react-dom": "catalog:",
+    "clsx": "catalog:",
+    "tailwind-merge": "catalog:"
   },
   "devDependencies": {
     "@babel/core": "catalog:",

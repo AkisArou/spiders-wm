@@ -1,4 +1,11 @@
-export type EditorFileId = "config" | "root-css" | "layout-tsx" | "layout-css";
+export type EditorFileId =
+  | "config"
+  | "config-bindings"
+  | "config-inputs"
+  | "config-layouts"
+  | "root-css"
+  | "layout-tsx"
+  | "layout-css";
 
 export interface EditorFile {
   id: EditorFileId;

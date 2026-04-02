@@ -2,7 +2,7 @@ import * as commands from "@spiders-wm/sdk/commands";
 import type { BindingsConfig } from "@spiders-wm/sdk/config";
 
 export const bindings = {
-  mod: "super",
+  mod: "alt",
   entries: [
     { bind: ["mod", "Return"], command: commands.spawn("foot") },
     { bind: ["mod", "d"], command: commands.spawn("rofi -show drun") },

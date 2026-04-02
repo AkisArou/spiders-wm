@@ -1,9 +1,20 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
+use spiders_core::command::FocusDirection;
+use spiders_core::focus::set_focused_window;
+use spiders_core::navigation::{
+    NavigationDirection, WindowGeometryCandidate, managed_window_swap_positions,
+    select_directional_focus_candidate,
+};
 use spiders_core::snapshot::WindowSnapshot;
 use spiders_core::types::{ShellKind, WindowMode};
-use spiders_core::{LayoutNodeMeta, LayoutRect, RemainingTake, ResolvedLayoutNode, SlotTake};
+use spiders_core::wm::{WindowGeometry, WmModel};
+use spiders_core::workspace::{ensure_workspace, request_select_workspace};
+use spiders_core::{
+    LayoutNodeMeta, LayoutRect, OutputId, RemainingTake, ResolvedLayoutNode, SlotTake, WindowId,
+    WorkspaceId,
+};
 use spiders_scene::LayoutSnapshotNode;
 use spiders_scene::ast::{AuthoredLayoutNode, AuthoredNodeMeta, ValidatedLayoutTree};
 use spiders_scene::pipeline::{LayoutPipelineError, compile_stylesheet, compute_layout_from_sheet};
@@ -30,6 +41,83 @@ struct ComputePreviewResult {
     snapshot_root: Option<PreviewSnapshotNode>,
     diagnostics: Vec<PreviewDiagnostic>,
     unclaimed_windows: Vec<WindowSnapshot>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PreviewSessionState {
+    active_workspace_name: String,
+    workspace_names: Vec<String>,
+    windows: Vec<PreviewSessionWindow>,
+    #[serde(default)]
+    master_ratio_by_workspace: BTreeMap<String, f32>,
+    #[serde(default)]
+    stack_weights_by_workspace: BTreeMap<String, BTreeMap<String, f32>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PreviewSessionWindow {
+    id: String,
+    #[serde(default, rename = "app_id", alias = "appId")]
+    app_id: Option<String>,
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    class: Option<String>,
+    #[serde(default)]
+    instance: Option<String>,
+    #[serde(default)]
+    role: Option<String>,
+    #[serde(default)]
+    shell: Option<String>,
+    #[serde(default, rename = "window_type", alias = "windowType")]
+    window_type: Option<String>,
+    #[serde(default)]
+    floating: bool,
+    #[serde(default)]
+    fullscreen: bool,
+    #[serde(default)]
+    focused: bool,
+    workspace_name: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct PreviewCommand {
+    name: String,
+    #[serde(default)]
+    arg: Option<PreviewCommandArg>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+enum PreviewCommandArg {
+    String(String),
+    Number(i32),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+enum JsPreviewSnapshotClasses {
+    One(String),
+    Many(Vec<String>),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct JsPreviewSnapshotNode {
+    #[serde(rename = "type")]
+    node_type: String,
+    #[serde(default)]
+    id: Option<String>,
+    #[serde(default, rename = "class", alias = "className")]
+    class_name: Option<JsPreviewSnapshotClasses>,
+    #[serde(default)]
+    rect: Option<LayoutRect>,
+    #[serde(default, rename = "window_id", alias = "windowId")]
+    window_id: Option<WindowId>,
+    #[serde(default)]
+    children: Vec<JsPreviewSnapshotNode>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -217,6 +305,39 @@ pub fn compute_layout_preview(
     serde_wasm_bindgen::to_value(&result).map_err(into_js_error)
 }
 
+#[wasm_bindgen]
+pub fn apply_preview_command(
+    state: JsValue,
+    command: JsValue,
+    snapshot_root: JsValue,
+) -> Result<JsValue, JsValue> {
+    let state: PreviewSessionState = serde_wasm_bindgen::from_value(state).map_err(into_js_error)?;
+    let command: PreviewCommand = serde_wasm_bindgen::from_value(command).map_err(into_js_error)?;
+    let snapshot_root: Option<JsPreviewSnapshotNode> = if snapshot_root.is_null() || snapshot_root.is_undefined() {
+        None
+    } else {
+        Some(serde_wasm_bindgen::from_value(snapshot_root).map_err(into_js_error)?)
+    };
+
+    let next_state = apply_preview_command_inner(state, command, snapshot_root);
+
+    serde_wasm_bindgen::to_value(&next_state).map_err(into_js_error)
+}
+
+#[wasm_bindgen]
+pub fn apply_preview_snapshot_overrides(
+    state: JsValue,
+    snapshot_root: JsValue,
+) -> Result<JsValue, JsValue> {
+    let state: PreviewSessionState = serde_wasm_bindgen::from_value(state).map_err(into_js_error)?;
+    let mut snapshot_root: JsPreviewSnapshotNode =
+        serde_wasm_bindgen::from_value(snapshot_root).map_err(into_js_error)?;
+
+    apply_snapshot_overrides(&state, &mut snapshot_root);
+
+    serde_wasm_bindgen::to_value(&snapshot_root).map_err(into_js_error)
+}
+
 fn deserialize_authored_root(value: JsValue) -> Result<AuthoredLayoutNode, JsValue> {
     let renderable: JsLayoutValue = serde_wasm_bindgen::from_value(value).map_err(into_js_error)?;
     let mut nodes = Vec::new();
@@ -229,6 +350,720 @@ fn deserialize_authored_root(value: JsValue) -> Result<AuthoredLayoutNode, JsVal
             .next()
             .ok_or_else(|| JsValue::from_str("layout must return a workspace root node")),
         _ => Err(JsValue::from_str("layout must return exactly one root node")),
+    }
+}
+
+fn apply_preview_command_inner(
+    mut state: PreviewSessionState,
+    command: PreviewCommand,
+    snapshot_root: Option<JsPreviewSnapshotNode>,
+) -> PreviewSessionState {
+    normalize_preview_state(&mut state);
+
+    let mut model = preview_model(&state);
+
+    match command.name.as_str() {
+        "view_workspace" => {
+            if let Some(target_name) = command_workspace_name(&state.workspace_names, command.arg.as_ref()) {
+                let ordered_window_ids = ordered_window_ids(&state);
+
+                if let Some(selection) = request_select_workspace(
+                    &mut model,
+                    WorkspaceId(target_name),
+                    ordered_window_ids,
+                ) {
+                    let _ = set_focused_window(&mut model, selection.focused_window_id);
+                }
+            }
+        }
+        "assign_workspace" => {
+            if let Some(target_name) = command_workspace_name(&state.workspace_names, command.arg.as_ref()) {
+                assign_focused_window_to_workspace(
+                    &mut model,
+                    WorkspaceId(target_name),
+                    ordered_window_ids(&state),
+                );
+            }
+        }
+        "focus_dir" => {
+            if let Some(direction) = command_direction(command.arg.as_ref()) {
+                focus_direction(&mut model, snapshot_root.as_ref(), direction);
+            }
+        }
+        "swap_dir" => {
+            if let Some(direction) = command_direction(command.arg.as_ref()) {
+                swap_direction(&mut state, &mut model, snapshot_root.as_ref(), direction);
+            }
+        }
+        "toggle_floating" => {
+            toggle_focused_window_floating(&mut model);
+        }
+        "kill_client" => {
+            close_focused_window(&mut state, &mut model);
+        }
+        "spawn" => {
+            if matches!(command.arg.as_ref(), Some(PreviewCommandArg::String(value)) if value == "foot") {
+                spawn_foot_window(&mut state, &mut model);
+            }
+        }
+        "resize_dir" | "resize_tiled" => {
+            if let Some(direction) = command_direction(command.arg.as_ref()) {
+                resize_direction(&mut state, &model, snapshot_root.as_ref(), direction);
+            }
+        }
+        "cycle_layout" => {}
+        _ => {}
+    }
+
+    sync_preview_state(&mut state, &model);
+    state
+}
+
+fn apply_snapshot_overrides(state: &PreviewSessionState, root: &mut JsPreviewSnapshotNode) {
+    let Some(root_rect) = root.rect else {
+        return;
+    };
+
+    let mut windows = snapshot_windows(root);
+
+    if windows.len() < 2 {
+        return;
+    }
+
+    windows.sort_by(|left, right| {
+        left.rect
+            .x
+            .partial_cmp(&right.rect.x)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| {
+                left.rect
+                    .y
+                    .partial_cmp(&right.rect.y)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+    });
+
+    let Some(master) = windows.first().cloned() else {
+        return;
+    };
+    let stack = windows.iter().skip(1).cloned().collect::<Vec<_>>();
+
+    if stack.is_empty() {
+        return;
+    }
+
+    let workspace_name = state.active_workspace_name.as_str();
+    let master_ratio = state
+        .master_ratio_by_workspace
+        .get(workspace_name)
+        .copied()
+        .unwrap_or(0.6)
+        .clamp(0.2, 0.8);
+
+    let left_padding = master.rect.x - root_rect.x;
+    let stack_left = stack
+        .iter()
+        .map(|window| window.rect.x)
+        .fold(f32::INFINITY, f32::min);
+    let stack_right = stack
+        .iter()
+        .map(|window| window.rect.x + window.rect.width)
+        .fold(f32::NEG_INFINITY, f32::max);
+    let right_padding = (root_rect.x + root_rect.width) - stack_right;
+    let gap = (stack_left - (master.rect.x + master.rect.width)).max(0.0);
+    let content_width = (root_rect.width - left_padding - right_padding - gap).max(0.0);
+    let master_width = content_width * master_ratio;
+    let stack_width = (content_width - master_width).max(0.0);
+    let master_rect = LayoutRect {
+        x: root_rect.x + left_padding,
+        y: master.rect.y,
+        width: master_width,
+        height: master.rect.height,
+    };
+    let stack_x = master_rect.x + master_rect.width + gap;
+
+    let mut stack_sorted = stack;
+    stack_sorted.sort_by(|left, right| {
+        left.rect
+            .y
+            .partial_cmp(&right.rect.y)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    let top_padding = stack_sorted
+        .first()
+        .map(|window| window.rect.y - root_rect.y)
+        .unwrap_or(0.0);
+    let bottom_padding = stack_sorted
+        .last()
+        .map(|window| (root_rect.y + root_rect.height) - (window.rect.y + window.rect.height))
+        .unwrap_or(0.0);
+    let gaps = stack_sorted
+        .windows(2)
+        .map(|pair| (pair[1].rect.y - (pair[0].rect.y + pair[0].rect.height)).max(0.0))
+        .collect::<Vec<_>>();
+    let gap_total = gaps.iter().sum::<f32>();
+    let available_height = (root_rect.height - top_padding - bottom_padding - gap_total).max(0.0);
+    let stack_weights = state.stack_weights_by_workspace.get(workspace_name);
+    let mut resolved_weights = stack_sorted
+        .iter()
+        .map(|window| {
+            stack_weights
+                .and_then(|weights| weights.get(window.window_id.as_str()).copied())
+                .unwrap_or(1.0)
+                .max(0.1)
+        })
+        .collect::<Vec<_>>();
+    let weight_total = resolved_weights.iter().sum::<f32>().max(0.1);
+
+    for weight in &mut resolved_weights {
+        *weight /= weight_total;
+    }
+
+    set_window_rect(root, &master.window_id, master_rect);
+
+    let mut cursor_y = root_rect.y + top_padding;
+
+    for (index, window) in stack_sorted.iter().enumerate() {
+        let height = if index + 1 == stack_sorted.len() {
+            (root_rect.y + root_rect.height - bottom_padding - cursor_y).max(0.0)
+        } else {
+            available_height * resolved_weights[index]
+        };
+
+        set_window_rect(
+            root,
+            &window.window_id,
+            LayoutRect {
+                x: stack_x,
+                y: cursor_y,
+                width: stack_width,
+                height,
+            },
+        );
+
+        cursor_y += height + gaps.get(index).copied().unwrap_or(0.0);
+    }
+
+    recompute_group_rects(root, true);
+}
+
+fn normalize_preview_state(state: &mut PreviewSessionState) {
+    if state.workspace_names.is_empty() {
+        state.workspace_names.push(if state.active_workspace_name.is_empty() {
+            "1:dev".to_string()
+        } else {
+            state.active_workspace_name.clone()
+        });
+    }
+
+    if !state.workspace_names.contains(&state.active_workspace_name) {
+        state.active_workspace_name = state
+            .workspace_names
+            .first()
+            .cloned()
+            .unwrap_or_else(|| "1:dev".to_string());
+    }
+}
+
+fn preview_model(state: &PreviewSessionState) -> WmModel {
+    let mut model = WmModel::default();
+    let output_id = OutputId::from("preview-output");
+
+    model.upsert_output(output_id.clone(), "preview-output", 0, 0, None);
+    model.set_current_output(output_id.clone());
+
+    for workspace_name in &state.workspace_names {
+        ensure_workspace(&mut model, workspace_name.clone());
+    }
+
+    model.set_current_workspace(WorkspaceId::from(state.active_workspace_name.as_str()));
+
+    for window in &state.windows {
+        let window_id = WindowId::from(window.id.as_str());
+        let workspace_id = WorkspaceId::from(window.workspace_name.as_str());
+
+        model.insert_window(
+            window_id.clone(),
+            Some(workspace_id),
+            Some(output_id.clone()),
+        );
+        model.set_window_mapped(window_id.clone(), true);
+        model.set_window_identity(window_id.clone(), window.title.clone(), window.app_id.clone());
+        model.set_window_floating(window_id.clone(), window.floating);
+        model.set_window_fullscreen(window_id.clone(), window.fullscreen);
+    }
+
+    let focused_window_id = state
+        .windows
+        .iter()
+        .find(|window| window.focused)
+        .map(|window| WindowId::from(window.id.as_str()));
+    let _ = set_focused_window(&mut model, focused_window_id);
+
+    model
+}
+
+fn ordered_window_ids(state: &PreviewSessionState) -> Vec<WindowId> {
+    state
+        .windows
+        .iter()
+        .map(|window| WindowId::from(window.id.as_str()))
+        .collect()
+}
+
+fn command_workspace_name(workspace_names: &[String], arg: Option<&PreviewCommandArg>) -> Option<String> {
+    let PreviewCommandArg::Number(workspace_index) = arg? else {
+        return None;
+    };
+
+    if *workspace_index <= 0 {
+        return None;
+    }
+
+    workspace_names.get((*workspace_index as usize) - 1).cloned()
+}
+
+fn command_direction(arg: Option<&PreviewCommandArg>) -> Option<FocusDirection> {
+    let PreviewCommandArg::String(direction) = arg? else {
+        return None;
+    };
+
+    match direction.as_str() {
+        "left" => Some(FocusDirection::Left),
+        "right" => Some(FocusDirection::Right),
+        "up" => Some(FocusDirection::Up),
+        "down" => Some(FocusDirection::Down),
+        _ => None,
+    }
+}
+
+fn focus_direction(
+    model: &mut WmModel,
+    snapshot_root: Option<&JsPreviewSnapshotNode>,
+    direction: FocusDirection,
+) {
+    let Some(target_window_id) = directional_target_window(model, snapshot_root, direction) else {
+        return;
+    };
+
+    let _ = set_focused_window(model, Some(target_window_id));
+}
+
+fn resize_direction(
+    state: &mut PreviewSessionState,
+    model: &WmModel,
+    snapshot_root: Option<&JsPreviewSnapshotNode>,
+    direction: FocusDirection,
+) {
+    let Some(snapshot_root) = snapshot_root else {
+        return;
+    };
+    let Some(focused_window_id) = model.focused_window_id().cloned() else {
+        return;
+    };
+
+    let mut windows = snapshot_windows(snapshot_root);
+
+    if windows.len() < 2 {
+        return;
+    }
+
+    windows.sort_by(|left, right| {
+        left.rect
+            .x
+            .partial_cmp(&right.rect.x)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| {
+                left.rect
+                    .y
+                    .partial_cmp(&right.rect.y)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+    });
+
+    let workspace_name = state.active_workspace_name.clone();
+    let Some(master_window) = windows.first() else {
+        return;
+    };
+    let focused_is_master = master_window.window_id == focused_window_id;
+    let delta = 0.04_f32;
+
+    match direction {
+        FocusDirection::Left | FocusDirection::Right => {
+            let ratio = state
+                .master_ratio_by_workspace
+                .entry(workspace_name)
+                .or_insert(0.6);
+            let signed_delta = match (focused_is_master, direction) {
+                (true, FocusDirection::Left) => -delta,
+                (true, FocusDirection::Right) => delta,
+                (false, FocusDirection::Left) => delta,
+                (false, FocusDirection::Right) => -delta,
+                _ => 0.0,
+            };
+            *ratio = (*ratio + signed_delta).clamp(0.2, 0.8);
+        }
+        FocusDirection::Up | FocusDirection::Down => {
+            let stack_windows = windows.iter().skip(1).cloned().collect::<Vec<_>>();
+            let Some(current_index) = stack_windows
+                .iter()
+                .position(|window| window.window_id == focused_window_id)
+            else {
+                return;
+            };
+            let neighbor_index = match direction {
+                FocusDirection::Up if current_index > 0 => Some(current_index - 1),
+                FocusDirection::Down if current_index + 1 < stack_windows.len() => Some(current_index + 1),
+                _ => None,
+            };
+            let Some(neighbor_index) = neighbor_index else {
+                return;
+            };
+
+            let weights = state
+                .stack_weights_by_workspace
+                .entry(workspace_name)
+                .or_default();
+            let current_id = stack_windows[current_index].window_id.as_str().to_string();
+            let neighbor_id = stack_windows[neighbor_index].window_id.as_str().to_string();
+            let current_weight = weights.get(&current_id).copied().unwrap_or(1.0);
+            let neighbor_weight = weights.get(&neighbor_id).copied().unwrap_or(1.0);
+            let grow = 0.12_f32;
+            let shrink = 0.12_f32.min((neighbor_weight - 0.2).max(0.0));
+
+            if shrink <= 0.0 {
+                return;
+            }
+
+            weights.insert(current_id, current_weight + grow);
+            weights.insert(neighbor_id, (neighbor_weight - shrink).max(0.2));
+        }
+    }
+}
+
+fn swap_direction(
+    state: &mut PreviewSessionState,
+    model: &mut WmModel,
+    snapshot_root: Option<&JsPreviewSnapshotNode>,
+    direction: FocusDirection,
+) {
+    let Some(focused_window_id) = model.focused_window_id().cloned() else {
+        return;
+    };
+    let Some(target_window_id) = directional_target_window(model, snapshot_root, direction) else {
+        return;
+    };
+
+    let candidate_ids = directional_candidate_ids(state, snapshot_root);
+    let Some((first_index, second_index)) = managed_window_swap_positions(
+        &candidate_ids,
+        focused_window_id.clone(),
+        target_window_id,
+    ) else {
+        return;
+    };
+
+    let first_global_index = state
+        .windows
+        .iter()
+        .position(|window| window.id == candidate_ids[first_index].as_str());
+    let second_global_index = state
+        .windows
+        .iter()
+        .position(|window| window.id == candidate_ids[second_index].as_str());
+
+    let (Some(first_global_index), Some(second_global_index)) = (first_global_index, second_global_index) else {
+        return;
+    };
+
+    state.windows.swap(first_global_index, second_global_index);
+    let _ = set_focused_window(model, Some(focused_window_id));
+}
+
+fn directional_candidate_ids(
+    state: &PreviewSessionState,
+    snapshot_root: Option<&JsPreviewSnapshotNode>,
+) -> Vec<WindowId> {
+    let mut snapshot_ids = Vec::new();
+
+    if let Some(snapshot_root) = snapshot_root {
+        collect_snapshot_window_ids(snapshot_root, &mut snapshot_ids);
+    }
+
+    if snapshot_ids.is_empty() {
+        return Vec::new();
+    }
+
+    state
+        .windows
+        .iter()
+        .filter(|window| !window.floating && snapshot_ids.iter().any(|id| id.as_str() == window.id))
+        .map(|window| WindowId::from(window.id.as_str()))
+        .collect()
+}
+
+fn directional_target_window(
+    model: &WmModel,
+    snapshot_root: Option<&JsPreviewSnapshotNode>,
+    direction: FocusDirection,
+) -> Option<WindowId> {
+    let snapshot_root = snapshot_root?;
+    let mut candidates = Vec::new();
+    collect_snapshot_candidates(snapshot_root, &mut candidates);
+
+    select_directional_focus_candidate(
+        &candidates,
+        model.focused_window_id().cloned(),
+        navigation_direction(direction),
+    )
+}
+
+fn collect_snapshot_candidates(
+    node: &JsPreviewSnapshotNode,
+    out: &mut Vec<WindowGeometryCandidate>,
+) {
+    if node.node_type == "window"
+        && let (Some(window_id), Some(rect)) = (node.window_id.as_ref(), node.rect)
+    {
+        out.push(WindowGeometryCandidate {
+            window_id: window_id.clone(),
+            geometry: WindowGeometry {
+                x: rect.x.round() as i32,
+                y: rect.y.round() as i32,
+                width: rect.width.round() as i32,
+                height: rect.height.round() as i32,
+            },
+        });
+    }
+
+    for child in &node.children {
+        collect_snapshot_candidates(child, out);
+    }
+}
+
+fn collect_snapshot_window_ids(node: &JsPreviewSnapshotNode, out: &mut Vec<WindowId>) {
+    if node.node_type == "window" && let Some(window_id) = node.window_id.as_ref() {
+        out.push(window_id.clone());
+    }
+
+    for child in &node.children {
+        collect_snapshot_window_ids(child, out);
+    }
+}
+
+#[derive(Clone)]
+struct SnapshotWindowRect {
+    window_id: WindowId,
+    rect: LayoutRect,
+}
+
+fn snapshot_windows(node: &JsPreviewSnapshotNode) -> Vec<SnapshotWindowRect> {
+    let mut windows = Vec::new();
+    collect_snapshot_windows(node, &mut windows);
+    windows
+}
+
+fn collect_snapshot_windows(node: &JsPreviewSnapshotNode, out: &mut Vec<SnapshotWindowRect>) {
+    if node.node_type == "window"
+        && let (Some(window_id), Some(rect)) = (node.window_id.as_ref(), node.rect)
+    {
+        out.push(SnapshotWindowRect {
+            window_id: window_id.clone(),
+            rect,
+        });
+    }
+
+    for child in &node.children {
+        collect_snapshot_windows(child, out);
+    }
+}
+
+fn set_window_rect(node: &mut JsPreviewSnapshotNode, target_id: &WindowId, rect: LayoutRect) -> bool {
+    if node.node_type == "window" && node.window_id.as_ref() == Some(target_id) {
+        node.rect = Some(rect);
+        return true;
+    }
+
+    for child in &mut node.children {
+        if set_window_rect(child, target_id, rect) {
+            return true;
+        }
+    }
+
+    false
+}
+
+fn recompute_group_rects(node: &mut JsPreviewSnapshotNode, is_root: bool) -> Option<LayoutRect> {
+    if node.node_type == "window" {
+        return node.rect;
+    }
+
+    let child_rects = node
+        .children
+        .iter_mut()
+        .filter_map(|child| recompute_group_rects(child, false))
+        .collect::<Vec<_>>();
+
+    if !is_root {
+        node.rect = bounding_rect(&child_rects);
+    }
+
+    node.rect
+}
+
+fn bounding_rect(rects: &[LayoutRect]) -> Option<LayoutRect> {
+    let first = *rects.first()?;
+    let mut left = first.x;
+    let mut top = first.y;
+    let mut right = first.x + first.width;
+    let mut bottom = first.y + first.height;
+
+    for rect in rects.iter().skip(1) {
+        left = left.min(rect.x);
+        top = top.min(rect.y);
+        right = right.max(rect.x + rect.width);
+        bottom = bottom.max(rect.y + rect.height);
+    }
+
+    Some(LayoutRect {
+        x: left,
+        y: top,
+        width: (right - left).max(0.0),
+        height: (bottom - top).max(0.0),
+    })
+}
+
+fn navigation_direction(direction: FocusDirection) -> NavigationDirection {
+    match direction {
+        FocusDirection::Left => NavigationDirection::Left,
+        FocusDirection::Right => NavigationDirection::Right,
+        FocusDirection::Up => NavigationDirection::Up,
+        FocusDirection::Down => NavigationDirection::Down,
+    }
+}
+
+fn assign_focused_window_to_workspace(
+    model: &mut WmModel,
+    workspace_id: WorkspaceId,
+    ordered_window_ids: Vec<WindowId>,
+) {
+    let Some(focused_window_id) = model.focused_window_id().cloned() else {
+        return;
+    };
+
+    model.set_window_workspace(focused_window_id, Some(workspace_id));
+    let next_focus = model.preferred_focus_window_on_current_workspace(ordered_window_ids);
+    let _ = set_focused_window(model, next_focus);
+}
+
+fn toggle_focused_window_floating(model: &mut WmModel) {
+    let Some(focused_window_id) = model.focused_window_id().cloned() else {
+        return;
+    };
+
+    let next_floating = model
+        .windows
+        .get(&focused_window_id)
+        .map(|window| !window.floating)
+        .unwrap_or(false);
+    model.set_window_floating(focused_window_id, next_floating);
+}
+
+fn close_focused_window(state: &mut PreviewSessionState, model: &mut WmModel) {
+    let Some(focused_window_id) = model.focused_window_id().cloned() else {
+        return;
+    };
+
+    state
+        .windows
+        .retain(|window| window.id != focused_window_id.as_str());
+    model.remove_window(focused_window_id);
+    let next_focus = model.preferred_focus_window_on_current_workspace(ordered_window_ids(state));
+    let _ = set_focused_window(model, next_focus);
+}
+
+fn spawn_foot_window(state: &mut PreviewSessionState, model: &mut WmModel) {
+    let terminal_number = next_terminal_title_number(state);
+    let window_id = format!("win-{}", next_window_id_number(state));
+    let current_workspace = model
+        .current_workspace_id()
+        .cloned()
+        .unwrap_or_else(|| WorkspaceId::from(state.active_workspace_name.as_str()));
+
+    state.windows.push(PreviewSessionWindow {
+        id: window_id.clone(),
+        app_id: Some("foot".to_string()),
+        title: Some(format!("Terminal {terminal_number}")),
+        class: Some("foot".to_string()),
+        instance: Some("foot".to_string()),
+        role: None,
+        shell: Some("xdg_toplevel".to_string()),
+        window_type: None,
+        floating: false,
+        fullscreen: false,
+        focused: false,
+        workspace_name: current_workspace.as_str().to_string(),
+    });
+
+    let output_id = model.current_output_id().cloned();
+    model.insert_window(WindowId::from(window_id.as_str()), Some(current_workspace), output_id);
+    model.set_window_identity(
+        WindowId::from(window_id.as_str()),
+        Some(format!("Terminal {terminal_number}")),
+        Some("foot".to_string()),
+    );
+    let _ = set_focused_window(model, Some(WindowId::from(window_id.as_str())));
+}
+
+fn next_terminal_title_number(state: &PreviewSessionState) -> u32 {
+    state
+        .windows
+        .iter()
+        .filter_map(|window| {
+            window
+                .title
+                .as_deref()
+                .and_then(|title| title.strip_prefix("Terminal "))
+                .and_then(|suffix| suffix.parse::<u32>().ok())
+        })
+        .max()
+        .unwrap_or(0)
+        + 1
+}
+
+fn next_window_id_number(state: &PreviewSessionState) -> u32 {
+    state
+        .windows
+        .iter()
+        .filter_map(|window| {
+            window
+                .id
+                .strip_prefix("win-")
+                .and_then(|suffix| suffix.parse::<u32>().ok())
+        })
+        .max()
+        .unwrap_or(0)
+        + 1
+}
+
+fn sync_preview_state(state: &mut PreviewSessionState, model: &WmModel) {
+    if let Some(current_workspace_id) = model.current_workspace_id() {
+        state.active_workspace_name = current_workspace_id.as_str().to_string();
+    }
+
+    for window in &mut state.windows {
+        let window_id = WindowId::from(window.id.as_str());
+
+        if let Some(model_window) = model.windows.get(&window_id) {
+            window.focused = model_window.focused;
+            window.floating = model_window.floating;
+            window.fullscreen = model_window.fullscreen;
+
+            if let Some(workspace_id) = model_window.workspace_id.as_ref() {
+                window.workspace_name = workspace_id.as_str().to_string();
+            }
+        }
     }
 }
 

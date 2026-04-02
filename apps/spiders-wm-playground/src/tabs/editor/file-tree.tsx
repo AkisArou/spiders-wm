@@ -1,4 +1,6 @@
-import type { EditorFile, EditorFileId, FileTreeNode } from "./playground-types.ts";
+import { cn } from "../../utils/cn.ts";
+
+import type { EditorFile, EditorFileId, FileTreeNode } from "./types.ts";
 
 export function FileTree({
   node,
@@ -21,12 +23,12 @@ export function FileTree({
     return (
       <button
         type="button"
-        className={[
+        className={cn(
           "flex w-full items-center gap-2 px-2 py-1 text-left text-sm leading-5",
           activeFileId === file.id
             ? "bg-terminal-bg-active text-terminal-fg-strong"
             : "text-terminal-muted hover:bg-terminal-bg-hover hover:text-terminal-fg",
-        ].join(" ")}
+        )}
         onClick={() => onSelect(file.id)}
         style={{ paddingLeft: `${depth * 14 + 8}px` }}
       >
