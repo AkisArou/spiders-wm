@@ -1597,7 +1597,14 @@ mod tests {
         );
         assert_eq!(focused_window_id(&state), "win-3");
 
-        let state = apply_preview_command_inner(state, focus_command("left"), Some(snapshot_root));
+        let state = apply_preview_command_inner(state, focus_command("left"), Some(snapshot_root.clone()));
+        assert_eq!(focused_window_id(&state), "win-1");
+
+        let state = apply_preview_command_inner(
+            abcd_preview_state(),
+            focus_command("right"),
+            Some(snapshot_root.clone()),
+        );
         assert_eq!(focused_window_id(&state), "win-1");
     }
 }

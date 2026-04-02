@@ -155,7 +155,7 @@ fn select_directional_focus_candidate_from_tree(
             return Some(window_id);
         }
 
-        wrap_candidate.get_or_insert((scope_key.clone(), current_index, navigation.branches.len()));
+        wrap_candidate = Some((scope_key.clone(), current_index, navigation.branches.len()));
     }
 
     let Some((scope_key, current_index, branch_count)) = wrap_candidate else {
@@ -1144,6 +1144,17 @@ mod tests {
                 &candidates,
                 Some(window_id(3)),
                 NavigationDirection::Left,
+                &remembered,
+                Some(&focus_tree),
+            ),
+            Some(window_id(1))
+        );
+
+        assert_eq!(
+            select_directional_focus_candidate(
+                &candidates,
+                Some(window_id(4)),
+                NavigationDirection::Right,
                 &remembered,
                 Some(&focus_tree),
             ),
