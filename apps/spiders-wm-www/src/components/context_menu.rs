@@ -2,9 +2,7 @@ use clsx::clsx;
 use leptos::html;
 use leptos::prelude::*;
 
-#[cfg(target_arch = "wasm32")]
 use wasm_bindgen::{JsCast, JsValue};
-#[cfg(target_arch = "wasm32")]
 use web_sys::HtmlElement;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -22,7 +20,6 @@ pub fn ContextMenu(
 ) -> impl IntoView {
     let menu_ref = NodeRef::<html::Div>::new();
 
-    #[cfg(target_arch = "wasm32")]
     Effect::new(move |_| {
         let is_open = open.get();
         let _ = position.get();
@@ -55,17 +52,8 @@ pub fn ContextMenu(
                 event.stop_propagation();
             }
             on:toggle=move |_| {
-                #[cfg(target_arch = "wasm32")]
-                {
-                    if let Some(menu) = menu_ref.get() {
-                        if !popover_is_open(&menu) {
-                            on_close.run(());
-                        }
-                    }
-                }
-                #[cfg(not(target_arch = "wasm32"))]
-                {
-                    if !open.get() {
+                if let Some(menu) = menu_ref.get() {
+                    if !popover_is_open(&menu) {
                         on_close.run(());
                     }
                 }
@@ -111,12 +99,10 @@ pub fn ContextMenuItem(
     }
 }
 
-#[cfg(target_arch = "wasm32")]
 fn popover_is_open(element: &HtmlElement) -> bool {
     element.matches(":popover-open").unwrap_or(false)
 }
 
-#[cfg(target_arch = "wasm32")]
 fn call_popover_method(element: &HtmlElement, method_name: &str) {
     let Ok(method) = js_sys::Reflect::get(element.as_ref(), &JsValue::from_str(method_name)) else {
         return;

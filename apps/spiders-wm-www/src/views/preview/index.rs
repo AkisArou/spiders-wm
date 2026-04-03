@@ -248,7 +248,7 @@ pub fn PreviewView() -> impl IntoView {
                                                             .update(|state| state.set_focus(focus_target.clone()));
                                                     }
                                                 >
-                                                    <div class="flex justify-between items-center py-0.5 px-1 text-xs border-b bg-terminal-bg-subtle/80 text-terminal-dim border-current/20">
+                                                    <div class="flex justify-between items-center py-0.5 px-1 text-xs border-b bg-terminal-bg-subtle text-terminal-dim border-current/20">
                                                         <span class="truncate">{title}</span>
                                                         <span>{dimensions}</span>
                                                     </div>

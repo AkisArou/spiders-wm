@@ -1,22 +1,18 @@
 use std::cell::RefCell;
+use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use leptos::html;
 use leptos::prelude::*;
-#[cfg(target_arch = "wasm32")]
-use std::collections::BTreeMap;
-#[cfg(target_arch = "wasm32")]
 use wasm_bindgen_futures::spawn_local;
 
 use crate::app_state::AppState;
-#[cfg(target_arch = "wasm32")]
 use crate::workspace::{
     EDITOR_FILES, EditorFileId, WORKSPACE_FS_ROOT, initial_content, model_path,
 };
 
 use super::buffers::active_buffer_text;
 
-#[cfg(target_arch = "wasm32")]
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct MonacoModel {
@@ -25,7 +21,6 @@ struct MonacoModel {
     value: String,
 }
 
-#[cfg(target_arch = "wasm32")]
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct MonacoExtraLib {
@@ -33,7 +28,6 @@ struct MonacoExtraLib {
     content: &'static str,
 }
 
-#[cfg(target_arch = "wasm32")]
 fn monaco_models(buffers: &BTreeMap<EditorFileId, String>) -> Vec<MonacoModel> {
     EDITOR_FILES
         .iter()
@@ -48,7 +42,6 @@ fn monaco_models(buffers: &BTreeMap<EditorFileId, String>) -> Vec<MonacoModel> {
         .collect()
 }
 
-#[cfg(target_arch = "wasm32")]
 fn sdk_type_libs() -> Vec<MonacoExtraLib> {
   let workspace_node_modules = format!("{WORKSPACE_FS_ROOT}/node_modules/@spiders-wm/sdk");
 
@@ -96,10 +89,6 @@ fn sdk_type_libs() -> Vec<MonacoExtraLib> {
     ]
 }
 
-    #[cfg(not(target_arch = "wasm32"))]
-    pub struct MonacoEditorHandle;
-
-#[cfg(target_arch = "wasm32")]
 mod wasm {
     use js_sys::{Function, Promise};
     use wasm_bindgen::JsCast;
@@ -448,9 +437,7 @@ export function disposeMonacoEditor(handle) {
     }
 }
 
-#[cfg(target_arch = "wasm32")]
 pub use wasm::MonacoEditorHandle;
-#[cfg(target_arch = "wasm32")]
 use wasm::mount_monaco_editor;
 
 #[component]
@@ -461,7 +448,6 @@ pub fn MonacoEditorPane() -> impl IntoView {
     let monaco_loading = RwSignal::new(false);
     let _monaco_handle = Rc::new(RefCell::new(None::<MonacoEditorHandle>));
 
-    #[cfg(target_arch = "wasm32")]
     {
         let editor_mount = editor_mount.clone();
       let monaco_handle = Rc::clone(&_monaco_handle);

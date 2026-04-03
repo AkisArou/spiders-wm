@@ -4,11 +4,10 @@ use wasm_bindgen_futures::spawn_local;
 
 use crate::app_state::AppState;
 use crate::editor_host::download_directory;
-use crate::workspace::file_by_id;
+use crate::workspace::{EditorFileTreeDirectory, EditorFileTreeNode, file_by_id};
 
 use super::buffers::{editor_file_badge, is_file_dirty};
 use super::download::{collect_directory_download_items, download_directory_title};
-use super::types::{EditorFileTreeDirectory, EditorFileTreeNode};
 
 fn is_directory_open(
     app_state: AppState,

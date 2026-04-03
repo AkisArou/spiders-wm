@@ -3,7 +3,6 @@ use leptos::prelude::*;
 use leptos_router::components::{A, Route, Router, Routes};
 use leptos_router::hooks::use_location;
 use leptos_router::path;
-#[cfg(target_arch = "wasm32")]
 use wasm_bindgen::{JsCast, closure::Closure};
 
 mod app_state;
@@ -16,7 +15,6 @@ mod views;
 mod workspace;
 
 use app_state::AppState;
-#[cfg(target_arch = "wasm32")]
 use bindings::parse_bindings_source;
 use layout_runtime::PreviewRenderRequest;
 use views::editor::EditorView;
@@ -83,7 +81,7 @@ fn AppShell() -> impl IntoView {
                 </nav>
             </div>
 
-            <div class="overflow-hidden flex-1 min-h-0 p-2">
+            <div class="overflow-hidden flex-1 p-2 min-h-0">
                 <Routes fallback=NotFoundRoute>
                     <Route path=path!("/") view=PreviewRoute />
                     <Route path=path!("/preview") view=PreviewRoute />
@@ -163,10 +161,6 @@ fn install_preview_renderer(app_state: AppState) {
 }
 
 fn install_keyboard_listener(app_state: AppState) {
-    #[cfg(not(target_arch = "wasm32"))]
-    let _ = app_state;
-
-    #[cfg(target_arch = "wasm32")]
     Effect::new(move |_| {
         let Some(window) = web_sys::window() else {
             return;
@@ -204,7 +198,6 @@ fn install_keyboard_listener(app_state: AppState) {
     });
 }
 
-#[cfg(target_arch = "wasm32")]
 fn binding_source(buffers: &std::collections::BTreeMap<workspace::EditorFileId, String>) -> &str {
     buffers
         .get(&workspace::EditorFileId::ConfigBindings)

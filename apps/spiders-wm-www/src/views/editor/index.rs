@@ -281,7 +281,7 @@ pub fn EditorView() -> impl IntoView {
                         </div>
                         <div class="border-terminal-border bg-terminal-bg-panel border px-2 py-1">
                             <div class="text-terminal-info text-xs">"editor host"</div>
-                            <div class="mt-1">"Monaco models are hydrated from the same fixture bundle as the playground and receive @spiders-wm/sdk type libraries"</div>
+                            <div class="mt-1">"Monaco models are hydrated from the local fixture bundle in this crate and receive @spiders-wm/sdk type libraries"</div>
                         </div>
                     </div>
                 </div>

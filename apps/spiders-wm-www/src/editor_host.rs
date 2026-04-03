@@ -1,9 +1,6 @@
-#[cfg(target_arch = "wasm32")]
 use js_sys::Promise;
 use serde::Serialize;
-#[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
-#[cfg(target_arch = "wasm32")]
 use wasm_bindgen_futures::JsFuture;
 
 #[derive(Debug, Clone, Serialize)]
@@ -12,7 +9,6 @@ pub struct DirectoryDownloadItem {
     pub content: String,
 }
 
-#[cfg(target_arch = "wasm32")]
 #[wasm_bindgen(inline_js = r#"
 export async function copyTextToClipboard(text) {
     if (navigator.clipboard?.write && typeof ClipboardItem !== "undefined") {
@@ -108,14 +104,12 @@ extern "C" {
     fn download_directory_js(directory_name: &str, items: JsValue) -> Result<Promise, JsValue>;
 }
 
-#[cfg(target_arch = "wasm32")]
 pub async fn copy_text_to_clipboard(text: &str) -> Result<(), String> {
     let promise = copy_text_to_clipboard_js(text).map_err(js_error_message)?;
     JsFuture::from(promise).await.map_err(js_error_message)?;
     Ok(())
 }
 
-#[cfg(target_arch = "wasm32")]
 pub async fn download_directory(
     directory_name: &str,
     items: &[DirectoryDownloadItem],
@@ -126,22 +120,8 @@ pub async fn download_directory(
     Ok(())
 }
 
-#[cfg(target_arch = "wasm32")]
 fn js_error_message(error: JsValue) -> String {
     error
         .as_string()
         .unwrap_or_else(|| "clipboard access failed".to_string())
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-pub async fn copy_text_to_clipboard(_text: &str) -> Result<(), String> {
-    Err("clipboard access is only available in the web preview".to_string())
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-pub async fn download_directory(
-    _directory_name: &str,
-    _items: &[DirectoryDownloadItem],
-) -> Result<(), String> {
-    Err("directory downloads are only available in the web preview".to_string())
 }

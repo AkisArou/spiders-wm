@@ -115,36 +115,22 @@ pub fn initial_open_directories() -> BTreeMap<String, bool> {
 
 pub fn initial_content(file_id: EditorFileId) -> &'static str {
     match file_id {
-        EditorFileId::Config => {
-            include_str!("../../spiders-wm-playground/src/spiders-wm/config.ts")
-        }
-        EditorFileId::RootCss => {
-            include_str!("../../spiders-wm-playground/src/spiders-wm/index.css")
-        }
-        EditorFileId::ConfigBindings => {
-            include_str!("../../spiders-wm-playground/src/spiders-wm/config/bindings.ts")
-        }
-        EditorFileId::ConfigInputs => {
-            include_str!("../../spiders-wm-playground/src/spiders-wm/config/inputs.ts")
-        }
-        EditorFileId::ConfigLayouts => {
-            include_str!("../../spiders-wm-playground/src/spiders-wm/config/layouts.ts")
-        }
+        EditorFileId::Config => include_str!("../fixtures/spiders-wm/config.ts"),
+        EditorFileId::RootCss => include_str!("../fixtures/spiders-wm/index.css"),
+        EditorFileId::ConfigBindings => include_str!("../fixtures/spiders-wm/config/bindings.ts"),
+        EditorFileId::ConfigInputs => include_str!("../fixtures/spiders-wm/config/inputs.ts"),
+        EditorFileId::ConfigLayouts => include_str!("../fixtures/spiders-wm/config/layouts.ts"),
         EditorFileId::LayoutTsx => {
-            include_str!(
-                "../../spiders-wm-playground/src/spiders-wm/layouts/master-stack/index.tsx"
-            )
+            include_str!("../fixtures/spiders-wm/layouts/master-stack/index.tsx")
         }
         EditorFileId::LayoutCss => {
-            include_str!(
-                "../../spiders-wm-playground/src/spiders-wm/layouts/master-stack/index.css"
-            )
+            include_str!("../fixtures/spiders-wm/layouts/master-stack/index.css")
         }
         EditorFileId::FocusReproLayoutTsx => {
-            include_str!("../../spiders-wm-playground/src/spiders-wm/layouts/focus-repro/index.tsx")
+            include_str!("../fixtures/spiders-wm/layouts/focus-repro/index.tsx")
         }
         EditorFileId::FocusReproLayoutCss => {
-            include_str!("../../spiders-wm-playground/src/spiders-wm/layouts/focus-repro/index.css")
+            include_str!("../fixtures/spiders-wm/layouts/focus-repro/index.css")
         }
     }
 }
@@ -226,7 +212,6 @@ pub fn runtime_path(file_id: EditorFileId) -> &'static str {
     }
 }
 
-#[cfg(target_arch = "wasm32")]
 pub fn model_path(file_id: EditorFileId) -> &'static str {
     match file_id {
         EditorFileId::Config => "file:///home/demo/.config/spiders-wm/config.ts",
@@ -249,7 +234,6 @@ pub fn model_path(file_id: EditorFileId) -> &'static str {
     }
 }
 
-#[cfg(target_arch = "wasm32")]
 pub fn file_id_by_model_path(path: &str) -> Option<EditorFileId> {
     EDITOR_FILES
         .iter()

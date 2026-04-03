@@ -203,7 +203,6 @@ pub fn format_binding_token(token: &str, mod_key: &str) -> String {
     }
 }
 
-#[cfg(target_arch = "wasm32")]
 pub fn matches_web_keyboard_event(
     entry: &ParsedBindingEntry,
     event: &web_sys::KeyboardEvent,
@@ -258,7 +257,6 @@ fn command_arg_to_string(arg: &PreviewSessionCommandArg) -> String {
     }
 }
 
-#[cfg(target_arch = "wasm32")]
 fn expected_modifiers(bind: &[String], mod_key: &str) -> ExpectedModifiers {
     let mut expected = ExpectedModifiers::default();
 
@@ -275,7 +273,6 @@ fn expected_modifiers(bind: &[String], mod_key: &str) -> ExpectedModifiers {
     expected
 }
 
-#[cfg(target_arch = "wasm32")]
 fn resolve_modifier_token<'a>(token: &'a str, mod_key: &'a str) -> Option<&'static str> {
     let resolved = if token == "mod" { mod_key } else { token };
 
@@ -288,7 +285,6 @@ fn resolve_modifier_token<'a>(token: &'a str, mod_key: &'a str) -> Option<&'stat
     }
 }
 
-#[cfg(target_arch = "wasm32")]
 fn normalize_keyboard_event_key(event: &web_sys::KeyboardEvent) -> Option<String> {
     let code = event.code();
 
@@ -316,7 +312,6 @@ fn normalize_keyboard_event_key(event: &web_sys::KeyboardEvent) -> Option<String
     }
 }
 
-#[cfg(target_arch = "wasm32")]
 fn normalize_binding_key(token: &str) -> String {
     match token {
         "Return" => "return".to_string(),
@@ -342,7 +337,6 @@ fn mod_pattern() -> &'static Regex {
     PATTERN.get_or_init(|| Regex::new(r#"\bmod:\s*\"([^\"]+)\""#).expect("valid mod regex"))
 }
 
-#[cfg(target_arch = "wasm32")]
 #[derive(Default)]
 struct ExpectedModifiers {
     alt: bool,
@@ -357,7 +351,7 @@ mod tests {
 
     #[test]
     fn parses_multiline_resize_tiled_entries_without_consuming_neighbors() {
-        let source = include_str!("../../spiders-wm-playground/src/spiders-wm/config/bindings.ts");
+        let source = include_str!("../fixtures/spiders-wm/config/bindings.ts");
         let parsed = parse_bindings_source(source);
 
         let resize_left = parsed

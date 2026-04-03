@@ -4,7 +4,6 @@ use serde::{Deserialize, Serialize};
 use spiders_core::focus::{FocusTree, FocusTreeWindowGeometry};
 use spiders_core::wm::WindowGeometry;
 use spiders_core::{LayoutRect, WindowId};
-#[cfg(target_arch = "wasm32")]
 use spiders_web_bindings::apply_preview_command;
 use spiders_web_bindings::{apply_preview_snapshot_overrides, compute_layout_preview};
 use wasm_bindgen::JsValue;
@@ -32,7 +31,6 @@ impl PreviewLayoutId {
         self.title()
     }
 
-    #[cfg(target_arch = "wasm32")]
     fn next(self) -> Self {
         match self {
             Self::MasterStack => Self::FocusRepro,
@@ -40,7 +38,6 @@ impl PreviewLayoutId {
         }
     }
 
-    #[cfg(target_arch = "wasm32")]
     fn from_name(name: &str) -> Option<Self> {
         match name {
             "master-stack" => Some(Self::MasterStack),
@@ -85,7 +82,6 @@ pub enum PreviewSessionCommandArg {
 }
 
 impl PreviewSessionCommand {
-    #[cfg(target_arch = "wasm32")]
     pub fn display_label(&self) -> String {
         match self.arg.as_ref() {
             Some(PreviewSessionCommandArg::String(value)) => {
@@ -185,7 +181,6 @@ impl PreviewSessionWindow {
         }
     }
 
-    #[cfg(target_arch = "wasm32")]
     fn from_bindings(window: BindingsSessionWindow, index: usize) -> Self {
         let visuals = default_window_visuals(
             window.id.as_str(),
@@ -331,7 +326,6 @@ impl PreviewSessionState {
             .unwrap_or_else(|| window_id.as_str().to_string())
     }
 
-    #[cfg(target_arch = "wasm32")]
     pub fn apply_command(&mut self, command: PreviewSessionCommand) {
         if command.name == "cycle_layout" {
             self.active_layout = self.active_layout.next();
@@ -604,7 +598,6 @@ impl PreviewSessionState {
         }
     }
 
-    #[cfg(target_arch = "wasm32")]
     fn apply_bindings_state(&mut self, next_state: BindingsSessionState) {
         let mut existing = self
             .windows

@@ -692,19 +692,19 @@ fn strip_stylesheet_imports(path: &Path, source: &str) -> Result<String, String>
 
 fn read_virtual_module_source(specifier: &str) -> Result<String, String> {
     match specifier {
-        "spiders-wm/commands" | "@spiders-wm/sdk/commands" => {
+        "@spiders-wm/sdk/commands" => {
             Ok(include_str!("../../../packages/spiders-wm-sdk/src/commands.js").to_string())
         }
-        "spiders-wm/config" | "@spiders-wm/sdk/config" => Ok(
+        "@spiders-wm/sdk/config" => Ok(
             include_str!("../../../crates/runtimes/js/src/virtual/config.js").to_string(),
         ),
-        "spiders-wm/jsx-runtime" | "@spiders-wm/sdk/jsx-runtime" => {
+        "@spiders-wm/sdk/jsx-runtime" => {
             Ok(include_str!("../../../packages/spiders-wm-sdk/src/jsx-runtime.js").to_string())
         }
-        "spiders-wm/layout" | "@spiders-wm/sdk/layout" => Ok(
+        "@spiders-wm/sdk/layout" => Ok(
             include_str!("../../../crates/runtimes/js/src/virtual/layout.js").to_string(),
         ),
-        "spiders-wm/api" | "@spiders-wm/sdk/api" => Ok(
+        "@spiders-wm/sdk/api" => Ok(
             include_str!("../../../crates/runtimes/js/src/virtual/api.js").to_string(),
         ),
         _ => Err(format!("unsupported virtual module {specifier}")),
@@ -723,7 +723,7 @@ fn module_key(root_dir: &Path, module_id: &SourceModuleId) -> String {
 }
 
 fn is_virtual_sdk_specifier(specifier: &str) -> bool {
-    specifier.starts_with("spiders-wm/") || specifier.starts_with("@spiders-wm/sdk/")
+    specifier.starts_with("@spiders-wm/sdk/")
 }
 
 fn layout_entry_file_id(layout: PreviewLayoutId) -> EditorFileId {
