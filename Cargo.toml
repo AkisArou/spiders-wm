@@ -12,7 +12,6 @@ members = [
   "crates/spiders-wm-river",
   "crates/spiders-scene",
   "crates/runtimes/js",
-  "apps/spiders-wm-web",
   "apps/spiders-wm-www",
 ]
 

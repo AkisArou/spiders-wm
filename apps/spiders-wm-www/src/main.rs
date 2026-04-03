@@ -38,14 +38,13 @@ fn App() -> impl IntoView {
 
     view! {
         <Router>
-            <AppShell/>
+            <AppShell />
         </Router>
     }
 }
 
 #[component]
 fn AppShell() -> impl IntoView {
-    let app_state = expect_context::<AppState>();
     let location = use_location();
 
     let tab_class = move |path: &'static str| {
@@ -56,22 +55,22 @@ fn AppShell() -> impl IntoView {
         };
 
         clsx!(
-            "inline-flex items-center rounded-t-[18px] border border-b-0 px-4 py-3 text-sm font-medium tracking-[0.04em] transition duration-150",
+            "inline-flex items-center border border-b-0 px-3 py-1.5 text-sm transition duration-150",
             (
                 is_active,
-                "border-sky-300/40 bg-white/[0.08] text-white shadow-[0_-1px_0_rgba(255,255,255,0.08)]"
+                "border-terminal-border-strong bg-terminal-bg text-terminal-fg-strong"
             ),
             (
                 !is_active,
-                "border-white/10 bg-white/[0.03] text-slate-300 hover:border-sky-300/25 hover:bg-white/[0.06] hover:text-white"
+                "border-terminal-border bg-terminal-bg-bar text-terminal-dim opacity-70 hover:text-terminal-fg hover:opacity-100"
             )
         )
     };
 
     view! {
-        <main class="min-h-screen bg-[radial-gradient(circle_at_top,rgba(14,165,233,0.14),transparent_36%),linear-gradient(180deg,#04070b_0%,#09111a_52%,#05080c_100%)] px-4 py-6 text-slate-100 sm:px-6 lg:px-8">
-            <div class="mx-auto flex w-full max-w-384 flex-col gap-4">
-                <nav class="flex flex-wrap gap-2 overflow-x-auto pb-1">
+        <main class="flex overflow-hidden flex-col h-screen bg-terminal-bg text-terminal-fg">
+            <div class="px-2 pt-1 border-b border-terminal-border bg-terminal-bg-subtle">
+                <nav class="flex overflow-x-auto flex-wrap gap-1">
                     <A href="/" attr:class=move || tab_class("/")>
                         "1:preview"
                     </A>
@@ -82,27 +81,14 @@ fn AppShell() -> impl IntoView {
                         "3:system"
                     </A>
                 </nav>
+            </div>
 
-                <section class="grid gap-3 rounded-[28px] border border-white/10 bg-[linear-gradient(180deg,rgba(11,24,37,0.92),rgba(7,15,23,0.92))] p-5 shadow-[0_28px_80px_rgba(0,0,0,0.34)] backdrop-blur-[18px] sm:p-6">
-                    <p class="text-[0.72rem] uppercase tracking-[0.18em] text-sky-200/70">
-                        "Leptos CSR Prototype"
-                    </p>
-                    <h1 class="text-[clamp(1.75rem,2.5vw,2.7rem)] font-semibold tracking-[-0.04em] text-white">
-                        "Rust-first playground shell"
-                    </h1>
-                    <p class="max-w-[68ch] text-sm leading-7 text-slate-300 sm:text-[0.98rem]">
-                        "This app now follows the playground runtime model: source files live in app state, bindings are parsed from those buffers, and preview geometry is recomputed at runtime instead of from build.rs output."
-                    </p>
-                    <p class="rounded-[20px] border border-sky-300/15 bg-black/20 px-4 py-3 font-mono text-sm text-sky-100/90 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
-                        {move || app_state.session.get().prompt().to_string()}
-                    </p>
-                </section>
-
+            <div class="overflow-hidden flex-1 min-h-0 p-2">
                 <Routes fallback=NotFoundRoute>
-                    <Route path=path!("/") view=PreviewRoute/>
-                    <Route path=path!("/preview") view=PreviewRoute/>
-                    <Route path=path!("/editor") view=EditorRoute/>
-                    <Route path=path!("/system") view=SystemRoute/>
+                    <Route path=path!("/") view=PreviewRoute />
+                    <Route path=path!("/preview") view=PreviewRoute />
+                    <Route path=path!("/editor") view=EditorRoute />
+                    <Route path=path!("/system") view=SystemRoute />
                 </Routes>
             </div>
         </main>
@@ -111,27 +97,27 @@ fn AppShell() -> impl IntoView {
 
 #[component]
 fn PreviewRoute() -> impl IntoView {
-    view! { <PreviewView/> }
+    view! { <PreviewView /> }
 }
 
 #[component]
 fn EditorRoute() -> impl IntoView {
-    view! { <EditorView/> }
+    view! { <EditorView /> }
 }
 
 #[component]
 fn SystemRoute() -> impl IntoView {
-    view! { <SystemView/> }
+    view! { <SystemView /> }
 }
 
 #[component]
 fn NotFoundRoute() -> impl IntoView {
     view! {
-        <section class="grid rounded-[28px] border border-white/10 bg-[linear-gradient(180deg,rgba(11,24,37,0.92),rgba(7,15,23,0.92))] p-4 shadow-[0_28px_80px_rgba(0,0,0,0.34)] backdrop-blur-[18px]">
-            <div class="rounded-[22px] border border-white/10 bg-white/[0.03] p-4">
-                <p class="text-[0.72rem] uppercase tracking-[0.18em] text-sky-200/70">"route://missing"</p>
-                <h2 class="mt-2 text-xl font-semibold tracking-[-0.03em] text-white">"Not found"</h2>
+        <section class="grid gap-2 p-3 border border-terminal-border bg-terminal-bg-subtle">
+            <div class="text-xs uppercase text-terminal-dim tracking-[0.18em]">
+                "route://missing"
             </div>
+            <div class="text-lg text-terminal-fg-strong">"Not found"</div>
         </section>
     }
 }

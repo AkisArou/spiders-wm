@@ -18,7 +18,9 @@
   --color-terminal-warn: #e2c08d;
   --color-terminal-error: #f85149;
   --color-terminal-wait: #4daafc;
-  --font-mono: "JetBrainsMono Nerd Font", "Symbols Nerd Font Mono", "IBM Plex Mono", monospace;
+  --font-mono:
+    "JetBrainsMono Nerd Font", "Symbols Nerd Font Mono", "IBM Plex Mono",
+    monospace;
 }
 
 @layer base {
@@ -38,7 +40,7 @@
   }
 
   body {
-    @apply bg-terminal-bg font-mono text-terminal-fg;
+    @apply bg-terminal-bg text-terminal-fg font-mono;
     margin: 0;
   }
 
@@ -60,7 +62,7 @@
 
 @layer components {
   .ui-select {
-    @apply min-w-[12rem] border border-terminal-border bg-terminal-bg-subtle px-2.5 py-1 pr-8 text-xs leading-[1.1] text-terminal-fg-strong;
+    @apply border-terminal-border bg-terminal-bg-subtle text-terminal-fg-strong min-w-48 border px-2.5 py-1 pr-8 text-xs leading-[1.1];
     appearance: none;
     letter-spacing: 0.01em;
     background: linear-gradient(
@@ -110,5 +112,23 @@
       padding: 0.25rem;
       box-shadow: 0 18px 44px rgba(0, 0, 0, 0.42);
     }
+  }
+}
+
+@keyframes foot-cursor-blink {
+  0%,
+  49% {
+    opacity: 1;
+  }
+
+  50%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@layer utilities {
+  .foot-cursor {
+    animation: foot-cursor-blink 1.05s steps(1) infinite;
   }
 }

@@ -131,14 +131,18 @@ pub fn initial_content(file_id: EditorFileId) -> &'static str {
             include_str!("../../spiders-wm-playground/src/spiders-wm/config/layouts.ts")
         }
         EditorFileId::LayoutTsx => {
-            include_str!("../../spiders-wm-playground/src/spiders-wm/layouts/master-stack/index.tsx")
+            include_str!(
+                "../../spiders-wm-playground/src/spiders-wm/layouts/master-stack/index.tsx"
+            )
         }
         EditorFileId::LayoutCss => {
-            include_str!("../../spiders-wm-playground/src/spiders-wm/layouts/master-stack/index.css")
+            include_str!(
+                "../../spiders-wm-playground/src/spiders-wm/layouts/master-stack/index.css"
+            )
         }
         EditorFileId::FocusReproLayoutTsx => {
             include_str!("../../spiders-wm-playground/src/spiders-wm/layouts/focus-repro/index.tsx")
-        },
+        }
         EditorFileId::FocusReproLayoutCss => {
             include_str!("../../spiders-wm-playground/src/spiders-wm/layouts/focus-repro/index.css")
         }
@@ -220,6 +224,37 @@ pub fn runtime_path(file_id: EditorFileId) -> &'static str {
             "/home/demo/.config/spiders-wm/layouts/focus-repro/index.css"
         }
     }
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn model_path(file_id: EditorFileId) -> &'static str {
+    match file_id {
+        EditorFileId::Config => "file:///home/demo/.config/spiders-wm/config.ts",
+        EditorFileId::RootCss => "file:///home/demo/.config/spiders-wm/index.css",
+        EditorFileId::ConfigBindings => "file:///home/demo/.config/spiders-wm/config/bindings.ts",
+        EditorFileId::ConfigInputs => "file:///home/demo/.config/spiders-wm/config/inputs.ts",
+        EditorFileId::ConfigLayouts => "file:///home/demo/.config/spiders-wm/config/layouts.ts",
+        EditorFileId::LayoutTsx => {
+            "file:///home/demo/.config/spiders-wm/layouts/master-stack/index.tsx"
+        }
+        EditorFileId::LayoutCss => {
+            "file:///home/demo/.config/spiders-wm/layouts/master-stack/index.css"
+        }
+        EditorFileId::FocusReproLayoutTsx => {
+            "file:///home/demo/.config/spiders-wm/layouts/focus-repro/index.tsx"
+        }
+        EditorFileId::FocusReproLayoutCss => {
+            "file:///home/demo/.config/spiders-wm/layouts/focus-repro/index.css"
+        }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn file_id_by_model_path(path: &str) -> Option<EditorFileId> {
+    EDITOR_FILES
+        .iter()
+        .find(|file| model_path(file.id) == path)
+        .map(|file| file.id)
 }
 
 pub fn parse_workspace_names(source: &str) -> Vec<String> {

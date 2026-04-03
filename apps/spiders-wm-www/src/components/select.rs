@@ -31,9 +31,7 @@ pub fn TerminalSelect(
                         let option_value = option.value.clone();
                         let option_label = option.label;
 
-                        view! {
-                            <option value=option_value>{option_label}</option>
-                        }
+                        view! { <option value=option_value>{option_label}</option> }
                     })
                     .collect_view()}
             </select>

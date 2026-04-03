@@ -8,9 +8,7 @@ pub fn Panel(children: Children, #[prop(optional, into)] class: String) -> impl 
         (!class.is_empty(), class.as_str())
     );
 
-    view! {
-        <section class=classes>{children()}</section>
-    }
+    view! { <section class=classes>{children()}</section> }
 }
 
 #[component]
@@ -20,7 +18,5 @@ pub fn PanelBar(children: Children, #[prop(optional, into)] class: String) -> im
         (!class.is_empty(), class.as_str())
     );
 
-    view! {
-        <div class=classes>{children()}</div>
-    }
+    view! { <div class=classes>{children()}</div> }
 }

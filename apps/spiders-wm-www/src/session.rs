@@ -2,12 +2,11 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 use spiders_core::focus::{FocusTree, FocusTreeWindowGeometry};
-use spiders_core::navigation::NavigationDirection;
 use spiders_core::wm::WindowGeometry;
 use spiders_core::{LayoutRect, WindowId};
-use spiders_web_bindings::{
-    apply_preview_command, apply_preview_snapshot_overrides, compute_layout_preview,
-};
+#[cfg(target_arch = "wasm32")]
+use spiders_web_bindings::apply_preview_command;
+use spiders_web_bindings::{apply_preview_snapshot_overrides, compute_layout_preview};
 use wasm_bindgen::JsValue;
 
 const CANVAS_WIDTH: i32 = 3440;
@@ -33,28 +32,7 @@ impl PreviewLayoutId {
         self.title()
     }
 
-    pub fn summary(self) -> &'static str {
-        match self {
-            Self::MasterStack => {
-                "Matches the playground master-stack preview: a single master slot with a stacked remainder column."
-            }
-            Self::FocusRepro => {
-                "Matches the playground focus-repro preview: main pane, top pane, then a split bottom row as windows increase."
-            }
-        }
-    }
-
-    pub fn prompt(self) -> &'static str {
-        match self {
-            Self::MasterStack => {
-                "This preview follows the runtime playground flow: shared bindings session state, authored CSS, and a live layout selection."
-            }
-            Self::FocusRepro => {
-                "This preview mirrors the playground focus repro workspace. Use the keyboard bindings or click panes to drive the same preview session state."
-            }
-        }
-    }
-
+    #[cfg(target_arch = "wasm32")]
     fn next(self) -> Self {
         match self {
             Self::MasterStack => Self::FocusRepro,
@@ -62,6 +40,7 @@ impl PreviewLayoutId {
         }
     }
 
+    #[cfg(target_arch = "wasm32")]
     fn from_name(name: &str) -> Option<Self> {
         match name {
             "master-stack" => Some(Self::MasterStack),
@@ -79,10 +58,7 @@ pub struct PreviewEnvironment {
 
 impl PreviewEnvironment {
     pub fn stylesheet(&self, layout: PreviewLayoutId) -> &str {
-        self.stylesheets
-            .get(&layout)
-            .map(String::as_str)
-            .unwrap_or("")
+        self.stylesheets.get(&layout).map(String::as_str).unwrap_or("")
     }
 
     fn normalized_workspace_names(&self) -> Vec<String> {
@@ -109,13 +85,7 @@ pub enum PreviewSessionCommandArg {
 }
 
 impl PreviewSessionCommand {
-    pub fn focus_dir(direction: &str) -> Self {
-        Self {
-            name: "focus_dir".to_string(),
-            arg: Some(PreviewSessionCommandArg::String(direction.to_string())),
-        }
-    }
-
+    #[cfg(target_arch = "wasm32")]
     pub fn display_label(&self) -> String {
         match self.arg.as_ref() {
             Some(PreviewSessionCommandArg::String(value)) => {
@@ -211,15 +181,11 @@ impl PreviewSessionWindow {
             badge: visuals.badge,
             subtitle: visuals.subtitle,
             accent: visuals.accent,
-            geometry: WindowGeometry {
-                x: 0,
-                y: 0,
-                width: 0,
-                height: 0,
-            },
+            geometry: WindowGeometry { x: 0, y: 0, width: 0, height: 0 },
         }
     }
 
+    #[cfg(target_arch = "wasm32")]
     fn from_bindings(window: BindingsSessionWindow, index: usize) -> Self {
         let visuals = default_window_visuals(
             window.id.as_str(),
@@ -244,12 +210,7 @@ impl PreviewSessionWindow {
             badge: visuals.badge,
             subtitle: visuals.subtitle,
             accent: visuals.accent,
-            geometry: WindowGeometry {
-                x: 0,
-                y: 0,
-                width: 0,
-                height: 0,
-            },
+            geometry: WindowGeometry { x: 0, y: 0, width: 0, height: 0 },
         }
     }
 
@@ -278,10 +239,8 @@ pub struct PreviewSessionState {
 impl PreviewSessionState {
     pub fn new(active_layout: PreviewLayoutId, environment: PreviewEnvironment) -> Self {
         let workspace_names = environment.normalized_workspace_names();
-        let active_workspace_name = workspace_names
-            .first()
-            .cloned()
-            .unwrap_or_else(|| "1".to_string());
+        let active_workspace_name =
+            workspace_names.first().cloned().unwrap_or_else(|| "1".to_string());
         let mut state = Self {
             active_layout,
             active_workspace_name,
@@ -309,18 +268,10 @@ impl PreviewSessionState {
 
         self.environment = environment;
         self.workspace_names = self.environment.normalized_workspace_names();
-        if !self
-            .workspace_names
-            .iter()
-            .any(|name| name == &self.active_workspace_name)
-        {
-            self.active_workspace_name = self
-                .workspace_names
-                .first()
-                .cloned()
-                .unwrap_or_else(|| "1".to_string());
+        if !self.workspace_names.iter().any(|name| name == &self.active_workspace_name) {
+            self.active_workspace_name =
+                self.workspace_names.first().cloned().unwrap_or_else(|| "1".to_string());
         }
-
     }
 
     pub fn switch_layout(&mut self, active_layout: PreviewLayoutId) {
@@ -333,11 +284,6 @@ impl PreviewSessionState {
         self.push_log(self.last_action.clone());
     }
 
-    pub fn reset(&mut self) {
-        let environment = self.environment.clone();
-        *self = Self::new(self.active_layout, environment);
-    }
-
     pub fn canvas_width(&self) -> i32 {
         CANVAS_WIDTH
     }
@@ -346,31 +292,12 @@ impl PreviewSessionState {
         CANVAS_HEIGHT
     }
 
-    pub fn prompt(&self) -> &'static str {
-        self.active_layout.prompt()
-    }
-
-    pub fn display_title(&self) -> &'static str {
-        self.active_layout.display_title()
-    }
-
-    pub fn summary(&self) -> &'static str {
-        self.active_layout.summary()
-    }
-
     pub fn selected_layout_name(&self) -> String {
         self.active_layout.title().to_string()
     }
 
-    pub fn layout_name_for_workspace(&self, _workspace_name: &str) -> String {
-        self.selected_layout_name()
-    }
-
     pub fn focused_window_id(&self) -> Option<WindowId> {
-        self.windows
-            .iter()
-            .find(|window| window.focused)
-            .map(|window| window.id.clone())
+        self.windows.iter().find(|window| window.focused).map(|window| window.id.clone())
     }
 
     pub fn visible_windows(&self) -> Vec<PreviewSessionWindow> {
@@ -386,10 +313,6 @@ impl PreviewSessionState {
             .into_iter()
             .filter(|window| window.geometry.width > 0 && window.geometry.height > 0)
             .collect()
-    }
-
-    pub fn claimed_visible_window_count(&self) -> usize {
-        self.claimed_visible_windows().len()
     }
 
     pub fn unclaimed_visible_windows(&self) -> Vec<PreviewSessionWindow> {
@@ -408,28 +331,12 @@ impl PreviewSessionState {
             .unwrap_or_else(|| window_id.as_str().to_string())
     }
 
-    pub fn current_scope_path(&self) -> Vec<String> {
-        let Some(focused_window_id) = self.focused_window_id() else {
-            return Vec::new();
-        };
-
-        self.focus_tree()
-            .scope_path(&focused_window_id)
-            .map(|scope_path| scope_path.iter().map(ToString::to_string).collect())
-            .unwrap_or_default()
-    }
-
-    pub fn remembered_rows(&self) -> Vec<(String, String)> {
-        self.remembered_focus_by_scope
-            .iter()
-            .map(|(scope, window_id)| (scope.to_string(), self.window_name(window_id)))
-            .collect()
-    }
-
+    #[cfg(target_arch = "wasm32")]
     pub fn apply_command(&mut self, command: PreviewSessionCommand) {
         if command.name == "cycle_layout" {
             self.active_layout = self.active_layout.next();
-            self.last_action = format!("{} -> {}", command.display_label(), self.active_layout.title());
+            self.last_action =
+                format!("{} -> {}", command.display_label(), self.active_layout.title());
             self.push_log(self.last_action.clone());
             return;
         }
@@ -468,25 +375,27 @@ impl PreviewSessionState {
             .unwrap_or(wasm_bindgen::JsValue::NULL);
 
         match apply_preview_command(state_value, command_value, snapshot_value) {
-            Ok(next_value) => match serde_wasm_bindgen::from_value::<BindingsSessionState>(next_value) {
-                Ok(next_state) => {
-                    self.apply_bindings_state(next_state);
-                    self.last_action = command.display_label();
-                    self.push_log(format!(
-                        "{} -> {} on workspace {}",
-                        self.last_action,
-                        self.focused_window_id()
-                            .as_ref()
-                            .map(|window_id| self.window_name(window_id))
-                            .unwrap_or_else(|| "none".to_string()),
-                        self.active_workspace_name,
-                    ));
+            Ok(next_value) => {
+                match serde_wasm_bindgen::from_value::<BindingsSessionState>(next_value) {
+                    Ok(next_state) => {
+                        self.apply_bindings_state(next_state);
+                        self.last_action = command.display_label();
+                        self.push_log(format!(
+                            "{} -> {} on workspace {}",
+                            self.last_action,
+                            self.focused_window_id()
+                                .as_ref()
+                                .map(|window_id| self.window_name(window_id))
+                                .unwrap_or_else(|| "none".to_string()),
+                            self.active_workspace_name,
+                        ));
+                    }
+                    Err(error) => {
+                        self.last_action = format!("{} -> error", command.display_label());
+                        self.push_log(format!("{} failed: {error}", command.display_label()));
+                    }
                 }
-                Err(error) => {
-                    self.last_action = format!("{} -> error", command.display_label());
-                    self.push_log(format!("{} failed: {error}", command.display_label()));
-                }
-            },
+            }
             Err(error) => {
                 self.last_action = format!("{} -> error", command.display_label());
                 self.push_log(format!("{} failed: {error:?}", command.display_label()));
@@ -495,7 +404,9 @@ impl PreviewSessionState {
     }
 
     pub fn select_workspace(&mut self, workspace_name: String) {
-        if !self.workspace_names.contains(&workspace_name) || self.active_workspace_name == workspace_name {
+        if !self.workspace_names.contains(&workspace_name)
+            || self.active_workspace_name == workspace_name
+        {
             return;
         }
 
@@ -530,10 +441,6 @@ impl PreviewSessionState {
         self.set_focus_internal(Some(window_id));
         self.last_action = format!("click focus -> {to}");
         self.push_log(format!("Selected {to} from {from}"));
-    }
-
-    pub fn navigate(&mut self, direction: NavigationDirection) {
-        self.apply_command(PreviewSessionCommand::focus_dir(direction_name(direction)));
     }
 
     fn focus_tree(&self) -> FocusTree {
@@ -572,8 +479,7 @@ impl PreviewSessionState {
         let focus_tree = self.focus_tree();
         if let Some(scope_path) = focus_tree.scope_path(&focused_window_id) {
             for scope in scope_path {
-                self.remembered_focus_by_scope
-                    .insert(scope.to_string(), focused_window_id.clone());
+                self.remembered_focus_by_scope.insert(scope.to_string(), focused_window_id.clone());
             }
         }
     }
@@ -582,13 +488,13 @@ impl PreviewSessionState {
         let layout_windows = self
             .windows
             .iter()
-            .filter(|window| window.workspace_name == self.active_workspace_name && !window.floating)
+            .filter(|window| {
+                window.workspace_name == self.active_workspace_name && !window.floating
+            })
             .cloned()
             .collect::<Vec<_>>();
-        let render_windows = layout_windows
-            .iter()
-            .map(RenderLayoutWindow::from)
-            .collect::<Vec<_>>();
+        let render_windows =
+            layout_windows.iter().map(RenderLayoutWindow::from).collect::<Vec<_>>();
         let Ok(windows_value) = serde_wasm_bindgen::to_value(&render_windows) else {
             self.apply_preview_failure("layout", "failed to serialize layout windows".to_string());
             return;
@@ -623,7 +529,9 @@ impl PreviewSessionState {
         self.unclaimed_windows = self
             .windows
             .iter()
-            .filter(|window| window.workspace_name == self.active_workspace_name && !window.floating)
+            .filter(|window| {
+                window.workspace_name == self.active_workspace_name && !window.floating
+            })
             .cloned()
             .collect();
         self.sync_window_geometries_from_snapshot();
@@ -640,9 +548,7 @@ impl PreviewSessionState {
             .map(|window| window.id)
             .collect::<BTreeSet<_>>();
 
-        self.snapshot_root = computation
-            .snapshot_root
-            .and_then(normalize_preview_snapshot_node);
+        self.snapshot_root = computation.snapshot_root.and_then(normalize_preview_snapshot_node);
         self.diagnostics = computation.diagnostics;
         self.unclaimed_windows = layout_windows
             .into_iter()
@@ -666,8 +572,13 @@ impl PreviewSessionState {
             Err(_) => return,
         };
 
-        if let Ok(next_snapshot_value) = apply_preview_snapshot_overrides(state_value, snapshot_value) {
-            if let Ok(next_snapshot) = serde_wasm_bindgen::from_value::<RawBindingsPreviewSnapshotNode>(next_snapshot_value) {
+        if let Ok(next_snapshot_value) =
+            apply_preview_snapshot_overrides(state_value, snapshot_value)
+        {
+            if let Ok(next_snapshot) = serde_wasm_bindgen::from_value::<
+                RawBindingsPreviewSnapshotNode,
+            >(next_snapshot_value)
+            {
                 self.snapshot_root = normalize_preview_snapshot_node(next_snapshot);
             }
         }
@@ -693,6 +604,7 @@ impl PreviewSessionState {
         }
     }
 
+    #[cfg(target_arch = "wasm32")]
     fn apply_bindings_state(&mut self, next_state: BindingsSessionState) {
         let mut existing = self
             .windows
@@ -934,7 +846,10 @@ fn initial_windows() -> Vec<PreviewSessionWindow> {
     ]
 }
 
-fn collect_snapshot_geometries(node: &PreviewSnapshotNode, out: &mut BTreeMap<WindowId, WindowGeometry>) {
+fn collect_snapshot_geometries(
+    node: &PreviewSnapshotNode,
+    out: &mut BTreeMap<WindowId, WindowGeometry>,
+) {
     if node.node_type == "window" {
         if let (Some(window_id), Some(rect)) = (node.window_id.as_ref(), node.rect) {
             out.insert(
@@ -974,10 +889,7 @@ fn normalize_preview_snapshot_node(
         }),
         RawBindingsPreviewSnapshotNode::Wrapped(node) => {
             if let Some(node) = node.workspace {
-                return Some(normalize_wrapped_preview_snapshot_node(
-                    "workspace",
-                    node,
-                ));
+                return Some(normalize_wrapped_preview_snapshot_node("workspace", node));
             }
 
             if let Some(node) = node.group {
@@ -1005,25 +917,18 @@ fn normalize_wrapped_preview_snapshot_node(
         window_id: node.window_id,
         axis: node.axis,
         reverse: node.reverse,
-        children: node
-            .children
-            .into_iter()
-            .filter_map(normalize_preview_snapshot_node)
-            .collect(),
+        children: node.children.into_iter().filter_map(normalize_preview_snapshot_node).collect(),
     }
 }
 
-fn default_window_visuals(window_id: &str, app_id: Option<&str>, title: Option<&str>, index: usize) -> WindowVisuals {
-    const PALETTE: [&str; 8] = [
-        "#7dd3fc",
-        "#f97316",
-        "#34d399",
-        "#facc15",
-        "#818cf8",
-        "#06b6d4",
-        "#e879f9",
-        "#fb7185",
-    ];
+fn default_window_visuals(
+    window_id: &str,
+    app_id: Option<&str>,
+    title: Option<&str>,
+    index: usize,
+) -> WindowVisuals {
+    const PALETTE: [&str; 8] =
+        ["#7dd3fc", "#f97316", "#34d399", "#facc15", "#818cf8", "#06b6d4", "#e879f9", "#fb7185"];
 
     let seed = title.or(app_id).unwrap_or(window_id);
     let hash = seed.bytes().fold(index, |acc, byte| acc + byte as usize);
@@ -1040,17 +945,6 @@ fn default_window_visuals(window_id: &str, app_id: Option<&str>, title: Option<&
     }
 }
 
-fn direction_name(direction: NavigationDirection) -> &'static str {
-    match direction {
-        NavigationDirection::Left => "left",
-        NavigationDirection::Right => "right",
-        NavigationDirection::Up => "up",
-        NavigationDirection::Down => "down",
-    }
-}
-
 fn js_error_to_string(error: JsValue) -> String {
-    error
-        .as_string()
-        .unwrap_or_else(|| format!("{error:?}"))
+    error.as_string().unwrap_or_else(|| format!("{error:?}"))
 }
