@@ -70,7 +70,7 @@ fn AppShell() -> impl IntoView {
 
     view! {
         <main class="min-h-screen bg-[radial-gradient(circle_at_top,rgba(14,165,233,0.14),transparent_36%),linear-gradient(180deg,#04070b_0%,#09111a_52%,#05080c_100%)] px-4 py-6 text-slate-100 sm:px-6 lg:px-8">
-            <div class="mx-auto flex w-full max-w-[96rem] flex-col gap-4">
+            <div class="mx-auto flex w-full max-w-384 flex-col gap-4">
                 <nav class="flex flex-wrap gap-2 overflow-x-auto pb-1">
                     <A href="/" attr:class=move || tab_class("/")>
                         "1:preview"
