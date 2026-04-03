@@ -574,7 +574,9 @@ fn decode_meta(meta: JsAuthoredNodeMeta) -> AuthoredNodeMeta {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
     use std::fs;
+    use std::path::PathBuf;
 
     use serde_json::json;
     use spiders_config::model::{Config, LayoutDefinition};
@@ -583,6 +585,10 @@ mod tests {
     use spiders_core::{OutputId, WorkspaceId};
 
     use super::*;
+    use crate::authored::{load_prepared_config, rebuild_prepared_config};
+    use crate::module_graph::{JavaScriptModule, JavaScriptModuleGraph};
+    use crate::module_graph_runtime::call_entry_export_with_json_arg;
+    use crate::payload::decode_runtime_graph_payload;
 
     fn workspace() -> WorkspaceSnapshot {
         WorkspaceSnapshot {
@@ -723,5 +729,125 @@ mod tests {
         assert!(matches!(layout, SourceLayoutNode::Workspace { .. }));
 
         let _ = fs::remove_file(module_path);
+    }
+
+    #[test]
+    fn module_graph_runtime_loads_sdk_jsx_runtime_virtual_module() {
+        let result = call_entry_export_with_json_arg(
+            &JavaScriptModuleGraph {
+                entry: "layouts/master-stack/index.js".into(),
+                modules: vec![
+                    JavaScriptModule {
+                        specifier: "layouts/master-stack/index.js".into(),
+                        source: "import { sp } from \"@spiders-wm/sdk/jsx-runtime\"; export default function layout(ctx) { return sp(\"workspace\", { id: \"root\" }); }".into(),
+                        resolved_imports: BTreeMap::from([(
+                            "@spiders-wm/sdk/jsx-runtime".into(),
+                            "@spiders-wm/sdk/jsx-runtime".into(),
+                        )]),
+                    },
+                    JavaScriptModule {
+                        specifier: "@spiders-wm/sdk/jsx-runtime".into(),
+                        source: include_str!("../../../../packages/spiders-wm-sdk/src/jsx-runtime.js")
+                            .into(),
+                        resolved_imports: BTreeMap::new(),
+                    },
+                ],
+            },
+            "layouts/master-stack/index.js",
+            "default",
+            &json!({}),
+        );
+
+        assert!(result.is_ok(), "{result:?}");
+    }
+
+    #[test]
+    fn prepared_test_config_genymotion_layout_evaluates() {
+        let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        let authored_config = repo_root.join("test_config/config.ts");
+        let runtime_root = std::env::temp_dir().join(format!(
+            "spiders-runtime-genymotion-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let runtime_entry = runtime_root.join("config.js");
+
+        fs::create_dir_all(&runtime_root).unwrap();
+        rebuild_prepared_config(&authored_config, &runtime_entry).unwrap();
+        let config = load_prepared_config(&runtime_entry).unwrap();
+        let runtime = QuickJsPreparedLayoutRuntime::with_loader(FsLayoutSourceLoader);
+        let workspace = WorkspaceSnapshot {
+            effective_layout: Some(LayoutRef {
+                name: "genymotion".into(),
+            }),
+            ..workspace()
+        };
+
+        let loaded = runtime.prepare_layout(&config, &workspace).unwrap().unwrap();
+        let graph = decode_runtime_graph_payload(&loaded.runtime_payload).unwrap();
+
+        assert!(graph.modules.iter().any(|module| {
+            module.specifier == "@spiders-wm/sdk/jsx-runtime"
+                || module.specifier == "spiders-wm/jsx-runtime"
+        }));
+
+        let layout = runtime.evaluate_layout(
+            &loaded,
+            &state().layout_context(&workspace, Some(loaded.selected.clone())),
+        );
+
+        assert!(layout.is_ok(), "{layout:?}");
+    }
+
+    #[test]
+    fn checked_in_prepared_test_config_genymotion_layout_evaluates() {
+        let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        let prepared_config = repo_root.join("test_config/.spiders-wm-build/config.js");
+        let config = load_prepared_config(&prepared_config).unwrap();
+        let runtime = QuickJsPreparedLayoutRuntime::with_loader(FsLayoutSourceLoader);
+        let workspace = WorkspaceSnapshot {
+            effective_layout: Some(LayoutRef {
+                name: "genymotion".into(),
+            }),
+            ..workspace()
+        };
+
+        let loaded = runtime.prepare_layout(&config, &workspace).unwrap().unwrap();
+        let graph = decode_runtime_graph_payload(&loaded.runtime_payload).unwrap();
+
+        assert!(graph.modules.iter().any(|module| {
+            module.specifier == "@spiders-wm/sdk/jsx-runtime"
+                || module.specifier == "spiders-wm/jsx-runtime"
+        }));
+
+        let layout = runtime.evaluate_layout(
+            &loaded,
+            &state().layout_context(&workspace, Some(loaded.selected.clone())),
+        );
+
+        assert!(layout.is_ok(), "{layout:?}");
+    }
+
+    #[test]
+    fn prepared_template_config_loads() {
+        let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        let authored_config = repo_root.join("template/config.ts");
+        let runtime_root = std::env::temp_dir().join(format!(
+            "spiders-runtime-template-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let runtime_entry = runtime_root.join("config.js");
+
+        fs::create_dir_all(&runtime_root).unwrap();
+        rebuild_prepared_config(&authored_config, &runtime_entry).unwrap();
+
+        let config = load_prepared_config(&runtime_entry);
+
+        assert!(config.is_ok(), "{config:?}");
     }
 }

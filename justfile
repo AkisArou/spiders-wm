@@ -20,3 +20,6 @@ wm-smoke:
 
 wm-live-smoke:
     SPIDERS_WM_RUN_LIVE_SMOKE=1 cargo test -p spiders-wm --test live_ipc_smoke -- --ignored --nocapture
+
+web-dev:
+    cd apps/spiders-wm-web && dx serve

@@ -273,20 +273,46 @@ pub fn compiled_app_to_module_graph(
                 .clone(),
         };
 
+        let mut resolved_imports = record
+            .resolved_imports
+            .iter()
+            .filter(|import| !matches!(import.kind, ImportedModuleKind::Stylesheet))
+            .map(|import| {
+                (
+                    import.specifier.clone(),
+                    module_key(&graph.app.root_dir, &import.module_id),
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+
+        if matches!(module_id, ModuleId::File(path) if matches!(path.extension().and_then(|extension| extension.to_str()), Some("tsx" | "jsx")))
+            && compiled_virtuals.contains_key(&ModuleId::Virtual("@spiders-wm/sdk/jsx-runtime".into()))
+        {
+            resolved_imports.insert(
+                "@spiders-wm/sdk/jsx-runtime".into(),
+                "@spiders-wm/sdk/jsx-runtime".into(),
+            );
+        }
+
         modules.push(JavaScriptModule {
             specifier: module_key(&graph.app.root_dir, module_id),
             source,
-            resolved_imports: record
-                .resolved_imports
-                .iter()
-                .filter(|import| !matches!(import.kind, ImportedModuleKind::Stylesheet))
-                .map(|import| {
-                    (
-                        import.specifier.clone(),
-                        module_key(&graph.app.root_dir, &import.module_id),
-                    )
-                })
-                .collect(),
+            resolved_imports,
+        });
+    }
+
+    for module in &compiled.virtual_modules {
+        if modules
+            .iter()
+            .any(|existing| existing.specifier == module.specifier)
+        {
+            continue;
+        }
+
+        modules.push(JavaScriptModule {
+            specifier: module.specifier.clone(),
+            source: module.code.clone(),
+            resolved_imports: BTreeMap::new(),
         });
     }
 
@@ -616,6 +642,17 @@ mod tests {
                 .map(String::as_str),
             Some("components/StackGroup.ts")
         );
+        assert_eq!(
+            layout_module
+                .resolved_imports
+                .get("@spiders-wm/sdk/jsx-runtime")
+                .map(String::as_str),
+            Some("@spiders-wm/sdk/jsx-runtime")
+        );
+        assert!(module_graph
+            .modules
+            .iter()
+            .any(|module| module.specifier == "@spiders-wm/sdk/jsx-runtime"));
         assert!(compiled.stylesheet.contains(".layout {}"));
         assert!(compiled.stylesheet.contains(".stack {}"));
     }

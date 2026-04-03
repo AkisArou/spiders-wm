@@ -1,0 +1,30 @@
+[package]
+name = "spiders-wm-web"
+version = "0.1.0"
+authors = ["AkisArou <akisarou90@gmail.com>"]
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+dioxus = { version = "0.7.1", features = ["router"] }
+spiders-core = { path = "../../crates/spiders-core" }
+spiders-scene = { path = "../../crates/spiders-scene" }
+spiders-web-bindings = { path = "../../crates/spiders-web-bindings" }
+oxc = { version = "0.119.0", features = ["full"] }
+regex = "1"
+serde.workspace = true
+serde-wasm-bindgen = "0.6"
+js-sys = "0.3"
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+web-sys = { version = "0.3", features = [
+  "KeyboardEvent",
+  "Window",
+  "EventTarget",
+] }
+
+[features]
+default = ["web"]
+# The feature that are only required for the web = ["dioxus/web"] build target should be optional and only enabled in the web = ["dioxus/web"] feature
+web = ["dioxus/web"]

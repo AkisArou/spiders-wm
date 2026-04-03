@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 
 use oxc::span::SourceType;
@@ -414,7 +415,9 @@ fn runtime_relative_path(
     authored_root: &Path,
     config_file_name: Option<&str>,
 ) -> PathBuf {
-    let relative = source_path.strip_prefix(authored_root).unwrap();
+    let Ok(relative) = source_path.strip_prefix(authored_root) else {
+        return external_runtime_relative_path(source_path, "js");
+    };
     let mut destination = relative.to_path_buf();
     destination.set_extension("js");
     if relative.parent().is_none() {
@@ -428,8 +431,28 @@ fn runtime_relative_path(
 fn runtime_static_relative_path(source_path: &Path, authored_root: &Path) -> PathBuf {
     source_path
         .strip_prefix(authored_root)
-        .unwrap()
-        .to_path_buf()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|_| {
+            let extension = source_path
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .unwrap_or("asset");
+            external_runtime_relative_path(source_path, extension)
+        })
+}
+
+fn external_runtime_relative_path(source_path: &Path, extension: &str) -> PathBuf {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    source_path.hash(&mut hasher);
+    let hash = hasher.finish();
+    let stem = source_path
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .filter(|stem| !stem.is_empty())
+        .unwrap_or("module");
+
+    PathBuf::from("__external")
+        .join(format!("{stem}-{hash:016x}.{extension}"))
 }
 
 fn rewrite_module_for_runtime(

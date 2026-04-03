@@ -11,7 +11,7 @@ members = [
   "crates/spiders-wm",
   "crates/spiders-wm-river",
   "crates/spiders-scene",
-  "crates/runtimes/js",
+  "crates/runtimes/js", "apps/spiders-wm-web",
 ]
 
 [workspace.package]
