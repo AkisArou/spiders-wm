@@ -7,6 +7,7 @@ Non-compiling staging inventory for cross-crate type review.
 `wm_www::PreviewWindowProjection` and `wm_www::RuntimeWindowSnapshotInput` were present in the earlier staging pass, but they do not exist in the current source tree anymore, so they are called out as removed instead of reconstructed.
 
 ```rust
+// crate: spiders-wm-runtime
 pub mod wm_runtime {
     // bindings.rs
     pub struct ParsedBindingsState {
@@ -215,6 +216,7 @@ pub mod wm_runtime {
     }
 }
 
+// crate: spiders-wm-www
 pub mod wm_www {
     // apps/spiders-wm-www/src/session.rs
     pub struct PreviewSessionState {
@@ -234,6 +236,7 @@ pub mod wm_www {
     // pub struct RuntimeWindowSnapshotInput { ... }
 }
 
+// crate: spiders-core
 pub mod wm_core {
     // ids.rs, expanded from id_type!
     pub struct WindowId(pub String);
@@ -772,6 +775,7 @@ pub mod wm_core {
     }
 }
 
+// crate: spiders-wm
 pub mod wm_smithay {
     // state.rs
     pub struct SpidersWm {
