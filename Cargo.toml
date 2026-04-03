@@ -11,7 +11,9 @@ members = [
   "crates/spiders-wm",
   "crates/spiders-wm-river",
   "crates/spiders-scene",
-  "crates/runtimes/js", "apps/spiders-wm-web",
+  "crates/runtimes/js",
+  "apps/spiders-wm-web",
+  "apps/spiders-wm-www",
 ]
 
 [workspace.package]
@@ -22,8 +24,19 @@ publish = false
 
 [workspace.dependencies]
 anyhow = "1"
+clsx = "0.1.1"
+console_error_panic_hook = "0.1.7"
+dioxus = "0.7.1"
+js-sys = "0.3"
+leptos = "0.8.17"
+leptos_router = "0.8.8"
+oxc = "0.119.0"
+oxc_resolver = "11.19.1"
+regex = "1"
+rquickjs = "0.11.0"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+serde-wasm-bindgen = "0.6"
 thiserror = "2"
 tracing = "0.1"
 tracing-log = "0.2"
@@ -32,3 +45,6 @@ tracing-subscriber = { version = "0.3", features = [
   "fmt",
   "ansi",
 ] }
+wasm-bindgen = "0.2.117"
+wasm-bindgen-futures = "0.4"
+web-sys = "0.3"

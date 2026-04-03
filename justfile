@@ -23,3 +23,6 @@ wm-live-smoke:
 
 web-dev:
     cd apps/spiders-wm-web && dx serve
+
+www-dev:
+    cd apps/spiders-wm-www && trunk serve --open

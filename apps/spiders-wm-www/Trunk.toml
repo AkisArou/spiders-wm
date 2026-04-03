@@ -1,0 +1,5 @@
+[build]
+target = "index.html"
+
+[tools]
+tailwindcss = "4.2.2"

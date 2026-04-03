@@ -1,0 +1,15 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "build-wm-www-trunk",
+			"type": "shell",
+			"command": "trunk",
+			"args": [
+				"build"
+			],
+			"isBackground": false,
+			"group": "test"
+		}
+	]
+}

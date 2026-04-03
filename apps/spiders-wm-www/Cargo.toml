@@ -1,13 +1,15 @@
 [package]
-name = "spiders-wm-web"
-version = "0.1.0"
-authors = ["AkisArou <akisarou90@gmail.com>"]
-edition = "2021"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+name = "spiders-wm-www"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+publish.workspace = true
 
 [dependencies]
-dioxus = { workspace = true, features = ["router"] }
+clsx.workspace = true
+console_error_panic_hook.workspace = true
+leptos = { workspace = true, features = ["csr"] }
+leptos_router.workspace = true
 spiders-core = { path = "../../crates/spiders-core" }
 spiders-scene = { path = "../../crates/spiders-scene" }
 spiders-web-bindings = { path = "../../crates/spiders-web-bindings" }
@@ -21,10 +23,6 @@ wasm-bindgen-futures.workspace = true
 web-sys = { workspace = true, features = [
   "KeyboardEvent",
   "Window",
+  "Location",
   "EventTarget",
 ] }
-
-[features]
-default = ["web"]
-# The feature that are only required for the web = ["dioxus/web"] build target should be optional and only enabled in the web = ["dioxus/web"] feature
-web = ["dioxus/web"]

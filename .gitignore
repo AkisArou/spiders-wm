@@ -12,7 +12,7 @@ pnpm-debug.log*
 lerna-debug.log*
 node_modules
 dist
-dist-ssr
+apps/spiders-wm-www/tailwind.generated.css
 *.local
 .vscode/*
 !.vscode/extensions.json
