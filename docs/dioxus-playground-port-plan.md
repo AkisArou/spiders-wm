@@ -1,6 +1,13 @@
 # Dioxus Playground Port Plan
 
-This document maps the current React playground and lays out a concrete migration plan to a Dioxus-based web UI.
+This document maps the old React playground and the migration that produced the current thin web shell.
+
+Historical note:
+
+- `apps/spiders-wm-playground` is now a deprecated extraction source.
+- The active web shell is `apps/spiders-wm-www`.
+- Shared preview/session/runtime behavior now belongs in `crates/spiders-wm-runtime`.
+- Any remaining `spiders-web-bindings` references in this document refer to the legacy bridge, not the target architecture.
 
 ## Current React Playground
 
@@ -22,9 +29,9 @@ The current app is split into three concerns:
    - `tabs/system/index.tsx`
    - Derived state/logging view over preview state, bindings, diagnostics, and editor buffers.
 
-Bridge layer: `apps/spiders-wm-playground/src/wasm-preview.ts`
+Legacy bridge layer: `apps/spiders-wm-playground/src/wasm-preview.ts`
 
-- Loads `spiders-web-bindings` wasm.
+- Loads deprecated `spiders-web-bindings` wasm.
 - Computes preview tree + snapshot.
 - Applies preview session commands.
 - Normalizes JS/wasm values back into plain objects.
@@ -52,27 +59,27 @@ That means the correct migration order is:
 
 ### Rust-first Dioxus shell
 
-`apps/spiders-wm-web` becomes the main playground shell.
+`apps/spiders-wm-www` is the main web playground shell.
 
 - Dioxus owns app state, tabs, preview session state, and system inspection.
 - `spiders-core` remains the navigation/focus engine.
-- A Rust-native preview/session model mirrors the current `PreviewSessionState` shape.
+- `spiders-wm-runtime` owns the shared preview/session reducer, preview layout compute, and preview authored-layout context construction.
+- Browser-only authored module graph compilation/evaluation stays in the web app adapter until a cleaner shared boundary is extracted.
 
 ### Transitional bridge for authored layouts
 
-In the short term, keep the authoring/runtime bridge separate from the Dioxus shell.
+Keep the browser-only authored-layout bridge separate from the shared runtime layer.
 
-Two viable options:
+Current state:
 
-1. Hybrid mode
-   - Keep using the existing `spiders-web-bindings` preview compute path for authored layouts.
-   - Dioxus calls into a narrow wasm boundary for compute/apply command operations.
-   - Best short-term path.
+1. Current active path
+   - `apps/spiders-wm-www` evaluates the authored JS module graph in-browser.
+   - The app passes typed preview/session state into `spiders-wm-runtime` for shared reducer/layout behavior.
+   - The app uses the shared preview layout context builder from `spiders-wm-runtime`.
 
-2. Full Rust-native mode
-   - Replace JS-authored layout evaluation with a Rust-native authoring/runtime layer.
-   - Much larger project.
-   - Not required for initial port.
+2. Legacy bridge
+   - `apps/spiders-wm-playground` still uses `spiders-web-bindings`.
+   - This path is deprecated and should not receive new architecture work.
 
 ## Migration Phases
 
@@ -102,12 +109,11 @@ Goal:
   - workspace names
   - windows
   - remembered focus by scope
-  - master ratio by workspace
-  - stack weights by workspace
+  - shared layout adjustments keyed by stable layout node ids
 
 Acceptance criteria:
 
-- The Dioxus app can simulate the same focus and resize session transitions the current preview can.
+- The Dioxus app can simulate the same focus and shared layout-adjustment transitions without reintroducing preview-only snapshot rewrite hacks.
 
 ### Phase 3: Real preview compute integration
 
@@ -118,7 +124,8 @@ Goal:
 
 Recommended implementation:
 
-- Reuse `spiders-web-bindings` behavior at a narrow boundary first.
+- Use `spiders-wm-runtime` for typed preview/session/layout behavior.
+- Keep browser-specific authored JS evaluation in the app adapter until a better shared runtime boundary is ready.
 
 Acceptance criteria:
 
@@ -177,7 +184,7 @@ Do not try to port Monaco or TS authoring first.
 
 1. Monaco parity inside Dioxus may be awkward enough that the editor should remain external or hybrid.
 2. Full authored-layout parity still depends on the current JS runtime assumptions.
-3. Browser-native debugging ergonomics may still be better in the React/Vite path until preview parity is complete.
+3. The deprecated React/Vite playground may remain useful for archaeology while migration cleanups are still in progress.
 
 ## What Has Started
 

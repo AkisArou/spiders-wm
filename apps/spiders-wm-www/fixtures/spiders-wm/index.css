@@ -1,20 +1,13 @@
-:root {
-  gap: 12px;
-  border-radius: 16px;
-  padding: 12px;
-}
-
-group#main {
-  gap: 12px;
-}
-
 window {
   border-width: 1px;
   border-color: #7dd3c7;
 }
 
 window:focused::titlebar {
-  background: #7dd3c7;
-  color: #071015;
+  background: #0f766e;
+  color: #f7f5ef;
   height: 28px;
+  padding-left: 12px;
+  padding-right: 12px;
+  text-align: left;
 }

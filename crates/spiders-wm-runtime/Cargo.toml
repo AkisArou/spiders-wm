@@ -1,0 +1,18 @@
+[package]
+name = "spiders-wm-runtime"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+regex.workspace = true
+serde.workspace = true
+serde-wasm-bindgen.workspace = true
+spiders-config = { path = "../spiders-config" }
+spiders-core = { path = "../spiders-core" }
+spiders-css = { path = "../spiders-css" }
+spiders-scene = { path = "../spiders-scene" }
+spiders-runtime-js = { path = "../runtimes/js" }
+tracing.workspace = true
+wasm-bindgen.workspace = true

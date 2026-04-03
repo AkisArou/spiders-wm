@@ -1,7 +1,8 @@
 use std::sync::Arc;
 use std::sync::mpsc;
 
-use spiders_config::model::{Config, ConfigDiscoveryOptions, ConfigPaths};
+use spiders_config::model::{Config, ConfigPaths};
+use spiders_wm_runtime::{config_discovery_options_from_env, load_config as load_runtime_config};
 
 use smithay::backend::egl::EGLDevice;
 use smithay::backend::renderer::damage::OutputDamageTracker;
@@ -24,7 +25,7 @@ use smithay::wayland::selection::data_device::DataDeviceState;
 use smithay::wayland::shell::xdg::XdgShellState;
 use smithay::wayland::shm::ShmState;
 use smithay::wayland::socket::ListeningSocketSource;
-use tracing::{info, warn};
+use tracing::warn;
 
 use crate::frame_sync::FrameSyncState;
 use crate::handlers::ClientState;
@@ -49,20 +50,15 @@ pub(crate) fn build_state(
     let (blocker_cleared_tx, blocker_cleared_rx) = mpsc::channel();
     let mut seat_state = SeatState::new();
     let mut seat: Seat<SpidersWm> = seat_state.new_wl_seat(&display_handle, "winit");
-    seat.add_keyboard(Default::default(), 200, 25)
-        .expect("failed to create keyboard");
+    seat.add_keyboard(Default::default(), 200, 25).expect("failed to create keyboard");
     seat.add_pointer();
 
     let socket_name = init_wayland_listener(display, event_loop);
     let mut model = spiders_core::wm::WmModel::default();
     {
         let mut runtime = WmRuntime::new(&mut model);
-        let _ = runtime.execute(RuntimeCommand::EnsureDefaultWorkspace {
-            name: "1".to_string(),
-        });
-        let _ = runtime.execute(RuntimeCommand::EnsureSeat {
-            seat_id: "winit".into(),
-        });
+        let _ = runtime.execute(RuntimeCommand::EnsureDefaultWorkspace { name: "1".to_string() });
+        let _ = runtime.execute(RuntimeCommand::EnsureSeat { seat_id: "winit".into() });
     }
     let (config_paths, config) = load_wm_config(None);
     let ipc_socket_path = crate::ipc::init_ipc_listener(event_loop);
@@ -101,38 +97,7 @@ pub(crate) fn build_state(
 }
 
 pub(crate) fn load_wm_config(existing_paths: Option<ConfigPaths>) -> (Option<ConfigPaths>, Config) {
-    let paths = match existing_paths {
-        Some(paths) => paths,
-        None => match ConfigPaths::discover(ConfigDiscoveryOptions::from_env()) {
-            Ok(paths) => paths,
-            Err(error) => {
-                warn!(%error, "wm could not discover config paths; using empty config");
-                return (None, Config::default());
-            }
-        },
-    };
-
-    let service = spiders_runtime_js::build_authoring_layout_service(&paths);
-    match service.load_config(&paths) {
-        Ok(config) => {
-            info!(
-                authored_config = %paths.authored_config.display(),
-                prepared_config = %paths.prepared_config.display(),
-                binding_count = config.bindings.len(),
-                "loaded wm config"
-            );
-            (Some(paths), config)
-        }
-        Err(error) => {
-            warn!(
-                authored_config = %paths.authored_config.display(),
-                prepared_config = %paths.prepared_config.display(),
-                %error,
-                "wm failed to load config; using empty config"
-            );
-            (Some(paths), Config::default())
-        }
-    }
+    load_runtime_config(existing_paths, config_discovery_options_from_env())
 }
 
 pub(crate) fn init_winit(
@@ -141,9 +106,7 @@ pub(crate) fn init_winit(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let (mut backend, winit) = winit::init::<GlesRenderer>()?;
 
-    state
-        .shm_state
-        .update_formats(backend.renderer().shm_formats());
+    state.shm_state.update_formats(backend.renderer().shm_formats());
 
     let render_node = EGLDevice::device_for_display(backend.renderer().egl_context().display())
         .and_then(|device| device.try_get_render_node());
@@ -168,14 +131,10 @@ pub(crate) fn init_winit(
     .expect("failed to build dmabuf feedback");
 
     state.dmabuf_global = if let Some(default_feedback) = dmabuf_default_feedback.as_ref() {
-        Some(
-            state
-                .dmabuf_state
-                .create_global_with_default_feedback::<SpidersWm>(
-                    &state.display_handle,
-                    default_feedback,
-                ),
-        )
+        Some(state.dmabuf_state.create_global_with_default_feedback::<SpidersWm>(
+            &state.display_handle,
+            default_feedback,
+        ))
     } else {
         let dmabuf_formats = backend.renderer().dmabuf_formats();
         if dmabuf_formats.iter().next().is_some() {
@@ -192,11 +151,7 @@ pub(crate) fn init_winit(
     state.backend = Some(backend);
 
     let mode = Mode {
-        size: state
-            .backend
-            .as_ref()
-            .expect("winit backend missing during init")
-            .window_size(),
+        size: state.backend.as_ref().expect("winit backend missing during init").window_size(),
         refresh: 60_000,
     };
 
@@ -211,12 +166,7 @@ pub(crate) fn init_winit(
         },
     );
     let _global = output.create_global::<SpidersWm>(&state.display_handle);
-    output.change_current_state(
-        Some(mode),
-        Some(Transform::Flipped180),
-        None,
-        Some((0, 0).into()),
-    );
+    output.change_current_state(Some(mode), Some(Transform::Flipped180), None, Some((0, 0).into()));
     output.set_preferred(mode);
     state.space.map_output(&output, (0, 0));
     let _ = state.runtime().execute(RuntimeCommand::SyncOutput {
@@ -228,32 +178,22 @@ pub(crate) fn init_winit(
 
     let mut damage_tracker = OutputDamageTracker::from_output(&output);
 
-    event_loop
-        .handle()
-        .insert_source(winit, move |event, _, state| match event {
-            WinitEvent::Resized { size, .. } => {
-                output.change_current_state(
-                    Some(Mode {
-                        size,
-                        refresh: 60_000,
-                    }),
-                    None,
-                    None,
-                    None,
-                );
-                let _ = state.runtime().execute(RuntimeCommand::SyncOutput {
-                    output_id: "winit".into(),
-                    name: "winit".to_string(),
-                    logical_width: size.w as u32,
-                    logical_height: size.h as u32,
-                });
-                state.schedule_relayout();
-            }
-            WinitEvent::Input(event) => state.process_input_event(event),
-            WinitEvent::Redraw => state.render_output_frame(&output, &mut damage_tracker),
-            WinitEvent::CloseRequested => state.loop_signal.stop(),
-            _ => {}
-        })?;
+    event_loop.handle().insert_source(winit, move |event, _, state| match event {
+        WinitEvent::Resized { size, .. } => {
+            output.change_current_state(Some(Mode { size, refresh: 60_000 }), None, None, None);
+            let _ = state.runtime().execute(RuntimeCommand::SyncOutput {
+                output_id: "winit".into(),
+                name: "winit".to_string(),
+                logical_width: size.w as u32,
+                logical_height: size.h as u32,
+            });
+            state.schedule_relayout();
+        }
+        WinitEvent::Input(event) => state.process_input_event(event),
+        WinitEvent::Redraw => state.render_output_frame(&output, &mut damage_tracker),
+        WinitEvent::CloseRequested => state.loop_signal.stop(),
+        _ => {}
+    })?;
 
     Ok(())
 }
@@ -281,10 +221,7 @@ fn init_wayland_listener(
             Generic::new(display, Interest::READ, CalloopMode::Level),
             |_, display, state| {
                 unsafe {
-                    display
-                        .get_mut()
-                        .dispatch_clients(state)
-                        .expect("failed to dispatch clients");
+                    display.get_mut().dispatch_clients(state).expect("failed to dispatch clients");
                 }
                 Ok(PostAction::Continue)
             },
@@ -352,10 +289,7 @@ export default {{
         let (paths, config) =
             load_wm_config(Some(ConfigPaths::new(&authored_config, &prepared_config)));
 
-        assert_eq!(
-            paths,
-            Some(ConfigPaths::new(&authored_config, &prepared_config))
-        );
+        assert_eq!(paths, Some(ConfigPaths::new(&authored_config, &prepared_config)));
         assert!(prepared_config.exists());
         assert_eq!(config.workspaces, vec!["1".to_string(), "2".to_string()]);
         assert_eq!(config.bindings.len(), 1);
@@ -383,10 +317,7 @@ export default {{
         write_authored_config(&authored_config, "commands.toggle_fullscreen()");
         let (_, initial_config) = load_wm_config(Some(paths.clone()));
         assert_eq!(initial_config.bindings.len(), 1);
-        assert_eq!(
-            initial_config.bindings[0].command,
-            WmCommand::ToggleFullscreen
-        );
+        assert_eq!(initial_config.bindings[0].command, WmCommand::ToggleFullscreen);
 
         std::thread::sleep(Duration::from_millis(20));
         write_authored_config(&authored_config, "commands.reload_config()");

@@ -1,22 +1,49 @@
 use leptos::prelude::*;
+use spiders_core::snapshot::WindowSnapshot;
+use spiders_core::wm::WindowGeometry;
 
 use crate::app_state::AppState;
 use crate::components::{Panel, PanelBar, TerminalSelect, TerminalSelectOption};
 use crate::session::{
-    PreviewDiagnostic, PreviewLayoutId, PreviewSessionState, PreviewSessionWindow,
-    PreviewSnapshotNode,
+    PreviewDiagnostic, PreviewSessionState, PreviewSnapshotNode, preview_layout_ids,
 };
 
-fn pane_style(window: &PreviewSessionWindow, canvas_width: i32, canvas_height: i32) -> String {
-    let left = window.geometry.x as f32 / canvas_width as f32 * 100.0;
-    let top = window.geometry.y as f32 / canvas_height as f32 * 100.0;
-    let width = window.geometry.width as f32 / canvas_width as f32 * 100.0;
-    let height = window.geometry.height as f32 / canvas_height as f32 * 100.0;
+fn pane_style(
+    geometry: WindowGeometry,
+    accent: &str,
+    canvas_width: i32,
+    canvas_height: i32,
+) -> String {
+    let left = geometry.x as f32 / canvas_width as f32 * 100.0;
+    let top = geometry.y as f32 / canvas_height as f32 * 100.0;
+    let width = geometry.width as f32 / canvas_width as f32 * 100.0;
+    let height = geometry.height as f32 / canvas_height as f32 * 100.0;
 
     format!(
-        "left: {left:.3}%; top: {top:.3}%; width: calc({width:.3}% - 0.4rem); height: calc({height:.3}% - 0.4rem); --accent: {};",
-        window.accent,
+        "left: {left:.3}%; top: {top:.3}%; width: {width:.3}%; height: {height:.3}%; --accent: {};",
+        accent,
     )
+}
+
+fn window_display_title(window: &WindowSnapshot) -> &str {
+    window.title.as_deref().unwrap_or_else(|| window.id.as_str())
+}
+
+fn window_subtitle(window: &WindowSnapshot) -> &str {
+    window.app_id.as_deref().unwrap_or("preview window")
+}
+
+fn window_accent(window: &WindowSnapshot) -> String {
+    const PALETTE: [&str; 8] =
+        ["#7dd3fc", "#f97316", "#34d399", "#facc15", "#818cf8", "#06b6d4", "#e879f9", "#fb7185"];
+
+    let seed = window.title.as_deref().or(window.app_id.as_deref()).unwrap_or(window.id.as_str());
+    let hash = seed
+        .bytes()
+        .chain(window.id.as_str().bytes())
+        .fold(0usize, |acc, byte| acc + byte as usize);
+
+    PALETTE[hash % PALETTE.len()].to_string()
 }
 
 fn focused_window_label(snapshot: &PreviewSessionState) -> String {
@@ -45,10 +72,7 @@ fn descendant_window_count(node: &PreviewSnapshotNode) -> usize {
     ids.len()
 }
 
-fn descendant_window_titles(
-    node: &PreviewSnapshotNode,
-    windows: &[PreviewSessionWindow],
-) -> String {
+fn descendant_window_titles(node: &PreviewSnapshotNode, windows: &[WindowSnapshot]) -> String {
     let mut ids = Vec::new();
     descendant_window_ids(node, &mut ids);
 
@@ -57,7 +81,7 @@ fn descendant_window_titles(
             windows
                 .iter()
                 .find(|window| window.id.as_str() == window_id)
-                .map(|window| window.display_title().to_string())
+                .map(|window| window_display_title(window).to_string())
                 .unwrap_or(window_id)
         })
         .collect::<Vec<_>>()
@@ -68,15 +92,14 @@ fn descendant_window_titles(
 pub fn PreviewView() -> impl IntoView {
     let app_state = expect_context::<AppState>();
     let show_sidebar = RwSignal::new(false);
-    let layout_options = PreviewLayoutId::ALL
-        .iter()
+    let layout_options = preview_layout_ids()
         .map(|layout| TerminalSelectOption {
-            value: layout.title().to_string(),
-            label: layout.display_title().to_string(),
+            value: layout.as_str().to_string(),
+            label: layout.as_str().to_string(),
         })
         .collect::<Vec<_>>();
     let layout_value =
-        Signal::derive(move || app_state.session.get().active_layout.title().to_string());
+        Signal::derive(move || app_state.session.get().active_layout.as_str().to_string());
 
     view! {
         <section class=move || {
@@ -93,7 +116,7 @@ pub fn PreviewView() -> impl IntoView {
                             {move || {
                                 let snapshot = app_state.session.get();
                                 snapshot
-                                    .workspace_names
+                                    .workspace_names()
                                     .iter()
                                     .cloned()
                                     .map(|workspace_name| {
@@ -103,7 +126,7 @@ pub fn PreviewView() -> impl IntoView {
                                         view! {
                                             <button
                                                 class=move || {
-                                                    if app_state.session.get().active_workspace_name
+                                                    if app_state.session.get().active_workspace_name()
                                                         == class_workspace
                                                     {
                                                         format!(
@@ -140,15 +163,15 @@ pub fn PreviewView() -> impl IntoView {
                                 value=layout_value
                                 aria_label="Select preview layout"
                                 options=layout_options
-                                onchange=Callback::new(move |layout_name| {
-                                    if let Some(layout) = PreviewLayoutId::ALL
-                                        .iter()
-                                        .copied()
-                                        .find(|candidate| candidate.title() == layout_name)
+                                onchange=Callback::new(move |layout_name: String| {
+                                    if preview_layout_ids()
+                                        .any(|candidate| candidate.as_str() == layout_name)
                                     {
                                         app_state
                                             .session
-                                            .update(|state| state.switch_layout(layout));
+                                            .update(|state| {
+                                                state.switch_layout(layout_name.as_str().into())
+                                            });
                                     }
                                 })
                             />
@@ -215,29 +238,35 @@ pub fn PreviewView() -> impl IntoView {
                                             let surface_window = window.clone();
                                             let focus_target = window.id.clone();
                                             let focused_id = window.id.clone();
-                                            let title = window.display_title().to_string();
+                                            let title = window_display_title(&window).to_string();
+                                            let accent = window_accent(&window);
+                                            let geometry = app_state
+                                                .session
+                                                .get()
+                                                .window_geometry(&window.id);
                                             let dimensions = format!(
                                                 "{}x{}",
-                                                window.geometry.width,
-                                                window.geometry.height,
+                                                geometry.width,
+                                                geometry.height,
                                             );
                                             let is_foot = window.app_id.as_deref() == Some("foot");
 
                                             view! {
-                                                <button
+                                                <div
                                                     class=move || {
                                                         if app_state.session.get().focused_window_id().as_ref()
                                                             == Some(&focused_id)
                                                         {
-                                                            "text-terminal-fg absolute z-20 overflow-hidden border border-terminal-info bg-terminal-bg-active text-left text-xs"
+                                                            "text-terminal-fg absolute z-20 overflow-hidden border border-terminal-info bg-terminal-bg-active text-left text-xs cursor-pointer"
                                                         } else {
-                                                            "text-terminal-fg absolute z-20 overflow-hidden border border-terminal-border-strong bg-terminal-bg-panel text-left text-xs"
+                                                            "text-terminal-fg absolute z-20 overflow-hidden border border-terminal-border-strong bg-terminal-bg-panel text-left text-xs cursor-pointer"
                                                         }
                                                     }
                                                     style=move || {
                                                         let snapshot = app_state.session.get();
                                                         pane_style(
-                                                            &style_window,
+                                                            snapshot.window_geometry(&style_window.id),
+                                                            &accent,
                                                             snapshot.canvas_width(),
                                                             snapshot.canvas_height(),
                                                         )
@@ -264,7 +293,7 @@ pub fn PreviewView() -> impl IntoView {
                                                     } else {
                                                         view! { <WindowSurface window=surface_window /> }.into_any()
                                                     }}
-                                                </button>
+                                                </div>
                                             }
                                         })
                                         .collect_view()
@@ -363,7 +392,7 @@ fn InspectorPanel(#[prop(into)] title: Oco<'static, str>, children: Children) ->
 
 #[component]
 fn WindowList(
-    #[prop(into)] windows: Signal<Vec<PreviewSessionWindow>>,
+    #[prop(into)] windows: Signal<Vec<WindowSnapshot>>,
     #[prop(into)] empty_label: Oco<'static, str>,
 ) -> impl IntoView {
     let fallback_label = empty_label.clone();
@@ -383,7 +412,7 @@ fn WindowList(
                         .get()
                         .into_iter()
                         .map(|window| {
-                            let title = window.display_title().to_string();
+                            let title = window_display_title(&window).to_string();
                             let app_id = window.app_id.unwrap_or_else(|| "unknown".to_string());
 
                             view! {
@@ -393,7 +422,7 @@ fn WindowList(
                                     "flex items-center gap-2 border border-terminal-border bg-terminal-bg-panel px-2 py-1"
                                 }>
                                     <span class="text-terminal-fg-strong">{title}</span>
-                                    <Show when=move || window.floating>
+                                    <Show when=move || window.mode.is_floating()>
                                         <span class="text-terminal-warn">"float"</span>
                                     </Show>
                                     <span class="ml-auto text-terminal-faint">{app_id}</span>
@@ -408,13 +437,11 @@ fn WindowList(
 }
 
 #[component]
-fn WindowSurface(window: PreviewSessionWindow) -> impl IntoView {
+fn WindowSurface(window: WindowSnapshot) -> impl IntoView {
     view! {
         <div class="flex flex-col p-2 text-sm text-terminal-muted h-[calc(100%-1.5rem)]">
             <div>
-                <div class="text-terminal-fg-strong">
-                    {window.app_id.unwrap_or_else(|| "window".to_string())}
-                </div>
+                <div class="text-terminal-fg-strong">{window_subtitle(&window).to_string()}</div>
                 <div class="mt-1 text-terminal-dim">
                     {window.title.unwrap_or_else(|| "unbound node".to_string())}
                 </div>
@@ -443,7 +470,7 @@ fn FootTerminal(focused: Signal<bool>) -> impl IntoView {
 #[component]
 fn WindowOrderSummary(
     #[prop(into)] label: Oco<'static, str>,
-    #[prop(into)] windows: Signal<Vec<PreviewSessionWindow>>,
+    #[prop(into)] windows: Signal<Vec<WindowSnapshot>>,
 ) -> impl IntoView {
     view! {
         <div class="grid gap-1">
@@ -457,7 +484,7 @@ fn WindowOrderSummary(
                         rows.into_iter()
                             .enumerate()
                             .map(|(index, window)| {
-                                format!("{}:{}", index + 1, window.display_title())
+                                format!("{}:{}", index + 1, window_display_title(&window))
                             })
                             .collect::<Vec<_>>()
                             .join("  ->  ")
@@ -507,7 +534,7 @@ fn DiagnosticsList(#[prop(into)] diagnostics: Signal<Vec<PreviewDiagnostic>>) ->
 #[component]
 fn LayoutTreeNode(
     node: PreviewSnapshotNode,
-    windows: Vec<PreviewSessionWindow>,
+    windows: Vec<WindowSnapshot>,
     #[prop(optional)] depth: usize,
 ) -> AnyView {
     let label = node.id.clone().unwrap_or_else(|| "_".to_string());

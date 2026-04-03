@@ -163,18 +163,6 @@ pub struct ConfigDiscoveryOptions {
     pub authored_config_override: Option<PathBuf>,
 }
 
-impl ConfigDiscoveryOptions {
-    pub fn from_env() -> Self {
-        Self {
-            home_dir: std::env::var_os("SPIDERS_WM_HOME").map(PathBuf::from),
-            config_dir_override: std::env::var_os("SPIDERS_WM_CONFIG_DIR").map(PathBuf::from),
-            cache_dir_override: std::env::var_os("SPIDERS_WM_CACHE_DIR").map(PathBuf::from),
-            authored_config_override: std::env::var_os("SPIDERS_WM_AUTHORED_CONFIG")
-                .map(PathBuf::from),
-        }
-    }
-}
-
 impl ConfigPaths {
     pub fn new(authored_config: impl Into<PathBuf>, prepared_config: impl Into<PathBuf>) -> Self {
         Self {
@@ -191,15 +179,24 @@ impl ConfigPaths {
             authored_config_override,
         } = options;
 
-        let home_dir = home_dir
-            .or_else(|| std::env::var_os("HOME").map(PathBuf::from))
-            .ok_or_else(|| LayoutConfigError::ReadConfig {
-                path: PathBuf::from("$HOME"),
-            })?;
-
-        let config_root =
-            config_dir_override.unwrap_or_else(|| home_dir.join(".config/spiders-wm"));
-        let cache_root = cache_dir_override.unwrap_or_else(|| home_dir.join(".cache/spiders-wm"));
+        let config_root = match config_dir_override {
+            Some(path) => path,
+            None => home_dir
+                .as_ref()
+                .map(|path| path.join(".config/spiders-wm"))
+                .ok_or_else(|| LayoutConfigError::ReadConfig {
+                    path: PathBuf::from("config discovery requires a home_dir or config_dir_override"),
+                })?,
+        };
+        let cache_root = match cache_dir_override {
+            Some(path) => path,
+            None => home_dir
+                .as_ref()
+                .map(|path| path.join(".cache/spiders-wm"))
+                .ok_or_else(|| LayoutConfigError::ReadConfig {
+                    path: PathBuf::from("config discovery requires a home_dir or cache_dir_override"),
+                })?,
+        };
 
         let authored_config = authored_config_override.unwrap_or_else(|| {
             if config_root.join("config.ts").exists() {

@@ -42,6 +42,8 @@ Make the playground structurally closer to the Rust pipeline:
 
 ## Phase 4
 
+Historical bridge landing for the deprecated playground:
+
 Replace the temporary TypeScript preview helpers with a Rust wasm bridge:
 
 1. add `crates/spiders-web-bindings`
@@ -51,6 +53,12 @@ Replace the temporary TypeScript preview helpers with a Rust wasm bridge:
 5. compile CSS via `spiders-css`
 6. compute preview geometry via `spiders-scene`
 7. render the returned resolved tree and geometry in the browser
+
+Current status:
+
+- This bridge exists, but it is now a deprecated extraction source.
+- New shared runtime/session/layout work should go into `crates/spiders-wm-runtime` instead.
+- Do not expand `spiders-web-bindings` further except when harvesting/removing legacy code.
 
 ## Constraints
 

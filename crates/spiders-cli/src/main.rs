@@ -6,6 +6,7 @@ use report::{
     BuildConfigReport, DiscoveryReport, ErrorReport, IpcCommandReport, IpcMonitorReport,
     IpcQueryReport, IpcSmokeReport, OutputMode, SuccessCheckReport, emit,
 };
+use spiders_wm_runtime::config_discovery_options_from_env;
 use tracing::info;
 
 #[derive(Debug, Clone)]
@@ -16,7 +17,7 @@ struct CliContext {
 impl CliContext {
     fn new() -> Self {
         Self {
-            options: spiders_config::model::ConfigDiscoveryOptions::from_env(),
+            options: config_discovery_options_from_env(),
         }
     }
 
@@ -872,6 +873,7 @@ fn command_label(action: &spiders_core::command::WmCommand) -> &'static str {
 
     match action {
         WmCommand::Spawn { .. } => "spawn",
+        WmCommand::Quit => "quit",
         WmCommand::ReloadConfig => "reload-config",
         WmCommand::SetLayout { .. } => "set-layout",
         WmCommand::CycleLayout { .. } => "cycle-layout",

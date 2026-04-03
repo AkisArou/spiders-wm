@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+use crate::resize::LayoutAdjustmentState;
 use crate::runtime::layout_context::{
     LayoutEvaluationContext, LayoutMonitorContext, LayoutStateContext, LayoutWindowContext,
     LayoutWorkspaceContext,
@@ -74,9 +75,7 @@ pub struct StateSnapshot {
 impl StateSnapshot {
     pub fn current_workspace(&self) -> Option<&WorkspaceSnapshot> {
         self.current_workspace_id.as_ref().and_then(|workspace_id| {
-            self.workspaces
-                .iter()
-                .find(|workspace| &workspace.id == workspace_id)
+            self.workspaces.iter().find(|workspace| &workspace.id == workspace_id)
         })
     }
 
@@ -109,18 +108,12 @@ impl StateSnapshot {
     }
 
     fn layout_space_for_workspace(&self, workspace: &WorkspaceSnapshot) -> LayoutSpace {
-        let output = workspace
-            .output_id
-            .as_ref()
-            .and_then(|output_id| self.output_by_id(output_id));
+        let output =
+            workspace.output_id.as_ref().and_then(|output_id| self.output_by_id(output_id));
 
         LayoutSpace {
-            width: output
-                .map(|output| output.logical_width as f32)
-                .unwrap_or_default(),
-            height: output
-                .map(|output| output.logical_height as f32)
-                .unwrap_or_default(),
+            width: output.map(|output| output.logical_width as f32).unwrap_or_default(),
+            height: output.map(|output| output.logical_height as f32).unwrap_or_default(),
         }
     }
 
@@ -139,18 +132,9 @@ impl StateSnapshot {
 
         LayoutEvaluationContext {
             monitor: LayoutMonitorContext {
-                name: output
-                    .as_ref()
-                    .map(|output| output.name.clone())
-                    .unwrap_or_default(),
-                width: output
-                    .as_ref()
-                    .map(|output| output.logical_width)
-                    .unwrap_or(0),
-                height: output
-                    .as_ref()
-                    .map(|output| output.logical_height)
-                    .unwrap_or(0),
+                name: output.as_ref().map(|output| output.name.clone()).unwrap_or_default(),
+                width: output.as_ref().map(|output| output.logical_width).unwrap_or(0),
+                height: output.as_ref().map(|output| output.logical_height).unwrap_or(0),
                 scale: output.as_ref().map(|output| output.scale),
             },
             workspace: LayoutWorkspaceContext {
@@ -185,6 +169,7 @@ impl StateSnapshot {
                 visible_window_ids: self.visible_window_ids.clone(),
                 workspace_names: self.workspace_names.clone(),
                 selected_layout_name: selected_layout_name.clone(),
+                layout_adjustments: LayoutAdjustmentState::default(),
             }),
             workspace_id: workspace.id.clone(),
             output,
@@ -223,9 +208,7 @@ mod tests {
                 active_workspaces: vec!["1".into()],
                 focused: true,
                 visible: true,
-                effective_layout: Some(LayoutRef {
-                    name: "master-stack".into(),
-                }),
+                effective_layout: Some(LayoutRef { name: "master-stack".into() }),
             }],
             windows: vec![],
             visible_window_ids: vec![],
@@ -267,9 +250,7 @@ mod tests {
                 active_workspaces: vec!["1".into()],
                 focused: true,
                 visible: true,
-                effective_layout: Some(LayoutRef {
-                    name: "master-stack".into(),
-                }),
+                effective_layout: Some(LayoutRef { name: "master-stack".into() }),
             }],
             windows: vec![],
             visible_window_ids: vec![],
@@ -318,9 +299,7 @@ mod tests {
                 active_workspaces: vec!["1".into()],
                 focused: true,
                 visible: true,
-                effective_layout: Some(LayoutRef {
-                    name: "master-stack".into(),
-                }),
+                effective_layout: Some(LayoutRef { name: "master-stack".into() }),
             }],
             windows: vec![
                 WindowSnapshot {

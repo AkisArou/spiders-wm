@@ -1,13 +1,15 @@
 use std::collections::BTreeMap;
 
 use leptos::prelude::*;
+use spiders_core::LayoutId;
+use spiders_wm_runtime::parse_workspace_names;
 
 use crate::bindings::{ParsedBindingEntry, ParsedBindingsState, parse_bindings_source};
-use crate::session::{PreviewEnvironment, PreviewLayoutId, PreviewSessionState};
-use crate::workspace::{
-    EditorFileId, initial_content, initial_editor_buffers, initial_open_directories,
-    initial_open_editor_files, parse_workspace_names,
+use crate::editor_files::{
+    EditorFileId, initial_content, initial_editor_buffers, initial_open_editor_files,
 };
+use crate::session::PreviewSessionState;
+use crate::workspace::initial_open_directories;
 
 #[derive(Clone, Copy)]
 pub struct AppState {
@@ -26,8 +28,9 @@ impl AppState {
 
         Self {
             session: RwSignal::new(PreviewSessionState::new(
-                PreviewLayoutId::MasterStack,
-                initial_environment,
+                LayoutId::from("master-stack"),
+                initial_environment.workspace_names,
+                initial_environment.stylesheets_by_layout,
             )),
             editor_buffers: RwSignal::new(initial_buffers),
             active_file_id: RwSignal::new(Some(EditorFileId::LayoutTsx)),
@@ -50,8 +53,12 @@ impl AppState {
         self.editor_buffers.update(|buffers| {
             buffers.insert(file_id, next_value);
             let next_environment = build_preview_environment(buffers);
-            self.session
-                .update(|state| state.sync_environment(next_environment));
+            self.session.update(|state| {
+                state.sync_inputs(
+                    next_environment.workspace_names,
+                    next_environment.stylesheets_by_layout,
+                )
+            });
         });
     }
 
@@ -66,9 +73,7 @@ impl AppState {
 
     pub fn close_editor_file(&self, file_id: EditorFileId) {
         self.open_file_ids.update(|open_files| {
-            let Some(index) = open_files
-                .iter()
-                .position(|open_file_id| *open_file_id == file_id)
+            let Some(index) = open_files.iter().position(|open_file_id| *open_file_id == file_id)
             else {
                 return;
             };
@@ -76,9 +81,7 @@ impl AppState {
             open_files.remove(index);
 
             if self.active_file_id.get_untracked() == Some(file_id) {
-                let next_index = index
-                    .saturating_sub(1)
-                    .min(open_files.len().saturating_sub(1));
+                let next_index = index.saturating_sub(1).min(open_files.len().saturating_sub(1));
                 let next_file_id = open_files.get(next_index).copied();
                 self.active_file_id.set(next_file_id);
             }
@@ -103,7 +106,12 @@ impl AppState {
     }
 }
 
-fn build_preview_environment(buffers: &BTreeMap<EditorFileId, String>) -> PreviewEnvironment {
+struct PreviewInputs {
+    workspace_names: Vec<String>,
+    stylesheets_by_layout: BTreeMap<LayoutId, String>,
+}
+
+fn build_preview_environment(buffers: &BTreeMap<EditorFileId, String>) -> PreviewInputs {
     let root_css = buffers
         .get(&EditorFileId::RootCss)
         .map(String::as_str)
@@ -121,17 +129,11 @@ fn build_preview_environment(buffers: &BTreeMap<EditorFileId, String>) -> Previe
         .map(String::as_str)
         .unwrap_or_else(|| initial_content(EditorFileId::Config));
 
-    PreviewEnvironment {
+    PreviewInputs {
         workspace_names: parse_workspace_names(config_source),
-        stylesheets: BTreeMap::from([
-            (
-                PreviewLayoutId::MasterStack,
-                format!("{root_css}\n\n{master_css}"),
-            ),
-            (
-                PreviewLayoutId::FocusRepro,
-                format!("{root_css}\n\n{focus_css}"),
-            ),
+        stylesheets_by_layout: BTreeMap::from([
+            (LayoutId::from("master-stack"), format!("{root_css}\n\n{master_css}")),
+            (LayoutId::from("focus-repro"), format!("{root_css}\n\n{focus_css}")),
         ]),
     }
 }

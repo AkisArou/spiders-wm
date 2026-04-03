@@ -70,6 +70,23 @@ export interface LayoutWindow {
   focused?: boolean;
 }
 
+export interface LayoutAdjustmentState {
+  splitWeightsByNodeId?: Record<string, number[]>;
+}
+
+export interface LayoutState {
+  prototype?: boolean;
+  lastAction?: string;
+  focusedWindowId?: string | null;
+  currentOutputId?: string | null;
+  currentWorkspaceId?: string | null;
+  visibleWindowIds?: string[];
+  workspaceNames?: string[];
+  selectedLayoutName?: string | null;
+  layoutAdjustments?: LayoutAdjustmentState;
+  [key: string]: unknown;
+}
+
 export interface LayoutContext {
   monitor: {
     name: string;
@@ -83,7 +100,7 @@ export interface LayoutContext {
     windowCount: number;
   };
   windows: LayoutWindow[];
-  state?: Record<string, unknown>;
+  state?: LayoutState;
 }
 
 export type LayoutFn = (ctx: LayoutContext) => LayoutRenderable;

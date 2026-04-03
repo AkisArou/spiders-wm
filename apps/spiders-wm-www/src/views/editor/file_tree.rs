@@ -3,8 +3,9 @@ use leptos::prelude::*;
 use wasm_bindgen_futures::spawn_local;
 
 use crate::app_state::AppState;
+use crate::editor_files::file_by_id;
 use crate::editor_host::download_directory;
-use crate::workspace::{EditorFileTreeDirectory, EditorFileTreeNode, file_by_id};
+use crate::workspace::{EditorFileTreeDirectory, EditorFileTreeNode};
 
 use super::buffers::{editor_file_badge, is_file_dirty};
 use super::download::{collect_directory_download_items, download_directory_title};
@@ -18,12 +19,7 @@ fn is_directory_open(
     if is_root {
         true
     } else {
-        app_state
-            .directory_open_state
-            .get()
-            .get(path)
-            .copied()
-            .unwrap_or(default_open)
+        app_state.directory_open_state.get().get(path).copied().unwrap_or(default_open)
     }
 }
 
@@ -44,62 +40,78 @@ pub fn FileTreeDirectoryView(
     let padding_left = format!("padding-left: {}px", depth * 14 + 8);
 
     view! {
-        <div class=if is_root { "grid" } else { "grid" }>
-            {(!is_root).then(|| {
-                let directory_name_text = directory_name.clone();
-                let row_padding = padding_left.clone();
+        <div class=if is_root {
+            "grid"
+        } else {
+            "grid"
+        }>
+            {(!is_root)
+                .then(|| {
+                    let directory_name_text = directory_name.clone();
+                    let row_padding = padding_left.clone();
 
-                view! {
-                    <div class="group/layout-subtree flex items-center gap-1">
-                        <button
-                            class="text-terminal-dim flex flex-1 items-center gap-1 px-2 py-1 text-left text-sm leading-5"
-                            style=row_padding
-                            on:click=move |_| app_state.toggle_directory(directory_path.clone(), default_open)
-                        >
-                            <span>
-                                {move || if is_directory_open(app_state, directory.path, default_open, is_root) { "v" } else { ">" }}
-                            </span>
-                            <span class="min-w-0 flex-1 truncate">{directory_name_text}</span>
-                        </button>
-
-                        {can_download.then(|| {
-                            let directory_for_download = download_directory_node.clone();
-                            let directory_label = directory_for_download.name;
-
-                            view! {
-                                <button
-                                    class="border-terminal-border bg-terminal-bg-panel text-terminal-dim hover:border-terminal-info hover:text-terminal-fg rounded-full border px-1.5 py-0 text-[10px] uppercase tracking-[0.16em]"
-                                    title=download_title.clone()
-                                    on:click=move |event| {
-                                        event.stop_propagation();
-
-                                        let items = collect_directory_download_items(
-                                            &directory_for_download,
-                                            &app_state.editor_buffers.get_untracked(),
-                                        );
-                                        if items.is_empty() {
-                                            return;
+                    view! {
+                        <div class="flex gap-1 items-center group/layout-subtree">
+                            <button
+                                class="flex flex-1 gap-1 items-center py-1 px-2 text-sm leading-5 text-left text-terminal-dim"
+                                style=row_padding
+                                on:click=move |_| {
+                                    app_state.toggle_directory(directory_path.clone(), default_open)
+                                }
+                            >
+                                <span>
+                                    {move || {
+                                        if is_directory_open(
+                                            app_state,
+                                            directory.path,
+                                            default_open,
+                                            is_root,
+                                        ) {
+                                            "v"
+                                        } else {
+                                            ">"
                                         }
+                                    }}
+                                </span>
+                                <span class="flex-1 min-w-0 truncate">{directory_name_text}</span>
+                            </button>
 
-                                        spawn_local(async move {
-                                            let _ = download_directory(directory_label, &items).await;
-                                        });
+                            {can_download
+                                .then(|| {
+                                    let directory_for_download = download_directory_node.clone();
+                                    let directory_label = directory_for_download.name;
+
+                                    view! {
+                                        <button
+                                            class="py-0 px-1.5 uppercase rounded-full border border-terminal-border bg-terminal-bg-panel text-terminal-dim text-[10px] tracking-[0.16em] hover:border-terminal-info hover:text-terminal-fg"
+                                            title=download_title.clone()
+                                            on:click=move |event| {
+                                                event.stop_propagation();
+                                                let items = collect_directory_download_items(
+                                                    &directory_for_download,
+                                                    &app_state.editor_buffers.get_untracked(),
+                                                );
+                                                if items.is_empty() {
+                                                    return;
+                                                }
+                                                spawn_local(async move {
+                                                    let _ = download_directory(directory_label, &items).await;
+                                                });
+                                            }
+                                        >
+                                            "dl"
+                                        </button>
                                     }
-                                >
-                                    "dl"
-                                </button>
-                            }
-                        })}
-                    </div>
-                }
-            })}
-
+                                })}
+                        </div>
+                    }
+                })}
             <Show when=move || is_directory_open(app_state, directory.path, default_open, is_root)>
                 <div class="grid">
                     {child_nodes
                         .clone()
                         .into_iter()
-                        .map(|child| view! { <FileTreeNodeView node=child depth=depth + 1/> })
+                        .map(|child| view! { <FileTreeNodeView node=child depth=depth + 1 /> })
                         .collect_view()}
                 </div>
             </Show>
@@ -114,7 +126,7 @@ pub fn FileTreeNodeView(node: EditorFileTreeNode, #[prop(optional)] depth: usize
     view! {
         {match node {
             EditorFileTreeNode::Directory(directory) => {
-                view! { <FileTreeDirectoryView directory=directory depth=depth/> }.into_any()
+                view! { <FileTreeDirectoryView directory=directory depth=depth /> }.into_any()
             }
             EditorFileTreeNode::File(file_id) => {
                 let file = file_by_id(file_id);
@@ -140,19 +152,15 @@ pub fn FileTreeNodeView(node: EditorFileTreeNode, #[prop(optional)] depth: usize
                         style=padding_left
                         on:click=move |_| app_state.select_editor_file(file_id)
                     >
-                        <span class="text-terminal-info shrink-0">
-                            {badge}
-                        </span>
-                        <span class="min-w-0 flex-1 truncate">{label}</span>
+                        <span class="text-terminal-info shrink-0">{badge}</span>
+                        <span class="flex-1 min-w-0 truncate">{label}</span>
 
                         <Show when=move || app_state.open_file_ids.get().contains(&file_id)>
-                            <span class="text-terminal-dim shrink-0 text-xs">
-                                "open"
-                            </span>
+                            <span class="text-xs text-terminal-dim shrink-0">"open"</span>
                         </Show>
 
                         <Show when=move || is_file_dirty(&app_state.editor_buffers.get(), file_id)>
-                            <span class="text-terminal-warn ml-auto shrink-0">"+"</span>
+                            <span class="ml-auto text-terminal-warn shrink-0">"+"</span>
                         </Show>
                     </button>
                 }

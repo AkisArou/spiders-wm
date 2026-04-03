@@ -38,7 +38,7 @@ export function SystemPane({
       message: previewError
         ? previewError
         : preview
-          ? "spiders-web-bindings returned a preview tree"
+          ? "legacy spiders-web-bindings returned a preview tree"
           : "waiting for wasm bindings",
     },
     {

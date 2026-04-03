@@ -8,6 +8,7 @@ use wasm_bindgen::{JsCast, closure::Closure};
 mod app_state;
 mod bindings;
 mod components;
+mod editor_files;
 mod editor_host;
 mod layout_runtime;
 mod session;
@@ -184,11 +185,12 @@ fn install_keyboard_listener(app_state: AppState) {
                 }) else {
                     return;
                 };
+                let Some(command) = entry.command.clone() else {
+                    return;
+                };
 
                 event.prevent_default();
-                app_state
-                    .session
-                    .update(|state| state.apply_command(entry.command.clone()));
+                app_state.session.update(|state| state.apply_command(command));
             },
         ));
 
@@ -198,9 +200,11 @@ fn install_keyboard_listener(app_state: AppState) {
     });
 }
 
-fn binding_source(buffers: &std::collections::BTreeMap<workspace::EditorFileId, String>) -> &str {
+fn binding_source(
+    buffers: &std::collections::BTreeMap<editor_files::EditorFileId, String>,
+) -> &str {
     buffers
-        .get(&workspace::EditorFileId::ConfigBindings)
+        .get(&editor_files::EditorFileId::ConfigBindings)
         .map(String::as_str)
-        .unwrap_or_else(|| workspace::initial_content(workspace::EditorFileId::ConfigBindings))
+        .unwrap_or_else(|| editor_files::initial_content(editor_files::EditorFileId::ConfigBindings))
 }

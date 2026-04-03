@@ -1,10 +1,8 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 use smithay::utils::{Logical, Point, Size};
-use spiders_config::authoring_layout::AuthoringLayoutService;
 use spiders_config::model::{Config, ConfigPaths};
 use spiders_core::focus::{FocusTree, FocusTreeWindowGeometry};
-use spiders_runtime_js::DefaultLayoutRuntime;
 use spiders_scene::ast::ValidatedLayoutTree;
 use spiders_scene::pipeline::SceneCache;
 use spiders_scene::{LayoutSnapshotNode, SceneRequest};
@@ -14,6 +12,9 @@ use spiders_core::types::LayoutRef;
 use spiders_core::workspace::{fallback_master_stack_layout_tree, flat_workspace_root};
 use spiders_core::{
     LayoutRect, LayoutSpace, ResolvedLayoutNode, SourceLayoutNode, WindowId,
+};
+use spiders_wm_runtime::{
+    build_authoring_layout_service, AuthoringLayoutService, DefaultLayoutRuntime,
 };
 use tracing::{debug, warn};
 
@@ -39,9 +40,7 @@ pub(crate) struct SceneLayoutState {
 
 impl SceneLayoutState {
     pub(crate) fn new(config_paths: Option<ConfigPaths>) -> Self {
-        let layout_service = config_paths
-            .as_ref()
-            .map(spiders_runtime_js::build_authoring_layout_service);
+        let layout_service = config_paths.as_ref().map(build_authoring_layout_service);
 
         Self {
             config_paths,
@@ -52,10 +51,7 @@ impl SceneLayoutState {
 
     pub(crate) fn set_config_paths(&mut self, config_paths: Option<ConfigPaths>) {
         self.config_paths = config_paths;
-        self.layout_service = self
-            .config_paths
-            .as_ref()
-            .map(spiders_runtime_js::build_authoring_layout_service);
+        self.layout_service = self.config_paths.as_ref().map(build_authoring_layout_service);
         self.cache.clear();
     }
 

@@ -11,10 +11,8 @@ console_error_panic_hook.workspace = true
 leptos = { workspace = true, features = ["csr"] }
 leptos_router.workspace = true
 spiders-core = { path = "../../crates/spiders-core" }
+spiders-wm-runtime = { path = "../../crates/spiders-wm-runtime" }
 spiders-scene = { path = "../../crates/spiders-scene" }
-spiders-web-bindings = { path = "../../crates/spiders-web-bindings" }
-oxc = { workspace = true, features = ["full"] }
-regex.workspace = true
 
 serde.workspace = true
 serde-wasm-bindgen.workspace = true

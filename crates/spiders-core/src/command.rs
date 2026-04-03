@@ -24,6 +24,7 @@ pub enum WmCommand {
     Spawn {
         command: String,
     },
+    Quit,
     ReloadConfig,
     SetLayout {
         name: String,

@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use leptos::prelude::Get;
 
 use crate::app_state::AppState;
-use crate::workspace::{EditorFileId, file_by_id, initial_content};
+use crate::editor_files::{EditorFile, EditorFileId, file_by_id, initial_content};
 
 pub fn editor_file_badge(language: &str) -> &'static str {
     match language {
@@ -18,7 +18,7 @@ pub fn is_file_dirty(buffers: &BTreeMap<EditorFileId, String>, file_id: EditorFi
         != initial_content(file_id)
 }
 
-pub fn active_file(app_state: AppState) -> Option<&'static crate::workspace::EditorFile> {
+pub fn active_file(app_state: AppState) -> Option<&'static EditorFile> {
     app_state.active_file_id.get().map(file_by_id)
 }
 

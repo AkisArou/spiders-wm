@@ -4,7 +4,7 @@ use crate::app_state::AppState;
 use crate::bindings::ParsedBindingEntry;
 use crate::bindings::format_binding_token;
 use crate::components::{Panel, PanelBar};
-use crate::workspace::{EditorFileId, file_by_id, initial_content};
+use crate::editor_files::{EditorFileId, file_by_id, initial_content};
 use leptos::prelude::*;
 fn active_file_path(app_state: AppState) -> String {
     app_state
@@ -15,10 +15,7 @@ fn active_file_path(app_state: AppState) -> String {
         .unwrap_or_else(|| "no file open".to_string())
 }
 fn dirty_file_count(buffers: &BTreeMap<EditorFileId, String>) -> usize {
-    buffers
-        .iter()
-        .filter(|(file_id, value)| value.as_str() != initial_content(**file_id))
-        .count()
+    buffers.iter().filter(|(file_id, value)| value.as_str() != initial_content(**file_id)).count()
 }
 
 #[component]
@@ -26,12 +23,12 @@ pub fn SystemView() -> impl IntoView {
     let app_state = expect_context::<AppState>();
 
     view! {
-        <section class="grid h-full min-h-0 w-full min-w-0 grid-cols-1 gap-2 xl:grid-cols-[minmax(0,1.4fr)_20rem]">
+        <section class="grid grid-cols-1 gap-2 w-full min-w-0 h-full min-h-0 xl:grid-cols-[minmax(0,1.4fr)_20rem]">
             <Panel>
                 <PanelBar>
                     <div>"system://log"</div>
                 </PanelBar>
-                <div class="text-terminal-muted min-h-0 flex-1 overflow-auto p-2 text-sm leading-5">
+                <div class="overflow-auto flex-1 p-2 min-h-0 text-sm leading-5 text-terminal-muted">
                     <div class="grid gap-1">
                         {move || {
                             let snapshot = app_state.session.get();
@@ -49,7 +46,7 @@ pub fn SystemView() -> impl IntoView {
                                     preview_level.to_string(),
                                     "bindings".to_string(),
                                     if snapshot.snapshot_root.is_some() {
-                                        "spiders-web-bindings returned a preview tree".to_string()
+                                        "spiders-wm-runtime returned a preview tree".to_string()
                                     } else if snapshot.diagnostics.is_empty() {
                                         "waiting for wasm bindings".to_string()
                                     } else {
@@ -81,7 +78,6 @@ pub fn SystemView() -> impl IntoView {
                                     format!("{} diagnostic(s) reported", snapshot.diagnostics.len()),
                                 ),
                             ];
-
                             log_lines
                                 .into_iter()
                                 .map(|(level, scope, message)| {
@@ -93,9 +89,11 @@ pub fn SystemView() -> impl IntoView {
                                     };
 
                                     view! {
-                                        <div class="border-terminal-border bg-terminal-bg-panel flex gap-3 border px-2 py-1">
-                                            <span class=move || format!("w-12 shrink-0 {level_class}")>{level}</span>
-                                            <span class="text-terminal-dim w-16 shrink-0">{scope}</span>
+                                        <div class="flex gap-3 py-1 px-2 border border-terminal-border bg-terminal-bg-panel">
+                                            <span class=move || {
+                                                format!("w-12 shrink-0 {level_class}")
+                                            }>{level}</span>
+                                            <span class="w-16 text-terminal-dim shrink-0">{scope}</span>
                                             <span>{message}</span>
                                         </div>
                                     }
@@ -106,12 +104,12 @@ pub fn SystemView() -> impl IntoView {
                 </div>
             </Panel>
 
-            <div class="grid min-h-0 gap-2 xl:grid-rows-[auto_minmax(14rem,1fr)_minmax(0,1fr)]">
+            <div class="grid gap-2 min-h-0 xl:grid-rows-[auto_minmax(14rem,1fr)_minmax(0,1fr)]">
                 <Panel>
                     <PanelBar>
                         <div>"system://state"</div>
                     </PanelBar>
-                    <div class="text-terminal-muted grid gap-1 p-2 text-sm">
+                    <div class="grid gap-1 p-2 text-sm text-terminal-muted">
                         {move || {
                             let snapshot = app_state.session.get();
                             let focused_window = snapshot
@@ -128,10 +126,12 @@ pub fn SystemView() -> impl IntoView {
                             } else {
                                 "degraded"
                             };
-
                             vec![
-                                ("workspace".to_string(), snapshot.active_workspace_name.clone()),
-                                ("layout".to_string(), snapshot.active_layout.display_title().to_string()),
+                                (
+                                    "workspace".to_string(),
+                                    snapshot.active_workspace_name().to_string(),
+                                ),
+                                ("layout".to_string(), snapshot.active_layout.as_str().to_string()),
                                 ("focused".to_string(), focused_window),
                                 ("dirty".to_string(), dirty_count.to_string()),
                                 ("preview".to_string(), preview_state.to_string()),
@@ -139,10 +139,13 @@ pub fn SystemView() -> impl IntoView {
                             ]
                                 .into_iter()
                                 .map(|(label, value)| {
+
                                     view! {
-                                        <div class="border-terminal-border bg-terminal-bg-panel flex justify-between gap-3 border px-2 py-1">
+                                        <div class="flex gap-3 justify-between py-1 px-2 border border-terminal-border bg-terminal-bg-panel">
                                             <span>{label}</span>
-                                            <span class="text-terminal-fg-strong truncate text-right">{value}</span>
+                                            <span class="text-right text-terminal-fg-strong truncate">
+                                                {value}
+                                            </span>
                                         </div>
                                     }
                                 })
@@ -155,7 +158,7 @@ pub fn SystemView() -> impl IntoView {
                     <PanelBar>
                         <div>"system://bindings"</div>
                     </PanelBar>
-                    <div class="text-terminal-muted min-h-0 overflow-auto p-2 text-sm">
+                    <div class="overflow-auto p-2 min-h-0 text-sm text-terminal-muted">
                         {move || {
                             let binding_state = app_state.parsed_bindings();
                             let mod_key = format_binding_token("mod", &binding_state.mod_key);
@@ -163,15 +166,19 @@ pub fn SystemView() -> impl IntoView {
 
                             view! {
                                 <>
-                                    <div class="border-terminal-border bg-terminal-bg-panel mb-2 flex items-center justify-between border px-2 py-1">
+                                    <div class="flex justify-between items-center py-1 px-2 mb-2 border border-terminal-border bg-terminal-bg-panel">
                                         <span>"mod"</span>
                                         <span class="text-terminal-fg-strong">{mod_key}</span>
                                     </div>
                                     {if has_entries {
-                                        view! { <BindingEntries entries=binding_state.entries.clone()/> }
+                                        view! {
+                                            <BindingEntries entries=binding_state.entries.clone() />
+                                        }
                                             .into_any()
                                     } else {
-                                        view! { <div class="text-terminal-faint">"no bindings parsed"</div> }
+                                        view! {
+                                            <div class="text-terminal-faint">"no bindings parsed"</div>
+                                        }
                                             .into_any()
                                     }}
                                 </>
@@ -184,10 +191,12 @@ pub fn SystemView() -> impl IntoView {
                     <PanelBar>
                         <div>"system://diagnostics"</div>
                     </PanelBar>
-                    <div class="text-terminal-muted min-h-0 overflow-auto p-2 text-sm">
+                    <div class="overflow-auto p-2 min-h-0 text-sm text-terminal-muted">
                         <Show
                             when=move || !app_state.session.get().diagnostics.is_empty()
-                            fallback=move || view! { <div class="text-terminal-faint">"no diagnostics"</div> }
+                            fallback=move || {
+                                view! { <div class="text-terminal-faint">"no diagnostics"</div> }
+                            }
                         >
                             <div class="grid gap-1">
                                 {move || {
@@ -204,8 +213,8 @@ pub fn SystemView() -> impl IntoView {
                                             };
 
                                             view! {
-                                                <div class="border-terminal-border bg-terminal-bg-panel border px-2 py-1">
-                                                    <div class="flex items-center gap-2 text-xs">
+                                                <div class="py-1 px-2 border border-terminal-border bg-terminal-bg-panel">
+                                                    <div class="flex gap-2 items-center text-xs">
                                                         <span class=level_class>{diagnostic.level}</span>
                                                         <span class="text-terminal-dim">{diagnostic.source}</span>
                                                     </div>
@@ -232,7 +241,7 @@ fn BindingEntries(entries: Vec<ParsedBindingEntry>) -> impl IntoView {
                 .into_iter()
                 .map(|entry| {
                     view! {
-                        <div class="border-terminal-border bg-terminal-bg-panel grid gap-1 border px-2 py-1">
+                        <div class="grid gap-1 py-1 px-2 border border-terminal-border bg-terminal-bg-panel">
                             <div class="text-terminal-fg-strong">{entry.chord}</div>
                             <div class="text-terminal-dim">{entry.command_label}</div>
                         </div>

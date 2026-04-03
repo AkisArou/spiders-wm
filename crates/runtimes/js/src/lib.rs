@@ -5,7 +5,11 @@ pub mod loader;
 mod module_graph;
 mod module_graph_runtime;
 mod payload;
+mod preview_bundle;
 pub mod runtime;
+
+pub use module_graph::{JavaScriptModule, JavaScriptModuleGraph};
+pub use preview_bundle::compile_source_bundle_to_module_graph;
 
 pub type DefaultLayoutRuntime =
     runtime::QuickJsPreparedLayoutRuntime<loader::RuntimeProjectLayoutSourceLoader>;

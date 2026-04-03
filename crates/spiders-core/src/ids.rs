@@ -4,7 +4,9 @@ use serde::{Deserialize, Serialize};
 
 macro_rules! id_type {
     ($name:ident) => {
-        #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize)]
+        #[derive(
+            Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize,
+        )]
         #[serde(transparent)]
         pub struct $name(pub String);
 
@@ -40,6 +42,7 @@ macro_rules! id_type {
 
 id_type!(WindowId);
 id_type!(OutputId);
+id_type!(LayoutId);
 id_type!(WorkspaceId);
 id_type!(SeatId);
 

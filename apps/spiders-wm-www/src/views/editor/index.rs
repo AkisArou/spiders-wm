@@ -4,7 +4,8 @@ use leptos::prelude::*;
 
 use crate::app_state::AppState;
 use crate::components::{ContextMenu, ContextMenuItem, ContextMenuPosition};
-use crate::workspace::{EditorFileId, WORKSPACE_ROOT, file_by_id, workspace_file_tree};
+use crate::editor_files::{EditorFileId, WORKSPACE_ROOT, file_by_id};
+use crate::workspace::workspace_file_tree;
 
 use super::buffers::{
     active_buffer_text, active_file_badge, active_file_is_dirty, active_file_language,
@@ -245,7 +246,7 @@ pub fn EditorView() -> impl IntoView {
                         </div>
                         <div class="border-terminal-border bg-terminal-bg-panel flex justify-between border px-2 py-1">
                             <span>"layout"</span>
-                            <span class="text-terminal-fg-strong">{move || app_state.session.get().selected_layout_name().to_string()}</span>
+                            <span class="text-terminal-fg-strong">{move || app_state.session.get().active_layout.as_str().to_string()}</span>
                         </div>
                     </div>
                 </div>

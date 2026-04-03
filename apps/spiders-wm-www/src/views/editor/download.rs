@@ -1,19 +1,15 @@
 use std::collections::BTreeMap;
 
+use crate::editor_files::{EditorFileId, file_by_id, initial_content};
 use crate::editor_host::DirectoryDownloadItem;
-use crate::workspace::{
-    EditorFileId, EditorFileTreeDirectory, EditorFileTreeNode, file_by_id, initial_content,
-};
+use crate::workspace::{EditorFileTreeDirectory, EditorFileTreeNode};
 
 pub fn download_directory_title(directory: &EditorFileTreeDirectory) -> String {
     let Some(root_path) = directory.download_root_path else {
         return "Download directory".to_string();
     };
 
-    let parent_path = root_path
-        .rsplit_once('/')
-        .map(|(parent, _)| parent)
-        .unwrap_or_default();
+    let parent_path = root_path.rsplit_once('/').map(|(parent, _)| parent).unwrap_or_default();
 
     if parent_path.is_empty() {
         format!(
@@ -59,11 +55,8 @@ fn collect_directory_download_items_recursive(
             }
             EditorFileTreeNode::File(file_id) => {
                 let file = file_by_id(*file_id);
-                let relative_path = file
-                    .path
-                    .strip_prefix(root_path)
-                    .unwrap_or(file.path)
-                    .trim_start_matches('/');
+                let relative_path =
+                    file.path.strip_prefix(root_path).unwrap_or(file.path).trim_start_matches('/');
                 let content = buffers
                     .get(file_id)
                     .cloned()

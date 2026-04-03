@@ -7,7 +7,7 @@ use leptos::prelude::*;
 use wasm_bindgen_futures::spawn_local;
 
 use crate::app_state::AppState;
-use crate::workspace::{
+use crate::editor_files::{
     EDITOR_FILES, EditorFileId, WORKSPACE_FS_ROOT, initial_content, model_path,
 };
 
@@ -478,7 +478,7 @@ pub fn MonacoEditorPane() -> impl IntoView {
                     active_path.as_deref(),
                     &models,
                     move |path, value| {
-                        let Some(file_id) = crate::workspace::file_id_by_model_path(&path) else {
+                        let Some(file_id) = crate::editor_files::file_id_by_model_path(&path) else {
                             return;
                         };
 
@@ -494,7 +494,7 @@ pub fn MonacoEditorPane() -> impl IntoView {
                         }
                     },
                     move |path| {
-                        if let Some(file_id) = crate::workspace::file_id_by_model_path(&path) {
+                        if let Some(file_id) = crate::editor_files::file_id_by_model_path(&path) {
                             callback_state.select_editor_file(file_id);
                         }
                     },

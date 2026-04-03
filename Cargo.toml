@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+  "crates/spiders-wm-runtime",
   "crates/spiders-web-bindings",
   "crates/spiders-cli",
   "crates/spiders-core",
@@ -8,10 +9,10 @@ members = [
   "crates/spiders-config",
   "crates/spiders-ipc",
   "crates/spiders-logging",
-  "crates/spiders-wm",
   "crates/spiders-wm-river",
   "crates/spiders-scene",
   "crates/runtimes/js",
+  "apps/spiders-wm",
   "apps/spiders-wm-www",
 ]
 

@@ -16,6 +16,7 @@ spiders-logging = { path = "../spiders-logging" }
 spiders-scene = { path = "../spiders-scene" }
 spiders-runtime-js = { path = "../runtimes/js" }
 spiders-core = { path = "../spiders-core" }
+spiders-wm-runtime = { path = "../spiders-wm-runtime" }
 thiserror.workspace = true
 tracing = "0.1"
 tempfile = "3"
