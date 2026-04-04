@@ -3960,6 +3960,7 @@ dependencies = [
  "spiders-runtime-js-core",
  "wasm-bindgen",
  "wasm-bindgen-futures",
+ "web-sys",
 ]
 
 [[package]]

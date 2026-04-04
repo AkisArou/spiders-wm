@@ -5,7 +5,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::path::{Path, PathBuf};
 
-use js_sys::Promise;
+use js_sys::{Array, Function, Promise, Reflect};
 use serde_json::Value;
 use spiders_config::model::{Config, LayoutConfigError, RuntimeKind};
 use spiders_config::runtime::{
@@ -17,112 +17,32 @@ use spiders_core::runtime::prepared_layout::{PreparedLayout, PreparedStylesheet,
 use spiders_core::snapshot::{StateSnapshot, WorkspaceSnapshot};
 use spiders_core::SourceLayoutNode;
 use spiders_runtime_js_core::{
-    JavaScriptModuleGraph, compile_source_bundle_to_module_graph, decode_js_layout_value,
+    JavaScriptModule, JavaScriptModuleGraph, compile_source_bundle_to_module_graph, decode_js_layout_value,
     decode_runtime_graph_payload, encode_runtime_graph_payload,
 };
+use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
+use web_sys::{Blob, BlobPropertyBag, Url};
 
 use crate::config_decode::{decode_config_value, validate_layout_selection};
 
 #[wasm_bindgen(inline_js = r#"
-const importFromPattern = /(\bfrom\s*)(["'])([^"']+)(\2)/g;
-const importOnlyPattern = /(\bimport\s*)(["'])([^"']+)(\2)/g;
-const dynamicImportPattern = /(\bimport\s*\(\s*)(["'])([^"']+)(\2)(\s*\))/g;
-
-function rewriteSource(source, resolvedImports, moduleMap, toUrl) {
-    const resolveSpecifier = (specifier) => {
-        const resolved = resolvedImports[specifier];
-        if (resolved) {
-            return resolved;
-        }
-
-        return moduleMap.has(specifier) ? specifier : null;
-    };
-
-    const replaceImportFrom = (_, prefix, quote, specifier, closingQuote) => {
-        const resolved = resolveSpecifier(specifier);
-        if (!resolved) {
-            return `${prefix}${quote}${specifier}${closingQuote}`;
-        }
-
-        return `${prefix}${quote}${toUrl(resolved)}${closingQuote}`;
-    };
-
-    const replaceDynamicImport = (_, prefix, quote, specifier, closingQuote, suffix) => {
-        const resolved = resolveSpecifier(specifier);
-        if (!resolved) {
-            return `${prefix}${quote}${specifier}${closingQuote}${suffix}`;
-        }
-
-        return `${prefix}${quote}${toUrl(resolved)}${closingQuote}${suffix}`;
-    };
-
-    return source
-        .replace(importFromPattern, replaceImportFrom)
-        .replace(importOnlyPattern, replaceImportFrom)
-        .replace(dynamicImportPattern, replaceDynamicImport);
-}
-
-function moduleUrlFor(specifier, moduleMap, cache, visiting) {
-    if (cache.has(specifier)) {
-        return cache.get(specifier);
-    }
-
-    if (visiting.has(specifier)) {
-        throw new Error(`Circular module graph dependency detected at ${specifier}`);
-    }
-
-    const module = moduleMap.get(specifier);
-    if (!module) {
-        throw new Error(`Missing module ${specifier}`);
-    }
-
-    visiting.add(specifier);
-    const resolvedImports = module.resolved_imports ?? {};
-    const rewritten = rewriteSource(module.source, resolvedImports, moduleMap, (nextSpecifier) =>
-        moduleUrlFor(nextSpecifier, moduleMap, cache, visiting),
-    );
-    const url = `data:text/javascript;charset=utf-8,${encodeURIComponent(rewritten)}`;
-    cache.set(specifier, url);
-    visiting.delete(specifier);
-    return url;
-}
-
-export async function evaluateModuleGraph(moduleGraph, exportName, arg) {
-    const moduleMap = new Map(
-        (moduleGraph.modules ?? []).map((module) => [module.specifier, module]),
-    );
-    const cache = new Map();
-    const entryUrl = moduleUrlFor(moduleGraph.entry, moduleMap, cache, new Set());
-    const namespace = await import(entryUrl);
-    const exported = exportName === "default" ? namespace.default : namespace[exportName];
-
-    if (typeof exported !== "function") {
-        throw new Error(`Module ${moduleGraph.entry} does not export callable ${exportName}`);
-    }
-
-    return exported(arg);
+export async function importModule(url) {
+  return await import(url);
 }
 "#)]
 extern "C" {
-    #[wasm_bindgen(catch, js_name = evaluateModuleGraph)]
-    fn evaluate_module_graph(
-        module_graph: JsValue,
-        export_name: &str,
-        arg: JsValue,
-    ) -> Result<Promise, JsValue>;
+    #[wasm_bindgen(catch, js_name = importModule)]
+    fn import_module(url: &str) -> Result<Promise, JsValue>;
 }
 
 pub async fn evaluate_layout_module_graph(
     module_graph: &JavaScriptModuleGraph,
     context: &LayoutEvaluationContext,
 ) -> Result<JsValue, String> {
-    let graph_value = serde_wasm_bindgen::to_value(module_graph).map_err(|error| error.to_string())?;
     let context_value = serde_wasm_bindgen::to_value(context).map_err(|error| error.to_string())?;
-    let promise = evaluate_module_graph(graph_value, "default", context_value).map_err(js_error_to_string)?;
-
-    JsFuture::from(promise).await.map_err(js_error_to_string)
+    evaluate_module_export(module_graph, "default", context_value).await
 }
 
 pub async fn load_config_from_source_bundle(
@@ -132,10 +52,7 @@ pub async fn load_config_from_source_bundle(
 ) -> Result<Config, String> {
     let graph = compile_source_bundle_to_module_graph(root_dir, entry_path, sources)
         .map_err(|error| error.to_string())?;
-    let graph_value = serde_wasm_bindgen::to_value(&graph).map_err(|error| error.to_string())?;
-    let arg = JsValue::NULL;
-    let promise = evaluate_module_graph(graph_value, "default", arg).map_err(js_error_to_string)?;
-    let value = JsFuture::from(promise).await.map_err(js_error_to_string)?;
+    let value = evaluate_module_export(&graph, "default", JsValue::NULL).await?;
     let config_value: Value = serde_wasm_bindgen::from_value(value).map_err(|error| error.to_string())?;
     let mut config = decode_config_value(entry_path, &config_value).map_err(|error| error.to_string())?;
     config.global_stylesheet_path = sources
@@ -157,6 +74,266 @@ pub fn compile_module_graph_from_source_bundle(
 
 fn js_error_to_string(error: JsValue) -> String {
     error.as_string().unwrap_or_else(|| format!("{error:?}"))
+}
+
+async fn evaluate_module_export(
+    module_graph: &JavaScriptModuleGraph,
+    export_name: &str,
+    arg: JsValue,
+) -> Result<JsValue, String> {
+    let module_urls = build_module_urls(module_graph)?;
+    let entry_url = module_urls
+        .get(&module_graph.entry)
+        .ok_or_else(|| format!("Missing module {}", module_graph.entry))?
+        .clone();
+    let promise = import_module(&entry_url).map_err(js_error_to_string)?;
+    let namespace = JsFuture::from(promise).await.map_err(js_error_to_string)?;
+    let export = Reflect::get(&namespace, &JsValue::from_str(export_name)).map_err(js_error_to_string)?;
+    let function = export.dyn_into::<Function>().map_err(|_| {
+        format!("Module {} does not export callable {}", module_graph.entry, export_name)
+    })?;
+    function.call1(&JsValue::UNDEFINED, &arg).map_err(js_error_to_string)
+}
+
+fn build_module_urls(module_graph: &JavaScriptModuleGraph) -> Result<BTreeMap<String, String>, String> {
+    let module_map = module_graph
+        .modules
+        .iter()
+        .cloned()
+        .map(|module| (module.specifier.clone(), module))
+        .collect::<BTreeMap<_, _>>();
+    let mut cache = BTreeMap::new();
+    let mut object_urls = Vec::new();
+    let mut visiting = Vec::new();
+
+    let _ = module_url_for(&module_graph.entry, &module_map, &mut cache, &mut object_urls, &mut visiting)?;
+    Ok(cache)
+}
+
+fn module_url_for(
+    specifier: &str,
+    module_map: &BTreeMap<String, JavaScriptModule>,
+    cache: &mut BTreeMap<String, String>,
+    object_urls: &mut Vec<String>,
+    visiting: &mut Vec<String>,
+) -> Result<String, String> {
+    if let Some(url) = cache.get(specifier) {
+        return Ok(url.clone());
+    }
+
+    if visiting.iter().any(|entry| entry == specifier) {
+        return Err(format!("Circular module graph dependency detected at {specifier}"));
+    }
+
+    let module = module_map.get(specifier).ok_or_else(|| format!("Missing module {specifier}"))?;
+    visiting.push(specifier.to_string());
+    let rewritten = rewrite_source(&module.source, &module.resolved_imports, module_map, cache, object_urls, visiting)?;
+    let url = create_module_url(&rewritten)?;
+    object_urls.push(url.clone());
+    cache.insert(specifier.to_string(), url.clone());
+    visiting.pop();
+    Ok(url)
+}
+
+fn rewrite_source(
+    source: &str,
+    resolved_imports: &BTreeMap<String, String>,
+    module_map: &BTreeMap<String, JavaScriptModule>,
+    cache: &mut BTreeMap<String, String>,
+    object_urls: &mut Vec<String>,
+    visiting: &mut Vec<String>,
+) -> Result<String, String> {
+    let mut output = String::with_capacity(source.len());
+    let bytes = source.as_bytes();
+    let mut cursor = 0usize;
+
+    while cursor < bytes.len() {
+        if starts_with_keyword(bytes, cursor, b"from") {
+            let Some((next_cursor, replaced)) = rewrite_static_import(
+                source,
+                cursor + 4,
+                resolved_imports,
+                module_map,
+                cache,
+                object_urls,
+                visiting,
+            )? else {
+                output.push(bytes[cursor] as char);
+                cursor += 1;
+                continue;
+            };
+            output.push_str("from ");
+            output.push_str(&replaced);
+            cursor = next_cursor;
+            continue;
+        }
+
+        if starts_with_keyword(bytes, cursor, b"import") {
+            if let Some((next_cursor, replaced)) = rewrite_dynamic_or_bare_import(
+                source,
+                cursor + 6,
+                resolved_imports,
+                module_map,
+                cache,
+                object_urls,
+                visiting,
+            )? {
+                output.push_str("import");
+                output.push_str(&replaced);
+                cursor = next_cursor;
+                continue;
+            }
+        }
+
+        output.push(bytes[cursor] as char);
+        cursor += 1;
+    }
+
+    Ok(output)
+}
+
+fn rewrite_static_import(
+    source: &str,
+    mut cursor: usize,
+    resolved_imports: &BTreeMap<String, String>,
+    module_map: &BTreeMap<String, JavaScriptModule>,
+    cache: &mut BTreeMap<String, String>,
+    object_urls: &mut Vec<String>,
+    visiting: &mut Vec<String>,
+) -> Result<Option<(usize, String)>, String> {
+    let whitespace = consume_whitespace(source, cursor);
+    cursor = whitespace;
+    let Some((next_cursor, specifier, quote)) = consume_string_literal(source, cursor) else {
+        return Ok(None);
+    };
+    let replacement = resolve_rewritten_specifier(
+        specifier,
+        resolved_imports,
+        module_map,
+        cache,
+        object_urls,
+        visiting,
+    )?;
+    Ok(Some((
+        next_cursor,
+        format!("{}{}{}", quote, replacement.unwrap_or_else(|| specifier.to_string()), quote),
+    )))
+}
+
+fn rewrite_dynamic_or_bare_import(
+    source: &str,
+    mut cursor: usize,
+    resolved_imports: &BTreeMap<String, String>,
+    module_map: &BTreeMap<String, JavaScriptModule>,
+    cache: &mut BTreeMap<String, String>,
+    object_urls: &mut Vec<String>,
+    visiting: &mut Vec<String>,
+) -> Result<Option<(usize, String)>, String> {
+    let whitespace = consume_whitespace(source, cursor);
+    cursor = whitespace;
+    let bytes = source.as_bytes();
+    if bytes.get(cursor) == Some(&b'(') {
+        let after_open = consume_whitespace(source, cursor + 1);
+        let Some((next_cursor, specifier, quote)) = consume_string_literal(source, after_open) else {
+            return Ok(None);
+        };
+        let close_cursor = consume_whitespace(source, next_cursor);
+        if source.as_bytes().get(close_cursor) != Some(&b')') {
+            return Ok(None);
+        }
+        let replacement = resolve_rewritten_specifier(
+            specifier,
+            resolved_imports,
+            module_map,
+            cache,
+            object_urls,
+            visiting,
+        )?;
+        return Ok(Some((
+            close_cursor + 1,
+            format!("({quote}{}{quote})", replacement.unwrap_or_else(|| specifier.to_string())),
+        )));
+    }
+
+    let Some((next_cursor, specifier, quote)) = consume_string_literal(source, cursor) else {
+        return Ok(None);
+    };
+    let replacement = resolve_rewritten_specifier(
+        specifier,
+        resolved_imports,
+        module_map,
+        cache,
+        object_urls,
+        visiting,
+    )?;
+    Ok(Some((
+        next_cursor,
+        format!(" {quote}{}{quote}", replacement.unwrap_or_else(|| specifier.to_string())),
+    )))
+}
+
+fn resolve_rewritten_specifier(
+    specifier: &str,
+    resolved_imports: &BTreeMap<String, String>,
+    module_map: &BTreeMap<String, JavaScriptModule>,
+    cache: &mut BTreeMap<String, String>,
+    object_urls: &mut Vec<String>,
+    visiting: &mut Vec<String>,
+) -> Result<Option<String>, String> {
+    let resolved = resolved_imports
+        .get(specifier)
+        .map(String::as_str)
+        .or_else(|| module_map.contains_key(specifier).then_some(specifier));
+
+    match resolved {
+        Some(target) => module_url_for(target, module_map, cache, object_urls, visiting).map(Some),
+        None => Ok(None),
+    }
+}
+
+fn starts_with_keyword(bytes: &[u8], cursor: usize, keyword: &[u8]) -> bool {
+    bytes.get(cursor..cursor + keyword.len()) == Some(keyword)
+}
+
+fn consume_whitespace(source: &str, mut cursor: usize) -> usize {
+    let bytes = source.as_bytes();
+    while let Some(byte) = bytes.get(cursor) {
+        if !byte.is_ascii_whitespace() {
+            break;
+        }
+        cursor += 1;
+    }
+    cursor
+}
+
+fn consume_string_literal(source: &str, cursor: usize) -> Option<(usize, &str, char)> {
+    let bytes = source.as_bytes();
+    let quote = match bytes.get(cursor) {
+        Some(b'\'') => '\'',
+        Some(b'"') => '"',
+        _ => return None,
+    };
+    let mut end = cursor + 1;
+    while let Some(byte) = bytes.get(end) {
+        if *byte == b'\\' {
+            end += 2;
+            continue;
+        }
+        if *byte == quote as u8 {
+            return Some((end + 1, &source[cursor + 1..end], quote));
+        }
+        end += 1;
+    }
+    None
+}
+
+fn create_module_url(source: &str) -> Result<String, String> {
+    let parts = Array::new();
+    parts.push(&JsValue::from_str(source));
+    let bag = BlobPropertyBag::new();
+    bag.set_type("text/javascript;charset=utf-8");
+    let blob = Blob::new_with_str_sequence_and_options(&parts, &bag).map_err(js_error_to_string)?;
+    Url::create_object_url_with_blob(&blob).map_err(js_error_to_string)
 }
 
 fn discover_layout_definitions(
