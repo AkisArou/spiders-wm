@@ -3,7 +3,8 @@ use std::os::fd::AsFd;
 
 use super::*;
 use crate::backend::plan::TitlebarPlan;
-use crate::backend::titlebar_renderer::render_titlebar_pixels;
+use spiders_fonts_native::{CachedNativeFontResolver, FontDbNativeFontResolver};
+use spiders_titlebar_native::render_titlebar_pixels;
 use wayland_client::protocol::wl_shm;
 
 impl RiverBackendState {
@@ -18,8 +19,13 @@ impl RiverBackendState {
         let mut file = tempfile::tempfile().ok()?;
         file.set_len(size as u64).ok()?;
 
-        let pixels =
-            render_titlebar_pixels(width, entry, self.config.options.titlebar_font.as_ref())?;
+        let resolver = CachedNativeFontResolver::new(FontDbNativeFontResolver::default());
+        let pixels = render_titlebar_pixels(
+            width,
+            entry,
+            self.config.options.titlebar_font.as_ref(),
+            &resolver,
+        )?;
 
         for pixel in pixels {
             file.write_all(&pixel.to_le_bytes()).ok()?;
@@ -49,9 +55,9 @@ impl RiverBackendState {
             title: entry.title.clone(),
             text_color: entry.text_color,
             text_align: entry.text_align,
-            font_family: entry.font_family.clone(),
-            font_size: entry.font_size,
-            font_weight: entry.font_weight,
+            font_family: Some(entry.font.families.clone()),
+            font_size: entry.font.size_px,
+            font_weight: entry.font.weight,
             letter_spacing: entry.letter_spacing,
             box_shadow: entry.box_shadow.clone(),
             padding_top: entry.padding_top,
@@ -172,6 +178,9 @@ impl RiverBackendState {
     }
 
     pub(super) fn apply_titlebar_plan(&mut self, plan: &[TitlebarPlan]) {
+        // River decoration surfaces are currently render-only here. The protocol gives us
+        // decoration placement/commit hooks, but no dedicated decoration-surface button
+        // events, so shared titlebar buttons should not be treated as natively clickable.
         let planned = plan
             .iter()
             .filter_map(|entry| {
@@ -198,9 +207,9 @@ impl RiverBackendState {
                         || buffer.title != entry.title
                         || buffer.text_color != entry.text_color
                         || buffer.text_align != entry.text_align
-                        || buffer.font_family != entry.font_family
-                        || buffer.font_size != entry.font_size
-                        || buffer.font_weight != entry.font_weight
+                        || buffer.font_family != Some(entry.font.families.clone())
+                        || buffer.font_size != entry.font.size_px
+                        || buffer.font_weight != entry.font.weight
                         || buffer.letter_spacing != entry.letter_spacing
                         || buffer.box_shadow != entry.box_shadow
                         || buffer.padding_top != entry.padding_top

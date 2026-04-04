@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use spiders_core::{LayoutRect, WindowId};
+use spiders_scene::ComputedStyle;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
@@ -25,6 +26,10 @@ pub struct PreviewSnapshotNode {
     pub axis: Option<String>,
     #[serde(default)]
     pub reverse: bool,
+    #[serde(default)]
+    pub layout_style: Option<ComputedStyle>,
+    #[serde(default)]
+    pub titlebar_style: Option<ComputedStyle>,
     #[serde(default)]
     pub children: Vec<PreviewSnapshotNode>,
 }

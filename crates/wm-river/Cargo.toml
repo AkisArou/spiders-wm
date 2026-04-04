@@ -16,11 +16,14 @@ spiders-logging = { path = "../logging" }
 spiders-scene = { path = "../scene" }
 spiders-runtime-js-native = { path = "../runtimes/js/native" }
 spiders-core = { path = "../core" }
+spiders-css = { path = "../css" }
+spiders-fonts-native = { path = "../fonts/native" }
+spiders-titlebar-core = { path = "../titlebar/core" }
+spiders-titlebar-native = { path = "../titlebar/native" }
 spiders-wm-runtime = { path = "../wm-runtime" }
 thiserror.workspace = true
 tracing = "0.1"
 tempfile = "3"
-ab_glyph = "0.2"
 tiny-skia = "0.11"
 wayland-backend = "0.3"
 wayland-client = "0.31"

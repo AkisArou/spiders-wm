@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+  "crates/fonts/native",
   "crates/wm-runtime",
   "crates/cli",
   "crates/core",
@@ -10,6 +11,9 @@ members = [
   "crates/logging",
   "crates/wm-river",
   "crates/scene",
+  "crates/titlebar/native",
+  "crates/titlebar/core",
+  "crates/titlebar/web",
   "crates/runtimes/js/core",
   "crates/runtimes/js/browser",
   "crates/runtimes/js/native",

@@ -1029,6 +1029,29 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "77ce24cb58228fbb8aa041425bb1050850ac19177686ea6e0f41a70416f56fdb"
 
 [[package]]
+name = "fontconfig-parser"
+version = "0.5.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bbc773e24e02d4ddd8395fd30dc147524273a83e54e0f312d986ea30de5f5646"
+dependencies = [
+ "roxmltree",
+]
+
+[[package]]
+name = "fontdb"
+version = "0.16.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b0299020c3ef3f60f526a4f64ab4a3d4ce116b1acbf24cdd22da0068e5d81dc3"
+dependencies = [
+ "fontconfig-parser",
+ "log",
+ "memmap2",
+ "slotmap",
+ "tinyvec",
+ "ttf-parser 0.20.0",
+]
+
+[[package]]
 name = "foreign-types"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2333,7 +2356,7 @@ version = "0.25.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "36820e9051aca1014ddc75770aab4d68bc1e9e632f0f5627c4086bc216fb583b"
 dependencies = [
- "ttf-parser",
+ "ttf-parser 0.25.1",
 ]
 
 [[package]]
@@ -3380,6 +3403,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "roxmltree"
+version = "0.20.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6c20b6793b5c2fa6553b250154b78d6d0db37e72700ae35fad9387a46f487c97"
+
+[[package]]
 name = "rquickjs"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3928,6 +3957,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "spiders-fonts-native"
+version = "0.1.0"
+dependencies = [
+ "fontdb",
+ "serde",
+ "spiders-css",
+]
+
+[[package]]
 name = "spiders-ipc"
 version = "0.1.0"
 dependencies = [
@@ -4014,6 +4052,37 @@ dependencies = [
 ]
 
 [[package]]
+name = "spiders-titlebar-core"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "spiders-core",
+ "spiders-css",
+ "spiders-scene",
+]
+
+[[package]]
+name = "spiders-titlebar-native"
+version = "0.1.0"
+dependencies = [
+ "ab_glyph",
+ "spiders-config",
+ "spiders-css",
+ "spiders-fonts-native",
+ "spiders-titlebar-core",
+ "tiny-skia",
+]
+
+[[package]]
+name = "spiders-titlebar-web"
+version = "0.1.0"
+dependencies = [
+ "spiders-core",
+ "spiders-css",
+ "spiders-titlebar-core",
+]
+
+[[package]]
 name = "spiders-wm"
 version = "0.1.0"
 dependencies = [
@@ -4036,17 +4105,20 @@ dependencies = [
 name = "spiders-wm-river"
 version = "0.1.0"
 dependencies = [
- "ab_glyph",
  "anyhow",
  "bitflags 2.11.0",
  "serde",
  "serde_json",
  "spiders-config",
  "spiders-core",
+ "spiders-css",
+ "spiders-fonts-native",
  "spiders-ipc",
  "spiders-logging",
  "spiders-runtime-js-native",
  "spiders-scene",
+ "spiders-titlebar-core",
+ "spiders-titlebar-native",
  "spiders-wm-runtime",
  "tempfile",
  "thiserror 2.0.18",
@@ -4086,9 +4158,12 @@ dependencies = [
  "serde-wasm-bindgen",
  "spiders-config",
  "spiders-core",
+ "spiders-css",
  "spiders-runtime-js-browser",
  "spiders-runtime-js-core",
  "spiders-scene",
+ "spiders-titlebar-core",
+ "spiders-titlebar-web",
  "spiders-wm-runtime",
  "wasm-bindgen",
  "wasm-bindgen-futures",
@@ -4502,6 +4577,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "tinyvec"
+version = "1.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3e61e67053d25a4e82c844e8424039d9745781b3fc4f32b8d55ed50f5f667ef3"
+dependencies = [
+ "tinyvec_macros",
+]
+
+[[package]]
+name = "tinyvec_macros"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
+
+[[package]]
 name = "to_shmem"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4632,6 +4722,12 @@ dependencies = [
  "tracing-core",
  "tracing-log",
 ]
+
+[[package]]
+name = "ttf-parser"
+version = "0.20.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "17f77d76d837a7830fe1d4f12b7b4ba4192c1888001c7164257e4bc6d21d96b4"
 
 [[package]]
 name = "ttf-parser"

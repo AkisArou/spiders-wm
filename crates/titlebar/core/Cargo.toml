@@ -1,0 +1,12 @@
+[package]
+name = "spiders-titlebar-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde.workspace = true
+spiders-core = { path = "../../core" }
+spiders-css = { path = "../../css" }
+spiders-scene = { path = "../../scene" }

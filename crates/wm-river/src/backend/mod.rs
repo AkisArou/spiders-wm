@@ -56,7 +56,6 @@ mod dispatch;
 mod motion;
 mod plan;
 mod planner;
-mod titlebar_renderer;
 mod transient;
 
 use self::apply::{effective_bindings, parse_binding};

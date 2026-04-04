@@ -8,11 +8,15 @@ use crate::backend::motion::MotionStyleScope;
 use crate::backend::plan::TitlebarPlan;
 use crate::layout_adapter::{compute_layout_snapshot, compute_workspace_layout_snapshot};
 use spiders_scene::{
-    AppearanceValue, BorderStyleValue, BoxEdges, ColorValue, ComputedStyle, FontWeightValue,
-    LayoutSnapshotNode, LengthPercentage, SizeValue, TextAlignValue, TextTransformValue,
+    AppearanceValue, BorderStyleValue, BoxEdges, ColorValue, ComputedStyle, LayoutSnapshotNode,
+    LengthPercentage, SizeValue,
 };
 use spiders_core::types::WindowMode;
 use spiders_core::{LayoutRect, WindowId, WorkspaceId};
+use spiders_titlebar_core::{
+    TitlebarButtonsConfig, TitlebarPlanInput, build_titlebar_plan, decoration_mode_for_window,
+    titlebar_text_from_window,
+};
 
 const NO_WORKSPACE_CLASSES: &[&str] = &[];
 const ENTER_FROM_LEFT_CLASSES: &[&str] = &["enter-from-left"];
@@ -182,12 +186,6 @@ fn default_titlebar_background(focused: bool) -> ColorValue {
     }
 }
 
-fn titlebar_background(style: Option<&ComputedStyle>, focused: bool) -> ColorValue {
-    style
-        .and_then(|style| style.background)
-        .unwrap_or_else(|| default_titlebar_background(focused))
-}
-
 fn default_titlebar_text_color(focused: bool) -> ColorValue {
     if focused {
         ColorValue {
@@ -203,182 +201,6 @@ fn default_titlebar_text_color(focused: bool) -> ColorValue {
             blue: 222,
             alpha: 255,
         }
-    }
-}
-
-fn titlebar_text_color(style: Option<&ComputedStyle>, focused: bool) -> ColorValue {
-    style
-        .and_then(|style| style.color)
-        .unwrap_or_else(|| default_titlebar_text_color(focused))
-}
-
-fn titlebar_text_align(style: Option<&ComputedStyle>) -> TextAlignValue {
-    style
-        .and_then(|style| style.text_align)
-        .unwrap_or(TextAlignValue::Left)
-}
-
-fn titlebar_font_family(style: Option<&ComputedStyle>) -> Option<spiders_scene::FontFamilyValue> {
-    style
-        .and_then(|style| style.font_family.as_ref())
-        .cloned()
-        .filter(|families| !families.is_empty())
-}
-
-fn titlebar_font_weight(style: Option<&ComputedStyle>) -> FontWeightValue {
-    style
-        .and_then(|style| style.font_weight)
-        .unwrap_or(FontWeightValue::Normal)
-}
-
-fn titlebar_font_size(style: Option<&ComputedStyle>) -> i32 {
-    match style.and_then(|style| style.font_size) {
-        Some(LengthPercentage::Px(value)) | Some(LengthPercentage::Percent(value)) => {
-            value.round() as i32
-        }
-        None => 14,
-    }
-    .clamp(8, 48)
-}
-
-fn titlebar_letter_spacing(style: Option<&ComputedStyle>) -> i32 {
-    style
-        .and_then(|style| style.letter_spacing)
-        .unwrap_or(0.0)
-        .round() as i32
-}
-
-fn titlebar_box_shadow(
-    titlebar_style: Option<&ComputedStyle>,
-    window_style: Option<&ComputedStyle>,
-) -> Option<Vec<spiders_scene::BoxShadowValue>> {
-    titlebar_style
-        .and_then(|style| style.box_shadow.as_ref())
-        .or_else(|| window_style.and_then(|style| style.box_shadow.as_ref()))
-        .cloned()
-        .filter(|shadow| !shadow.is_empty())
-}
-
-fn titlebar_padding(style: Option<&ComputedStyle>) -> (i32, i32, i32, i32) {
-    let Some(padding) = style.and_then(|style| style.padding) else {
-        return (0, 0, 0, 0);
-    };
-
-    (
-        border_length_to_px(padding.top),
-        border_length_to_px(padding.right),
-        border_length_to_px(padding.bottom),
-        border_length_to_px(padding.left),
-    )
-}
-
-fn titlebar_corner_radii(
-    titlebar_style: Option<&ComputedStyle>,
-    window_style: Option<&ComputedStyle>,
-) -> (i32, i32) {
-    let radius = titlebar_style
-        .and_then(|style| style.border_radius)
-        .or_else(|| window_style.and_then(|style| style.border_radius));
-    let Some(radius) = radius else {
-        return (0, 0);
-    };
-
-    (radius.top_left, radius.top_right)
-}
-
-fn titlebar_text(window: &crate::model::WindowState) -> String {
-    window
-        .title
-        .as_ref()
-        .filter(|title| !title.trim().is_empty())
-        .cloned()
-        .or_else(|| {
-            window
-                .app_id
-                .as_ref()
-                .filter(|app_id| !app_id.trim().is_empty())
-                .cloned()
-        })
-        .unwrap_or_default()
-}
-
-fn apply_titlebar_text_transform(style: Option<&ComputedStyle>, text: String) -> String {
-    match style
-        .and_then(|style| style.text_transform)
-        .unwrap_or(TextTransformValue::None)
-    {
-        TextTransformValue::None => text,
-        TextTransformValue::Uppercase => text.to_uppercase(),
-        TextTransformValue::Lowercase => text.to_lowercase(),
-        TextTransformValue::Capitalize => {
-            let mut result = String::with_capacity(text.len());
-            let mut at_word_start = true;
-
-            for character in text.chars() {
-                if at_word_start && character.is_alphanumeric() {
-                    result.extend(character.to_uppercase());
-                    at_word_start = false;
-                } else {
-                    result.push(character);
-                    if !character.is_alphanumeric() {
-                        at_word_start = true;
-                    }
-                }
-            }
-
-            result
-        }
-    }
-}
-
-fn titlebar_bottom_border_width(style: Option<&ComputedStyle>) -> i32 {
-    if matches!(
-        style
-            .and_then(|style| style.border_style)
-            .map(|border| border.bottom),
-        Some(BorderStyleValue::None)
-    ) {
-        return 0;
-    }
-
-    style
-        .and_then(|style| style.border)
-        .map(|border| border_length_to_px(border.bottom))
-        .unwrap_or(0)
-}
-
-fn titlebar_bottom_border_color(
-    style: Option<&ComputedStyle>,
-    background: ColorValue,
-) -> ColorValue {
-    if let Some(color) = style
-        .and_then(|style| style.border_side_colors)
-        .and_then(|colors| colors.bottom)
-    {
-        return color;
-    }
-
-    style
-        .and_then(|style| style.border_color)
-        .unwrap_or(background)
-}
-
-fn decoration_mode_for_window(
-    appearance: AppearanceValue,
-    has_titlebar_style: bool,
-    supports_compositor_titlebar: bool,
-    is_fullscreen: bool,
-) -> DecorationMode {
-    if is_fullscreen {
-        return DecorationMode::NoTitlebar;
-    }
-
-    match appearance {
-        AppearanceValue::Auto if has_titlebar_style && supports_compositor_titlebar => {
-            DecorationMode::CompositorTitlebar
-        }
-        AppearanceValue::Auto => DecorationMode::ClientSide,
-        AppearanceValue::None => DecorationMode::NoTitlebar,
     }
 }
 
@@ -692,7 +514,7 @@ impl RiverBackendState {
                 let focused = self.runtime_state.focused_window_id.as_ref() == Some(&window_id);
                 let base_title = {
                     let window = self.runtime_state.windows.get(&window_id)?;
-                    titlebar_text(window)
+                    titlebar_text_from_window(window.title.as_deref(), window.app_id.as_deref())
                 };
                 let window_width = self
                     .runtime_state
@@ -713,52 +535,21 @@ impl RiverBackendState {
                     .and_then(|style| style.opacity)
                     .unwrap_or(1.0)
                     * motion.opacity;
-                let background = apply_opacity(
-                    titlebar_background(titlebar_style, focused),
-                    effective_opacity,
-                );
-                let text_color = apply_opacity(
-                    titlebar_text_color(titlebar_style, focused),
-                    effective_opacity,
-                );
-                let text_align = titlebar_text_align(titlebar_style);
-                let font_family = titlebar_font_family(titlebar_style);
-                let font_size = titlebar_font_size(titlebar_style);
-                let font_weight = titlebar_font_weight(titlebar_style);
-                let letter_spacing = titlebar_letter_spacing(titlebar_style);
-                let box_shadow = titlebar_box_shadow(titlebar_style, window_style);
-                let border_bottom_color = apply_opacity(
-                    titlebar_bottom_border_color(titlebar_style, background),
-                    effective_opacity,
-                );
-                let (padding_top, padding_right, padding_bottom, padding_left) =
-                    titlebar_padding(titlebar_style);
-                let (corner_radius_top_left, corner_radius_top_right) =
-                    titlebar_corner_radii(titlebar_style, window_style);
-                let title = apply_titlebar_text_transform(titlebar_style, base_title);
-                Some(TitlebarPlan {
+                Some(build_titlebar_plan(&TitlebarPlanInput {
                     window_id,
-                    height: titlebar_height,
+                    title: base_title,
+                    focused,
+                    titlebar_style: titlebar_style.cloned(),
+                    window_style: window_style.cloned(),
+                    default_background_focused: default_titlebar_background(true),
+                    default_background_unfocused: default_titlebar_background(false),
+                    default_text_color_focused: default_titlebar_text_color(true),
+                    default_text_color_unfocused: default_titlebar_text_color(false),
                     offset_x: motion.transform.translate_x_px.round() as i32,
                     offset_y: motion.transform.translate_y_px.round() as i32,
-                    background,
-                    border_bottom_width: titlebar_bottom_border_width(titlebar_style),
-                    border_bottom_color,
-                    title,
-                    text_color,
-                    text_align,
-                    font_family,
-                    font_size,
-                    font_weight,
-                    letter_spacing,
-                    box_shadow,
-                    padding_top,
-                    padding_right,
-                    padding_bottom,
-                    padding_left,
-                    corner_radius_top_left,
-                    corner_radius_top_right,
-                })
+                    effective_opacity,
+                    buttons: TitlebarButtonsConfig::default(),
+                }))
             })
             .collect()
     }
@@ -1537,7 +1328,10 @@ mod tests {
     #[test]
     fn titlebar_family_and_shadow_helpers_preserve_values() {
         let style = ComputedStyle {
-            font_family: Some(vec!["'DejaVu Sans'".into(), "sans-serif".into()]),
+            font_family: Some(vec![
+                spiders_css::FontFamilyName::Named("'DejaVu Sans'".into()),
+                spiders_css::FontFamilyName::SansSerif,
+            ]),
             box_shadow: Some(vec![spiders_scene::BoxShadowValue {
                 color: Some(spiders_scene::ColorValue {
                     red: 0,
@@ -1556,7 +1350,10 @@ mod tests {
 
         assert_eq!(
             titlebar_font_family(Some(&style)),
-            Some(vec!["'DejaVu Sans'".into(), "sans-serif".into()])
+            Some(vec![
+                spiders_css::FontFamilyName::Named("'DejaVu Sans'".into()),
+                spiders_css::FontFamilyName::SansSerif,
+            ])
         );
         assert_eq!(
             titlebar_box_shadow(Some(&style), None),
@@ -1636,55 +1433,6 @@ mod tests {
                 alpha: 100,
             }
         );
-    }
-
-    #[test]
-    fn titlebar_corner_radii_uses_titlebar_then_window_radius() {
-        let titlebar_style = ComputedStyle {
-            border_radius: Some(spiders_scene::BorderRadiusValue {
-                top_left: 12,
-                top_right: 6,
-                bottom_right: 0,
-                bottom_left: 0,
-            }),
-            ..ComputedStyle::default()
-        };
-        let window_style = ComputedStyle {
-            border_radius: Some(spiders_scene::BorderRadiusValue {
-                top_left: 20,
-                top_right: 18,
-                bottom_right: 20,
-                bottom_left: 18,
-            }),
-            ..ComputedStyle::default()
-        };
-
-        assert_eq!(
-            titlebar_corner_radii(Some(&titlebar_style), Some(&window_style)),
-            (12, 6)
-        );
-        assert_eq!(titlebar_corner_radii(None, Some(&window_style)), (20, 18));
-    }
-
-    #[test]
-    fn titlebar_bottom_border_width_honors_none_style() {
-        let style = ComputedStyle {
-            border: Some(BoxEdges {
-                top: LengthPercentage::Px(0.0),
-                right: LengthPercentage::Px(0.0),
-                bottom: LengthPercentage::Px(4.0),
-                left: LengthPercentage::Px(0.0),
-            }),
-            border_style: Some(BoxEdges {
-                top: BorderStyleValue::None,
-                right: BorderStyleValue::None,
-                bottom: BorderStyleValue::None,
-                left: BorderStyleValue::None,
-            }),
-            ..ComputedStyle::default()
-        };
-
-        assert_eq!(titlebar_bottom_border_width(Some(&style)), 0);
     }
 
     #[test]

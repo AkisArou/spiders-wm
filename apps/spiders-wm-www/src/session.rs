@@ -8,6 +8,7 @@ use spiders_core::resize::LayoutAdjustmentState;
 use spiders_core::snapshot::WindowSnapshot;
 use spiders_core::wm::WindowGeometry;
 use spiders_core::{LayoutId, WindowId};
+use spiders_scene::ComputedStyle;
 pub use spiders_wm_runtime::{PreviewDiagnostic, PreviewSnapshotNode};
 use spiders_wm_runtime::{
     PreviewLayoutComputation, PreviewSession as RuntimePreviewSession, PreviewWindow, WmHost,
@@ -224,6 +225,30 @@ impl PreviewSessionState {
                     .unwrap_or_else(|| title.to_string())
             })
             .unwrap_or_else(|| window_id.as_str().to_string())
+    }
+
+    pub fn snapshot_node_for_window(&self, window_id: &WindowId) -> Option<&PreviewSnapshotNode> {
+        fn find<'a>(
+            node: &'a PreviewSnapshotNode,
+            window_id: &WindowId,
+        ) -> Option<&'a PreviewSnapshotNode> {
+            if node.window_id.as_ref() == Some(window_id) {
+                return Some(node);
+            }
+
+            node.children.iter().find_map(|child| find(child, window_id))
+        }
+
+        self.snapshot_root.as_ref().and_then(|root| find(root, window_id))
+    }
+
+    pub fn window_titlebar_styles(
+        &self,
+        window_id: &WindowId,
+    ) -> (Option<ComputedStyle>, Option<ComputedStyle>) {
+        self.snapshot_node_for_window(window_id)
+            .map(|node| (node.layout_style.clone(), node.titlebar_style.clone()))
+            .unwrap_or((None, None))
     }
 
     pub fn apply_command(&mut self, command: WmCommand) {

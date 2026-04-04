@@ -1,0 +1,14 @@
+[package]
+name = "spiders-titlebar-native"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+ab_glyph = "0.2"
+spiders-config = { path = "../../config" }
+spiders-css = { path = "../../css" }
+spiders-fonts-native = { path = "../../fonts/native" }
+spiders-titlebar-core = { path = "../core" }
+tiny-skia = "0.11"

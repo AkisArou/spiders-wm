@@ -364,6 +364,8 @@ impl Dispatch<river_decoration_v1::RiverDecorationV1, ()> for RiverBackendState 
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
     ) {
+        // river_decoration_v1 does not currently deliver actionable input events here.
+        // Pointer interaction is exposed at the river_seat_v1/river_window_v1 level instead.
     }
 }
 

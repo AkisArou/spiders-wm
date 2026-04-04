@@ -1,6 +1,16 @@
 use leptos::prelude::*;
+use spiders_core::command::WmCommand;
 use spiders_core::snapshot::WindowSnapshot;
 use spiders_core::wm::WindowGeometry;
+use spiders_css::ColorValue;
+use spiders_titlebar_core::{
+    TitlebarButtonKind, TitlebarButtonsConfig, TitlebarPlan, TitlebarPlanInput, TitlebarPlanPreset,
+    build_titlebar_plan_with_preset,
+};
+use spiders_titlebar_web::{
+    WebTitlebarButtonState, WebTitlebarTrailingContent,
+    view_model_for_titlebar_with_button_state_and_trailing,
+};
 
 use crate::app_state::AppState;
 use crate::components::{Panel, PanelBar, TerminalSelect, TerminalSelectOption};
@@ -25,6 +35,109 @@ fn pane_style(
     )
 }
 
+fn frame_style(layout_style: Option<&spiders_scene::ComputedStyle>, focused: bool) -> String {
+    let background =
+        layout_style.and_then(|style| style.background).map(css_color).unwrap_or_else(|| {
+            if focused {
+                "rgba(20, 24, 33, 0.98)".to_string()
+            } else {
+                "rgba(24, 27, 36, 0.94)".to_string()
+            }
+        });
+    let opacity = layout_style.and_then(|style| style.opacity).unwrap_or(1.0).clamp(0.0, 1.0);
+    let radius = layout_style.and_then(|style| style.border_radius);
+    let border = layout_style.and_then(|style| style.border);
+    let border_style = layout_style.and_then(|style| style.border_style);
+    let border_color = layout_style
+        .and_then(|style| style.border_color)
+        .or_else(|| {
+            layout_style.and_then(|style| style.border_side_colors).and_then(|colors| colors.top)
+        })
+        .map(css_color)
+        .unwrap_or_else(|| {
+            if focused {
+                "rgba(93, 173, 226, 0.55)".to_string()
+            } else {
+                "rgba(80, 86, 104, 0.7)".to_string()
+            }
+        });
+    let border_width = border
+        .map(|edges| {
+            border_length_to_px(edges.top)
+                .max(border_length_to_px(edges.right))
+                .max(border_length_to_px(edges.bottom))
+                .max(border_length_to_px(edges.left))
+        })
+        .unwrap_or(1)
+        .max(0);
+    let border_css =
+        if matches!(border_style.map(|edges| edges.top), Some(spiders_css::BorderStyleValue::None))
+            || border_width == 0
+        {
+            "border: none;".to_string()
+        } else {
+            format!("border: {border_width}px solid {border_color};")
+        };
+
+    [
+        format!("background: {background};"),
+        format!("opacity: {opacity:.3};"),
+        border_css,
+        radius
+            .map(|radius| {
+                format!(
+                    "border-radius: {}px {}px {}px {}px;",
+                    radius.top_left, radius.top_right, radius.bottom_right, radius.bottom_left
+                )
+            })
+            .unwrap_or_default(),
+    ]
+    .join(" ")
+}
+
+fn body_style(layout_style: Option<&spiders_scene::ComputedStyle>) -> String {
+    let padding = layout_style.and_then(|style| style.padding);
+    let overflow = layout_style.and_then(|style| style.overflow_y);
+    let padding_css = padding
+        .map(|padding| {
+            format!(
+                "padding: {}px {}px {}px {}px;",
+                border_length_to_px(padding.top),
+                border_length_to_px(padding.right),
+                border_length_to_px(padding.bottom),
+                border_length_to_px(padding.left)
+            )
+        })
+        .unwrap_or_default();
+    let overflow_css = match overflow {
+        Some(spiders_css::OverflowValue::Hidden | spiders_css::OverflowValue::Clip) => {
+            "overflow: hidden;".to_string()
+        }
+        Some(spiders_css::OverflowValue::Scroll) => "overflow: auto;".to_string(),
+        _ => String::new(),
+    };
+
+    format!("{padding_css} {overflow_css}")
+}
+
+fn css_color(color: ColorValue) -> String {
+    format!(
+        "rgba({}, {}, {}, {:.3})",
+        color.red,
+        color.green,
+        color.blue,
+        f32::from(color.alpha) / 255.0
+    )
+}
+
+fn border_length_to_px(length: spiders_css::LengthPercentage) -> i32 {
+    match length {
+        spiders_css::LengthPercentage::Px(value)
+        | spiders_css::LengthPercentage::Percent(value) => value.round() as i32,
+    }
+    .max(0)
+}
+
 fn window_display_title(window: &WindowSnapshot) -> &str {
     window.title.as_deref().unwrap_or_else(|| window.id.as_str())
 }
@@ -44,6 +157,52 @@ fn window_accent(window: &WindowSnapshot) -> String {
         .fold(0usize, |acc, byte| acc + byte as usize);
 
     PALETTE[hash % PALETTE.len()].to_string()
+}
+
+fn titlebar_plan_with_styles(
+    window: &WindowSnapshot,
+    focused: bool,
+    layout_style: Option<spiders_scene::ComputedStyle>,
+    titlebar_style: Option<spiders_scene::ComputedStyle>,
+) -> TitlebarPlan {
+    build_titlebar_plan_with_preset(
+        &TitlebarPlanInput {
+            window_id: window.id.clone(),
+            title: window_display_title(window).to_string(),
+            focused,
+            titlebar_style,
+            window_style: layout_style,
+            default_background_focused: spiders_css::ColorValue {
+                red: 22,
+                green: 31,
+                blue: 45,
+                alpha: 245,
+            },
+            default_background_unfocused: spiders_css::ColorValue {
+                red: 25,
+                green: 25,
+                blue: 30,
+                alpha: 235,
+            },
+            default_text_color_focused: spiders_css::ColorValue {
+                red: 230,
+                green: 233,
+                blue: 239,
+                alpha: 255,
+            },
+            default_text_color_unfocused: spiders_css::ColorValue {
+                red: 230,
+                green: 233,
+                blue: 239,
+                alpha: 255,
+            },
+            offset_x: 0,
+            offset_y: 0,
+            effective_opacity: 1.0,
+            buttons: TitlebarButtonsConfig::default(),
+        },
+        &TitlebarPlanPreset::default(),
+    )
 }
 
 fn focused_window_label(snapshot: &PreviewSessionState) -> String {
@@ -252,8 +411,8 @@ pub fn PreviewView() -> impl IntoView {
                                                     let style_window = window.clone();
                                                     let surface_window = window.clone();
                                                     let focus_target = window.id.clone();
+                                                    let pane_focus_target = focus_target.clone();
                                                     let focused_id = window.id.clone();
-                                                    let title = window_display_title(&window).to_string();
                                                     let accent = window_accent(&window);
                                                     let geometry = app_state
                                                         .session
@@ -265,6 +424,47 @@ pub fn PreviewView() -> impl IntoView {
                                                         geometry.height,
                                                     );
                                                     let is_foot = window.app_id.as_deref() == Some("foot");
+                                                    let focused = app_state
+                                                        .session
+                                                        .get()
+                                                        .focused_window_id()
+                                                        .as_ref()
+                                                        == Some(&window.id);
+                                                    let (layout_style, titlebar_style) = app_state
+                                                        .session
+                                                        .get()
+                                                        .window_titlebar_styles(&window.id);
+                                                    let hovered_button = RwSignal::new(None::<TitlebarButtonKind>);
+                                                    let active_button = RwSignal::new(None::<TitlebarButtonKind>);
+                                                    let frame_style_value = frame_style(layout_style.as_ref(), focused);
+                                                    let body_style_value = body_style(layout_style.as_ref());
+                                                    let titlebar_plan = titlebar_plan_with_styles(
+                                                        &window,
+                                                        focused,
+                                                        layout_style,
+                                                        titlebar_style,
+                                                    );
+                                                    let trailing = WebTitlebarTrailingContent {
+                                                        text: dimensions.clone(),
+                                                        width_px: (dimensions.chars().count() as i32 * 8 + 8).max(0),
+                                                    };
+                                                    let titlebar = view_model_for_titlebar_with_button_state_and_trailing(
+                                                        &titlebar_plan,
+                                                        &titlebar_plan
+                                                            .buttons
+                                                            .iter()
+                                                            .map(|button| {
+                                                                (
+                                                                    button.kind,
+                                                                    WebTitlebarButtonState {
+                                                                        hovered: hovered_button.get() == Some(button.kind),
+                                                                        active: active_button.get() == Some(button.kind),
+                                                                    },
+                                                                )
+                                                            })
+                                                            .collect::<Vec<_>>(),
+                                                        Some(&trailing),
+                                                    );
 
                                                     view! {
                                                         <div
@@ -272,31 +472,81 @@ pub fn PreviewView() -> impl IntoView {
                                                                 if app_state.session.get().focused_window_id().as_ref()
                                                                     == Some(&focused_id)
                                                                 {
-                                                                    "text-terminal-fg absolute z-20 overflow-hidden border border-terminal-info bg-terminal-bg-active text-left text-xs cursor-pointer"
+                                                                    "text-terminal-fg absolute z-20 overflow-hidden text-left text-xs cursor-pointer"
                                                                 } else {
-                                                                    "text-terminal-fg absolute z-20 overflow-hidden border border-terminal-border-strong bg-terminal-bg-panel text-left text-xs cursor-pointer"
+                                                                    "text-terminal-fg absolute z-20 overflow-hidden text-left text-xs cursor-pointer"
                                                                 }
                                                             }
                                                             style=move || {
                                                                 let snapshot = app_state.session.get();
-                                                                pane_style(
+                                                                format!(
+                                                                    "{} {}",
+                                                                    pane_style(
                                                                     snapshot.window_geometry(&style_window.id),
                                                                     &accent,
                                                                     snapshot.canvas_width(),
                                                                     snapshot.canvas_height(),
+                                                                ),
+                                                                    frame_style_value,
                                                                 )
                                                             }
                                                             on:click=move |_| {
                                                                 app_state
                                                                     .session
-                                                                    .update(|state| state.set_focus(focus_target.clone()));
+                                                                    .update(|state| state.set_focus(pane_focus_target.clone()));
                                                             }
                                                         >
-                                                            <div class="flex justify-between items-center py-0.5 px-1 text-xs border-b bg-terminal-bg-subtle text-terminal-dim border-current/20">
-                                                                <span class="truncate">{title}</span>
-                                                                <span>{dimensions}</span>
+                                                            <div style=titlebar.outer_style.clone()>
+                                                                {titlebar
+                                                                    .buttons
+                                                                    .iter()
+                                                                    .cloned()
+                                                                    .map(|button| {
+                                                                        let button_kind = button.kind;
+                                                                        let button_label = button.label.clone();
+                                                                        let button_aria_label = button.label.clone();
+                                                                        let button_focus_target = focus_target.clone();
+                                                                        view! {
+                                                                            <button
+                                                                                style=button.style
+                                                                                title=button_label
+                                                                                aria-label=button_aria_label
+                                                                                on:pointerenter=move |_| {
+                                                                                    hovered_button.set(Some(button_kind));
+                                                                                }
+                                                                                on:pointerleave=move |_| {
+                                                                                    hovered_button.set(None);
+                                                                                    active_button.set(None);
+                                                                                }
+                                                                                on:mousedown=move |_| {
+                                                                                    active_button.set(Some(button_kind));
+                                                                                }
+                                                                                on:mouseup=move |_| {
+                                                                                    active_button.set(None);
+                                                                                }
+                                                                                on:click=move |event| {
+                                                                                    event.stop_propagation();
+                                                                                    active_button.set(None);
+                                                                                    app_state.session.update(|state| {
+                                                                                        state.set_focus(button_focus_target.clone());
+                                                                                        state.apply_command(match button_kind {
+                                                                                            TitlebarButtonKind::Close => WmCommand::CloseFocusedWindow,
+                                                                                            TitlebarButtonKind::ToggleFullscreen => WmCommand::ToggleFullscreen,
+                                                                                            TitlebarButtonKind::ToggleFloating => WmCommand::ToggleFloating,
+                                                                                        });
+                                                                                    });
+                                                                                }
+                                                                            />
+                                                                        }
+                                                                    })
+                                                                    .collect_view()}
+                                                                <div class="flex justify-between gap-2 items-center w-full min-w-0 text-xs" style=titlebar.title_style.clone()>
+                                                                    <span class="truncate min-w-0 flex-1">{titlebar.title}</span>
+                                                                </div>
+                                                                <span class="text-terminal-dim shrink-0 text-xs" style=titlebar.trailing_style.clone()>{trailing.text}</span>
                                                             </div>
 
+                                                            <div style=body_style_value.clone()>
                                                             {if is_foot {
                                                                 view! {
                                                                     <FootTerminal focused=Signal::derive(move || {
@@ -308,6 +558,7 @@ pub fn PreviewView() -> impl IntoView {
                                                             } else {
                                                                 view! { <WindowSurface window=surface_window /> }.into_any()
                                                             }}
+                                                            </div>
                                                         </div>
                                                     }
                                                 })

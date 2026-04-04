@@ -8,11 +8,11 @@ use crate::style::{
     AlignmentValue, AnimationDirectionValue, AnimationFillModeValue, AnimationIterationCountValue,
     AnimationPlayStateValue, AppearanceValue, BorderRadiusValue, BorderStyleValue, BoxEdges,
     BoxShadowValue, BoxSizingValue, ColorValue, ContentAlignmentValue, Display, FlexDirectionValue,
-    FlexWrapValue, FontFamilyValue, FontWeightValue, GridAutoFlow, GridPlacementValue,
-    GridTemplate, GridTemplateArea, GridTrackValue, LengthPercentage, Line, LinearStopValue,
-    MotionEasingKeywordValue, MotionEasingValue, MotionPropertyValue, MotionTimeValue,
-    OverflowValue, PositionValue, ScaleTransformValue, Size2, SizeValue, StepPositionValue,
-    TextAlignValue, TextTransformValue, TransformOperationValue, TransformValue,
+    FlexWrapValue, FontFamilyName, FontFamilyValue, FontWeightValue, GridAutoFlow,
+    GridPlacementValue, GridTemplate, GridTemplateArea, GridTrackValue, LengthPercentage, Line,
+    LinearStopValue, MotionEasingKeywordValue, MotionEasingValue, MotionPropertyValue,
+    MotionTimeValue, OverflowValue, PositionValue, ScaleTransformValue, Size2, SizeValue,
+    StepPositionValue, TextAlignValue, TextTransformValue, TransformOperationValue, TransformValue,
     TranslateTransformValue,
 };
 use style::parser::{Parse as StyloParse, ParserContext};
@@ -132,33 +132,27 @@ pub fn compile_declaration_from_value(
     value: &CssValue,
 ) -> Result<CompiledDeclaration, CssValueError> {
     match property {
-        "display" => Ok(CompiledDeclaration::Display(parse_display_direct(
-            property, value,
-        )?)),
-        "box-sizing" => Ok(CompiledDeclaration::BoxSizing(parse_box_sizing_direct(
-            property, value,
-        )?)),
-        "aspect-ratio" => Ok(CompiledDeclaration::AspectRatio(parse_aspect_ratio_direct(
-            property, value,
-        )?)),
-        "appearance" => Ok(CompiledDeclaration::Appearance(parse_appearance_direct(
-            property, value,
-        )?)),
-        "background" | "background-color" => Ok(CompiledDeclaration::Background(
-            parse_color_direct(property, value)?,
-        )),
-        "color" => Ok(CompiledDeclaration::Color(parse_color_direct(
-            property, value,
-        )?)),
-        "opacity" => Ok(CompiledDeclaration::Opacity(parse_number_direct(
-            property, value,
-        )?)),
-        "border-color" => Ok(CompiledDeclaration::BorderColor(parse_color_direct(
-            property, value,
-        )?)),
-        "border-style" => Ok(CompiledDeclaration::BorderStyle(
-            parse_box_border_styles_direct(property, value)?,
-        )),
+        "display" => Ok(CompiledDeclaration::Display(parse_display_direct(property, value)?)),
+        "box-sizing" => {
+            Ok(CompiledDeclaration::BoxSizing(parse_box_sizing_direct(property, value)?))
+        }
+        "aspect-ratio" => {
+            Ok(CompiledDeclaration::AspectRatio(parse_aspect_ratio_direct(property, value)?))
+        }
+        "appearance" => {
+            Ok(CompiledDeclaration::Appearance(parse_appearance_direct(property, value)?))
+        }
+        "background" | "background-color" => {
+            Ok(CompiledDeclaration::Background(parse_color_direct(property, value)?))
+        }
+        "color" => Ok(CompiledDeclaration::Color(parse_color_direct(property, value)?)),
+        "opacity" => Ok(CompiledDeclaration::Opacity(parse_number_direct(property, value)?)),
+        "border-color" => {
+            Ok(CompiledDeclaration::BorderColor(parse_color_direct(property, value)?))
+        }
+        "border-style" => {
+            Ok(CompiledDeclaration::BorderStyle(parse_box_border_styles_direct(property, value)?))
+        }
         "border-top-style" => Ok(CompiledDeclaration::BorderStyleSide(
             BoxSide::Top,
             parse_border_style_direct(property, value)?,
@@ -191,50 +185,48 @@ pub fn compile_declaration_from_value(
             BoxSide::Left,
             parse_color_direct(property, value)?,
         )),
-        "border-radius" => Ok(CompiledDeclaration::BorderRadius(
-            parse_border_radius_direct(property, value)?,
-        )),
-        "box-shadow" => Ok(CompiledDeclaration::BoxShadow(parse_box_shadow_direct(
-            property, value,
-        )?)),
-        "backdrop-filter" => Ok(CompiledDeclaration::BackdropFilter(parse_raw_text_direct(
-            property, value,
-        )?)),
-        "transform" => Ok(CompiledDeclaration::Transform(parse_transform_direct(
-            property, value,
-        )?)),
-        "text-align" => Ok(CompiledDeclaration::TextAlign(parse_text_align_direct(
-            property, value,
-        )?)),
-        "text-transform" => Ok(CompiledDeclaration::TextTransform(
-            parse_text_transform_direct(property, value)?,
-        )),
-        "font-family" => Ok(CompiledDeclaration::FontFamily(parse_font_family_direct(
-            property, value,
-        )?)),
+        "border-radius" => {
+            Ok(CompiledDeclaration::BorderRadius(parse_border_radius_direct(property, value)?))
+        }
+        "box-shadow" => {
+            Ok(CompiledDeclaration::BoxShadow(parse_box_shadow_direct(property, value)?))
+        }
+        "backdrop-filter" => {
+            Ok(CompiledDeclaration::BackdropFilter(parse_raw_text_direct(property, value)?))
+        }
+        "transform" => Ok(CompiledDeclaration::Transform(parse_transform_direct(property, value)?)),
+        "text-align" => {
+            Ok(CompiledDeclaration::TextAlign(parse_text_align_direct(property, value)?))
+        }
+        "text-transform" => {
+            Ok(CompiledDeclaration::TextTransform(parse_text_transform_direct(property, value)?))
+        }
+        "font-family" => {
+            Ok(CompiledDeclaration::FontFamily(parse_font_family_direct(property, value)?))
+        }
         "font-size" => Ok(CompiledDeclaration::FontSize(parse_length_percentage_word(
             property,
             value.text.trim(),
         )?)),
-        "font-weight" => Ok(CompiledDeclaration::FontWeight(parse_font_weight_direct(
-            property, value,
-        )?)),
-        "letter-spacing" => Ok(CompiledDeclaration::LetterSpacing(
-            parse_letter_spacing_direct(property, value)?,
-        )),
+        "font-weight" => {
+            Ok(CompiledDeclaration::FontWeight(parse_font_weight_direct(property, value)?))
+        }
+        "letter-spacing" => {
+            Ok(CompiledDeclaration::LetterSpacing(parse_letter_spacing_direct(property, value)?))
+        }
         "animation" => Ok(CompiledDeclaration::Ignored),
-        "animation-name" => Ok(CompiledDeclaration::AnimationName(
-            parse_animation_name_direct(property, value)?,
-        )),
+        "animation-name" => {
+            Ok(CompiledDeclaration::AnimationName(parse_animation_name_direct(property, value)?))
+        }
         "animation-duration" => Ok(CompiledDeclaration::AnimationDuration(
             parse_animation_duration_direct(property, value)?,
         )),
         "animation-timing-function" => Ok(CompiledDeclaration::AnimationTimingFunction(
             parse_timing_function_list_direct(property, value)?,
         )),
-        "animation-delay" => Ok(CompiledDeclaration::AnimationDelay(parse_time_list_direct(
-            property, value,
-        )?)),
+        "animation-delay" => {
+            Ok(CompiledDeclaration::AnimationDelay(parse_time_list_direct(property, value)?))
+        }
         "animation-iteration-count" => Ok(CompiledDeclaration::AnimationIterationCount(
             parse_animation_iteration_count_direct(property, value)?,
         )),
@@ -257,31 +249,21 @@ pub fn compile_declaration_from_value(
         "transition-timing-function" => Ok(CompiledDeclaration::TransitionTimingFunction(
             parse_timing_function_list_direct(property, value)?,
         )),
-        "transition-delay" => Ok(CompiledDeclaration::TransitionDelay(
-            parse_time_list_direct(property, value)?,
-        )),
+        "transition-delay" => {
+            Ok(CompiledDeclaration::TransitionDelay(parse_time_list_direct(property, value)?))
+        }
         "transition-behavior" => Ok(CompiledDeclaration::Ignored),
-        "flex-direction" => Ok(CompiledDeclaration::FlexDirection(
-            parse_flex_direction_direct(property, value)?,
-        )),
-        "flex-wrap" => Ok(CompiledDeclaration::FlexWrap(parse_flex_wrap_direct(
-            property, value,
-        )?)),
-        "flex-grow" => Ok(CompiledDeclaration::FlexGrow(parse_number_direct(
-            property, value,
-        )?)),
-        "flex-shrink" => Ok(CompiledDeclaration::FlexShrink(parse_number_direct(
-            property, value,
-        )?)),
-        "flex-basis" => Ok(CompiledDeclaration::FlexBasis(parse_size_value_direct(
-            property, value,
-        )?)),
-        "position" => Ok(CompiledDeclaration::Position(parse_position_direct(
-            property, value,
-        )?)),
-        "inset" => Ok(CompiledDeclaration::Inset(parse_box_edges_size_direct(
-            property, value,
-        )?)),
+        "flex-direction" => {
+            Ok(CompiledDeclaration::FlexDirection(parse_flex_direction_direct(property, value)?))
+        }
+        "flex-wrap" => Ok(CompiledDeclaration::FlexWrap(parse_flex_wrap_direct(property, value)?)),
+        "flex-grow" => Ok(CompiledDeclaration::FlexGrow(parse_number_direct(property, value)?)),
+        "flex-shrink" => Ok(CompiledDeclaration::FlexShrink(parse_number_direct(property, value)?)),
+        "flex-basis" => {
+            Ok(CompiledDeclaration::FlexBasis(parse_size_value_direct(property, value)?))
+        }
+        "position" => Ok(CompiledDeclaration::Position(parse_position_direct(property, value)?)),
+        "inset" => Ok(CompiledDeclaration::Inset(parse_box_edges_size_direct(property, value)?)),
         "top" => Ok(CompiledDeclaration::InsetSide(
             BoxSide::Top,
             parse_size_value_direct(property, value)?,
@@ -302,85 +284,67 @@ pub fn compile_declaration_from_value(
             let (x, y) = parse_overflow_pair_direct(property, value)?;
             Ok(CompiledDeclaration::Overflow(x, y))
         }
-        "overflow-x" => Ok(CompiledDeclaration::OverflowX(parse_overflow_direct(
-            property, value,
-        )?)),
-        "overflow-y" => Ok(CompiledDeclaration::OverflowY(parse_overflow_direct(
-            property, value,
-        )?)),
-        "width" => Ok(CompiledDeclaration::Width(parse_size_value_direct(
-            property, value,
-        )?)),
-        "height" => Ok(CompiledDeclaration::Height(parse_size_value_direct(
-            property, value,
-        )?)),
-        "min-width" => Ok(CompiledDeclaration::MinWidth(parse_size_value_direct(
-            property, value,
-        )?)),
-        "min-height" => Ok(CompiledDeclaration::MinHeight(parse_size_value_direct(
-            property, value,
-        )?)),
-        "max-width" => Ok(CompiledDeclaration::MaxWidth(parse_size_value_direct(
-            property, value,
-        )?)),
-        "max-height" => Ok(CompiledDeclaration::MaxHeight(parse_size_value_direct(
-            property, value,
-        )?)),
-        "align-items" => Ok(CompiledDeclaration::AlignItems(parse_alignment_direct(
-            property, value,
-        )?)),
-        "align-self" => Ok(CompiledDeclaration::AlignSelf(parse_alignment_direct(
-            property, value,
-        )?)),
-        "justify-items" => Ok(CompiledDeclaration::JustifyItems(parse_alignment_direct(
-            property, value,
-        )?)),
-        "justify-self" => Ok(CompiledDeclaration::JustifySelf(parse_alignment_direct(
-            property, value,
-        )?)),
-        "align-content" => Ok(CompiledDeclaration::AlignContent(
-            parse_content_alignment_direct(property, value)?,
-        )),
+        "overflow-x" => Ok(CompiledDeclaration::OverflowX(parse_overflow_direct(property, value)?)),
+        "overflow-y" => Ok(CompiledDeclaration::OverflowY(parse_overflow_direct(property, value)?)),
+        "width" => Ok(CompiledDeclaration::Width(parse_size_value_direct(property, value)?)),
+        "height" => Ok(CompiledDeclaration::Height(parse_size_value_direct(property, value)?)),
+        "min-width" => Ok(CompiledDeclaration::MinWidth(parse_size_value_direct(property, value)?)),
+        "min-height" => {
+            Ok(CompiledDeclaration::MinHeight(parse_size_value_direct(property, value)?))
+        }
+        "max-width" => Ok(CompiledDeclaration::MaxWidth(parse_size_value_direct(property, value)?)),
+        "max-height" => {
+            Ok(CompiledDeclaration::MaxHeight(parse_size_value_direct(property, value)?))
+        }
+        "align-items" => {
+            Ok(CompiledDeclaration::AlignItems(parse_alignment_direct(property, value)?))
+        }
+        "align-self" => {
+            Ok(CompiledDeclaration::AlignSelf(parse_alignment_direct(property, value)?))
+        }
+        "justify-items" => {
+            Ok(CompiledDeclaration::JustifyItems(parse_alignment_direct(property, value)?))
+        }
+        "justify-self" => {
+            Ok(CompiledDeclaration::JustifySelf(parse_alignment_direct(property, value)?))
+        }
+        "align-content" => {
+            Ok(CompiledDeclaration::AlignContent(parse_content_alignment_direct(property, value)?))
+        }
         "justify-content" => Ok(CompiledDeclaration::JustifyContent(
             parse_content_alignment_direct(property, value)?,
         )),
         "gap" => Ok(CompiledDeclaration::Gap(parse_gap_direct(property, value)?)),
-        "row-gap" => Ok(CompiledDeclaration::Gap(parse_axis_gap_direct(
-            property, value, true,
-        )?)),
-        "column-gap" => Ok(CompiledDeclaration::Gap(parse_axis_gap_direct(
-            property, value, false,
-        )?)),
-        "grid-template-rows" => Ok(CompiledDeclaration::GridTemplateRows(parse_grid_tracks(
-            property, value,
-        )?)),
-        "grid-template-columns" => Ok(CompiledDeclaration::GridTemplateColumns(parse_grid_tracks(
-            property, value,
-        )?)),
-        "grid-auto-rows" => Ok(CompiledDeclaration::GridAutoRows(parse_grid_auto_tracks(
-            property, value,
-        )?)),
-        "grid-auto-columns" => Ok(CompiledDeclaration::GridAutoColumns(
-            parse_grid_auto_tracks(property, value)?,
-        )),
-        "grid-template-areas" => Ok(CompiledDeclaration::GridTemplateAreas(
-            parse_grid_template_areas(property, value)?,
-        )),
-        "grid-row" => Ok(CompiledDeclaration::GridRow(parse_grid_line_shorthand(
-            property, value,
-        )?)),
-        "grid-column" => Ok(CompiledDeclaration::GridColumn(parse_grid_line_shorthand(
-            property, value,
-        )?)),
-        "grid-row-start" | "grid-row-end" => Ok(CompiledDeclaration::GridRow(
-            parse_grid_line_side(property, value)?,
-        )),
-        "grid-column-start" | "grid-column-end" => Ok(CompiledDeclaration::GridColumn(
-            parse_grid_line_side(property, value)?,
-        )),
-        "border-width" => Ok(CompiledDeclaration::Border(parse_box_edges_direct(
-            property, value,
-        )?)),
+        "row-gap" => Ok(CompiledDeclaration::Gap(parse_axis_gap_direct(property, value, true)?)),
+        "column-gap" => {
+            Ok(CompiledDeclaration::Gap(parse_axis_gap_direct(property, value, false)?))
+        }
+        "grid-template-rows" => {
+            Ok(CompiledDeclaration::GridTemplateRows(parse_grid_tracks(property, value)?))
+        }
+        "grid-template-columns" => {
+            Ok(CompiledDeclaration::GridTemplateColumns(parse_grid_tracks(property, value)?))
+        }
+        "grid-auto-rows" => {
+            Ok(CompiledDeclaration::GridAutoRows(parse_grid_auto_tracks(property, value)?))
+        }
+        "grid-auto-columns" => {
+            Ok(CompiledDeclaration::GridAutoColumns(parse_grid_auto_tracks(property, value)?))
+        }
+        "grid-template-areas" => {
+            Ok(CompiledDeclaration::GridTemplateAreas(parse_grid_template_areas(property, value)?))
+        }
+        "grid-row" => Ok(CompiledDeclaration::GridRow(parse_grid_line_shorthand(property, value)?)),
+        "grid-column" => {
+            Ok(CompiledDeclaration::GridColumn(parse_grid_line_shorthand(property, value)?))
+        }
+        "grid-row-start" | "grid-row-end" => {
+            Ok(CompiledDeclaration::GridRow(parse_grid_line_side(property, value)?))
+        }
+        "grid-column-start" | "grid-column-end" => {
+            Ok(CompiledDeclaration::GridColumn(parse_grid_line_side(property, value)?))
+        }
+        "border-width" => Ok(CompiledDeclaration::Border(parse_box_edges_direct(property, value)?)),
         "border-top-width" => Ok(CompiledDeclaration::BorderSide(
             BoxSide::Top,
             parse_length_percentage_word(property, value.text.trim())?,
@@ -397,9 +361,7 @@ pub fn compile_declaration_from_value(
             BoxSide::Left,
             parse_length_percentage_word(property, value.text.trim())?,
         )),
-        "padding" => Ok(CompiledDeclaration::Padding(parse_box_edges_direct(
-            property, value,
-        )?)),
+        "padding" => Ok(CompiledDeclaration::Padding(parse_box_edges_direct(property, value)?)),
         "padding-top" => Ok(CompiledDeclaration::PaddingSide(
             BoxSide::Top,
             parse_length_percentage_word(property, value.text.trim())?,
@@ -416,9 +378,7 @@ pub fn compile_declaration_from_value(
             BoxSide::Left,
             parse_length_percentage_word(property, value.text.trim())?,
         )),
-        "margin" => Ok(CompiledDeclaration::Margin(parse_box_edges_size_direct(
-            property, value,
-        )?)),
+        "margin" => Ok(CompiledDeclaration::Margin(parse_box_edges_size_direct(property, value)?)),
         "margin-top" => Ok(CompiledDeclaration::MarginSide(
             BoxSide::Top,
             parse_size_value_direct(property, value)?,
@@ -530,13 +490,14 @@ fn parse_font_weight_direct(
 fn parse_letter_spacing_direct(property: &str, value: &CssValue) -> Result<f32, CssValueError> {
     match keyword(property, value)? {
         "normal" => Ok(0.0),
-        text => text
-            .strip_suffix("px")
-            .and_then(|number| number.parse::<f32>().ok())
-            .ok_or_else(|| CssValueError::UnsupportedValue {
-                property: property.to_string(),
-                value: value.text.clone(),
-            }),
+        text => {
+            text.strip_suffix("px").and_then(|number| number.parse::<f32>().ok()).ok_or_else(|| {
+                CssValueError::UnsupportedValue {
+                    property: property.to_string(),
+                    value: value.text.clone(),
+                }
+            })
+        }
     }
 }
 
@@ -549,12 +510,7 @@ fn parse_color_direct(property: &str, value: &CssValue) -> Result<ColorValue, Cs
         });
     }
     if text.eq_ignore_ascii_case("transparent") {
-        return Ok(ColorValue {
-            red: 0,
-            green: 0,
-            blue: 0,
-            alpha: 0,
-        });
+        return Ok(ColorValue { red: 0, green: 0, blue: 0, alpha: 0 });
     }
 
     if let Some(color) = parse_hex_color(text) {
@@ -610,9 +566,7 @@ fn parse_transform_direct(
     }
 
     if text.eq_ignore_ascii_case("none") {
-        return Ok(TransformValue {
-            operations: Vec::new(),
-        });
+        return Ok(TransformValue { operations: Vec::new() });
     }
 
     let mut operations = Vec::new();
@@ -626,18 +580,18 @@ fn parse_transform_direct(
             "translate" => operations.push(TransformOperationValue::Translate(
                 parse_translate_function_args(property, value, &args)?,
             )),
-            "translatex" => operations.push(TransformOperationValue::Translate(
-                TranslateTransformValue {
+            "translatex" => {
+                operations.push(TransformOperationValue::Translate(TranslateTransformValue {
                     x: parse_transform_length_percentage_arg(property, value, args.first())?,
                     y: LengthPercentage::Px(0.0),
-                },
-            )),
-            "translatey" => operations.push(TransformOperationValue::Translate(
-                TranslateTransformValue {
+                }))
+            }
+            "translatey" => {
+                operations.push(TransformOperationValue::Translate(TranslateTransformValue {
                     x: LengthPercentage::Px(0.0),
                     y: parse_transform_length_percentage_arg(property, value, args.first())?,
-                },
-            )),
+                }))
+            }
             "scale" => operations.push(TransformOperationValue::Scale(parse_scale_function_args(
                 property, value, &args,
             )?)),
@@ -752,11 +706,7 @@ fn parse_transform_number_arg(
 }
 
 fn non_whitespace_components(tokens: &[CssValueToken]) -> Vec<CssValueToken> {
-    tokens
-        .iter()
-        .filter(|token| !matches!(token, CssValueToken::Whitespace))
-        .cloned()
-        .collect()
+    tokens.iter().filter(|token| !matches!(token, CssValueToken::Whitespace)).cloned().collect()
 }
 
 fn split_transform_function_args(tokens: &[CssValueToken]) -> Vec<Vec<CssValueToken>> {
@@ -803,12 +753,10 @@ fn parse_transition_property_direct(
             property: property.to_string(),
             value: value.text.clone(),
         })?;
-    parser
-        .expect_exhausted()
-        .map_err(|_| CssValueError::UnsupportedValue {
-            property: property.to_string(),
-            value: value.text.clone(),
-        })?;
+    parser.expect_exhausted().map_err(|_| CssValueError::UnsupportedValue {
+        property: property.to_string(),
+        value: value.text.clone(),
+    })?;
 
     Ok(parsed
         .into_iter()
@@ -841,23 +789,17 @@ fn parse_animation_name_direct(
     let parsed = parser
         .parse_comma_separated(|input| StyloAnimationName::parse(&context, input))
         .map_err(|_| CssValueError::UnsupportedValue {
-            property: property.to_string(),
-            value: value.text.clone(),
-        })?;
-    parser
-        .expect_exhausted()
-        .map_err(|_| CssValueError::UnsupportedValue {
-            property: property.to_string(),
-            value: value.text.clone(),
-        })?;
+        property: property.to_string(),
+        value: value.text.clone(),
+    })?;
+    parser.expect_exhausted().map_err(|_| CssValueError::UnsupportedValue {
+        property: property.to_string(),
+        value: value.text.clone(),
+    })?;
 
     Ok(parsed
         .into_iter()
-        .map(|name| {
-            name.as_atom()
-                .map(|atom| atom.to_string())
-                .unwrap_or_else(|| "none".into())
-        })
+        .map(|name| name.as_atom().map(|atom| atom.to_string()).unwrap_or_else(|| "none".into()))
         .collect())
 }
 
@@ -883,12 +825,10 @@ fn parse_animation_duration_direct(
             property: property.to_string(),
             value: value.text.clone(),
         })?;
-    parser
-        .expect_exhausted()
-        .map_err(|_| CssValueError::UnsupportedValue {
-            property: property.to_string(),
-            value: value.text.clone(),
-        })?;
+    parser.expect_exhausted().map_err(|_| CssValueError::UnsupportedValue {
+        property: property.to_string(),
+        value: value.text.clone(),
+    })?;
 
     Ok(parsed
         .into_iter()
@@ -921,12 +861,10 @@ fn parse_timing_function_list_direct(
             property: property.to_string(),
             value: value.text.clone(),
         })?;
-    parser
-        .expect_exhausted()
-        .map_err(|_| CssValueError::UnsupportedValue {
-            property: property.to_string(),
-            value: value.text.clone(),
-        })?;
+    parser.expect_exhausted().map_err(|_| CssValueError::UnsupportedValue {
+        property: property.to_string(),
+        value: value.text.clone(),
+    })?;
 
     Ok(parsed
         .into_iter()
@@ -956,12 +894,10 @@ fn parse_non_negative_time_list_direct(
             property: property.to_string(),
             value: value.text.clone(),
         })?;
-    parser
-        .expect_exhausted()
-        .map_err(|_| CssValueError::UnsupportedValue {
-            property: property.to_string(),
-            value: value.text.clone(),
-        })?;
+    parser.expect_exhausted().map_err(|_| CssValueError::UnsupportedValue {
+        property: property.to_string(),
+        value: value.text.clone(),
+    })?;
 
     Ok(parsed.into_iter().map(motion_time_from_stylo).collect())
 }
@@ -982,18 +918,17 @@ fn parse_time_list_direct(
     let context = stylo_parser_context(&url_data);
     let mut input = ParserInput::new(text);
     let mut parser = Parser::new(&mut input);
-    let parsed = parser
-        .parse_comma_separated(|input| StyloTime::parse(&context, input))
-        .map_err(|_| CssValueError::UnsupportedValue {
-            property: property.to_string(),
-            value: value.text.clone(),
+    let parsed =
+        parser.parse_comma_separated(|input| StyloTime::parse(&context, input)).map_err(|_| {
+            CssValueError::UnsupportedValue {
+                property: property.to_string(),
+                value: value.text.clone(),
+            }
         })?;
-    parser
-        .expect_exhausted()
-        .map_err(|_| CssValueError::UnsupportedValue {
-            property: property.to_string(),
-            value: value.text.clone(),
-        })?;
+    parser.expect_exhausted().map_err(|_| CssValueError::UnsupportedValue {
+        property: property.to_string(),
+        value: value.text.clone(),
+    })?;
 
     Ok(parsed.into_iter().map(motion_time_from_stylo).collect())
 }
@@ -1020,12 +955,10 @@ fn parse_animation_iteration_count_direct(
             property: property.to_string(),
             value: value.text.clone(),
         })?;
-    parser
-        .expect_exhausted()
-        .map_err(|_| CssValueError::UnsupportedValue {
-            property: property.to_string(),
-            value: value.text.clone(),
-        })?;
+    parser.expect_exhausted().map_err(|_| CssValueError::UnsupportedValue {
+        property: property.to_string(),
+        value: value.text.clone(),
+    })?;
 
     Ok(parsed
         .into_iter()
@@ -1052,18 +985,16 @@ fn parse_animation_direction_direct(
 
     let mut input = ParserInput::new(text);
     let mut parser = Parser::new(&mut input);
-    let parsed = parser
-        .parse_comma_separated(StyloAnimationDirection::parse)
-        .map_err(|_| CssValueError::UnsupportedValue {
+    let parsed = parser.parse_comma_separated(StyloAnimationDirection::parse).map_err(|_| {
+        CssValueError::UnsupportedValue {
             property: property.to_string(),
             value: value.text.clone(),
-        })?;
-    parser
-        .expect_exhausted()
-        .map_err(|_| CssValueError::UnsupportedValue {
-            property: property.to_string(),
-            value: value.text.clone(),
-        })?;
+        }
+    })?;
+    parser.expect_exhausted().map_err(|_| CssValueError::UnsupportedValue {
+        property: property.to_string(),
+        value: value.text.clone(),
+    })?;
 
     Ok(parsed
         .into_iter()
@@ -1090,18 +1021,16 @@ fn parse_animation_fill_mode_direct(
 
     let mut input = ParserInput::new(text);
     let mut parser = Parser::new(&mut input);
-    let parsed = parser
-        .parse_comma_separated(StyloAnimationFillMode::parse)
-        .map_err(|_| CssValueError::UnsupportedValue {
+    let parsed = parser.parse_comma_separated(StyloAnimationFillMode::parse).map_err(|_| {
+        CssValueError::UnsupportedValue {
             property: property.to_string(),
             value: value.text.clone(),
-        })?;
-    parser
-        .expect_exhausted()
-        .map_err(|_| CssValueError::UnsupportedValue {
-            property: property.to_string(),
-            value: value.text.clone(),
-        })?;
+        }
+    })?;
+    parser.expect_exhausted().map_err(|_| CssValueError::UnsupportedValue {
+        property: property.to_string(),
+        value: value.text.clone(),
+    })?;
 
     Ok(parsed
         .into_iter()
@@ -1128,18 +1057,16 @@ fn parse_animation_play_state_direct(
 
     let mut input = ParserInput::new(text);
     let mut parser = Parser::new(&mut input);
-    let parsed = parser
-        .parse_comma_separated(StyloAnimationPlayState::parse)
-        .map_err(|_| CssValueError::UnsupportedValue {
+    let parsed = parser.parse_comma_separated(StyloAnimationPlayState::parse).map_err(|_| {
+        CssValueError::UnsupportedValue {
             property: property.to_string(),
             value: value.text.clone(),
-        })?;
-    parser
-        .expect_exhausted()
-        .map_err(|_| CssValueError::UnsupportedValue {
-            property: property.to_string(),
-            value: value.text.clone(),
-        })?;
+        }
+    })?;
+    parser.expect_exhausted().map_err(|_| CssValueError::UnsupportedValue {
+        property: property.to_string(),
+        value: value.text.clone(),
+    })?;
 
     Ok(parsed
         .into_iter()
@@ -1176,12 +1103,9 @@ fn timing_function_to_scene(value: &ComputedTimingFunction) -> MotionEasingValue
             TimingKeyword::EaseOut => MotionEasingKeywordValue::EaseOut,
             TimingKeyword::EaseInOut => MotionEasingKeywordValue::EaseInOut,
         }),
-        ComputedTimingFunction::CubicBezier { x1, y1, x2, y2 } => MotionEasingValue::CubicBezier {
-            x1: *x1,
-            y1: *y1,
-            x2: *x2,
-            y2: *y2,
-        },
+        ComputedTimingFunction::CubicBezier { x1, y1, x2, y2 } => {
+            MotionEasingValue::CubicBezier { x1: *x1, y1: *y1, x2: *x2, y2: *y2 }
+        }
         ComputedTimingFunction::Steps(steps, position) => MotionEasingValue::Steps {
             count: (*steps).max(1) as u16,
             position: step_position_to_scene(*position),
@@ -1189,10 +1113,7 @@ fn timing_function_to_scene(value: &ComputedTimingFunction) -> MotionEasingValue
         ComputedTimingFunction::LinearFunction(function) => MotionEasingValue::LinearFunction(
             function
                 .iter()
-                .map(|entry| LinearStopValue {
-                    input: entry.x,
-                    output: entry.y,
-                })
+                .map(|entry| LinearStopValue { input: entry.x, output: entry.y })
                 .collect(),
         ),
     }
@@ -1234,6 +1155,7 @@ fn parse_font_family_direct(
     let families = split_font_family_list(value.text.trim())
         .into_iter()
         .filter(|family| !family.is_empty())
+        .map(|family| parse_font_family_name(&family))
         .collect::<Vec<_>>();
 
     if families.is_empty() {
@@ -1246,20 +1168,31 @@ fn parse_font_family_direct(
     Ok(families)
 }
 
+fn parse_font_family_name(value: &str) -> FontFamilyName {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "serif" => FontFamilyName::Serif,
+        "sans-serif" => FontFamilyName::SansSerif,
+        "monospace" => FontFamilyName::Monospace,
+        "cursive" => FontFamilyName::Cursive,
+        "fantasy" => FontFamilyName::Fantasy,
+        "system-ui" => FontFamilyName::SystemUi,
+        _ => FontFamilyName::Named(value.trim().to_string()),
+    }
+}
+
 fn parse_border_radius_direct(
     property: &str,
     value: &CssValue,
 ) -> Result<BorderRadiusValue, CssValueError> {
     let text = value.text.trim();
     let horizontal = text.split('/').next().unwrap_or(text);
-    let values = horizontal
-        .split_whitespace()
-        .map(parse_radius_px)
-        .collect::<Option<Vec<_>>>()
-        .ok_or_else(|| CssValueError::UnsupportedValue {
-            property: property.to_string(),
-            value: value.text.clone(),
-        })?;
+    let values =
+        horizontal.split_whitespace().map(parse_radius_px).collect::<Option<Vec<_>>>().ok_or_else(
+            || CssValueError::UnsupportedValue {
+                property: property.to_string(),
+                value: value.text.clone(),
+            },
+        )?;
 
     let radius = match values.as_slice() {
         [single] => BorderRadiusValue {
@@ -1347,9 +1280,8 @@ fn parse_box_shadow_list(text: &str) -> Option<Vec<BoxShadowValue>> {
     let context = stylo_parser_context(&url_data);
     let mut input = ParserInput::new(text);
     let mut parser = Parser::new(&mut input);
-    let shadows = parser
-        .parse_comma_separated(|input| StyloBoxShadow::parse(&context, input))
-        .ok()?;
+    let shadows =
+        parser.parse_comma_separated(|input| StyloBoxShadow::parse(&context, input)).ok()?;
     parser.expect_exhausted().ok()?;
 
     shadows
@@ -1498,20 +1430,14 @@ fn parse_box_sizing_direct(
 fn parse_aspect_ratio_direct(property: &str, value: &CssValue) -> Result<f32, CssValueError> {
     let trimmed = value.text.trim();
     if let Some((left, right)) = trimmed.split_once('/') {
-        let left = left
-            .trim()
-            .parse::<f32>()
-            .map_err(|_| CssValueError::UnsupportedValue {
-                property: property.into(),
-                value: value.text.clone(),
-            })?;
-        let right = right
-            .trim()
-            .parse::<f32>()
-            .map_err(|_| CssValueError::UnsupportedValue {
-                property: property.into(),
-                value: value.text.clone(),
-            })?;
+        let left = left.trim().parse::<f32>().map_err(|_| CssValueError::UnsupportedValue {
+            property: property.into(),
+            value: value.text.clone(),
+        })?;
+        let right = right.trim().parse::<f32>().map_err(|_| CssValueError::UnsupportedValue {
+            property: property.into(),
+            value: value.text.clone(),
+        })?;
         if right == 0.0 {
             return Err(CssValueError::UnsupportedValue {
                 property: property.into(),
@@ -1521,12 +1447,10 @@ fn parse_aspect_ratio_direct(property: &str, value: &CssValue) -> Result<f32, Cs
         return Ok(left / right);
     }
 
-    trimmed
-        .parse::<f32>()
-        .map_err(|_| CssValueError::UnsupportedValue {
-            property: property.into(),
-            value: value.text.clone(),
-        })
+    trimmed.parse::<f32>().map_err(|_| CssValueError::UnsupportedValue {
+        property: property.into(),
+        value: value.text.clone(),
+    })
 }
 
 fn parse_flex_direction_direct(
@@ -1591,13 +1515,7 @@ fn parse_overflow_pair_direct(
     let values = split_words(value)
         .into_iter()
         .map(|word| {
-            parse_overflow_direct(
-                property,
-                &CssValue {
-                    text: word.into(),
-                    components: Vec::new(),
-                },
-            )
+            parse_overflow_direct(property, &CssValue { text: word.into(), components: Vec::new() })
         })
         .collect::<Result<Vec<_>, _>>()?;
 
@@ -1661,14 +1579,8 @@ fn parse_gap_direct(
         .collect::<Result<Vec<_>, _>>()?;
 
     match values.as_slice() {
-        [single] => Ok(Size2 {
-            width: *single,
-            height: *single,
-        }),
-        [row, column] => Ok(Size2 {
-            width: *column,
-            height: *row,
-        }),
+        [single] => Ok(Size2 { width: *single, height: *single }),
+        [row, column] => Ok(Size2 { width: *column, height: *row }),
         _ => Err(CssValueError::UnsupportedValue {
             property: property.into(),
             value: value.text.clone(),
@@ -1692,27 +1604,17 @@ fn parse_axis_gap_direct(
     };
 
     Ok(if is_row {
-        Size2 {
-            width: LengthPercentage::Px(0.0),
-            height: parsed,
-        }
+        Size2 { width: LengthPercentage::Px(0.0), height: parsed }
     } else {
-        Size2 {
-            width: parsed,
-            height: LengthPercentage::Px(0.0),
-        }
+        Size2 { width: parsed, height: LengthPercentage::Px(0.0) }
     })
 }
 
 fn parse_number_direct(property: &str, value: &CssValue) -> Result<f32, CssValueError> {
-    value
-        .text
-        .trim()
-        .parse::<f32>()
-        .map_err(|_| CssValueError::UnsupportedValue {
-            property: property.into(),
-            value: value.text.clone(),
-        })
+    value.text.trim().parse::<f32>().map_err(|_| CssValueError::UnsupportedValue {
+        property: property.into(),
+        value: value.text.clone(),
+    })
 }
 
 fn split_words(value: &CssValue) -> Vec<&str> {
@@ -1727,35 +1629,24 @@ fn parse_length_percentage_word(
         return Ok(LengthPercentage::Px(0.0));
     }
     if let Some(number) = word.strip_suffix("px") {
-        return number
-            .parse::<f32>()
-            .map(LengthPercentage::Px)
-            .map_err(|_| CssValueError::UnsupportedValue {
-                property: property.into(),
-                value: word.into(),
-            });
+        return number.parse::<f32>().map(LengthPercentage::Px).map_err(|_| {
+            CssValueError::UnsupportedValue { property: property.into(), value: word.into() }
+        });
     }
     if let Some(number) = word.strip_suffix('%') {
-        return number
-            .parse::<f32>()
-            .map(LengthPercentage::Percent)
-            .map_err(|_| CssValueError::UnsupportedValue {
-                property: property.into(),
-                value: word.into(),
-            });
+        return number.parse::<f32>().map(LengthPercentage::Percent).map_err(|_| {
+            CssValueError::UnsupportedValue { property: property.into(), value: word.into() }
+        });
     }
-    Err(CssValueError::UnsupportedValue {
-        property: property.into(),
-        value: word.into(),
-    })
+    Err(CssValueError::UnsupportedValue { property: property.into(), value: word.into() })
 }
 
 fn parse_size_value_direct(property: &str, value: &CssValue) -> Result<SizeValue, CssValueError> {
     match split_words(value).as_slice() {
         ["auto"] => Ok(SizeValue::Auto),
-        [single] => Ok(SizeValue::LengthPercentage(parse_length_percentage_word(
-            property, single,
-        )?)),
+        [single] => {
+            Ok(SizeValue::LengthPercentage(parse_length_percentage_word(property, single)?))
+        }
         _ => Err(CssValueError::UnsupportedValue {
             property: property.into(),
             value: value.text.clone(),
@@ -1765,30 +1656,19 @@ fn parse_size_value_direct(property: &str, value: &CssValue) -> Result<SizeValue
 
 fn expand_box_sides<T: Copy>(values: &[T]) -> Option<BoxEdges<T>> {
     match values {
-        [a] => Some(BoxEdges {
-            top: *a,
-            right: *a,
-            bottom: *a,
-            left: *a,
-        }),
+        [a] => Some(BoxEdges { top: *a, right: *a, bottom: *a, left: *a }),
         [vertical, horizontal] => Some(BoxEdges {
             top: *vertical,
             right: *horizontal,
             bottom: *vertical,
             left: *horizontal,
         }),
-        [top, horizontal, bottom] => Some(BoxEdges {
-            top: *top,
-            right: *horizontal,
-            bottom: *bottom,
-            left: *horizontal,
-        }),
-        [top, right, bottom, left] => Some(BoxEdges {
-            top: *top,
-            right: *right,
-            bottom: *bottom,
-            left: *left,
-        }),
+        [top, horizontal, bottom] => {
+            Some(BoxEdges { top: *top, right: *horizontal, bottom: *bottom, left: *horizontal })
+        }
+        [top, right, bottom, left] => {
+            Some(BoxEdges { top: *top, right: *right, bottom: *bottom, left: *left })
+        }
         _ => None,
     }
 }
@@ -1816,10 +1696,7 @@ fn parse_box_border_styles_direct(
         .map(|word| {
             parse_border_style_direct(
                 property,
-                &CssValue {
-                    text: word.to_string(),
-                    components: Vec::new(),
-                },
+                &CssValue { text: word.to_string(), components: Vec::new() },
             )
         })
         .collect::<Result<Vec<_>, _>>()?;
@@ -1895,18 +1772,12 @@ pub(super) fn parse_dimension_length_percentage(
     if dimension.unit.eq_ignore_ascii_case("px") {
         Ok(LengthPercentage::Px(dimension.value))
     } else {
-        Err(invalid_value(
-            property,
-            &format!("{}{}", dimension.value, dimension.unit),
-        ))
+        Err(invalid_value(property, &format!("{}{}", dimension.value, dimension.unit)))
     }
 }
 
 pub(super) fn function_args_value(function: &CssFunction) -> CssValue {
-    CssValue {
-        text: components_to_text(&function.value),
-        components: function.value.clone(),
-    }
+    CssValue { text: components_to_text(&function.value), components: function.value.clone() }
 }
 
 pub(super) fn split_function_args(function: &CssFunction) -> Vec<CssValue> {
@@ -1924,22 +1795,13 @@ pub(super) fn split_function_args(function: &CssFunction) -> Vec<CssValue> {
         current.push(component.clone());
     }
 
-    groups.push(CssValue {
-        text: components_to_text(&current),
-        components: current,
-    });
+    groups.push(CssValue { text: components_to_text(&current), components: current });
     groups
 }
 
 pub(super) fn slice_to_value(components: &[&CssValueToken]) -> CssValue {
-    let owned = components
-        .iter()
-        .map(|component| (*component).clone())
-        .collect::<Vec<_>>();
-    CssValue {
-        text: components_to_text(&owned),
-        components: owned,
-    }
+    let owned = components.iter().map(|component| (*component).clone()).collect::<Vec<_>>();
+    CssValue { text: components_to_text(&owned), components: owned }
 }
 
 pub(super) fn components_to_text(components: &[CssValueToken]) -> String {
@@ -1978,8 +1840,5 @@ pub(super) fn component_text(component: &CssValueToken) -> String {
 }
 
 pub(super) fn invalid_value(property: &str, value: &str) -> CssValueError {
-    CssValueError::UnsupportedValue {
-        property: property.to_owned(),
-        value: value.to_owned(),
-    }
+    CssValueError::UnsupportedValue { property: property.to_owned(), value: value.to_owned() }
 }

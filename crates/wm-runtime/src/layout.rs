@@ -167,6 +167,8 @@ fn snapshot_node(node: LayoutSnapshotNode) -> PreviewSnapshotNode {
             window_id: None,
             axis: layout_axis(styles.as_ref()).map(str::to_string),
             reverse: layout_reverse(styles.as_ref()),
+            layout_style: None,
+            titlebar_style: None,
             children: children.into_iter().map(snapshot_node).collect(),
         },
         LayoutSnapshotNode::Group { meta, rect, children, styles } => PreviewSnapshotNode {
@@ -177,9 +179,16 @@ fn snapshot_node(node: LayoutSnapshotNode) -> PreviewSnapshotNode {
             window_id: None,
             axis: layout_axis(styles.as_ref()).map(str::to_string),
             reverse: layout_reverse(styles.as_ref()),
+            layout_style: None,
+            titlebar_style: None,
             children: children.into_iter().map(snapshot_node).collect(),
         },
-        LayoutSnapshotNode::Window { meta, rect, window_id, .. } => PreviewSnapshotNode {
+        LayoutSnapshotNode::Window {
+            meta,
+            rect,
+            window_id,
+            styles,
+        } => PreviewSnapshotNode {
             node_type: "window".to_string(),
             id: meta.id,
             class_name: snapshot_classes(meta.class),
@@ -187,6 +196,8 @@ fn snapshot_node(node: LayoutSnapshotNode) -> PreviewSnapshotNode {
             window_id,
             axis: None,
             reverse: false,
+            layout_style: styles.as_ref().map(|styles| styles.layout.clone()),
+            titlebar_style: styles.as_ref().and_then(|styles| styles.titlebar.clone()),
             children: Vec::new(),
         },
     }

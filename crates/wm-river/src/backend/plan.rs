@@ -1,7 +1,7 @@
-use spiders_scene::{BoxShadowValue, ColorValue, FontFamilyValue, FontWeightValue, TextAlignValue};
-use spiders_core::types::WindowMode;
 use spiders_core::WindowId;
+use spiders_core::types::WindowMode;
 use spiders_core::{OutputId, WorkspaceId};
+pub use spiders_titlebar_core::{AppearancePlan, DecorationMode, TitlebarPlan};
 
 use crate::protocol::river_window_management_v1::river_window_v1;
 
@@ -43,44 +43,6 @@ pub struct BorderPlan {
     pub green: u32,
     pub blue: u32,
     pub alpha: u32,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DecorationMode {
-    ClientSide,
-    CompositorTitlebar,
-    NoTitlebar,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AppearancePlan {
-    pub window_id: WindowId,
-    pub decoration_mode: DecorationMode,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TitlebarPlan {
-    pub window_id: WindowId,
-    pub height: i32,
-    pub offset_x: i32,
-    pub offset_y: i32,
-    pub background: ColorValue,
-    pub border_bottom_width: i32,
-    pub border_bottom_color: ColorValue,
-    pub title: String,
-    pub text_color: ColorValue,
-    pub text_align: TextAlignValue,
-    pub font_family: Option<FontFamilyValue>,
-    pub font_size: i32,
-    pub font_weight: FontWeightValue,
-    pub letter_spacing: i32,
-    pub box_shadow: Option<Vec<BoxShadowValue>>,
-    pub padding_top: i32,
-    pub padding_right: i32,
-    pub padding_bottom: i32,
-    pub padding_left: i32,
-    pub corner_radius_top_left: i32,
-    pub corner_radius_top_right: i32,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -145,24 +107,14 @@ pub struct MoveWindowInWorkspacePlan {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum CommandPlan {
-    Spawn {
-        command: String,
-    },
+    Spawn { command: String },
     ActivateWorkspace(ActivateWorkspacePlan),
     MoveFocusedWindowToWorkspace(MoveFocusedWindowToWorkspacePlan),
     MoveWindowInWorkspace(MoveWindowInWorkspacePlan),
     SetWindowMode(WindowModePlan),
-    FocusOutput {
-        output_id: OutputId,
-    },
-    FocusWindow {
-        stack: MoveWindowToTopPlan,
-        focus: FocusPlan,
-    },
+    FocusOutput { output_id: OutputId },
+    FocusWindow { stack: MoveWindowToTopPlan, focus: FocusPlan },
     CloseFocusedWindow,
-    FocusDirection {
-        stack: MoveWindowToTopPlan,
-        focus: FocusPlan,
-    },
+    FocusDirection { stack: MoveWindowToTopPlan, focus: FocusPlan },
     Noop,
 }

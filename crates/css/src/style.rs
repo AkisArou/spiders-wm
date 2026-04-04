@@ -73,7 +73,18 @@ pub struct BoxShadowValue {
     pub inset: bool,
 }
 
-pub type FontFamilyValue = Vec<String>;
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum FontFamilyName {
+    Named(String),
+    Serif,
+    SansSerif,
+    Monospace,
+    Cursive,
+    Fantasy,
+    SystemUi,
+}
+
+pub type FontFamilyValue = Vec<FontFamilyName>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct TranslateTransformValue {
@@ -135,16 +146,8 @@ pub struct LinearStopValue {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum MotionEasingValue {
     Keyword(MotionEasingKeywordValue),
-    CubicBezier {
-        x1: f32,
-        y1: f32,
-        x2: f32,
-        y2: f32,
-    },
-    Steps {
-        count: u16,
-        position: StepPositionValue,
-    },
+    CubicBezier { x1: f32, y1: f32, x2: f32, y2: f32 },
+    Steps { count: u16, position: StepPositionValue },
     LinearFunction(Vec<LinearStopValue>),
 }
 
@@ -201,10 +204,17 @@ pub enum TextTransformValue {
     Capitalize,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum FontWeightValue {
     Normal,
     Bold,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct FontQuery {
+    pub families: FontFamilyValue,
+    pub weight: FontWeightValue,
+    pub size_px: i32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
