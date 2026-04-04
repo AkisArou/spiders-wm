@@ -37,11 +37,14 @@ impl PreviewRenderRequest {
 pub async fn evaluate_layout_source(
     request: &PreviewRenderRequest,
 ) -> Result<spiders_core::SourceLayoutNode, String> {
-    let entry_path = PathBuf::from(runtime_path(layout_entry_file_id(&request.active_layout)));
+    let config_entry_path = PathBuf::from(runtime_path(EditorFileId::Config));
     let root_dir = PathBuf::from(WORKSPACE_FS_ROOT);
     let sources = source_bundle_sources(&request.buffers);
-    let mut service = build_layout_service(&entry_path).map_err(|error| error.to_string())?;
-    let config = service.load_config(&root_dir, &entry_path, &sources).await.map_err(|error| error.to_string())?;
+    let mut service = build_layout_service(&config_entry_path).map_err(|error| error.to_string())?;
+    let config = service
+        .load_config(&root_dir, &config_entry_path, &sources)
+        .await
+        .map_err(|error| error.to_string())?;
     let state = build_preview_state_snapshot(request);
     let workspace = state
         .current_workspace()
@@ -128,11 +131,4 @@ pub fn source_bundle_sources(
             (path, source)
         })
         .collect()
-}
-
-fn layout_entry_file_id(layout: &LayoutId) -> EditorFileId {
-    match layout.as_str() {
-        "focus-repro" => EditorFileId::FocusReproLayoutTsx,
-        _ => EditorFileId::LayoutTsx,
-    }
 }

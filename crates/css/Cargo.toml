@@ -6,7 +6,7 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
-spiders-core = { path = "../spiders-core" }
+spiders-core = { path = "../core" }
 cssparser = "0.36"
 precomputed-hash = "0.1"
 selectors = "0.36.1"

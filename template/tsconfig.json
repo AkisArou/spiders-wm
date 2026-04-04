@@ -10,7 +10,7 @@
     "emitDeclarationOnly": false,
     "composite": false,
     "paths": {
-      "@spiders-wm/sdk/*": ["../packages/spiders-wm-sdk/src/*"]
+      "@spiders-wm/sdk/*": ["../packages/sdk/js/src/*"]
     },
     "tsBuildInfoFile": "./node_modules/.tsbuild/template.tsbuildinfo"
   },

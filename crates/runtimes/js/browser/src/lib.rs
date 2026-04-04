@@ -42,7 +42,7 @@ pub async fn evaluate_layout_module_graph(
     context: &LayoutEvaluationContext,
 ) -> Result<JsValue, String> {
     let context_value = serde_wasm_bindgen::to_value(context).map_err(|error| error.to_string())?;
-    evaluate_module_export(module_graph, "default", context_value).await
+    evaluate_module_export_function(module_graph, "default", context_value).await
 }
 
 pub async fn load_config_from_source_bundle(
@@ -52,7 +52,7 @@ pub async fn load_config_from_source_bundle(
 ) -> Result<Config, String> {
     let graph = compile_source_bundle_to_module_graph(root_dir, entry_path, sources)
         .map_err(|error| error.to_string())?;
-    let value = evaluate_module_export(&graph, "default", JsValue::NULL).await?;
+    let value = evaluate_module_export_value(&graph, "default").await?;
     let config_value: Value = serde_wasm_bindgen::from_value(value).map_err(|error| error.to_string())?;
     let mut config = decode_config_value(entry_path, &config_value).map_err(|error| error.to_string())?;
     config.global_stylesheet_path = sources
@@ -76,10 +76,9 @@ fn js_error_to_string(error: JsValue) -> String {
     error.as_string().unwrap_or_else(|| format!("{error:?}"))
 }
 
-async fn evaluate_module_export(
+async fn evaluate_module_export_value(
     module_graph: &JavaScriptModuleGraph,
     export_name: &str,
-    arg: JsValue,
 ) -> Result<JsValue, String> {
     let module_urls = build_module_urls(module_graph)?;
     let entry_url = module_urls
@@ -88,7 +87,15 @@ async fn evaluate_module_export(
         .clone();
     let promise = import_module(&entry_url).map_err(js_error_to_string)?;
     let namespace = JsFuture::from(promise).await.map_err(js_error_to_string)?;
-    let export = Reflect::get(&namespace, &JsValue::from_str(export_name)).map_err(js_error_to_string)?;
+    Reflect::get(&namespace, &JsValue::from_str(export_name)).map_err(js_error_to_string)
+}
+
+async fn evaluate_module_export_function(
+    module_graph: &JavaScriptModuleGraph,
+    export_name: &str,
+    arg: JsValue,
+) -> Result<JsValue, String> {
+    let export = evaluate_module_export_value(module_graph, export_name).await?;
     let function = export.dyn_into::<Function>().map_err(|_| {
         format!("Module {} does not export callable {}", module_graph.entry, export_name)
     })?;

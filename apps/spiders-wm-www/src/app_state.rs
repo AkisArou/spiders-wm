@@ -52,7 +52,7 @@ impl AppState {
     }
 
     pub fn parsed_bindings(&self) -> ParsedBindingsState {
-        self.loaded_bindings.get()
+        self.loaded_bindings.get_untracked()
     }
 
     pub fn binding_entries(&self) -> Vec<ParsedBindingEntry> {

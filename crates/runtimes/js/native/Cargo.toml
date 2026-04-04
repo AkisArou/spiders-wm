@@ -10,10 +10,10 @@ oxc = { workspace = true, features = ["full"] }
 rquickjs = { workspace = true, features = ["loader"] }
 serde.workspace = true
 serde_json.workspace = true
-spiders-config = { path = "../../../spiders-config" }
-spiders-core = { path = "../../../spiders-core" }
+spiders-config = { path = "../../../config" }
+spiders-core = { path = "../../../core" }
 spiders-runtime-js-core = { path = "../core" }
-spiders-scene = { path = "../../../spiders-scene" }
+spiders-scene = { path = "../../../scene" }
 thiserror.workspace = true
 tracing.workspace = true
 

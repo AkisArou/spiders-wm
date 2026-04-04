@@ -69,16 +69,19 @@ export default {
 
 ## Repository Layout
 
-- `crates/spiders-wm` - smithay compositor integration + window management runtime
-- `crates/spiders-wm-river` - river compositor integration and compatibility path
-- `crates/spiders-core` - shared WM domain types, authored layout contracts, and core model logic
-- `crates/spiders-config` - config loading, authoring layout evaluation, prepared config caching
-- `crates/spiders-scene` - layout node scene graph and geometry resolution
-- `crates/spiders-ipc` - IPC protocol, transport, and server
-- `crates/runtimes/js` - JavaScript runtime bridge and config SDK surface
-- `crates/spiders-cli` - CLI tooling for config validation, building, and IPC queries
-- `crates/spiders-logging` - shared logging initialization and filter setup
-- `crates/spiders-tree` - tree/graph data structures for layout and window tracking
+- `apps/spiders-wm` - smithay compositor integration + native host app
+- `apps/spiders-wm-www` - browser authoring and preview app
+- `crates/core` - shared WM domain types, layout/runtime contracts, and core model logic
+- `crates/config` - config loading, authoring layout services, and prepared config caching
+- `crates/scene` - layout node scene graph and geometry resolution
+- `crates/css` - stylesheet parsing and layout/effects CSS support
+- `crates/ipc` - IPC protocol, transport, and server
+- `crates/wm-runtime` - shared WM runtime and preview/session logic
+- `crates/cli` - CLI tooling for config validation, building, and IPC queries
+- `crates/logging` - shared logging initialization and filter setup
+- `crates/wm-river` - river compositor integration and compatibility path
+- `crates/runtimes/js/{core,native,browser}` - JS runtime family split by shared/native/browser concerns
+- `packages/sdk/js` - JavaScript/TypeScript SDK package surface
 
 ## Notes
 

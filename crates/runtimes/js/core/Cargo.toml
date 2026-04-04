@@ -10,9 +10,9 @@ oxc = { workspace = true, features = ["full"] }
 oxc_resolver.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-spiders-config = { path = "../../../spiders-config" }
-spiders-core = { path = "../../../spiders-core" }
-spiders-scene = { path = "../../../spiders-scene" }
+spiders-config = { path = "../../../config" }
+spiders-core = { path = "../../../core" }
+spiders-scene = { path = "../../../scene" }
 thiserror.workspace = true
 tracing.workspace = true
 

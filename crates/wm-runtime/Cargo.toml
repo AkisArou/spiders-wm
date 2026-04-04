@@ -9,9 +9,9 @@ publish.workspace = true
 regex.workspace = true
 serde.workspace = true
 serde-wasm-bindgen.workspace = true
-spiders-config = { path = "../spiders-config" }
-spiders-core = { path = "../spiders-core" }
-spiders-css = { path = "../spiders-css" }
-spiders-scene = { path = "../spiders-scene" }
+spiders-config = { path = "../config" }
+spiders-core = { path = "../core" }
+spiders-css = { path = "../css" }
+spiders-scene = { path = "../scene" }
 tracing.workspace = true
 wasm-bindgen.workspace = true

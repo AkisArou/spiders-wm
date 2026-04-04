@@ -10,8 +10,8 @@ js-sys.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 serde-wasm-bindgen.workspace = true
-spiders-config = { path = "../../../spiders-config" }
-spiders-core = { path = "../../../spiders-core" }
+spiders-config = { path = "../../../config" }
+spiders-core = { path = "../../../core" }
 spiders-runtime-js-core = { path = "../core" }
 wasm-bindgen.workspace = true
 wasm-bindgen-futures.workspace = true

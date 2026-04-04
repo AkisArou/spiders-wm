@@ -9,8 +9,8 @@ publish.workspace = true
 anyhow.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-spiders-scene = { path = "../spiders-scene" }
-spiders-core = { path = "../spiders-core" }
+spiders-scene = { path = "../scene" }
+spiders-core = { path = "../core" }
 thiserror.workspace = true
 tracing.workspace = true
 

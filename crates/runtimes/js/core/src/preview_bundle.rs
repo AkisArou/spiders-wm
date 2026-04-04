@@ -424,11 +424,11 @@ fn strip_stylesheet_imports(path: &Path, source: &str) -> Result<String, String>
 fn read_virtual_module_source(specifier: &str) -> Result<String, String> {
     let source = match specifier {
         "@spiders-wm/sdk/commands" => {
-            include_str!("../../../../../packages/spiders-wm-sdk/src/commands.js")
+            include_str!("../../../../../packages/sdk/js/src/commands.js")
         }
         "@spiders-wm/sdk/config" => include_str!("virtual/config.js"),
         "@spiders-wm/sdk/jsx-runtime" => {
-            include_str!("../../../../../packages/spiders-wm-sdk/src/jsx-runtime.js")
+            include_str!("../../../../../packages/sdk/js/src/jsx-runtime.js")
         }
         "@spiders-wm/sdk/layout" => include_str!("virtual/layout.js"),
         "@spiders-wm/sdk/api" => include_str!("virtual/api.js"),

@@ -206,7 +206,10 @@ pub fn PreviewView() -> impl IntoView {
 
                     <div class="overflow-hidden flex-1 min-h-0">
                         <Show
-                            when=move || app_state.session.get().snapshot_root.is_some()
+                            when=move || {
+                                let session = app_state.session.get();
+                                session.snapshot_root.is_some() || !session.diagnostics.is_empty()
+                            }
                             fallback=move || {
                                 view! {
                                     <div class="flex justify-center items-center p-3 h-full text-sm text-terminal-faint min-h-72">
@@ -215,90 +218,105 @@ pub fn PreviewView() -> impl IntoView {
                                 }
                             }
                         >
-                            <div
-                                class="overflow-hidden relative w-full h-full bg-terminal-bg-subtle min-h-72"
-                                style="background-image: linear-gradient(color-mix(in srgb, var(--color-terminal-bg) 72%, transparent), color-mix(in srgb, var(--color-terminal-bg-subtle) 58%, transparent));"
-                            >
-                                <div class="flex absolute inset-0 z-30 justify-center items-center pointer-events-none">
-                                    <img
-                                        class="h-auto w-[min(26rem,52%)] opacity-[0.14]"
-                                        src="/spiders-wm-logo.png"
-                                        alt=""
-                                    />
-                                </div>
+                            {move || {
+                                let session = app_state.session.get();
+                                if session.snapshot_root.is_none() {
+                                    view! {
+                                        <div class="overflow-auto p-3 w-full h-full text-sm border border-terminal-border bg-terminal-bg-subtle text-terminal-muted min-h-72">
+                                            <DiagnosticsList diagnostics=Signal::derive(move || {
+                                                app_state.session.get().diagnostics.clone()
+                                            }) />
+                                        </div>
+                                    }
+                                        .into_any()
+                                } else {
+                                    view! {
+                                        <div
+                                            class="overflow-hidden relative w-full h-full bg-terminal-bg-subtle min-h-72"
+                                            style="background-image: linear-gradient(color-mix(in srgb, var(--color-terminal-bg) 72%, transparent), color-mix(in srgb, var(--color-terminal-bg-subtle) 58%, transparent));"
+                                        >
+                                            <div class="flex absolute inset-0 z-30 justify-center items-center pointer-events-none">
+                                                <img
+                                                    class="h-auto w-[min(26rem,52%)] opacity-[0.14]"
+                                                    src="/spiders-wm-logo.png"
+                                                    alt=""
+                                                />
+                                            </div>
 
-                                {move || {
-                                    app_state
-                                        .session
-                                        .get()
-                                        .claimed_visible_windows()
-                                        .into_iter()
-                                        .map(|window| {
-                                            let style_window = window.clone();
-                                            let surface_window = window.clone();
-                                            let focus_target = window.id.clone();
-                                            let focused_id = window.id.clone();
-                                            let title = window_display_title(&window).to_string();
-                                            let accent = window_accent(&window);
-                                            let geometry = app_state
+                                            {app_state
                                                 .session
                                                 .get()
-                                                .window_geometry(&window.id);
-                                            let dimensions = format!(
-                                                "{}x{}",
-                                                geometry.width,
-                                                geometry.height,
-                                            );
-                                            let is_foot = window.app_id.as_deref() == Some("foot");
+                                                .claimed_visible_windows()
+                                                .into_iter()
+                                                .map(|window| {
+                                                    let style_window = window.clone();
+                                                    let surface_window = window.clone();
+                                                    let focus_target = window.id.clone();
+                                                    let focused_id = window.id.clone();
+                                                    let title = window_display_title(&window).to_string();
+                                                    let accent = window_accent(&window);
+                                                    let geometry = app_state
+                                                        .session
+                                                        .get()
+                                                        .window_geometry(&window.id);
+                                                    let dimensions = format!(
+                                                        "{}x{}",
+                                                        geometry.width,
+                                                        geometry.height,
+                                                    );
+                                                    let is_foot = window.app_id.as_deref() == Some("foot");
 
-                                            view! {
-                                                <div
-                                                    class=move || {
-                                                        if app_state.session.get().focused_window_id().as_ref()
-                                                            == Some(&focused_id)
-                                                        {
-                                                            "text-terminal-fg absolute z-20 overflow-hidden border border-terminal-info bg-terminal-bg-active text-left text-xs cursor-pointer"
-                                                        } else {
-                                                            "text-terminal-fg absolute z-20 overflow-hidden border border-terminal-border-strong bg-terminal-bg-panel text-left text-xs cursor-pointer"
-                                                        }
-                                                    }
-                                                    style=move || {
-                                                        let snapshot = app_state.session.get();
-                                                        pane_style(
-                                                            snapshot.window_geometry(&style_window.id),
-                                                            &accent,
-                                                            snapshot.canvas_width(),
-                                                            snapshot.canvas_height(),
-                                                        )
-                                                    }
-                                                    on:click=move |_| {
-                                                        app_state
-                                                            .session
-                                                            .update(|state| state.set_focus(focus_target.clone()));
-                                                    }
-                                                >
-                                                    <div class="flex justify-between items-center py-0.5 px-1 text-xs border-b bg-terminal-bg-subtle text-terminal-dim border-current/20">
-                                                        <span class="truncate">{title}</span>
-                                                        <span>{dimensions}</span>
-                                                    </div>
+                                                    view! {
+                                                        <div
+                                                            class=move || {
+                                                                if app_state.session.get().focused_window_id().as_ref()
+                                                                    == Some(&focused_id)
+                                                                {
+                                                                    "text-terminal-fg absolute z-20 overflow-hidden border border-terminal-info bg-terminal-bg-active text-left text-xs cursor-pointer"
+                                                                } else {
+                                                                    "text-terminal-fg absolute z-20 overflow-hidden border border-terminal-border-strong bg-terminal-bg-panel text-left text-xs cursor-pointer"
+                                                                }
+                                                            }
+                                                            style=move || {
+                                                                let snapshot = app_state.session.get();
+                                                                pane_style(
+                                                                    snapshot.window_geometry(&style_window.id),
+                                                                    &accent,
+                                                                    snapshot.canvas_width(),
+                                                                    snapshot.canvas_height(),
+                                                                )
+                                                            }
+                                                            on:click=move |_| {
+                                                                app_state
+                                                                    .session
+                                                                    .update(|state| state.set_focus(focus_target.clone()));
+                                                            }
+                                                        >
+                                                            <div class="flex justify-between items-center py-0.5 px-1 text-xs border-b bg-terminal-bg-subtle text-terminal-dim border-current/20">
+                                                                <span class="truncate">{title}</span>
+                                                                <span>{dimensions}</span>
+                                                            </div>
 
-                                                    {if is_foot {
-                                                        view! {
-                                                            <FootTerminal focused=Signal::derive(move || {
-                                                                app_state.session.get().focused_window_id().as_ref()
-                                                                    == Some(&window.id)
-                                                            }) />
-                                                        }
-                                                            .into_any()
-                                                    } else {
-                                                        view! { <WindowSurface window=surface_window /> }.into_any()
-                                                    }}
-                                                </div>
-                                            }
-                                        })
-                                        .collect_view()
-                                }}
-                            </div>
+                                                            {if is_foot {
+                                                                view! {
+                                                                    <FootTerminal focused=Signal::derive(move || {
+                                                                        app_state.session.get().focused_window_id().as_ref()
+                                                                            == Some(&window.id)
+                                                                    }) />
+                                                                }
+                                                                    .into_any()
+                                                            } else {
+                                                                view! { <WindowSurface window=surface_window /> }.into_any()
+                                                            }}
+                                                        </div>
+                                                    }
+                                                })
+                                                .collect_view()}
+                                        </div>
+                                    }
+                                        .into_any()
+                                }
+                            }}
                         </Show>
                     </div>
                 </Panel>

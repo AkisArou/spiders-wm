@@ -9,7 +9,7 @@
 
 .master-slot {
   flex-basis: 0;
-  flex-grow: var(--spiders-grow, 12);
+  flex-grow: 3;
   min-width: 0;
   min-height: 0;
   border-width: 0;
@@ -25,87 +25,23 @@
   flex-direction: column;
   gap: 10px;
   flex-basis: 0;
-  flex-grow: var(--spiders-grow, 8);
+  flex-grow: 2;
   min-width: 0;
 }
 
 .stack-group__item {
   flex-basis: 0;
-  flex-grow: var(--spiders-grow, 8);
+  flex-grow: 1;
   min-height: 0;
   border-width: 0;
   padding: 12px;
 }
 
-.grow-1 {
-  --spiders-grow: 1;
-}
-.grow-2 {
-  --spiders-grow: 2;
-}
-.grow-3 {
-  --spiders-grow: 3;
-}
-.grow-4 {
-  --spiders-grow: 4;
-}
-.grow-5 {
-  --spiders-grow: 5;
-}
-.grow-6 {
-  --spiders-grow: 6;
-}
-.grow-7 {
-  --spiders-grow: 7;
-}
-.grow-8 {
-  --spiders-grow: 8;
-}
-.grow-9 {
-  --spiders-grow: 9;
-}
-.grow-10 {
-  --spiders-grow: 10;
-}
-.grow-11 {
-  --spiders-grow: 11;
-}
-.grow-12 {
-  --spiders-grow: 12;
-}
-.grow-13 {
-  --spiders-grow: 13;
-}
-.grow-14 {
-  --spiders-grow: 14;
-}
-.grow-15 {
-  --spiders-grow: 15;
-}
-.grow-16 {
-  --spiders-grow: 16;
-}
-.grow-17 {
-  --spiders-grow: 17;
-}
-.grow-18 {
-  --spiders-grow: 18;
-}
-.grow-19 {
-  --spiders-grow: 19;
-}
-.grow-20 {
-  --spiders-grow: 20;
-}
-.grow-21 {
-  --spiders-grow: 21;
-}
-.grow-22 {
-  --spiders-grow: 22;
-}
-.grow-23 {
-  --spiders-grow: 23;
-}
-.grow-24 {
-  --spiders-grow: 24;
+window:focused::titlebar {
+  background: #0f766e;
+  color: #f7f5ef;
+  height: 28px;
+  padding-left: 12px;
+  padding-right: 12px;
+  text-align: left;
 }

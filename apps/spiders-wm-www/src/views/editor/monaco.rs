@@ -60,31 +60,31 @@ fn sdk_type_libs() -> Vec<MonacoExtraLib> {
         },
         MonacoExtraLib {
           file_path: format!("{workspace_node_modules}/api.d.ts"),
-          content: include_str!("../../../../../packages/spiders-wm-sdk/src/api.d.ts"),
+        content: include_str!("../../../../../packages/sdk/js/src/api.d.ts"),
         },
         MonacoExtraLib {
           file_path: format!("{workspace_node_modules}/commands.d.ts"),
-          content: include_str!("../../../../../packages/spiders-wm-sdk/src/commands.d.ts"),
+        content: include_str!("../../../../../packages/sdk/js/src/commands.d.ts"),
         },
         MonacoExtraLib {
           file_path: format!("{workspace_node_modules}/config.d.ts"),
-          content: include_str!("../../../../../packages/spiders-wm-sdk/src/config.d.ts"),
+        content: include_str!("../../../../../packages/sdk/js/src/config.d.ts"),
         },
         MonacoExtraLib {
           file_path: format!("{workspace_node_modules}/css.d.ts"),
-          content: include_str!("../../../../../packages/spiders-wm-sdk/src/css.d.ts"),
+        content: include_str!("../../../../../packages/sdk/js/src/css.d.ts"),
         },
         MonacoExtraLib {
           file_path: format!("{workspace_node_modules}/jsx-dev-runtime.d.ts"),
-          content: include_str!("../../../../../packages/spiders-wm-sdk/src/jsx-dev-runtime.d.ts"),
+        content: include_str!("../../../../../packages/sdk/js/src/jsx-dev-runtime.d.ts"),
         },
         MonacoExtraLib {
           file_path: format!("{workspace_node_modules}/jsx-runtime.d.ts"),
-          content: include_str!("../../../../../packages/spiders-wm-sdk/src/jsx-runtime.d.ts"),
+        content: include_str!("../../../../../packages/sdk/js/src/jsx-runtime.d.ts"),
         },
         MonacoExtraLib {
           file_path: format!("{workspace_node_modules}/layout.d.ts"),
-          content: include_str!("../../../../../packages/spiders-wm-sdk/src/layout.d.ts"),
+        content: include_str!("../../../../../packages/sdk/js/src/layout.d.ts"),
         },
     ]
 }
