@@ -4,10 +4,10 @@ use spiders_core::runtime::layout_context::{
 };
 use spiders_core::{LayoutSpace, OutputId, WindowId, WorkspaceId};
 
-use crate::PreviewSessionState;
+use crate::PreviewSession;
 
 pub fn build_preview_layout_context(
-    state: &PreviewSessionState,
+    state: &PreviewSession,
     selected_layout_name: Option<String>,
     monitor_name: impl Into<String>,
     width: u32,
@@ -74,16 +74,17 @@ mod tests {
     use spiders_core::resize::LayoutAdjustmentState;
 
     use super::*;
-    use crate::PreviewSessionWindow;
+    use crate::PreviewWindow;
 
     #[test]
     fn preview_layout_context_uses_active_workspace_and_adjustments() {
         let context = build_preview_layout_context(
-            &PreviewSessionState {
+            &PreviewSession {
+                active_layout: "master-stack".into(),
                 active_workspace_name: "2".to_string(),
                 workspace_names: vec!["1".to_string(), "2".to_string()],
                 windows: vec![
-                    PreviewSessionWindow {
+                    PreviewWindow {
                         id: "win-1".to_string(),
                         app_id: Some("foot".to_string()),
                         title: Some("Terminal".to_string()),
@@ -97,7 +98,7 @@ mod tests {
                         focused: false,
                         workspace_name: "1".to_string(),
                     },
-                    PreviewSessionWindow {
+                    PreviewWindow {
                         id: "win-2".to_string(),
                         app_id: Some("foot".to_string()),
                         title: Some("Terminal 2".to_string()),

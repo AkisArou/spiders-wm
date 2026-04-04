@@ -1,6 +1,7 @@
 use serde::Serialize;
-use spiders_core::api::{CompositorEvent, QueryRequest, QueryResponse};
 use spiders_core::command::WmCommand;
+use spiders_core::event::WmEvent;
+use spiders_core::query::{QueryRequest, QueryResponse};
 use spiders_core::runtime::runtime_error::RuntimeRefreshSummary;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -83,7 +84,7 @@ pub struct IpcMonitorReport {
     pub request_id: String,
     pub topics: Vec<String>,
     pub subscribed_topics: Vec<String>,
-    pub events: Vec<CompositorEvent>,
+    pub events: Vec<WmEvent>,
 }
 
 pub fn emit<T: Serialize>(mode: OutputMode, report: &T, text: impl FnOnce() -> String) {

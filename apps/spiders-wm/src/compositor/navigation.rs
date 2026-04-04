@@ -1,45 +1,40 @@
 use spiders_core::command::FocusDirection;
 use tracing::info;
 
+use crate::state::SpidersWm;
+use spiders_core::WindowId;
 use spiders_core::navigation::{
     NavigationDirection, WindowGeometryCandidate, managed_window_swap_positions,
     select_directional_focus_candidate,
 };
 use spiders_core::wm::WindowGeometry;
-use spiders_core::WindowId;
-use crate::runtime::{RuntimeCommand, RuntimeResult};
-use crate::state::SpidersWm;
 
 impl SpidersWm {
     pub fn focus_next_window(&mut self, serial: smithay::utils::Serial) {
         let window_order = self.managed_window_ids();
-        let next_focus_window_id =
-            match self
-                .runtime()
-                .execute(RuntimeCommand::RequestFocusNextWindowSelection {
-                    seat_id: "winit".into(),
-                    window_order,
-                }) {
-                RuntimeResult::FocusSelection(selection) => selection.focused_window_id,
-                _ => None,
-            };
+        let (next_focus_window_id, events) = {
+            let mut runtime = self.runtime();
+            let next_focus_window_id = runtime
+                .request_focus_next_window_selection("winit", window_order)
+                .focused_window_id;
+            (next_focus_window_id, runtime.take_events())
+        };
 
+        self.broadcast_runtime_events(events);
         self.apply_modeled_focus(next_focus_window_id, serial);
     }
 
     pub fn focus_previous_window(&mut self, serial: smithay::utils::Serial) {
         let window_order = self.managed_window_ids();
-        let previous_focus_window_id =
-            match self
-                .runtime()
-                .execute(RuntimeCommand::RequestFocusPreviousWindowSelection {
-                    seat_id: "winit".into(),
-                    window_order,
-                }) {
-                RuntimeResult::FocusSelection(selection) => selection.focused_window_id,
-                _ => None,
-            };
+        let (previous_focus_window_id, events) = {
+            let mut runtime = self.runtime();
+            let previous_focus_window_id = runtime
+                .request_focus_previous_window_selection("winit", window_order)
+                .focused_window_id;
+            (previous_focus_window_id, runtime.take_events())
+        };
 
+        self.broadcast_runtime_events(events);
         self.apply_modeled_focus(previous_focus_window_id, serial);
     }
 
@@ -48,10 +43,8 @@ impl SpidersWm {
         direction: FocusDirection,
         serial: smithay::utils::Serial,
     ) {
-        let current_focused_window_id = self
-            .focused_surface
-            .as_ref()
-            .and_then(|surface| self.window_id_for_surface(surface));
+        let current_focused_window_id =
+            self.focused_surface.as_ref().and_then(|surface| self.window_id_for_surface(surface));
         let candidates = self.visible_geometry_candidates();
 
         let next_focus_window_id = match select_directional_focus_candidate(
@@ -90,16 +83,16 @@ impl SpidersWm {
         if let Some(workspace_id) = target_workspace_id {
             if self.current_workspace_id() != Some(&workspace_id) {
                 let window_order = self.managed_window_ids();
-                let selection =
-                    match self
-                        .runtime()
-                        .execute(RuntimeCommand::RequestSelectWorkspace {
-                            workspace_id,
-                            window_order,
-                        }) {
-                        RuntimeResult::WorkspaceSelection(Some(selection)) => selection,
-                        _ => return,
-                    };
+                let selection = match {
+                    let mut runtime = self.runtime();
+                    let selection = runtime.request_select_workspace(workspace_id, window_order);
+                    let events = runtime.take_events();
+                    self.broadcast_runtime_events(events);
+                    selection
+                } {
+                    Some(selection) => selection,
+                    None => return,
+                };
                 self.apply_workspace_selection(selection.focused_window_id, serial);
             }
         }
@@ -108,10 +101,8 @@ impl SpidersWm {
     }
 
     pub fn swap_focused_window_direction(&mut self, direction: FocusDirection) {
-        let Some(current_focused_window_id) = self
-            .focused_surface
-            .as_ref()
-            .and_then(|surface| self.window_id_for_surface(surface))
+        let Some(current_focused_window_id) =
+            self.focused_surface.as_ref().and_then(|surface| self.window_id_for_surface(surface))
         else {
             return;
         };

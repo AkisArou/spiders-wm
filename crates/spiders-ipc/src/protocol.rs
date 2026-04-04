@@ -1,7 +1,8 @@
 use serde::{Deserialize, Serialize};
 
-use spiders_core::api::{CompositorEvent, QueryRequest, QueryResponse};
 use spiders_core::command::WmCommand;
+use spiders_core::event::WmEvent;
+use spiders_core::query::{QueryRequest, QueryResponse};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -23,10 +24,7 @@ pub struct IpcEnvelope<T> {
 
 impl<T> IpcEnvelope<T> {
     pub fn new(message: T) -> Self {
-        Self {
-            request_id: None,
-            message,
-        }
+        Self { request_id: None, message }
     }
 
     pub fn with_request_id(mut self, request_id: impl Into<String>) -> Self {
@@ -57,7 +55,7 @@ pub enum IpcServerMessage {
     Event {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         topics: Vec<IpcSubscriptionTopic>,
-        event: CompositorEvent,
+        event: WmEvent,
     },
     CommandAccepted,
     Subscribed {
@@ -78,15 +76,11 @@ pub type IpcResponse = IpcEnvelope<IpcServerMessage>;
 
 impl IpcClientMessage {
     pub fn subscribe(topics: impl IntoIterator<Item = IpcSubscriptionTopic>) -> Self {
-        Self::Subscribe {
-            topics: normalize_topics(topics),
-        }
+        Self::Subscribe { topics: normalize_topics(topics) }
     }
 
     pub fn unsubscribe(topics: impl IntoIterator<Item = IpcSubscriptionTopic>) -> Self {
-        Self::Unsubscribe {
-            topics: normalize_topics(topics),
-        }
+        Self::Unsubscribe { topics: normalize_topics(topics) }
     }
 
     pub fn subscribe_all() -> Self {
@@ -95,44 +89,39 @@ impl IpcClientMessage {
 }
 
 impl IpcServerMessage {
-    pub fn event(event: CompositorEvent) -> Self {
-        Self::Event {
-            topics: infer_topics(&event),
-            event,
-        }
+    pub fn event(event: WmEvent) -> Self {
+        Self::Event { topics: infer_topics(&event), event }
     }
 
     pub fn subscribed(topics: impl IntoIterator<Item = IpcSubscriptionTopic>) -> Self {
-        Self::Subscribed {
-            topics: normalize_topics(topics),
-        }
+        Self::Subscribed { topics: normalize_topics(topics) }
     }
 
     pub fn unsubscribed(topics: impl IntoIterator<Item = IpcSubscriptionTopic>) -> Self {
-        Self::Unsubscribed {
-            topics: normalize_topics(topics),
-        }
+        Self::Unsubscribed { topics: normalize_topics(topics) }
     }
 
     pub fn error(message: impl Into<String>) -> Self {
-        Self::Error {
-            message: message.into(),
-        }
+        Self::Error { message: message.into() }
     }
 }
 
-pub fn infer_topics(event: &CompositorEvent) -> Vec<IpcSubscriptionTopic> {
+pub fn infer_topics(event: &WmEvent) -> Vec<IpcSubscriptionTopic> {
     match event {
-        CompositorEvent::FocusChange { .. } => vec![IpcSubscriptionTopic::Focus],
-        CompositorEvent::WindowCreated { .. }
-        | CompositorEvent::WindowDestroyed { .. }
-        | CompositorEvent::WindowWorkspaceChange { .. }
-        | CompositorEvent::WindowFloatingChange { .. }
-        | CompositorEvent::WindowGeometryChange { .. }
-        | CompositorEvent::WindowFullscreenChange { .. } => vec![IpcSubscriptionTopic::Windows],
-        CompositorEvent::WorkspaceChange { .. } => vec![IpcSubscriptionTopic::Workspaces],
-        CompositorEvent::LayoutChange { .. } => vec![IpcSubscriptionTopic::Layout],
-        CompositorEvent::ConfigReloaded => vec![IpcSubscriptionTopic::Config],
+        WmEvent::FocusChange { .. } => vec![IpcSubscriptionTopic::Focus],
+        WmEvent::WindowCreated { .. }
+        | WmEvent::WindowDestroyed { .. }
+        | WmEvent::WindowWorkspaceChange { .. }
+        | WmEvent::WindowIdentityChange { .. }
+        | WmEvent::WindowFloatingChange { .. }
+        | WmEvent::WindowMappedChange { .. }
+        | WmEvent::WindowGeometryChange { .. }
+        | WmEvent::WindowFullscreenChange { .. } => vec![IpcSubscriptionTopic::Windows],
+        WmEvent::WorkspaceChange { .. } | WmEvent::OutputChange { .. } => {
+            vec![IpcSubscriptionTopic::Workspaces]
+        }
+        WmEvent::LayoutChange { .. } => vec![IpcSubscriptionTopic::Layout],
+        WmEvent::ConfigReloaded => vec![IpcSubscriptionTopic::Config],
     }
 }
 
@@ -168,20 +157,19 @@ pub fn subscription_matches_topics(
         return true;
     }
 
-    event_topics
-        .iter()
-        .any(|topic| normalized.iter().any(|candidate| candidate == topic))
+    event_topics.iter().any(|topic| normalized.iter().any(|candidate| candidate == topic))
 }
 
 pub fn subscription_matches_event(
     subscription_topics: &[IpcSubscriptionTopic],
-    event: &CompositorEvent,
+    event: &WmEvent,
 ) -> bool {
     subscription_matches_topics(subscription_topics, &infer_topics(event))
 }
 
 #[cfg(test)]
 mod tests {
+    use spiders_core::event::WmEvent;
     use spiders_core::snapshot::OutputSnapshot;
     use spiders_core::{OutputId, WindowId};
 
@@ -202,9 +190,7 @@ mod tests {
     fn subscribe_all_helper_uses_all_topic() {
         assert_eq!(
             IpcClientMessage::subscribe_all(),
-            IpcClientMessage::Subscribe {
-                topics: vec![IpcSubscriptionTopic::All],
-            }
+            IpcClientMessage::Subscribe { topics: vec![IpcSubscriptionTopic::All] }
         );
     }
 
@@ -217,15 +203,13 @@ mod tests {
                 IpcSubscriptionTopic::All,
                 IpcSubscriptionTopic::Layout,
             ]),
-            IpcClientMessage::Subscribe {
-                topics: vec![IpcSubscriptionTopic::All],
-            }
+            IpcClientMessage::Subscribe { topics: vec![IpcSubscriptionTopic::All] }
         );
     }
 
     #[test]
     fn event_response_infers_topics_from_compositor_event() {
-        let message = IpcServerMessage::event(CompositorEvent::FocusChange {
+        let message = IpcServerMessage::event(WmEvent::FocusChange {
             focused_window_id: Some(WindowId::from("w1")),
             current_output_id: Some(OutputId::from("out-1")),
             current_workspace_id: None,
@@ -239,8 +223,19 @@ mod tests {
     }
 
     #[test]
+    fn config_reloaded_event_infers_config_topic() {
+        let message = IpcServerMessage::event(WmEvent::ConfigReloaded);
+
+        assert!(matches!(
+            message,
+            IpcServerMessage::Event { topics, .. }
+                if topics == vec![IpcSubscriptionTopic::Config]
+        ));
+    }
+
+    #[test]
     fn server_event_round_trips_with_topics() {
-        let response = IpcEnvelope::new(IpcServerMessage::event(CompositorEvent::WindowCreated {
+        let response = IpcEnvelope::new(IpcServerMessage::event(WmEvent::WindowCreated {
             window: spiders_core::snapshot::WindowSnapshot {
                 id: WindowId::from("w1"),
                 shell: spiders_core::types::ShellKind::XdgToplevel,
@@ -276,9 +271,7 @@ mod tests {
                 IpcSubscriptionTopic::Focus,
                 IpcSubscriptionTopic::All,
             ]),
-            IpcServerMessage::Subscribed {
-                topics: vec![IpcSubscriptionTopic::All],
-            }
+            IpcServerMessage::Subscribed { topics: vec![IpcSubscriptionTopic::All] }
         );
     }
 
@@ -294,24 +287,36 @@ mod tests {
 
     #[test]
     fn subscription_matches_event_topics() {
-        let event = CompositorEvent::LayoutChange {
-            workspace_id: None,
-            layout: None,
-        };
+        let event = WmEvent::LayoutChange { workspace_id: None, layout: None };
 
-        assert!(subscription_matches_event(
-            &[IpcSubscriptionTopic::Layout],
-            &event,
-        ));
-        assert!(subscription_matches_event(
-            &[IpcSubscriptionTopic::All],
-            &event
-        ));
-        assert!(!subscription_matches_event(
-            &[IpcSubscriptionTopic::Windows],
-            &event,
-        ));
+        assert!(subscription_matches_event(&[IpcSubscriptionTopic::Layout], &event,));
+        assert!(subscription_matches_event(&[IpcSubscriptionTopic::All], &event));
+        assert!(!subscription_matches_event(&[IpcSubscriptionTopic::Windows], &event,));
         assert!(!subscription_matches_event(&[], &event));
+    }
+
+    #[test]
+    fn output_change_infers_workspaces_topic() {
+        let message = IpcServerMessage::event(WmEvent::OutputChange {
+            output: OutputSnapshot {
+                id: OutputId::from("out-1"),
+                name: "HDMI-A-1".into(),
+                logical_x: 0,
+                logical_y: 0,
+                logical_width: 1920,
+                logical_height: 1080,
+                scale: 1,
+                transform: spiders_core::types::OutputTransform::Normal,
+                enabled: true,
+                current_workspace_id: None,
+            },
+        });
+
+        assert!(matches!(
+            message,
+            IpcServerMessage::Event { topics, .. }
+                if topics == vec![IpcSubscriptionTopic::Workspaces]
+        ));
     }
 
     #[test]
@@ -341,9 +346,7 @@ mod tests {
     fn error_helper_builds_error_message() {
         assert_eq!(
             IpcServerMessage::error("bad request"),
-            IpcServerMessage::Error {
-                message: "bad request".into(),
-            }
+            IpcServerMessage::Error { message: "bad request".into() }
         );
     }
 }

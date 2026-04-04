@@ -1,5 +1,6 @@
-use spiders_core::api::{CompositorEvent, QueryRequest, QueryResponse};
 use spiders_core::command::WmCommand;
+use spiders_core::event::WmEvent;
+use spiders_core::query::{QueryRequest, QueryResponse};
 use tracing::debug;
 
 use crate::protocol::{
@@ -14,14 +15,8 @@ pub struct IpcSession {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum IpcSessionHandleResult {
-    Query {
-        request_id: Option<String>,
-        query: QueryRequest,
-    },
-    Command {
-        request_id: Option<String>,
-        command: WmCommand,
-    },
+    Query { request_id: Option<String>, query: QueryRequest },
+    Command { request_id: Option<String>, command: WmCommand },
     Response(IpcResponse),
 }
 
@@ -36,14 +31,12 @@ impl IpcSession {
 
     pub fn handle_request(&mut self, request: IpcRequest) -> IpcSessionHandleResult {
         match request.message {
-            IpcClientMessage::Query(query) => IpcSessionHandleResult::Query {
-                request_id: request.request_id,
-                query,
-            },
-            IpcClientMessage::Command(command) => IpcSessionHandleResult::Command {
-                request_id: request.request_id,
-                command,
-            },
+            IpcClientMessage::Query(query) => {
+                IpcSessionHandleResult::Query { request_id: request.request_id, query }
+            }
+            IpcClientMessage::Command(command) => {
+                IpcSessionHandleResult::Command { request_id: request.request_id, command }
+            }
             IpcClientMessage::Subscribe { topics } => {
                 self.subscription_topics =
                     normalize_topics(self.subscription_topics.iter().copied().chain(topics));
@@ -73,17 +66,11 @@ impl IpcSession {
         request_id: Option<String>,
         response: QueryResponse,
     ) -> IpcResponse {
-        IpcEnvelope {
-            request_id,
-            message: IpcServerMessage::Query(response),
-        }
+        IpcEnvelope { request_id, message: IpcServerMessage::Query(response) }
     }
 
     pub fn command_accepted(&self, request_id: Option<String>) -> IpcResponse {
-        IpcEnvelope {
-            request_id,
-            message: IpcServerMessage::CommandAccepted,
-        }
+        IpcEnvelope { request_id, message: IpcServerMessage::CommandAccepted }
     }
 
     pub fn error_response(
@@ -91,13 +78,10 @@ impl IpcSession {
         request_id: Option<String>,
         message: impl Into<String>,
     ) -> IpcResponse {
-        IpcEnvelope {
-            request_id,
-            message: IpcServerMessage::error(message),
-        }
+        IpcEnvelope { request_id, message: IpcServerMessage::error(message) }
     }
 
-    pub fn event_response(&self, event: CompositorEvent) -> Option<IpcResponse> {
+    pub fn event_response(&self, event: WmEvent) -> Option<IpcResponse> {
         if subscription_matches_event(&self.subscription_topics, &event) {
             debug!(topics = ?self.subscription_topics, "ipc event matched current subscription topics");
             Some(IpcEnvelope::new(IpcServerMessage::event(event)))
@@ -126,15 +110,13 @@ fn unsubscribe_topics(
         return current;
     }
 
-    current
-        .into_iter()
-        .filter(|topic| !removed.contains(topic))
-        .collect()
+    current.into_iter().filter(|topic| !removed.contains(topic)).collect()
 }
 
 #[cfg(test)]
 mod tests {
-    use spiders_core::api::QueryResponse;
+    use spiders_core::event::WmEvent;
+    use spiders_core::query::QueryResponse;
 
     use super::*;
 
@@ -213,10 +195,7 @@ mod tests {
                 topics: vec![IpcSubscriptionTopic::Layout],
             }))
         );
-        assert_eq!(
-            session.subscription_topics(),
-            &[IpcSubscriptionTopic::Layout]
-        );
+        assert_eq!(session.subscription_topics(), &[IpcSubscriptionTopic::Layout]);
     }
 
     #[test]
@@ -262,18 +241,13 @@ mod tests {
             IpcSubscriptionTopic::Layout,
         ])));
 
-        let matching = session.event_response(CompositorEvent::LayoutChange {
-            workspace_id: None,
-            layout: None,
-        });
-        let non_matching = session.event_response(CompositorEvent::ConfigReloaded);
+        let matching =
+            session.event_response(WmEvent::LayoutChange { workspace_id: None, layout: None });
+        let non_matching = session.event_response(WmEvent::ConfigReloaded);
 
         assert!(matches!(
             matching,
-            Some(IpcEnvelope {
-                message: IpcServerMessage::Event { .. },
-                ..
-            })
+            Some(IpcEnvelope { message: IpcServerMessage::Event { .. }, .. })
         ));
         assert!(non_matching.is_none());
     }
@@ -287,9 +261,9 @@ mod tests {
                 Some("req-3".into()),
                 QueryResponse::WorkspaceNames(vec!["1".into()])
             ),
-            IpcEnvelope::new(IpcServerMessage::Query(QueryResponse::WorkspaceNames(
-                vec!["1".into()]
-            )))
+            IpcEnvelope::new(IpcServerMessage::Query(QueryResponse::WorkspaceNames(vec![
+                "1".into()
+            ])))
             .with_request_id("req-3")
         );
         assert_eq!(

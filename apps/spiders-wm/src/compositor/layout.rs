@@ -6,17 +6,14 @@ use smithay::utils::{Logical, Point, Rectangle, Size};
 use tracing::{debug, info};
 
 use crate::frame_sync::SyncHandle;
+use crate::state::SpidersWm;
 use spiders_core::WindowId;
 use spiders_core::wm::WindowGeometry;
 use spiders_core::workspace::flat_workspace_root;
-use crate::state::SpidersWm;
 
 impl SpidersWm {
     pub fn schedule_relayout(&mut self) {
-        debug!(
-            window_count = self.managed_window_count(),
-            "wm schedule relayout"
-        );
+        debug!(window_count = self.managed_window_count(), "wm schedule relayout");
         let _ = self.start_relayout();
     }
 
@@ -28,9 +25,8 @@ impl SpidersWm {
         let visible_window_ids = self.visible_managed_window_ids();
         let window_id = self.window_id_for_surface(surface)?;
 
-        let fullscreen_window_id = self
-            .model
-            .fullscreen_window_on_current_workspace(visible_window_ids.iter().cloned());
+        let fullscreen_window_id =
+            self.model.fullscreen_window_on_current_workspace(visible_window_ids.iter().cloned());
 
         if let Some(fullscreen_window_id) = fullscreen_window_id.as_ref() {
             return (fullscreen_window_id == &window_id)
@@ -59,18 +55,14 @@ impl SpidersWm {
     }
 
     pub(crate) fn start_relayout(&mut self) -> Option<SyncHandle> {
-        let output = self
-            .current_output_cloned()
-            .expect("output must exist before relayout");
-        let output_geometry = self
-            .output_geometry_for(&output)
-            .expect("output geometry missing during relayout");
+        let output = self.current_output_cloned().expect("output must exist before relayout");
+        let output_geometry =
+            self.output_geometry_for(&output).expect("output geometry missing during relayout");
 
         let visible_window_ids = self.visible_managed_window_ids();
         let tiled_window_ids = self.tiled_visible_window_ids(&visible_window_ids);
-        let fullscreen_window_id = self
-            .model
-            .fullscreen_window_on_current_workspace(visible_window_ids.iter().cloned());
+        let fullscreen_window_id =
+            self.model.fullscreen_window_on_current_workspace(visible_window_ids.iter().cloned());
         info!(
             visible_windows = visible_window_ids.len(),
             total_windows = self.managed_window_count(),
@@ -116,41 +108,43 @@ impl SpidersWm {
             }
         }
 
-        let relayout_targets = if let Some(fullscreen_window_id) = fullscreen_window_id.as_ref() {
-            let focus_root = flat_workspace_root([fullscreen_window_id.clone()]);
-            self.model.set_focus_tree(Some(&focus_root));
-            visible_window_ids
-                .iter()
-                .filter(|window_id| *window_id == fullscreen_window_id)
-                .cloned()
-                .map(|window_id| crate::scene::adapter::LayoutTarget {
-                    window_id,
-                    location: output_geometry.loc,
-                    size: output_geometry.size,
-                    fullscreen: true,
-                })
-                .collect::<Vec<_>>()
-        } else {
-            let floating_window_ids = visible_window_ids
-                .iter()
-                .filter(|window_id| self.window_is_floating(window_id))
-                .cloned()
-                .collect::<Vec<_>>();
-            let mut targets = if tiled_window_ids.is_empty() {
-                let focus_root = flat_workspace_root(floating_window_ids.iter().cloned());
+        let relayout_targets =
+            if let Some(fullscreen_window_id) = fullscreen_window_id.as_ref() {
+                let focus_root = flat_workspace_root([fullscreen_window_id.clone()]);
                 self.model.set_focus_tree(Some(&focus_root));
-                Vec::new()
+                visible_window_ids
+                    .iter()
+                    .filter(|window_id| *window_id == fullscreen_window_id)
+                    .cloned()
+                    .map(|window_id| crate::scene::adapter::LayoutTarget {
+                        window_id,
+                        location: output_geometry.loc,
+                        size: output_geometry.size,
+                        fullscreen: true,
+                    })
+                    .collect::<Vec<_>>()
             } else {
-                self.scene
-                    .compute_layout_targets(&self.config, &mut self.model, &tiled_window_ids)?
-            };
-            targets.extend(
-                floating_window_ids.iter().filter_map(|window_id| {
+                let floating_window_ids = visible_window_ids
+                    .iter()
+                    .filter(|window_id| self.window_is_floating(window_id))
+                    .cloned()
+                    .collect::<Vec<_>>();
+                let mut targets = if tiled_window_ids.is_empty() {
+                    let focus_root = flat_workspace_root(floating_window_ids.iter().cloned());
+                    self.model.set_focus_tree(Some(&focus_root));
+                    Vec::new()
+                } else {
+                    self.scene.compute_layout_targets(
+                        &self.config,
+                        &mut self.model,
+                        &tiled_window_ids,
+                    )?
+                };
+                targets.extend(floating_window_ids.iter().filter_map(|window_id| {
                     self.floating_layout_target(window_id, output_geometry)
-                }),
-            );
-            targets
-        };
+                }));
+                targets
+            };
         let mut relayout_transaction: Option<SyncHandle> = None;
 
         for target in relayout_targets {
@@ -247,10 +241,7 @@ impl SpidersWm {
         output_geometry: Rectangle<i32, Logical>,
     ) -> Option<(Point<i32, Logical>, Size<i32, Logical>)> {
         let geometry = self.ensure_floating_window_geometry(window_id, output_geometry)?;
-        Some((
-            Point::from((geometry.x, geometry.y)),
-            Size::from((geometry.width, geometry.height)),
-        ))
+        Some((Point::from((geometry.x, geometry.y)), Size::from((geometry.width, geometry.height))))
     }
 
     fn floating_layout_target(
@@ -279,17 +270,21 @@ impl SpidersWm {
         let geometry = self
             .managed_window_for_id(window_id)
             .and_then(|record| {
-                self.element_location(&record.window)
-                    .map(|location| WindowGeometry {
-                        x: location.x,
-                        y: location.y,
-                        width: record.window.geometry().size.w.max(1),
-                        height: record.window.geometry().size.h.max(1),
-                    })
+                self.element_location(&record.window).map(|location| WindowGeometry {
+                    x: location.x,
+                    y: location.y,
+                    width: record.window.geometry().size.w.max(1),
+                    height: record.window.geometry().size.h.max(1),
+                })
             })
             .unwrap_or_else(|| default_floating_geometry(output_geometry));
 
-        self.set_window_floating_geometry(window_id.clone(), geometry);
+        let events = {
+            let mut runtime = self.runtime();
+            let _ = runtime.set_window_floating_geometry(window_id.clone(), geometry);
+            runtime.take_events()
+        };
+        self.broadcast_runtime_events(events);
         Some(geometry)
     }
 }
@@ -343,21 +338,12 @@ fn plan_tiled_slot(
 }
 
 fn default_floating_geometry(output_geometry: Rectangle<i32, Logical>) -> WindowGeometry {
-    let width = ((output_geometry.size.w * 4) / 5)
-        .max(320)
-        .min(output_geometry.size.w.max(1));
-    let height = ((output_geometry.size.h * 4) / 5)
-        .max(240)
-        .min(output_geometry.size.h.max(1));
+    let width = ((output_geometry.size.w * 4) / 5).max(320).min(output_geometry.size.w.max(1));
+    let height = ((output_geometry.size.h * 4) / 5).max(240).min(output_geometry.size.h.max(1));
     let x = output_geometry.loc.x + (output_geometry.size.w - width) / 2;
     let y = output_geometry.loc.y + (output_geometry.size.h - height) / 2;
 
-    WindowGeometry {
-        x,
-        y,
-        width,
-        height,
-    }
+    WindowGeometry { x, y, width, height }
 }
 
 fn sync_toplevel_fullscreen_state(

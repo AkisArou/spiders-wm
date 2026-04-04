@@ -2,6 +2,7 @@ use std::sync::Arc;
 use std::sync::mpsc;
 
 use spiders_config::model::{Config, ConfigPaths};
+use spiders_core::signal::WmSignal;
 use spiders_wm_runtime::{config_discovery_options_from_env, load_config as load_runtime_config};
 
 use smithay::backend::egl::EGLDevice;
@@ -29,7 +30,7 @@ use tracing::warn;
 
 use crate::frame_sync::FrameSyncState;
 use crate::handlers::ClientState;
-use crate::runtime::{RuntimeCommand, WmRuntime};
+use crate::runtime::{NoopHost, WmRuntime};
 use crate::scene::adapter::SceneLayoutState;
 use crate::state::SpidersWm;
 
@@ -57,8 +58,9 @@ pub(crate) fn build_state(
     let mut model = spiders_core::wm::WmModel::default();
     {
         let mut runtime = WmRuntime::new(&mut model);
-        let _ = runtime.execute(RuntimeCommand::EnsureDefaultWorkspace { name: "1".to_string() });
-        let _ = runtime.execute(RuntimeCommand::EnsureSeat { seat_id: "winit".into() });
+        let mut host = NoopHost;
+        runtime.ensure_default_workspace("1");
+        let _ = runtime.handle_signal(&mut host, WmSignal::EnsureSeat { seat_id: "winit".into() });
     }
     let (config_paths, config) = load_wm_config(None);
     let ipc_socket_path = crate::ipc::init_ipc_listener(event_loop);
@@ -169,24 +171,46 @@ pub(crate) fn init_winit(
     output.change_current_state(Some(mode), Some(Transform::Flipped180), None, Some((0, 0).into()));
     output.set_preferred(mode);
     state.space.map_output(&output, (0, 0));
-    let _ = state.runtime().execute(RuntimeCommand::SyncOutput {
-        output_id: "winit".into(),
-        name: "winit".to_string(),
-        logical_width: mode.size.w as u32,
-        logical_height: mode.size.h as u32,
-    });
+    let config = state.config.clone();
+    let startup_events = {
+        let mut runtime = state.runtime();
+        let mut events = runtime.handle_signal(
+            &mut NoopHost,
+            WmSignal::OutputSynced {
+                output_id: "winit".into(),
+                name: "winit".to_string(),
+                logical_width: mode.size.w as u32,
+                logical_height: mode.size.h as u32,
+            },
+        );
+        runtime.sync_layout_selection_defaults(&config);
+        events.extend(runtime.take_events());
+        events
+    };
+    state.broadcast_runtime_events(startup_events);
 
     let mut damage_tracker = OutputDamageTracker::from_output(&output);
 
     event_loop.handle().insert_source(winit, move |event, _, state| match event {
         WinitEvent::Resized { size, .. } => {
             output.change_current_state(Some(Mode { size, refresh: 60_000 }), None, None, None);
-            let _ = state.runtime().execute(RuntimeCommand::SyncOutput {
-                output_id: "winit".into(),
-                name: "winit".to_string(),
-                logical_width: size.w as u32,
-                logical_height: size.h as u32,
-            });
+            let config = state.config.clone();
+            let events = {
+                let mut runtime = state.runtime();
+                let mut events = runtime.handle_signal(
+                    &mut NoopHost,
+                    WmSignal::OutputSynced {
+                        output_id: "winit".into(),
+                        name: "winit".to_string(),
+                        logical_width: size.w as u32,
+                        logical_height: size.h as u32,
+                    },
+                );
+                runtime.sync_layout_selection_defaults(&config);
+                events.extend(runtime.take_events());
+                events
+            };
+            state.broadcast_runtime_events(events);
             state.schedule_relayout();
         }
         WinitEvent::Input(event) => state.process_input_event(event),
@@ -237,8 +261,10 @@ mod tests {
     use std::path::{Path, PathBuf};
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-    use spiders_config::model::ConfigPaths;
+    use spiders_config::model::{Config, ConfigPaths, LayoutDefinition, LayoutSelectionConfig};
     use spiders_core::command::WmCommand;
+    use spiders_core::wm::WmModel;
+    use spiders_wm_runtime::WmRuntime;
 
     use super::load_wm_config;
 
@@ -328,5 +354,56 @@ export default {{
         assert_eq!(reloaded_config.bindings[0].command, WmCommand::ReloadConfig);
 
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn runtime_layout_defaults_follow_loaded_config_selection() {
+        let config = Config {
+            workspaces: vec!["1".to_string(), "2".to_string()],
+            layouts: vec![
+                LayoutDefinition {
+                    name: "master-stack".to_string(),
+                    directory: "layouts/master-stack".to_string(),
+                    module: "layouts/master-stack.js".to_string(),
+                    stylesheet_path: None,
+                    runtime_cache_payload: None,
+                },
+                LayoutDefinition {
+                    name: "focus-repro".to_string(),
+                    directory: "layouts/focus-repro".to_string(),
+                    module: "layouts/focus-repro.js".to_string(),
+                    stylesheet_path: None,
+                    runtime_cache_payload: None,
+                },
+            ],
+            layout_selection: LayoutSelectionConfig {
+                default: Some("master-stack".to_string()),
+                per_workspace: vec!["focus-repro".to_string(), "master-stack".to_string()],
+                per_monitor: Default::default(),
+            },
+            ..Config::default()
+        };
+        let mut model = WmModel::default();
+        let mut runtime = WmRuntime::new(&mut model);
+        let workspace_1 = runtime.ensure_workspace("1");
+        let workspace_2 = runtime.ensure_workspace("2");
+        runtime.sync_layout_selection_defaults(&config);
+
+        assert_eq!(
+            model
+                .workspaces
+                .get(&workspace_1)
+                .and_then(|workspace| workspace.effective_layout.as_ref())
+                .map(|layout| layout.name.as_str()),
+            Some("focus-repro")
+        );
+        assert_eq!(
+            model
+                .workspaces
+                .get(&workspace_2)
+                .and_then(|workspace| workspace.effective_layout.as_ref())
+                .map(|layout| layout.name.as_str()),
+            Some("master-stack")
+        );
     }
 }

@@ -99,7 +99,7 @@ pub fn PreviewView() -> impl IntoView {
         })
         .collect::<Vec<_>>();
     let layout_value =
-        Signal::derive(move || app_state.session.get().active_layout.as_str().to_string());
+        Signal::derive(move || app_state.session.get().active_layout().as_str().to_string());
 
     view! {
         <section class=move || {

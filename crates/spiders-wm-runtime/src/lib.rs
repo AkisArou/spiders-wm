@@ -20,15 +20,15 @@ pub use config::{
 };
 pub use context::build_preview_layout_context;
 pub use diagnostic::PreviewDiagnostic;
-pub use host::{
-    FocusTarget, WindowToggle, WmEnvironment, WorkspaceAssignment, WorkspaceTarget,
-    execute_wm_command,
+pub use host::{WmHost, dispatch_wm_command};
+pub use layout::{
+    PREVIEW_OUTPUT_ID, PreviewLayoutComputation, collect_snapshot_geometries,
+    compute_layout_preview, empty_window_geometry, preview_window_snapshot,
 };
-pub use layout::{PreviewLayoutComputation, PreviewLayoutWindow, compute_layout_preview};
 pub use session::{
-    PreviewSessionState, PreviewSessionWindow, apply_preview_command, select_preview_workspace,
+    PreviewSession, PreviewWindow, apply_preview_command, select_preview_workspace,
     set_preview_focused_window,
 };
 pub use snapshot::{PreviewSnapshotClasses, PreviewSnapshotNode};
 pub use spiders_runtime_js::{JavaScriptModuleGraph, compile_source_bundle_to_module_graph};
-pub use wm_runtime::{CloseSelection, RuntimeCommand, RuntimeResult, WmRuntime};
+pub use wm_runtime::{CloseSelection, WmRuntime};

@@ -2,12 +2,15 @@ mod focus_visual;
 mod ids;
 mod layout;
 
-pub mod api;
 pub mod command;
+pub mod effect;
+pub mod event;
 pub mod focus;
 pub mod navigation;
+pub mod query;
 pub mod resize;
 pub mod runtime;
+pub mod signal;
 pub mod snapshot;
 pub mod types;
 pub mod wm;

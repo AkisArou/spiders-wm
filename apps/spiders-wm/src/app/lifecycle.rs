@@ -68,6 +68,16 @@ impl SpidersWm {
         self.config_paths = config_paths;
         self.scene.set_config_paths(self.config_paths.clone());
         self.config = config;
+        let config = self.config.clone();
+        let events = {
+            let mut runtime = self.runtime();
+            runtime.sync_layout_selection_defaults(&config);
+            runtime.take_events()
+        };
+        if !events.is_empty() {
+            self.broadcast_runtime_events(events);
+            self.schedule_relayout();
+        }
         self.emit_config_reloaded();
     }
 }

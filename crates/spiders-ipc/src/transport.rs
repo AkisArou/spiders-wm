@@ -69,7 +69,7 @@ mod tests {
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use spiders_core::api::QueryRequest;
+    use spiders_core::query::{QueryRequest, QueryResponse};
 
     use crate::{IpcClientMessage, IpcEnvelope, IpcServerMessage, IpcSubscriptionTopic};
 
@@ -161,9 +161,10 @@ mod tests {
         let mut client = connect(&path).unwrap();
         let (server, _) = listener.accept().unwrap();
 
-        let response = IpcEnvelope::new(IpcServerMessage::Query(
-            spiders_core::api::QueryResponse::WorkspaceNames(vec!["1".into()]),
-        ));
+        let response =
+            IpcEnvelope::new(IpcServerMessage::Query(QueryResponse::WorkspaceNames(vec![
+                "1".into(),
+            ])));
 
         let line = encode_response_line(&response).unwrap();
         client.write_all(line.as_bytes()).unwrap();
@@ -180,10 +181,7 @@ mod tests {
     }
 
     fn unique_socket_path(label: &str) -> PathBuf {
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
+        let nanos = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
         std::env::temp_dir().join(format!("spiders-wm-{label}-{nanos}.sock"))
     }
 

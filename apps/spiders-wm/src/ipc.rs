@@ -5,24 +5,24 @@ use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
 
 use smithay::reexports::calloop::{EventLoop, Interest, Mode, PostAction, generic::Generic};
+use spiders_core::command::WmCommand;
+use spiders_core::event::WmEvent;
+use spiders_core::query::{QueryRequest, QueryResponse, query_response_for_model};
 use spiders_ipc::{
     IpcClientId, IpcCodecError, IpcRequest, IpcResponse, IpcServerHandleResult, IpcServerState,
     IpcTransportError, UnknownClientError, bind_listener, recv_request, send_response,
 };
-use spiders_core::api::{CompositorEvent, QueryRequest, QueryResponse};
-use spiders_core::command::WmCommand;
-use spiders_core::snapshot::{OutputSnapshot, StateSnapshot, WindowSnapshot, WorkspaceSnapshot};
-use spiders_core::types::{OutputTransform, ShellKind, WindowMode};
-use spiders_core::{OutputId, OutputId as SharedOutputId, WorkspaceId, WorkspaceId as SharedWorkspaceId};
 use tracing::{debug, warn};
 
-use spiders_core::wm::OutputModel;
-use spiders_core::wm::WindowModel;
-use spiders_core::wm::WorkspaceModel;
-use spiders_core::wm::WmModel;
 use crate::state::SpidersWm;
 
 impl SpidersWm {
+    pub fn broadcast_runtime_events(&mut self, events: impl IntoIterator<Item = WmEvent>) {
+        for event in events {
+            self.broadcast_ipc_event(event);
+        }
+    }
+
     pub fn ipc_add_client(&mut self) -> IpcClientId {
         self.ipc_server.add_client()
     }
@@ -38,21 +38,12 @@ impl SpidersWm {
         request: IpcRequest,
     ) -> Result<IpcResponse, UnknownClientError> {
         match self.ipc_server.handle_request(client_id, request)? {
-            IpcServerHandleResult::Query {
-                client_id,
-                request_id,
-                query,
-            } => {
+            IpcServerHandleResult::Query { client_id, request_id, query } => {
                 debug!(client_id, request_id = ?request_id, query = ?query, "wm handling IPC query");
                 let response = self.query_ipc(query);
-                self.ipc_server
-                    .query_response(client_id, request_id, response)
+                self.ipc_server.query_response(client_id, request_id, response)
             }
-            IpcServerHandleResult::Command {
-                client_id,
-                request_id,
-                command,
-            } => {
+            IpcServerHandleResult::Command { client_id, request_id, command } => {
                 debug!(client_id, request_id = ?request_id, command = ?command, "wm handling IPC command");
                 self.execute_wm_command(command);
                 self.ipc_server.command_accepted(client_id, request_id)
@@ -71,10 +62,9 @@ impl SpidersWm {
         self.ipc_clients.insert(client_id, writer);
 
         self.event_loop
-            .insert_source(
-                Generic::new(stream, Interest::READ, Mode::Level),
-                move |_, _, state| state.handle_ipc_client_io(client_id),
-            )
+            .insert_source(Generic::new(stream, Interest::READ, Mode::Level), move |_, _, state| {
+                state.handle_ipc_client_io(client_id)
+            })
             .expect("failed to register IPC client stream");
 
         Ok(())
@@ -135,7 +125,7 @@ impl SpidersWm {
         }
     }
 
-    pub fn broadcast_ipc_event(&mut self, event: CompositorEvent) {
+    pub fn broadcast_ipc_event(&mut self, event: WmEvent) {
         let stale_clients =
             broadcast_ipc_event_to_clients(&self.ipc_server, &mut self.ipc_clients, event);
 
@@ -144,47 +134,8 @@ impl SpidersWm {
         }
     }
 
-    pub fn emit_focus_change(&mut self) {
-        self.broadcast_ipc_event(CompositorEvent::FocusChange {
-            focused_window_id: self.model.focused_window_id().cloned(),
-            current_output_id: self.model.current_output_id().map(shared_output_id),
-            current_workspace_id: self.model.current_workspace_id().map(shared_workspace_id),
-        });
-    }
-
     pub fn emit_config_reloaded(&mut self) {
-        self.broadcast_ipc_event(CompositorEvent::ConfigReloaded);
-    }
-
-    pub fn emit_window_floating_change(
-        &mut self,
-        window_id: spiders_core::WindowId,
-        floating: bool,
-    ) {
-        self.broadcast_ipc_event(CompositorEvent::WindowFloatingChange {
-            window_id,
-            floating,
-        });
-    }
-
-    pub fn emit_window_fullscreen_change(
-        &mut self,
-        window_id: spiders_core::WindowId,
-        fullscreen: bool,
-    ) {
-        self.broadcast_ipc_event(CompositorEvent::WindowFullscreenChange {
-            window_id,
-            fullscreen,
-        });
-    }
-
-    pub fn emit_window_workspace_change(&mut self, window_id: spiders_core::WindowId) {
-        let workspaces = self.model.workspace_names_for_window(&window_id);
-
-        self.broadcast_ipc_event(CompositorEvent::WindowWorkspaceChange {
-            window_id,
-            workspaces,
-        });
+        self.broadcast_ipc_event(WmEvent::ConfigReloaded);
     }
 }
 
@@ -229,17 +180,12 @@ pub(crate) fn serve_ipc_client_stream(
     client_id: IpcClientId,
 ) -> Result<IpcResponse, WmIpcStreamError> {
     let request = {
-        let stream = state
-            .ipc_clients
-            .get_mut(&client_id)
-            .ok_or(UnknownClientError { client_id })?;
+        let stream =
+            state.ipc_clients.get_mut(&client_id).ok_or(UnknownClientError { client_id })?;
         recv_request(stream)?
     };
     let response = state.handle_ipc_request(client_id, request)?;
-    let stream = state
-        .ipc_clients
-        .get_mut(&client_id)
-        .ok_or(UnknownClientError { client_id })?;
+    let stream = state.ipc_clients.get_mut(&client_id).ok_or(UnknownClientError { client_id })?;
     send_response(stream, &response)?;
     Ok(response)
 }
@@ -247,7 +193,7 @@ pub(crate) fn serve_ipc_client_stream(
 pub(crate) fn broadcast_ipc_event_to_clients(
     server: &IpcServerState,
     clients: &mut BTreeMap<IpcClientId, UnixStream>,
-    event: CompositorEvent,
+    event: WmEvent,
 ) -> Vec<IpcClientId> {
     let mut stale_clients = Vec::new();
 
@@ -273,9 +219,8 @@ fn configured_ipc_socket_path() -> PathBuf {
 }
 
 fn default_ipc_socket_path() -> PathBuf {
-    let base = std::env::var_os("XDG_RUNTIME_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(std::env::temp_dir);
+    let base =
+        std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).unwrap_or_else(std::env::temp_dir);
     base.join(format!("spiders-wm-{}.sock", std::process::id()))
 }
 
@@ -333,16 +278,10 @@ where
     CommandHandler: FnMut(WmCommand),
 {
     match server.handle_request(client_id, request)? {
-        IpcServerHandleResult::Query {
-            client_id,
-            request_id,
-            query,
-        } => server.query_response(client_id, request_id, query_handler(query)),
-        IpcServerHandleResult::Command {
-            client_id,
-            request_id,
-            command,
-        } => {
+        IpcServerHandleResult::Query { client_id, request_id, query } => {
+            server.query_response(client_id, request_id, query_handler(query))
+        }
+        IpcServerHandleResult::Command { client_id, request_id, command } => {
             command_handler(command);
             server.command_accepted(client_id, request_id)
         }
@@ -350,140 +289,21 @@ where
     }
 }
 
-pub(crate) fn query_response_for_model(model: &WmModel, query: QueryRequest) -> QueryResponse {
-    let snapshot = state_snapshot_for_model(model);
-
-    match query {
-        QueryRequest::State => QueryResponse::State(snapshot),
-        QueryRequest::FocusedWindow => QueryResponse::FocusedWindow(
-            snapshot.focused_window_id.as_ref().and_then(|window_id| {
-                snapshot
-                    .windows
-                    .iter()
-                    .find(|window| &window.id == window_id)
-                    .cloned()
-            }),
-        ),
-        QueryRequest::CurrentOutput => {
-            QueryResponse::CurrentOutput(snapshot.current_output().cloned())
-        }
-        QueryRequest::CurrentWorkspace => {
-            QueryResponse::CurrentWorkspace(snapshot.current_workspace().cloned())
-        }
-        QueryRequest::MonitorList => QueryResponse::MonitorList(snapshot.outputs),
-        QueryRequest::WorkspaceNames => QueryResponse::WorkspaceNames(snapshot.workspace_names),
-    }
-}
-
-pub(crate) fn state_snapshot_for_model(model: &WmModel) -> StateSnapshot {
-    let outputs: Vec<OutputSnapshot> = model.outputs.values().map(output_snapshot).collect();
-
-    let workspace_names = model.workspace_names();
-
-    let workspaces: Vec<WorkspaceSnapshot> = model
-        .workspaces
-        .values()
-        .map(|workspace| workspace_snapshot(model, workspace))
-        .collect();
-
-    let windows: Vec<WindowSnapshot> = model
-        .windows
-        .values()
-        .map(|window| window_snapshot(model, window))
-        .collect();
-
-    let visible_window_ids = model.visible_window_ids();
-
-    StateSnapshot {
-        focused_window_id: model.focused_window_id().cloned(),
-        current_output_id: model.current_output_id().map(shared_output_id),
-        current_workspace_id: model.current_workspace_id().map(shared_workspace_id),
-        outputs,
-        workspaces,
-        windows,
-        visible_window_ids,
-        workspace_names,
-    }
-}
-
-fn output_snapshot(output: &OutputModel) -> OutputSnapshot {
-    OutputSnapshot {
-        id: shared_output_id(&output.id),
-        name: output.name.clone(),
-        logical_x: output.logical_x,
-        logical_y: output.logical_y,
-        logical_width: output.logical_width,
-        logical_height: output.logical_height,
-        scale: 1,
-        transform: OutputTransform::Normal,
-        enabled: output.enabled,
-        current_workspace_id: output
-            .focused_workspace_id
-            .as_ref()
-            .map(shared_workspace_id),
-    }
-}
-
-fn workspace_snapshot(model: &WmModel, workspace: &WorkspaceModel) -> WorkspaceSnapshot {
-    WorkspaceSnapshot {
-        id: shared_workspace_id(&workspace.id),
-        name: workspace.name.clone(),
-        output_id: workspace.output_id.as_ref().map(shared_output_id),
-        active_workspaces: model.active_workspace_names(workspace),
-        focused: workspace.focused,
-        visible: workspace.visible,
-        effective_layout: None,
-    }
-}
-
-fn window_snapshot(model: &WmModel, window: &WindowModel) -> WindowSnapshot {
-    WindowSnapshot {
-        id: window.id.clone(),
-        shell: ShellKind::Unknown,
-        app_id: window.app_id.clone(),
-        title: window.title.clone(),
-        class: None,
-        instance: None,
-        role: None,
-        window_type: None,
-        mapped: window.mapped,
-        mode: window_mode(window),
-        focused: window.focused,
-        urgent: false,
-        closing: window.closing,
-        output_id: window.output_id.as_ref().map(shared_output_id),
-        workspace_id: window.workspace_id.as_ref().map(shared_workspace_id),
-        workspaces: model.workspace_names_for_window(&window.id),
-    }
-}
-
-fn window_mode(window: &WindowModel) -> WindowMode {
-    if window.fullscreen {
-        WindowMode::Fullscreen
-    } else if window.floating {
-        WindowMode::Floating { rect: None }
-    } else {
-        WindowMode::Tiled
-    }
-}
-
-fn shared_workspace_id(workspace_id: &WorkspaceId) -> SharedWorkspaceId {
-    SharedWorkspaceId(workspace_id.0.clone())
-}
-
-fn shared_output_id(output_id: &OutputId) -> SharedOutputId {
-    SharedOutputId(output_id.0.clone())
-}
-
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
     use std::time::{SystemTime, UNIX_EPOCH};
 
+    use spiders_core::command::WmCommand;
+    use spiders_core::query::{
+        QueryRequest, QueryResponse, query_response_for_model, state_snapshot_for_model,
+    };
+    use spiders_core::types::WindowMode;
+    use spiders_core::wm::WmModel;
+    use spiders_core::{OutputId as SharedOutputId, WindowId, WorkspaceId as SharedWorkspaceId};
+    use spiders_core::{OutputId, WorkspaceId};
     use spiders_ipc::{IpcClientMessage, IpcEnvelope, IpcServerMessage, IpcSubscriptionTopic};
     use spiders_ipc::{bind_listener, connect, recv_response, send_request};
-    use spiders_core::command::WmCommand;
-    use spiders_core::{OutputId as SharedOutputId, WindowId, WorkspaceId as SharedWorkspaceId};
 
     use super::*;
 
@@ -521,19 +341,10 @@ mod tests {
     fn state_snapshot_tracks_shared_query_state() {
         let snapshot = state_snapshot_for_model(&sample_model());
 
-        assert_eq!(
-            snapshot.current_workspace_id,
-            Some(SharedWorkspaceId::from("1"))
-        );
-        assert_eq!(
-            snapshot.current_output_id,
-            Some(SharedOutputId::from("output-1"))
-        );
+        assert_eq!(snapshot.current_workspace_id, Some(SharedWorkspaceId::from("1")));
+        assert_eq!(snapshot.current_output_id, Some(SharedOutputId::from("output-1")));
         assert_eq!(snapshot.focused_window_id, Some(WindowId::from("win-1")));
-        assert_eq!(
-            snapshot.workspace_names,
-            vec!["1".to_string(), "2".to_string()]
-        );
+        assert_eq!(snapshot.workspace_names, vec!["1".to_string(), "2".to_string()]);
         assert_eq!(snapshot.visible_window_ids, vec![WindowId::from("win-1")]);
         assert_eq!(snapshot.outputs.len(), 1);
         assert_eq!(snapshot.workspaces.len(), 2);
@@ -630,9 +441,7 @@ mod tests {
             subscribe_response,
             IpcEnvelope {
                 request_id: Some("req-subscribe".into()),
-                message: IpcServerMessage::Subscribed {
-                    topics: vec![IpcSubscriptionTopic::Focus],
-                },
+                message: IpcServerMessage::Subscribed { topics: vec![IpcSubscriptionTopic::Focus] },
             }
         );
     }
@@ -711,17 +520,17 @@ mod tests {
         let stale_clients = broadcast_ipc_event_to_clients(
             &server,
             &mut writers,
-            CompositorEvent::FocusChange {
+            WmEvent::FocusChange {
                 focused_window_id: Some(WindowId::from("win-1")),
-                current_output_id: Some(SharedOutputId::from("output-1")),
-                current_workspace_id: Some(SharedWorkspaceId::from("1")),
+                current_output_id: Some(spiders_core::OutputId::from("output-1")),
+                current_workspace_id: Some(spiders_core::WorkspaceId::from("1")),
             },
         );
 
         assert!(stale_clients.is_empty());
         assert!(matches!(
             recv_response(&client).unwrap().message,
-            IpcServerMessage::Event { event: CompositorEvent::FocusChange { focused_window_id: Some(window_id), .. }, .. }
+            IpcServerMessage::Event { event: WmEvent::FocusChange { focused_window_id: Some(window_id), .. }, .. }
                 if window_id == WindowId::from("win-1")
         ));
 
@@ -750,10 +559,7 @@ mod tests {
     }
 
     fn unique_socket_path(label: &str) -> PathBuf {
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
+        let nanos = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
         std::env::temp_dir().join(format!("spiders-wm-{label}-{nanos}.sock"))
     }
 }

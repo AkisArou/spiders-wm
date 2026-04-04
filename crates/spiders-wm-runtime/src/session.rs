@@ -21,15 +21,17 @@ use spiders_core::workspace::{
     request_select_workspace,
 };
 use spiders_core::{OutputId, WindowId, WorkspaceId};
+use spiders_core::LayoutId;
 
 use crate::PreviewSnapshotNode;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct PreviewSessionState {
+pub struct PreviewSession {
+    pub active_layout: LayoutId,
     pub active_workspace_name: String,
     pub workspace_names: Vec<String>,
-    pub windows: Vec<PreviewSessionWindow>,
+    pub windows: Vec<PreviewWindow>,
     #[serde(default)]
     pub remembered_focus_by_scope: BTreeMap<String, WindowId>,
     #[serde(default)]
@@ -38,7 +40,7 @@ pub struct PreviewSessionState {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct PreviewSessionWindow {
+pub struct PreviewWindow {
     pub id: String,
     #[serde(default, rename = "app_id", alias = "appId")]
     pub app_id: Option<String>,
@@ -64,10 +66,10 @@ pub struct PreviewSessionWindow {
 }
 
 pub fn apply_preview_command(
-    mut state: PreviewSessionState,
+    mut state: PreviewSession,
     command: WmCommand,
     snapshot_root: Option<&PreviewSnapshotNode>,
-) -> PreviewSessionState {
+) -> PreviewSession {
     normalize_preview_state(&mut state);
 
     let mut model = preview_model_with_snapshot(&state, snapshot_root);
@@ -143,9 +145,7 @@ pub fn apply_preview_command(
         WmCommand::ResizeDirection { direction } | WmCommand::ResizeTiledDirection { direction } => {
             resize_direction(&mut state, &model, snapshot_root, direction);
         }
-        WmCommand::SetLayout { .. }
-        | WmCommand::CycleLayout { .. }
-        | WmCommand::ReloadConfig
+        WmCommand::ReloadConfig
         | WmCommand::ToggleViewWorkspace { .. }
         | WmCommand::AssignWorkspace { .. }
         | WmCommand::FocusMonitorLeft
@@ -155,6 +155,15 @@ pub fn apply_preview_command(
         | WmCommand::ToggleFullscreen
         | WmCommand::SetFloatingWindowGeometry { .. }
         | WmCommand::MoveDirection { .. } => {}
+        WmCommand::SetLayout { name } => {
+            state.active_layout = LayoutId::from(name.as_str());
+        }
+        WmCommand::CycleLayout { direction } => {
+            state.active_layout = cycle_preview_layout(
+                &state.active_layout,
+                direction.unwrap_or(spiders_core::command::LayoutCycleDirection::Next),
+            );
+        }
     }
 
     sync_preview_state(&mut state, &model);
@@ -162,10 +171,10 @@ pub fn apply_preview_command(
 }
 
 pub fn select_preview_workspace(
-    mut state: PreviewSessionState,
+    mut state: PreviewSession,
     workspace_name: &str,
     snapshot_root: Option<&PreviewSnapshotNode>,
-) -> PreviewSessionState {
+) -> PreviewSession {
     normalize_preview_state(&mut state);
 
     if state.active_workspace_name == workspace_name
@@ -190,10 +199,10 @@ pub fn select_preview_workspace(
 }
 
 pub fn set_preview_focused_window(
-    mut state: PreviewSessionState,
+    mut state: PreviewSession,
     focused_window_id: Option<WindowId>,
     snapshot_root: Option<&PreviewSnapshotNode>,
-) -> PreviewSessionState {
+) -> PreviewSession {
     normalize_preview_state(&mut state);
 
     let mut model = preview_model_with_snapshot(&state, snapshot_root);
@@ -211,13 +220,17 @@ pub fn set_preview_focused_window(
     state
 }
 
-fn normalize_preview_state(state: &mut PreviewSessionState) {
+fn normalize_preview_state(state: &mut PreviewSession) {
     if state.workspace_names.is_empty() {
         state.workspace_names.push(if state.active_workspace_name.is_empty() {
             "1:dev".to_string()
         } else {
             state.active_workspace_name.clone()
         });
+    }
+
+    if state.active_layout.as_str().is_empty() {
+        state.active_layout = LayoutId::from("master-stack");
     }
 
     if !state.workspace_names.contains(&state.active_workspace_name) {
@@ -229,7 +242,28 @@ fn normalize_preview_state(state: &mut PreviewSessionState) {
     }
 }
 
-fn preview_model(state: &PreviewSessionState) -> WmModel {
+fn cycle_preview_layout(
+    current: &LayoutId,
+    direction: spiders_core::command::LayoutCycleDirection,
+) -> LayoutId {
+    const PREVIEW_LAYOUT_IDS: [&str; 2] = ["master-stack", "focus-repro"];
+
+    let index = PREVIEW_LAYOUT_IDS
+        .iter()
+        .position(|layout_id| *layout_id == current.as_str())
+        .unwrap_or(0);
+
+    match direction {
+        spiders_core::command::LayoutCycleDirection::Next => {
+            LayoutId::from(PREVIEW_LAYOUT_IDS[(index + 1) % PREVIEW_LAYOUT_IDS.len()])
+        }
+        spiders_core::command::LayoutCycleDirection::Previous => LayoutId::from(
+            PREVIEW_LAYOUT_IDS[(index + PREVIEW_LAYOUT_IDS.len() - 1) % PREVIEW_LAYOUT_IDS.len()],
+        ),
+    }
+}
+
+fn preview_model(state: &PreviewSession) -> WmModel {
     let mut model = WmModel::default();
     let output_id = OutputId::from("preview-output");
 
@@ -271,7 +305,7 @@ fn preview_model(state: &PreviewSessionState) -> WmModel {
 }
 
 fn preview_model_with_snapshot(
-    state: &PreviewSessionState,
+    state: &PreviewSession,
     snapshot_root: Option<&PreviewSnapshotNode>,
 ) -> WmModel {
     let mut model = preview_model(state);
@@ -288,7 +322,7 @@ fn preview_model_with_snapshot(
     model
 }
 
-fn ordered_window_ids(state: &PreviewSessionState) -> Vec<WindowId> {
+fn ordered_window_ids(state: &PreviewSession) -> Vec<WindowId> {
     state
         .windows
         .iter()
@@ -305,7 +339,7 @@ fn workspace_name_by_index(workspace_names: &[String], workspace_index: u8) -> O
 }
 
 fn select_workspace_by_name(
-    state: &PreviewSessionState,
+    state: &PreviewSession,
     model: &mut WmModel,
     workspace_name: Option<String>,
 ) {
@@ -334,7 +368,7 @@ fn focus_direction(
 }
 
 fn resize_direction(
-    state: &mut PreviewSessionState,
+    state: &mut PreviewSession,
     model: &WmModel,
     snapshot_root: Option<&PreviewSnapshotNode>,
     direction: FocusDirection,
@@ -372,7 +406,7 @@ fn resize_direction(
 }
 
 fn swap_direction(
-    state: &mut PreviewSessionState,
+    state: &mut PreviewSession,
     model: &mut WmModel,
     snapshot_root: Option<&PreviewSnapshotNode>,
     direction: FocusDirection,
@@ -413,7 +447,7 @@ fn swap_direction(
 }
 
 fn directional_candidate_ids(
-    state: &PreviewSessionState,
+    state: &PreviewSession,
     snapshot_root: Option<&PreviewSnapshotNode>,
 ) -> Vec<WindowId> {
     let mut snapshot_ids = Vec::new();
@@ -707,7 +741,7 @@ fn toggle_focused_window_floating(model: &mut WmModel) {
     model.set_window_floating(focused_window_id, next_floating);
 }
 
-fn close_focused_window(state: &mut PreviewSessionState, model: &mut WmModel) {
+fn close_focused_window(state: &mut PreviewSession, model: &mut WmModel) {
     let Some(focused_window_id) = model.focused_window_id().cloned() else {
         return;
     };
@@ -719,7 +753,7 @@ fn close_focused_window(state: &mut PreviewSessionState, model: &mut WmModel) {
         .retain(|window| window.id != focused_window_id.as_str());
 }
 
-fn spawn_foot_window(state: &mut PreviewSessionState, model: &mut WmModel) {
+fn spawn_foot_window(state: &mut PreviewSession, model: &mut WmModel) {
     let terminal_number = next_terminal_title_number(state);
     let window_id = format!("win-{}", next_window_id_number(state));
     let current_workspace = model
@@ -727,7 +761,7 @@ fn spawn_foot_window(state: &mut PreviewSessionState, model: &mut WmModel) {
         .cloned()
         .unwrap_or_else(|| WorkspaceId::from(state.active_workspace_name.as_str()));
 
-    state.windows.push(PreviewSessionWindow {
+    state.windows.push(PreviewWindow {
         id: window_id.clone(),
         app_id: Some("foot".to_string()),
         title: Some(format!("Terminal {terminal_number}")),
@@ -752,7 +786,7 @@ fn spawn_foot_window(state: &mut PreviewSessionState, model: &mut WmModel) {
     let _ = set_focused_window(model, Some(WindowId::from(window_id.as_str())));
 }
 
-fn next_terminal_title_number(state: &PreviewSessionState) -> u32 {
+fn next_terminal_title_number(state: &PreviewSession) -> u32 {
     state
         .windows
         .iter()
@@ -768,7 +802,7 @@ fn next_terminal_title_number(state: &PreviewSessionState) -> u32 {
         + 1
 }
 
-fn next_window_id_number(state: &PreviewSessionState) -> u32 {
+fn next_window_id_number(state: &PreviewSession) -> u32 {
     state
         .windows
         .iter()
@@ -783,7 +817,7 @@ fn next_window_id_number(state: &PreviewSessionState) -> u32 {
         + 1
 }
 
-fn sync_preview_state(state: &mut PreviewSessionState, model: &WmModel) {
+fn sync_preview_state(state: &mut PreviewSession, model: &WmModel) {
     if let Some(current_workspace_id) = model.current_workspace_id() {
         state.active_workspace_name = current_workspace_id.as_str().to_string();
     }
@@ -838,8 +872,8 @@ mod tests {
         WmCommand::FocusDirection { direction }
     }
 
-    fn preview_window(id: &str, title: &str, focused: bool) -> PreviewSessionWindow {
-        PreviewSessionWindow {
+    fn preview_window(id: &str, title: &str, focused: bool) -> PreviewWindow {
+        PreviewWindow {
             id: id.to_string(),
             app_id: Some("foot".to_string()),
             title: Some(title.to_string()),
@@ -929,8 +963,9 @@ mod tests {
         }
     }
 
-    fn initial_preview_state() -> PreviewSessionState {
-        PreviewSessionState {
+    fn initial_preview_state() -> PreviewSession {
+        PreviewSession {
+            active_layout: LayoutId::from("master-stack"),
             active_workspace_name: "1".to_string(),
             workspace_names: vec!["1".to_string()],
             windows: vec![
@@ -1002,7 +1037,7 @@ mod tests {
         }
     }
 
-    fn focused_window_id(state: &PreviewSessionState) -> &str {
+    fn focused_window_id(state: &PreviewSession) -> &str {
         state
             .windows
             .iter()
@@ -1087,7 +1122,7 @@ mod tests {
     fn direct_workspace_selection_chooses_preferred_focus_on_target_workspace() {
         let mut state = initial_preview_state();
         state.workspace_names = vec!["1".to_string(), "2".to_string()];
-        state.windows.push(PreviewSessionWindow {
+        state.windows.push(PreviewWindow {
             id: "win-6".to_string(),
             app_id: Some("foot".to_string()),
             title: Some("Terminal 6".to_string()),
@@ -1139,5 +1174,29 @@ mod tests {
             state.layout_adjustments.split_weights_by_node_id.get("stack"),
             Some(&vec![8, 7, 9])
         );
+    }
+
+    #[test]
+    fn preview_set_layout_updates_runtime_layout_state() {
+        let state = apply_preview_command(
+            initial_preview_state(),
+            WmCommand::SetLayout {
+                name: "focus-repro".to_string(),
+            },
+            None,
+        );
+
+        assert_eq!(state.active_layout, LayoutId::from("focus-repro"));
+    }
+
+    #[test]
+    fn preview_cycle_layout_updates_runtime_layout_state() {
+        let state = apply_preview_command(
+            initial_preview_state(),
+            WmCommand::CycleLayout { direction: None },
+            None,
+        );
+
+        assert_eq!(state.active_layout, LayoutId::from("focus-repro"));
     }
 }

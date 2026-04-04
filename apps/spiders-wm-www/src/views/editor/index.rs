@@ -17,10 +17,8 @@ use super::monaco::MonacoEditorPane;
 
 const PANEL_CLASS: &str =
     "border-terminal-border bg-terminal-bg-subtle flex min-h-0 flex-col overflow-hidden border";
-const BAR_CLASS: &str =
-    "border-terminal-border bg-terminal-bg-bar text-terminal-dim flex items-center justify-between border-b px-2 py-1 text-xs";
-const ACTION_BUTTON_CLASS: &str =
-    "border-terminal-border bg-terminal-bg-panel text-terminal-dim hover:text-terminal-fg border px-2 py-0.5 text-xs disabled:cursor-not-allowed disabled:opacity-40";
+const BAR_CLASS: &str = "border-terminal-border bg-terminal-bg-bar text-terminal-dim flex items-center justify-between border-b px-2 py-1 text-xs";
+const ACTION_BUTTON_CLASS: &str = "border-terminal-border bg-terminal-bg-panel text-terminal-dim hover:text-terminal-fg border px-2 py-0.5 text-xs disabled:cursor-not-allowed disabled:opacity-40";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct TabContextMenuState {
@@ -38,12 +36,10 @@ pub fn EditorView() -> impl IntoView {
     let close_tab_context_menu = Callback::new(move |_| tab_context_menu.set(None));
     let tab_context_menu_open = Signal::derive(move || tab_context_menu.get().is_some());
     let tab_context_menu_position = Signal::derive(move || {
-        tab_context_menu
-            .get()
-            .map(|state| state.position)
-            .unwrap_or_default()
+        tab_context_menu.get().map(|state| state.position).unwrap_or_default()
     });
-    let tab_context_menu_file_id = Signal::derive(move || tab_context_menu.get().map(|state| state.file_id));
+    let tab_context_menu_file_id =
+        Signal::derive(move || tab_context_menu.get().map(|state| state.file_id));
 
     view! {
         <section class="grid h-full min-h-0 w-full min-w-0 grid-cols-1 gap-2 xl:grid-cols-[minmax(0,1fr)_20rem]">
@@ -246,7 +242,7 @@ pub fn EditorView() -> impl IntoView {
                         </div>
                         <div class="border-terminal-border bg-terminal-bg-panel flex justify-between border px-2 py-1">
                             <span>"layout"</span>
-                            <span class="text-terminal-fg-strong">{move || app_state.session.get().active_layout.as_str().to_string()}</span>
+                            <span class="text-terminal-fg-strong">{move || app_state.session.get().active_layout().as_str().to_string()}</span>
                         </div>
                     </div>
                 </div>

@@ -2,10 +2,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use spiders_core::LayoutId;
-use spiders_wm_runtime::{
-    PreviewSessionState as RuntimePreviewSessionState, build_preview_layout_context,
-    compile_source_bundle_to_module_graph,
-};
+use spiders_wm_runtime::{PreviewSession, build_preview_layout_context, compile_source_bundle_to_module_graph};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
 
@@ -15,7 +12,7 @@ use crate::session::PreviewSessionState;
 #[derive(Debug, Clone, PartialEq)]
 pub struct PreviewRenderRequest {
     pub active_layout: LayoutId,
-    pub runtime_state: RuntimePreviewSessionState,
+    pub runtime_state: PreviewSession,
     pub canvas_width: u32,
     pub canvas_height: u32,
     pub buffers: BTreeMap<EditorFileId, String>,
@@ -27,7 +24,7 @@ impl PreviewRenderRequest {
         session: &PreviewSessionState,
     ) -> Self {
         Self {
-            active_layout: session.active_layout.clone(),
+            active_layout: session.active_layout().clone(),
             runtime_state: session.runtime_state().clone(),
             canvas_width: session.canvas_width() as u32,
             canvas_height: session.canvas_height() as u32,

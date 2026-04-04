@@ -5,18 +5,11 @@ use tracing::{debug, info};
 use crate::actions::focus::FocusUpdate;
 use crate::frame_sync;
 use spiders_core::window_id;
-use crate::runtime::{RuntimeCommand, RuntimeResult};
 use crate::state::{ManagedWindow, SpidersWm};
 
 impl SpidersWm {
     pub fn close_focused_window(&mut self) {
-        let closing_window_id = match self
-            .runtime()
-            .execute(RuntimeCommand::RequestCloseFocusedWindowSelection)
-        {
-            RuntimeResult::CloseSelection(selection) => selection.closing_window_id,
-            _ => None,
-        };
+        let closing_window_id = self.runtime().request_close_focused_window_selection().closing_window_id;
         info!(closing_window = ?closing_window_id, "wm close focused window request");
         let Some(focused_surface) =
             closing_window_id.and_then(|window_id| self.surface_for_window_id(window_id))
@@ -34,12 +27,10 @@ impl SpidersWm {
     }
 
     pub fn toggle_focused_window_floating(&mut self) {
-        let toggled_window_id = match self
-            .runtime()
-            .execute(RuntimeCommand::ToggleFocusedWindowFloating)
-        {
-            RuntimeResult::Window(toggled_window_id) => toggled_window_id,
-            _ => None,
+        let (toggled_window_id, events) = {
+            let mut runtime = self.runtime();
+            let toggled_window_id = runtime.toggle_focused_window_floating();
+            (toggled_window_id, runtime.take_events())
         };
         if toggled_window_id.is_none() {
             return;
@@ -53,38 +44,35 @@ impl SpidersWm {
             }
 
             self.schedule_relayout();
-            let floating = self.window_is_floating(&window_id);
-            self.emit_window_floating_change(window_id, floating);
+            self.broadcast_runtime_events(events);
         }
     }
 
     pub fn toggle_focused_window_fullscreen(&mut self) {
-        let toggled_window_id = match self
-            .runtime()
-            .execute(RuntimeCommand::ToggleFocusedWindowFullscreen)
-        {
-            RuntimeResult::Window(toggled_window_id) => toggled_window_id,
-            _ => None,
+        let (toggled_window_id, events) = {
+            let mut runtime = self.runtime();
+            let toggled_window_id = runtime.toggle_focused_window_fullscreen();
+            (toggled_window_id, runtime.take_events())
         };
         if toggled_window_id.is_none() {
             return;
         }
 
         self.schedule_relayout();
-        if let Some(window_id) = toggled_window_id {
-            let fullscreen = self.window_is_fullscreen(&window_id);
-            self.emit_window_fullscreen_change(window_id, fullscreen);
-        }
+        self.broadcast_runtime_events(events);
     }
 
     pub fn add_window(&mut self, window: Window) {
         let window_id = window_id(self.next_window_id);
         self.next_window_id += 1;
-        let _ = self.runtime().execute(RuntimeCommand::PlaceNewWindow {
-            window_id: window_id.clone(),
-        });
+        let events = {
+            let mut runtime = self.runtime();
+            let _ = runtime.place_new_window(window_id.clone());
+            runtime.take_events()
+        };
 
         self.insert_managed_window(window_id.clone(), window);
+        self.broadcast_runtime_events(events);
 
         if let Some(toplevel) = self
             .managed_window_for_id(&window_id)
@@ -121,12 +109,10 @@ impl SpidersWm {
             .map(|location| location - window.geometry().loc);
         let window_order = self.managed_window_ids();
 
-        let focus_update = match self.runtime().execute(RuntimeCommand::UnmapWindow {
-            window_id: window_id.clone(),
-            window_order,
-        }) {
-            RuntimeResult::FocusUpdate(focus_update) => focus_update,
-            _ => FocusUpdate::Unchanged,
+        let (focus_update, events) = {
+            let mut runtime = self.runtime();
+            let focus_update = runtime.unmap_window(window_id.clone(), window_order);
+            (focus_update, runtime.take_events())
         };
         let closing = self.window_is_closing(&window_id);
 
@@ -141,6 +127,7 @@ impl SpidersWm {
 
         self.log_managed_window_state("after close start");
 
+        self.broadcast_runtime_events(events);
         self.apply_focus_update(focus_update);
         let relayout_transaction = self.closing_overlay_transaction();
 
@@ -189,24 +176,20 @@ impl SpidersWm {
         let record = self.remove_managed_window_at(position);
         let window_id = record.id.clone();
         let mut focus_update = FocusUpdate::Unchanged;
+        let mut runtime_events = Vec::new();
 
         if record.mapped {
             self.unmap_window_element(&record.window);
-            focus_update = match self.runtime().execute(RuntimeCommand::UnmapWindow {
-                window_id: window_id.clone(),
-                window_order: window_order.clone(),
-            }) {
-                RuntimeResult::FocusUpdate(focus_update) => focus_update,
-                _ => FocusUpdate::Unchanged,
-            };
+            let mut runtime = self.runtime();
+            focus_update = runtime.unmap_window(window_id.clone(), window_order.clone());
+            runtime_events.extend(runtime.take_events());
         }
 
-        let remove_update = match self.runtime().execute(RuntimeCommand::RemoveWindow {
-            window_id: window_id.clone(),
-            window_order,
-        }) {
-            RuntimeResult::FocusUpdate(focus_update) => focus_update,
-            _ => FocusUpdate::Unchanged,
+        let remove_update = {
+            let mut runtime = self.runtime();
+            let remove_update = runtime.remove_window(window_id.clone(), window_order);
+            runtime_events.extend(runtime.take_events());
+            remove_update
         };
 
         if matches!(focus_update, FocusUpdate::Unchanged) {
@@ -222,6 +205,7 @@ impl SpidersWm {
 
         self.log_managed_window_state("after window destroy");
 
+        self.broadcast_runtime_events(runtime_events);
         self.apply_focus_update(focus_update);
 
         if let Some((window, location, snapshot)) = destroy_overlay {
@@ -324,10 +308,12 @@ impl SpidersWm {
 
             if first_map {
                 info!(window = %window_id.0, "wm first map commit");
-                let _ = self.runtime().execute(RuntimeCommand::SyncWindowMapped {
-                    window_id,
-                    mapped: true,
-                });
+                let events = {
+                    let mut runtime = self.runtime();
+                    let _ = runtime.sync_window_mapped(window_id, true);
+                    runtime.take_events()
+                };
+                self.broadcast_runtime_events(events);
                 self.schedule_relayout();
                 self.set_focus_with_new_serial(Some(surface.clone()));
             }

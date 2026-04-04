@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 
 use crate::focus::{FocusScopeNavigation, FocusScopePath, FocusTree};
+use crate::types::LayoutRef;
 use crate::{OutputId, SeatId, WindowId, WorkspaceId};
 use crate::ResolvedLayoutNode;
 
@@ -72,6 +73,7 @@ pub struct WorkspaceModel {
     pub output_id: Option<OutputId>,
     pub focused: bool,
     pub visible: bool,
+    pub effective_layout: Option<LayoutRef>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -178,6 +180,7 @@ impl WmModel {
                 output_id: None,
                 focused: false,
                 visible: false,
+                effective_layout: None,
             });
     }
 
@@ -493,6 +496,16 @@ impl WmModel {
     pub fn set_window_fullscreen(&mut self, id: WindowId, fullscreen: bool) {
         if let Some(window) = self.windows.get_mut(&id) {
             window.fullscreen = fullscreen;
+        }
+    }
+
+    pub fn set_workspace_effective_layout(
+        &mut self,
+        workspace_id: WorkspaceId,
+        effective_layout: Option<LayoutRef>,
+    ) {
+        if let Some(workspace) = self.workspaces.get_mut(&workspace_id) {
+            workspace.effective_layout = effective_layout;
         }
     }
 

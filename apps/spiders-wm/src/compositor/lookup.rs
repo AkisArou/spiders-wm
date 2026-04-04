@@ -3,9 +3,9 @@ use smithay::output::Output;
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::utils::{Logical, Point, Rectangle};
 
-use spiders_core::{WindowId, WorkspaceId};
-use spiders_core::wm::WindowGeometry;
 use crate::state::{ManagedWindow, SpidersWm};
+use spiders_core::wm::WindowGeometry;
+use spiders_core::{WindowId, WorkspaceId};
 
 impl SpidersWm {
     pub fn managed_window_count(&self) -> usize {
@@ -17,10 +17,7 @@ impl SpidersWm {
     }
 
     pub fn managed_window_ids(&self) -> Vec<WindowId> {
-        self.managed_windows
-            .iter()
-            .map(|record| record.id.clone())
-            .collect()
+        self.managed_windows.iter().map(|record| record.id.clone()).collect()
     }
 
     pub fn insert_managed_window(&mut self, window_id: WindowId, window: Window) {
@@ -39,10 +36,7 @@ impl SpidersWm {
     pub fn visible_managed_window_ids(&self) -> Vec<WindowId> {
         self.visible_managed_window_positions()
             .into_iter()
-            .filter_map(|index| {
-                self.managed_window_at(index)
-                    .map(|record| record.id.clone())
-            })
+            .filter_map(|index| self.managed_window_at(index).map(|record| record.id.clone()))
             .collect()
     }
 
@@ -51,18 +45,14 @@ impl SpidersWm {
     }
 
     pub fn managed_window_for_id(&self, window_id: &WindowId) -> Option<&ManagedWindow> {
-        self.managed_windows
-            .iter()
-            .find(|record| &record.id == window_id)
+        self.managed_windows.iter().find(|record| &record.id == window_id)
     }
 
     pub fn managed_window_mut_for_id(
         &mut self,
         window_id: &WindowId,
     ) -> Option<&mut ManagedWindow> {
-        self.managed_windows
-            .iter_mut()
-            .find(|record| &record.id == window_id)
+        self.managed_windows.iter_mut().find(|record| &record.id == window_id)
     }
 
     pub fn swap_managed_window_positions(&mut self, first_index: usize, second_index: usize) {
@@ -78,10 +68,7 @@ impl SpidersWm {
     }
 
     pub fn window_workspace_id(&self, window_id: &WindowId) -> Option<WorkspaceId> {
-        self.model
-            .windows
-            .get(window_id)
-            .and_then(|window| window.workspace_id.clone())
+        self.model.windows.get(window_id).and_then(|window| window.workspace_id.clone())
     }
 
     pub fn window_is_on_current_workspace(&self, window_id: &WindowId) -> bool {
@@ -89,32 +76,15 @@ impl SpidersWm {
     }
 
     pub fn window_is_closing(&self, window_id: &WindowId) -> bool {
-        self.model
-            .windows
-            .get(window_id)
-            .is_some_and(|window| window.closing)
+        self.model.windows.get(window_id).is_some_and(|window| window.closing)
     }
 
     pub fn window_is_floating(&self, window_id: &WindowId) -> bool {
-        self.model
-            .windows
-            .get(window_id)
-            .is_some_and(|window| window.floating)
-    }
-
-    pub fn window_is_fullscreen(&self, window_id: &WindowId) -> bool {
-        self.model
-            .windows
-            .get(window_id)
-            .is_some_and(|window| window.fullscreen)
+        self.model.windows.get(window_id).is_some_and(|window| window.floating)
     }
 
     pub fn window_floating_geometry(&self, window_id: &WindowId) -> Option<WindowGeometry> {
         self.model.floating_geometry(window_id)
-    }
-
-    pub fn set_window_floating_geometry(&mut self, window_id: WindowId, geometry: WindowGeometry) {
-        self.model.set_window_floating_geometry(window_id, geometry);
     }
 
     pub fn current_output_geometry(&self) -> Option<Rectangle<i32, Logical>> {
@@ -130,19 +100,15 @@ impl SpidersWm {
         &self,
         pos: Point<f64, Logical>,
     ) -> Option<(WlSurface, Point<f64, Logical>)> {
-        self.space
-            .element_under(pos)
-            .and_then(|(window, location)| {
-                window
-                    .surface_under(pos - location.to_f64(), WindowSurfaceType::ALL)
-                    .map(|(surface, point)| (surface, (point + location).to_f64()))
-            })
+        self.space.element_under(pos).and_then(|(window, location)| {
+            window
+                .surface_under(pos - location.to_f64(), WindowSurfaceType::ALL)
+                .map(|(surface, point)| (surface, (point + location).to_f64()))
+        })
     }
 
     pub fn window_under(&self, pos: Point<f64, Logical>) -> Option<Window> {
-        self.space
-            .element_under(pos)
-            .map(|(window, _)| window.clone())
+        self.space.element_under(pos).map(|(window, _)| window.clone())
     }
 
     pub fn window_for_root_surface(&self, root: &WlSurface) -> Option<Window> {
@@ -163,16 +129,12 @@ impl SpidersWm {
     }
 
     pub fn window_id_for_surface(&self, surface: &WlSurface) -> Option<WindowId> {
-        self.managed_window_for_surface(surface)
-            .map(|record| record.id.clone())
+        self.managed_window_for_surface(surface).map(|record| record.id.clone())
     }
 
     pub fn managed_window_for_surface(&self, surface: &WlSurface) -> Option<&ManagedWindow> {
         self.managed_windows.iter().find(|record| {
-            record
-                .window
-                .toplevel()
-                .is_some_and(|toplevel| toplevel.wl_surface() == surface)
+            record.window.toplevel().is_some_and(|toplevel| toplevel.wl_surface() == surface)
         })
     }
 
@@ -181,38 +143,25 @@ impl SpidersWm {
         surface: &WlSurface,
     ) -> Option<&mut ManagedWindow> {
         self.managed_windows.iter_mut().find(|record| {
-            record
-                .window
-                .toplevel()
-                .is_some_and(|toplevel| toplevel.wl_surface() == surface)
+            record.window.toplevel().is_some_and(|toplevel| toplevel.wl_surface() == surface)
         })
     }
 
     pub fn managed_window_position_for_surface(&self, surface: &WlSurface) -> Option<usize> {
         self.managed_windows.iter().position(|record| {
-            record
-                .window
-                .toplevel()
-                .is_some_and(|toplevel| toplevel.wl_surface() == surface)
+            record.window.toplevel().is_some_and(|toplevel| toplevel.wl_surface() == surface)
         })
     }
 
     pub fn surface_for_window_id(&self, window_id: WindowId) -> Option<WlSurface> {
         self.managed_window_for_id(&window_id).and_then(|record| {
-            record
-                .window
-                .toplevel()
-                .map(|toplevel| toplevel.wl_surface().clone())
+            record.window.toplevel().map(|toplevel| toplevel.wl_surface().clone())
         })
     }
 
     pub fn window_id_under(&self, pos: Point<f64, Logical>) -> Option<WindowId> {
         self.window_under(pos)
-            .and_then(|window| {
-                window
-                    .toplevel()
-                    .map(|toplevel| toplevel.wl_surface().clone())
-            })
+            .and_then(|window| window.toplevel().map(|toplevel| toplevel.wl_surface().clone()))
             .and_then(|surface| self.window_id_for_surface(&surface))
     }
 
@@ -221,9 +170,7 @@ impl SpidersWm {
             .iter()
             .enumerate()
             .filter_map(|(index, record)| {
-                self.model
-                    .window_is_layout_eligible(&record.id)
-                    .then_some(index)
+                self.model.window_is_layout_eligible(&record.id).then_some(index)
             })
             .collect()
     }

@@ -1,51 +1,24 @@
+use spiders_core::command::WmCommand;
+use spiders_core::event::WmEvent;
 use spiders_core::focus::{
     FocusSelection, FocusUpdate, remove_window, request_focus_next_window,
     request_focus_previous_window, request_focus_window, unmap_window,
 };
+use spiders_core::query::{
+    QueryRequest, QueryResponse, output_snapshot, query_response_for_model, window_snapshot,
+    workspace_snapshot,
+};
+use spiders_core::signal::WmSignal;
+use spiders_core::types::LayoutRef;
 use spiders_core::wm::WmModel;
 use spiders_core::workspace::{
     WorkspaceSelection, ensure_default_workspace, ensure_workspace, place_new_window,
     request_select_next_workspace, request_select_previous_workspace, request_select_workspace,
 };
-use spiders_core::{OutputId, SeatId, WindowId, WorkspaceId};
+use spiders_core::{LayoutRect, OutputId, SeatId, WindowId, WorkspaceId};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum RuntimeCommand {
-    EnsureWorkspace { name: String },
-    EnsureDefaultWorkspace { name: String },
-    RequestSelectWorkspace { workspace_id: WorkspaceId, window_order: Vec<WindowId> },
-    RequestSelectNextWorkspace { window_order: Vec<WindowId> },
-    RequestSelectPreviousWorkspace { window_order: Vec<WindowId> },
-    EnsureSeat { seat_id: SeatId },
-    SyncOutput { output_id: OutputId, name: String, logical_width: u32, logical_height: u32 },
-    PlaceNewWindow { window_id: WindowId },
-    RequestFocusWindowSelection { seat_id: SeatId, window_id: Option<WindowId> },
-    RequestFocusNextWindowSelection { seat_id: SeatId, window_order: Vec<WindowId> },
-    RequestFocusPreviousWindowSelection { seat_id: SeatId, window_order: Vec<WindowId> },
-    SyncHoveredWindow { seat_id: SeatId, hovered_window_id: Option<WindowId> },
-    SyncInteractedWindow { seat_id: SeatId, interacted_window_id: Option<WindowId> },
-    UnmapWindow { window_id: WindowId, window_order: Vec<WindowId> },
-    RemoveWindow { window_id: WindowId, window_order: Vec<WindowId> },
-    RequestCloseFocusedWindowSelection,
-    AssignFocusedWindowToWorkspace { workspace_id: WorkspaceId, window_order: Vec<WindowId> },
-    ToggleAssignFocusedWindowToWorkspace { workspace_id: WorkspaceId, window_order: Vec<WindowId> },
-    ToggleFocusedWindowFloating,
-    ToggleFocusedWindowFullscreen,
-    SyncWindowIdentity { window_id: WindowId, title: Option<String>, app_id: Option<String> },
-    SyncWindowMapped { window_id: WindowId, mapped: bool },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum RuntimeResult {
-    Workspace(WorkspaceId),
-    WorkspaceSelection(Option<WorkspaceSelection>),
-    FocusSelection(FocusSelection),
-    CloseSelection(CloseSelection),
-    Seat(SeatId),
-    Output(OutputId),
-    Window(Option<WindowId>),
-    FocusUpdate(FocusUpdate),
-}
+use crate::host::{WmHost, dispatch_wm_command};
+use spiders_config::model::Config;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CloseSelection {
@@ -54,101 +27,58 @@ pub struct CloseSelection {
 
 pub struct WmRuntime<'a> {
     model: &'a mut WmModel,
+    pending_events: Vec<WmEvent>,
 }
 
 impl<'a> WmRuntime<'a> {
     pub fn new(model: &'a mut WmModel) -> Self {
-        Self { model }
+        Self { model, pending_events: Vec::new() }
     }
 
-    pub fn execute(&mut self, command: RuntimeCommand) -> RuntimeResult {
-        match command {
-            RuntimeCommand::EnsureWorkspace { name } => {
-                RuntimeResult::Workspace(self.ensure_workspace(name))
+    pub fn dispatch_command<H: WmHost>(
+        &mut self,
+        host: &mut H,
+        command: WmCommand,
+    ) -> Vec<WmEvent> {
+        dispatch_wm_command(host, command);
+        self.take_events()
+    }
+
+    pub fn handle_signal<H: WmHost>(&mut self, _host: &mut H, signal: WmSignal) -> Vec<WmEvent> {
+        match signal {
+            WmSignal::EnsureSeat { seat_id } => {
+                self.ensure_seat(seat_id);
             }
-            RuntimeCommand::EnsureDefaultWorkspace { name } => {
-                RuntimeResult::Workspace(self.ensure_default_workspace(name))
+            WmSignal::OutputSynced { output_id, name, logical_width, logical_height } => {
+                self.sync_output(output_id, name, logical_width, logical_height);
             }
-            RuntimeCommand::RequestSelectWorkspace { workspace_id, window_order } => {
-                RuntimeResult::WorkspaceSelection(
-                    self.request_select_workspace(workspace_id, window_order),
-                )
+            WmSignal::HoveredWindowChanged { seat_id, hovered_window_id } => {
+                self.sync_hovered_window(seat_id, hovered_window_id);
             }
-            RuntimeCommand::RequestSelectNextWorkspace { window_order } => {
-                RuntimeResult::WorkspaceSelection(self.request_select_next_workspace(window_order))
+            WmSignal::InteractedWindowChanged { seat_id, interacted_window_id } => {
+                self.sync_interacted_window(seat_id, interacted_window_id);
             }
-            RuntimeCommand::RequestSelectPreviousWorkspace { window_order } => {
-                RuntimeResult::WorkspaceSelection(
-                    self.request_select_previous_workspace(window_order),
-                )
+            WmSignal::WindowIdentityChanged { window_id, title, app_id } => {
+                self.sync_window_identity(window_id, title, app_id);
             }
-            RuntimeCommand::EnsureSeat { seat_id } => {
-                RuntimeResult::Seat(self.ensure_seat(seat_id))
-            }
-            RuntimeCommand::SyncOutput { output_id, name, logical_width, logical_height } => {
-                RuntimeResult::Output(self.sync_output(
-                    output_id,
-                    name,
-                    logical_width,
-                    logical_height,
-                ))
-            }
-            RuntimeCommand::PlaceNewWindow { window_id } => {
-                RuntimeResult::Window(Some(self.place_new_window(window_id)))
-            }
-            RuntimeCommand::RequestFocusWindowSelection { seat_id, window_id } => {
-                RuntimeResult::FocusSelection(
-                    self.request_focus_window_selection(seat_id, window_id),
-                )
-            }
-            RuntimeCommand::RequestFocusNextWindowSelection { seat_id, window_order } => {
-                RuntimeResult::FocusSelection(
-                    self.request_focus_next_window_selection(seat_id, window_order),
-                )
-            }
-            RuntimeCommand::RequestFocusPreviousWindowSelection { seat_id, window_order } => {
-                RuntimeResult::FocusSelection(
-                    self.request_focus_previous_window_selection(seat_id, window_order),
-                )
-            }
-            RuntimeCommand::SyncHoveredWindow { seat_id, hovered_window_id } => {
-                RuntimeResult::Window(self.sync_hovered_window(seat_id, hovered_window_id))
-            }
-            RuntimeCommand::SyncInteractedWindow { seat_id, interacted_window_id } => {
-                RuntimeResult::Window(self.sync_interacted_window(seat_id, interacted_window_id))
-            }
-            RuntimeCommand::UnmapWindow { window_id, window_order } => {
-                RuntimeResult::FocusUpdate(self.unmap_window(window_id, window_order))
-            }
-            RuntimeCommand::RemoveWindow { window_id, window_order } => {
-                RuntimeResult::FocusUpdate(self.remove_window(window_id, window_order))
-            }
-            RuntimeCommand::RequestCloseFocusedWindowSelection => {
-                RuntimeResult::CloseSelection(self.request_close_focused_window_selection())
-            }
-            RuntimeCommand::AssignFocusedWindowToWorkspace { workspace_id, window_order } => {
-                RuntimeResult::FocusSelection(
-                    self.assign_focused_window_to_workspace(workspace_id, window_order),
-                )
-            }
-            RuntimeCommand::ToggleAssignFocusedWindowToWorkspace { workspace_id, window_order } => {
-                RuntimeResult::FocusSelection(
-                    self.toggle_assign_focused_window_to_workspace(workspace_id, window_order),
-                )
-            }
-            RuntimeCommand::ToggleFocusedWindowFloating => {
-                RuntimeResult::Window(self.toggle_focused_window_floating())
-            }
-            RuntimeCommand::ToggleFocusedWindowFullscreen => {
-                RuntimeResult::Window(self.toggle_focused_window_fullscreen())
-            }
-            RuntimeCommand::SyncWindowIdentity { window_id, title, app_id } => {
-                RuntimeResult::Window(self.sync_window_identity(window_id, title, app_id))
-            }
-            RuntimeCommand::SyncWindowMapped { window_id, mapped } => {
-                RuntimeResult::Window(self.sync_window_mapped(window_id, mapped))
+            WmSignal::WindowMappedChanged { window_id, mapped } => {
+                self.sync_window_mapped(window_id, mapped);
             }
         }
+
+        self.take_events()
+    }
+
+    pub fn take_events(&mut self) -> Vec<WmEvent> {
+        std::mem::take(&mut self.pending_events)
+    }
+
+    pub fn query(&self, request: QueryRequest) -> QueryResponse {
+        query_response_for_model(self.model, request)
+    }
+
+    pub fn model(&self) -> &WmModel {
+        self.model
     }
 
     pub fn ensure_default_workspace(&mut self, name: impl Into<String>) -> WorkspaceId {
@@ -159,6 +89,72 @@ impl<'a> WmRuntime<'a> {
         ensure_workspace(self.model, name)
     }
 
+    pub fn sync_layout_selection_defaults(&mut self, config: &Config) {
+        let workspace_names = self.model.workspace_names();
+        let workspace_ids = self.model.workspaces.keys().cloned().collect::<Vec<_>>();
+
+        for workspace_id in workspace_ids {
+            let current_layout = self
+                .model
+                .workspaces
+                .get(&workspace_id)
+                .and_then(|workspace| workspace.effective_layout.clone());
+            let next_layout = workspace_default_layout_name(self.model, config, &workspace_names, &workspace_id)
+                .map(|name| LayoutRef { name });
+            if current_layout != next_layout {
+                self.model.set_workspace_effective_layout(workspace_id.clone(), next_layout.clone());
+                self.push_layout_change(Some(workspace_id), next_layout);
+            }
+        }
+    }
+
+    pub fn set_current_workspace_layout(&mut self, name: impl Into<String>) -> Option<LayoutRef> {
+        let workspace_id = self.model.current_workspace_id().cloned()?;
+        let name = name.into();
+        let layout = LayoutRef { name };
+        self.model
+            .set_workspace_effective_layout(workspace_id.clone(), Some(layout.clone()));
+        self.push_layout_change(Some(workspace_id), Some(layout.clone()));
+        Some(layout)
+    }
+
+    pub fn cycle_current_workspace_layout(
+        &mut self,
+        config: &Config,
+        direction: Option<spiders_core::command::LayoutCycleDirection>,
+    ) -> Option<LayoutRef> {
+        let workspace_id = self.model.current_workspace_id().cloned()?;
+        let layouts = config.layouts.iter().map(|layout| layout.name.as_str()).collect::<Vec<_>>();
+        if layouts.is_empty() {
+            return None;
+        }
+
+        let current_name = self
+            .model
+            .workspaces
+            .get(&workspace_id)
+            .and_then(|workspace| workspace.effective_layout.as_ref())
+            .map(|layout| layout.name.as_str());
+        let current_index = current_name.and_then(|name| layouts.iter().position(|candidate| *candidate == name));
+
+        let next_index = match (direction, current_index) {
+            (Some(spiders_core::command::LayoutCycleDirection::Previous), Some(index)) => {
+                (index + layouts.len() - 1) % layouts.len()
+            }
+            (Some(spiders_core::command::LayoutCycleDirection::Previous), None) => layouts.len() - 1,
+            (_, Some(index)) => (index + 1) % layouts.len(),
+            (_, None) => 0,
+        };
+
+        let layout = LayoutRef {
+            name: layouts[next_index].to_string(),
+        };
+        self.model
+            .set_workspace_effective_layout(workspace_id.clone(), Some(layout.clone()));
+        self.push_layout_change(Some(workspace_id), Some(layout.clone()));
+        Some(layout)
+    }
+
     pub fn request_select_workspace<I>(
         &mut self,
         workspace_id: WorkspaceId,
@@ -167,7 +163,12 @@ impl<'a> WmRuntime<'a> {
     where
         I: IntoIterator<Item = WindowId>,
     {
-        request_select_workspace(self.model, workspace_id, window_order)
+        let selection = request_select_workspace(self.model, workspace_id, window_order);
+        if selection.is_some() {
+            self.push_workspace_change();
+            self.push_focus_change();
+        }
+        selection
     }
 
     pub fn request_select_next_workspace<I>(
@@ -177,7 +178,12 @@ impl<'a> WmRuntime<'a> {
     where
         I: IntoIterator<Item = WindowId>,
     {
-        request_select_next_workspace(self.model, window_order)
+        let selection = request_select_next_workspace(self.model, window_order);
+        if selection.is_some() {
+            self.push_workspace_change();
+            self.push_focus_change();
+        }
+        selection
     }
 
     pub fn request_select_previous_workspace<I>(
@@ -187,7 +193,12 @@ impl<'a> WmRuntime<'a> {
     where
         I: IntoIterator<Item = WindowId>,
     {
-        request_select_previous_workspace(self.model, window_order)
+        let selection = request_select_previous_workspace(self.model, window_order);
+        if selection.is_some() {
+            self.push_workspace_change();
+            self.push_focus_change();
+        }
+        selection
     }
 
     pub fn ensure_seat(&mut self, seat_id: impl Into<SeatId>) -> SeatId {
@@ -201,11 +212,15 @@ impl<'a> WmRuntime<'a> {
         logical_width: u32,
         logical_height: u32,
     ) -> OutputId {
-        sync_output(self.model, output_id, name, logical_width, logical_height)
+        let output_id = sync_output(self.model, output_id, name, logical_width, logical_height);
+        self.push_output_change(&output_id);
+        output_id
     }
 
     pub fn place_new_window(&mut self, window_id: WindowId) -> WindowId {
-        place_new_window(self.model, window_id)
+        let window_id = place_new_window(self.model, window_id);
+        self.push_window_created(&window_id);
+        window_id
     }
 
     pub fn request_focus_window_selection(
@@ -216,6 +231,7 @@ impl<'a> WmRuntime<'a> {
         let selection = request_focus_window(self.model, window_id);
         let focused_window_id =
             sync_focused_window(self.model, seat_id, selection.focused_window_id);
+        self.push_focus_change();
         FocusSelection { focused_window_id }
     }
 
@@ -227,6 +243,7 @@ impl<'a> WmRuntime<'a> {
         let selection = request_focus_next_window(self.model, window_order);
         let focused_window_id =
             sync_focused_window(self.model, seat_id, selection.focused_window_id);
+        self.push_focus_change();
         FocusSelection { focused_window_id }
     }
 
@@ -238,6 +255,7 @@ impl<'a> WmRuntime<'a> {
         let selection = request_focus_previous_window(self.model, window_order);
         let focused_window_id =
             sync_focused_window(self.model, seat_id, selection.focused_window_id);
+        self.push_focus_change();
         FocusSelection { focused_window_id }
     }
 
@@ -262,7 +280,12 @@ impl<'a> WmRuntime<'a> {
         window_id: WindowId,
         window_order: impl IntoIterator<Item = WindowId>,
     ) -> FocusUpdate {
-        remove_window(self.model, window_id, window_order)
+        let focus_update = remove_window(self.model, window_id.clone(), window_order);
+        self.push_window_destroyed(window_id);
+        if matches!(focus_update, FocusUpdate::Set(_)) {
+            self.push_focus_change();
+        }
+        focus_update
     }
 
     pub fn unmap_window(
@@ -270,7 +293,11 @@ impl<'a> WmRuntime<'a> {
         window_id: WindowId,
         window_order: impl IntoIterator<Item = WindowId>,
     ) -> FocusUpdate {
-        unmap_window(self.model, window_id, window_order)
+        let focus_update = unmap_window(self.model, window_id, window_order);
+        if matches!(focus_update, FocusUpdate::Set(_)) {
+            self.push_focus_change();
+        }
+        focus_update
     }
 
     pub fn request_close_focused_window_selection(&mut self) -> CloseSelection {
@@ -285,13 +312,13 @@ impl<'a> WmRuntime<'a> {
     where
         I: IntoIterator<Item = WindowId>,
     {
-        FocusSelection {
-            focused_window_id: assign_focused_window_to_workspace(
-                self.model,
-                workspace_id,
-                window_order,
-            ),
+        let focused_window_id =
+            assign_focused_window_to_workspace(self.model, workspace_id, window_order);
+        if let Some(window_id) = focused_window_id.as_ref() {
+            self.push_window_workspace_change(window_id);
         }
+        self.push_focus_change();
+        FocusSelection { focused_window_id }
     }
 
     pub fn toggle_assign_focused_window_to_workspace<I>(
@@ -302,21 +329,29 @@ impl<'a> WmRuntime<'a> {
     where
         I: IntoIterator<Item = WindowId>,
     {
-        FocusSelection {
-            focused_window_id: toggle_assign_focused_window_to_workspace(
-                self.model,
-                workspace_id,
-                window_order,
-            ),
+        let focused_window_id =
+            toggle_assign_focused_window_to_workspace(self.model, workspace_id, window_order);
+        if let Some(window_id) = focused_window_id.as_ref() {
+            self.push_window_workspace_change(window_id);
         }
+        self.push_focus_change();
+        FocusSelection { focused_window_id }
     }
 
     pub fn toggle_focused_window_floating(&mut self) -> Option<WindowId> {
-        toggle_focused_window_floating(self.model)
+        let window_id = toggle_focused_window_floating(self.model);
+        if let Some(window_id) = window_id.as_ref() {
+            self.push_window_floating_change(window_id);
+        }
+        window_id
     }
 
     pub fn toggle_focused_window_fullscreen(&mut self) -> Option<WindowId> {
-        toggle_focused_window_fullscreen(self.model)
+        let window_id = toggle_focused_window_fullscreen(self.model);
+        if let Some(window_id) = window_id.as_ref() {
+            self.push_window_fullscreen_change(window_id);
+        }
+        window_id
     }
 
     pub fn sync_window_identity(
@@ -325,7 +360,11 @@ impl<'a> WmRuntime<'a> {
         title: Option<String>,
         app_id: Option<String>,
     ) -> Option<WindowId> {
-        sync_window_identity(self.model, window_id, title, app_id)
+        let window_id = sync_window_identity(self.model, window_id, title, app_id);
+        if let Some(window_id) = window_id.as_ref() {
+            self.push_window_identity_change(window_id);
+        }
+        window_id
     }
 
     pub fn sync_window_mapped(&mut self, window_id: WindowId, mapped: bool) -> Option<WindowId> {
@@ -334,8 +373,165 @@ impl<'a> WmRuntime<'a> {
         }
 
         self.model.set_window_mapped(window_id.clone(), mapped);
+        self.push_window_mapped_change(&window_id);
         Some(window_id)
     }
+
+    pub fn set_window_floating_geometry(
+        &mut self,
+        window_id: WindowId,
+        geometry: spiders_core::wm::WindowGeometry,
+    ) -> Option<WindowId> {
+        if !self.model.windows.contains_key(&window_id) {
+            return None;
+        }
+
+        self.model.set_window_floating_geometry(window_id.clone(), geometry);
+        self.push_window_geometry_change(&window_id);
+        Some(window_id)
+    }
+
+    fn push_focus_change(&mut self) {
+        self.pending_events.push(WmEvent::FocusChange {
+            focused_window_id: self.model.focused_window_id().cloned(),
+            current_output_id: self.model.current_output_id().cloned(),
+            current_workspace_id: self.model.current_workspace_id().cloned(),
+        });
+    }
+
+    fn push_workspace_change(&mut self) {
+        let workspace_id = self.model.current_workspace_id().cloned();
+        let active_workspaces = workspace_id
+            .as_ref()
+            .and_then(|workspace_id| self.model.workspaces.get(workspace_id))
+            .map(|workspace| workspace_snapshot(self.model, workspace).active_workspaces)
+            .unwrap_or_default();
+
+        self.pending_events.push(WmEvent::WorkspaceChange { workspace_id, active_workspaces });
+    }
+
+    fn push_window_created(&mut self, window_id: &WindowId) {
+        let Some(window) = self.model.windows.get(window_id) else {
+            return;
+        };
+
+        self.pending_events
+            .push(WmEvent::WindowCreated { window: window_snapshot(self.model, window) });
+    }
+
+    fn push_window_destroyed(&mut self, window_id: WindowId) {
+        self.pending_events.push(WmEvent::WindowDestroyed { window_id });
+    }
+
+    fn push_window_workspace_change(&mut self, window_id: &WindowId) {
+        self.pending_events.push(WmEvent::WindowWorkspaceChange {
+            window_id: window_id.clone(),
+            workspaces: self.model.workspace_names_for_window(window_id),
+        });
+    }
+
+    fn push_window_floating_change(&mut self, window_id: &WindowId) {
+        let Some(window) = self.model.windows.get(window_id) else {
+            return;
+        };
+
+        self.pending_events.push(WmEvent::WindowFloatingChange {
+            window_id: window_id.clone(),
+            floating: window.floating,
+        });
+    }
+
+    fn push_window_identity_change(&mut self, window_id: &WindowId) {
+        let Some(window) = self.model.windows.get(window_id) else {
+            return;
+        };
+
+        self.pending_events.push(WmEvent::WindowIdentityChange {
+            window: window_snapshot(self.model, window),
+        });
+    }
+
+    fn push_window_mapped_change(&mut self, window_id: &WindowId) {
+        let Some(window) = self.model.windows.get(window_id) else {
+            return;
+        };
+
+        self.pending_events.push(WmEvent::WindowMappedChange {
+            window_id: window_id.clone(),
+            mapped: window.mapped,
+        });
+    }
+
+    fn push_window_fullscreen_change(&mut self, window_id: &WindowId) {
+        let Some(window) = self.model.windows.get(window_id) else {
+            return;
+        };
+
+        self.pending_events.push(WmEvent::WindowFullscreenChange {
+            window_id: window_id.clone(),
+            fullscreen: window.fullscreen,
+        });
+    }
+
+    fn push_window_geometry_change(&mut self, window_id: &WindowId) {
+        let Some(window) = self.model.windows.get(window_id) else {
+            return;
+        };
+
+        self.pending_events.push(WmEvent::WindowGeometryChange {
+            window_id: window_id.clone(),
+            floating_rect: window.floating_geometry.map(layout_rect),
+            output_id: window.output_id.clone(),
+            workspace_id: window.workspace_id.clone(),
+        });
+    }
+
+    fn push_layout_change(&mut self, workspace_id: Option<WorkspaceId>, layout: Option<LayoutRef>) {
+        self.pending_events.push(WmEvent::LayoutChange { workspace_id, layout });
+    }
+
+    fn push_output_change(&mut self, output_id: &OutputId) {
+        let Some(output) = self.model.outputs.get(output_id) else {
+            return;
+        };
+
+        self.pending_events.push(WmEvent::OutputChange {
+            output: output_snapshot(output),
+        });
+    }
+}
+
+fn layout_rect(geometry: spiders_core::wm::WindowGeometry) -> LayoutRect {
+    LayoutRect {
+        x: geometry.x as f32,
+        y: geometry.y as f32,
+        width: geometry.width as f32,
+        height: geometry.height as f32,
+    }
+}
+
+fn workspace_default_layout_name(
+    model: &WmModel,
+    config: &Config,
+    workspace_names: &[String],
+    workspace_id: &WorkspaceId,
+) -> Option<String> {
+    let workspace = model.workspaces.get(workspace_id)?;
+
+    if let Some(output_id) = workspace.output_id.as_ref()
+        && let Some(output) = model.outputs.get(output_id)
+        && let Some(layout_name) = config.layout_selection.per_monitor.get(&output.name)
+    {
+        return Some(layout_name.clone());
+    }
+
+    if let Some(index) = workspace_names.iter().position(|name| name == &workspace.name)
+        && let Some(layout_name) = config.layout_selection.per_workspace.get(index)
+    {
+        return Some(layout_name.clone());
+    }
+
+    config.layout_selection.default.clone()
 }
 
 fn sync_output(
@@ -514,7 +710,15 @@ fn toggle_focused_window_fullscreen(model: &mut WmModel) -> Option<WindowId> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use spiders_config::model::{Config, LayoutDefinition};
     use spiders_core::window_id;
+    use spiders_core::signal::WmSignal;
+
+    struct NoopHost;
+
+    impl WmHost for NoopHost {
+        fn on_effect(&mut self, _effect: spiders_core::effect::WmHostEffect) {}
+    }
 
     #[test]
     fn runtime_composes_action_surface() {
@@ -536,80 +740,242 @@ mod tests {
     }
 
     #[test]
-    fn runtime_executes_commands() {
+    fn runtime_dispatch_command_uses_host() {
+        let mut model = WmModel::default();
+        let mut runtime = WmRuntime::new(&mut model);
+        let mut host = NoopHost;
+
+        let events = runtime.dispatch_command(&mut host, WmCommand::ReloadConfig);
+
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn selecting_workspace_emits_workspace_and_focus_events() {
         let mut model = WmModel::default();
         let mut runtime = WmRuntime::new(&mut model);
 
-        let workspace =
-            runtime.execute(RuntimeCommand::EnsureDefaultWorkspace { name: "1".to_string() });
-        let ensured_workspace =
-            runtime.execute(RuntimeCommand::EnsureWorkspace { name: "2".to_string() });
-        let selected_workspace = runtime.execute(RuntimeCommand::RequestSelectWorkspace {
-            workspace_id: WorkspaceId("1".to_string()),
-            window_order: Vec::new(),
-        });
-        let next_workspace = runtime
-            .execute(RuntimeCommand::RequestSelectNextWorkspace { window_order: Vec::new() });
-        let previous_workspace = runtime
-            .execute(RuntimeCommand::RequestSelectPreviousWorkspace { window_order: Vec::new() });
-        let requested_selection = runtime.execute(RuntimeCommand::RequestSelectWorkspace {
-            workspace_id: WorkspaceId("2".to_string()),
-            window_order: Vec::new(),
-        });
-        let focus_selection = runtime.execute(RuntimeCommand::RequestFocusWindowSelection {
-            seat_id: SeatId("winit".to_string()),
-            window_id: None,
-        });
-        let close_selection = runtime.execute(RuntimeCommand::RequestCloseFocusedWindowSelection);
-        let assigned_workspace = runtime.execute(RuntimeCommand::AssignFocusedWindowToWorkspace {
-            workspace_id: WorkspaceId("2".to_string()),
-            window_order: Vec::new(),
-        });
-        let seat =
-            runtime.execute(RuntimeCommand::EnsureSeat { seat_id: SeatId("winit".to_string()) });
+        runtime.ensure_workspace("1");
+        runtime.ensure_workspace("2");
 
-        assert_eq!(workspace, RuntimeResult::Workspace(WorkspaceId("1".to_string())));
-        assert_eq!(ensured_workspace, RuntimeResult::Workspace(WorkspaceId("2".to_string())));
+        let selection = runtime.request_select_workspace(WorkspaceId("2".to_string()), Vec::new());
+        let events = runtime.take_events();
+
         assert_eq!(
-            selected_workspace,
-            RuntimeResult::WorkspaceSelection(Some(WorkspaceSelection {
-                workspace_id: WorkspaceId("1".to_string()),
-                focused_window_id: None,
-            }))
+            selection.map(|selection| selection.workspace_id),
+            Some(WorkspaceId("2".to_string()))
         );
-        assert_eq!(
-            next_workspace,
-            RuntimeResult::WorkspaceSelection(Some(WorkspaceSelection {
-                workspace_id: WorkspaceId("2".to_string()),
-                focused_window_id: None,
-            }))
+        assert_eq!(events.len(), 2);
+        assert!(
+            matches!(events[0], WmEvent::WorkspaceChange { ref workspace_id, .. } if *workspace_id == Some(WorkspaceId("2".to_string())))
         );
-        assert_eq!(
-            previous_workspace,
-            RuntimeResult::WorkspaceSelection(Some(WorkspaceSelection {
-                workspace_id: WorkspaceId("1".to_string()),
-                focused_window_id: None,
-            }))
+        assert!(
+            matches!(events[1], WmEvent::FocusChange { ref current_workspace_id, .. } if *current_workspace_id == Some(WorkspaceId("2".to_string())))
         );
-        assert_eq!(
-            requested_selection,
-            RuntimeResult::WorkspaceSelection(Some(WorkspaceSelection {
-                workspace_id: WorkspaceId("2".to_string()),
-                focused_window_id: None,
-            }))
+    }
+
+    #[test]
+    fn placing_window_emits_window_created_event() {
+        let mut model = WmModel::default();
+        let mut runtime = WmRuntime::new(&mut model);
+
+        runtime.place_new_window(window_id(7));
+        let events = runtime.take_events();
+
+        assert!(
+            matches!(events.as_slice(), [WmEvent::WindowCreated { window }] if window.id == window_id(7))
         );
-        assert_eq!(
-            focus_selection,
-            RuntimeResult::FocusSelection(FocusSelection { focused_window_id: None })
+    }
+
+    #[test]
+    fn setting_floating_geometry_emits_window_geometry_change() {
+        let mut model = WmModel::default();
+        model.insert_window(window_id(9), None, None);
+        let mut runtime = WmRuntime::new(&mut model);
+
+        let updated_window_id = runtime.set_window_floating_geometry(
+            window_id(9),
+            spiders_core::wm::WindowGeometry { x: 10, y: 20, width: 300, height: 400 },
         );
-        assert_eq!(
-            close_selection,
-            RuntimeResult::CloseSelection(CloseSelection { closing_window_id: None })
+        let events = runtime.take_events();
+
+        assert_eq!(updated_window_id, Some(window_id(9)));
+        assert!(matches!(
+            events.as_slice(),
+            [WmEvent::WindowGeometryChange { window_id: event_window_id, floating_rect: Some(rect), .. }]
+                if *event_window_id == window_id(9)
+                    && *rect == LayoutRect { x: 10.0, y: 20.0, width: 300.0, height: 400.0 }
+        ));
+    }
+
+    #[test]
+    fn setting_current_workspace_layout_emits_layout_change() {
+        let mut model = WmModel::default();
+        let mut runtime = WmRuntime::new(&mut model);
+        runtime.ensure_workspace("1");
+        let _ = runtime.request_select_workspace(WorkspaceId("1".to_string()), Vec::new());
+        let _ = runtime.take_events();
+
+        let layout = runtime.set_current_workspace_layout("master-stack");
+        let events = runtime.take_events();
+
+        assert_eq!(layout, Some(LayoutRef { name: "master-stack".to_string() }));
+        assert!(matches!(
+            events.as_slice(),
+            [WmEvent::LayoutChange { workspace_id, layout: Some(layout) }]
+                if *workspace_id == Some(WorkspaceId("1".to_string()))
+                    && *layout == LayoutRef { name: "master-stack".to_string() }
+        ));
+    }
+
+    #[test]
+    fn cycling_current_workspace_layout_emits_layout_change() {
+        let mut model = WmModel::default();
+        let mut runtime = WmRuntime::new(&mut model);
+        runtime.ensure_workspace("1");
+        let _ = runtime.request_select_workspace(WorkspaceId("1".to_string()), Vec::new());
+        let _ = runtime.take_events();
+        let config = Config {
+            layouts: vec![
+                LayoutDefinition {
+                    name: "master-stack".to_string(),
+                    directory: "layouts/master-stack".to_string(),
+                    module: "layouts/master-stack.js".to_string(),
+                    stylesheet_path: None,
+                    runtime_cache_payload: None,
+                },
+                LayoutDefinition {
+                    name: "columns".to_string(),
+                    directory: "layouts/columns".to_string(),
+                    module: "layouts/columns.js".to_string(),
+                    stylesheet_path: None,
+                    runtime_cache_payload: None,
+                },
+            ],
+            ..Config::default()
+        };
+
+        let layout = runtime.cycle_current_workspace_layout(&config, None);
+        let events = runtime.take_events();
+
+        assert_eq!(layout, Some(LayoutRef { name: "master-stack".to_string() }));
+        assert!(matches!(
+            events.as_slice(),
+            [WmEvent::LayoutChange { workspace_id, layout: Some(layout) }]
+                if *workspace_id == Some(WorkspaceId("1".to_string()))
+                    && *layout == LayoutRef { name: "master-stack".to_string() }
+        ));
+    }
+
+    #[test]
+    fn syncing_layout_defaults_emits_layout_change_only_for_changed_workspaces() {
+        let mut model = WmModel::default();
+        let mut runtime = WmRuntime::new(&mut model);
+        runtime.ensure_default_workspace("1");
+        let mut host = NoopHost;
+        let _ = runtime.handle_signal(
+            &mut host,
+            WmSignal::OutputSynced {
+                output_id: OutputId("winit".to_string()),
+                name: "winit".to_string(),
+                logical_width: 1280,
+                logical_height: 720,
+            },
         );
-        assert_eq!(
-            assigned_workspace,
-            RuntimeResult::FocusSelection(FocusSelection { focused_window_id: None })
+        let _ = runtime.take_events();
+
+        let mut config = Config::default();
+        config.layout_selection.default = Some("master-stack".to_string());
+        config
+            .layout_selection
+            .per_monitor
+            .insert("winit".to_string(), "focus-repro".to_string());
+
+        runtime.sync_layout_selection_defaults(&config);
+        let events = runtime.take_events();
+
+        assert!(matches!(
+            events.as_slice(),
+            [WmEvent::LayoutChange { workspace_id, layout: Some(layout) }]
+                if *workspace_id == Some(WorkspaceId("1".to_string()))
+                    && *layout == LayoutRef { name: "focus-repro".to_string() }
+        ));
+
+        runtime.sync_layout_selection_defaults(&config);
+        assert!(runtime.take_events().is_empty());
+    }
+
+    #[test]
+    fn window_mapped_signal_emits_window_mapped_change_event() {
+        let mut model = WmModel::default();
+        model.insert_window(window_id(1), None, None);
+        let mut runtime = WmRuntime::new(&mut model);
+        let mut host = NoopHost;
+
+        let events = runtime.handle_signal(
+            &mut host,
+            WmSignal::WindowMappedChanged {
+                window_id: window_id(1),
+                mapped: true,
+            },
         );
-        assert_eq!(seat, RuntimeResult::Seat(SeatId("winit".to_string())));
+
+        assert!(matches!(
+            events.as_slice(),
+            [WmEvent::WindowMappedChange { window_id: event_window_id, mapped }]
+                if *event_window_id == window_id(1) && *mapped
+        ));
+        assert_eq!(model.windows.get(&window_id(1)).map(|window| window.mapped), Some(true));
+    }
+
+    #[test]
+    fn output_sync_signal_emits_output_change_event() {
+        let mut model = WmModel::default();
+        let mut runtime = WmRuntime::new(&mut model);
+        let mut host = NoopHost;
+
+        let events = runtime.handle_signal(
+            &mut host,
+            WmSignal::OutputSynced {
+                output_id: OutputId("winit".to_string()),
+                name: "winit".to_string(),
+                logical_width: 1280,
+                logical_height: 720,
+            },
+        );
+
+        assert!(matches!(
+            events.as_slice(),
+            [WmEvent::OutputChange { output }]
+                if output.id == OutputId("winit".to_string())
+                    && output.logical_width == 1280
+                    && output.logical_height == 720
+        ));
+        assert_eq!(model.current_output_id, Some(OutputId("winit".to_string())));
+    }
+
+    #[test]
+    fn window_identity_signal_emits_window_identity_change_event() {
+        let mut model = WmModel::default();
+        model.insert_window(window_id(1), None, None);
+        let mut runtime = WmRuntime::new(&mut model);
+        let mut host = NoopHost;
+
+        let events = runtime.handle_signal(
+            &mut host,
+            WmSignal::WindowIdentityChanged {
+                window_id: window_id(1),
+                title: Some("Terminal".to_string()),
+                app_id: Some("foot".to_string()),
+            },
+        );
+
+        assert!(matches!(
+            events.as_slice(),
+            [WmEvent::WindowIdentityChange { window }]
+                if window.id == window_id(1)
+                    && window.title.as_deref() == Some("Terminal")
+                    && window.app_id.as_deref() == Some("foot")
+        ));
     }
 }

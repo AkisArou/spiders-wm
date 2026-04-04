@@ -131,7 +131,10 @@ pub fn SystemView() -> impl IntoView {
                                     "workspace".to_string(),
                                     snapshot.active_workspace_name().to_string(),
                                 ),
-                                ("layout".to_string(), snapshot.active_layout.as_str().to_string()),
+                                (
+                                    "layout".to_string(),
+                                    snapshot.active_layout().as_str().to_string(),
+                                ),
                                 ("focused".to_string(), focused_window),
                                 ("dirty".to_string(), dirty_count.to_string()),
                                 ("preview".to_string(), preview_state.to_string()),

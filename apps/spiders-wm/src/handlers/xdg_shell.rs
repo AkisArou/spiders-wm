@@ -9,9 +9,10 @@ use smithay::wayland::shell::xdg::{PopupConfigureError, XdgShellState};
 use smithay::wayland::shell::xdg::{
     PopupSurface, PositionerState, ToplevelSurface, XdgShellHandler, XdgToplevelSurfaceData,
 };
+use spiders_core::signal::WmSignal;
 use tracing::info;
 
-use crate::runtime::RuntimeCommand;
+use crate::runtime::NoopHost;
 use crate::state::SpidersWm;
 
 impl XdgShellHandler for SpidersWm {
@@ -86,15 +87,10 @@ pub fn handle_commit(state: &mut SpidersWm, surface: &WlSurface) {
             .unwrap_or(false)
     });
     let planned_size = (!initial_configure_sent)
-        .then(|| {
-            state
-                .planned_layout_for_surface(surface)
-                .map(|(_, size)| size)
-        })
+        .then(|| state.planned_layout_for_surface(surface).map(|(_, size)| size))
         .flatten();
-    let planned_layout = (!initial_configure_sent)
-        .then(|| state.planned_layout_for_surface(surface))
-        .flatten();
+    let planned_layout =
+        (!initial_configure_sent).then(|| state.planned_layout_for_surface(surface)).flatten();
     let initial_transaction =
         (!initial_configure_sent).then(|| crate::frame_sync::new_sync_handle(&state.event_loop));
 
@@ -147,9 +143,12 @@ fn sync_toplevel_identity(state: &mut SpidersWm, surface: &WlSurface) {
             .unwrap_or((None, None))
     });
 
-    let _ = state.runtime().execute(RuntimeCommand::SyncWindowIdentity {
-        window_id,
-        title,
-        app_id,
-    });
+    let events = {
+        let mut runtime = state.runtime();
+        runtime.handle_signal(
+            &mut NoopHost,
+            WmSignal::WindowIdentityChanged { window_id, title, app_id },
+        )
+    };
+    state.broadcast_runtime_events(events);
 }

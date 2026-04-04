@@ -1,8 +1,9 @@
 use std::collections::BTreeMap;
 use std::os::unix::net::UnixStream;
 
-use spiders_core::api::{CompositorEvent, QueryRequest, QueryResponse};
 use spiders_core::command::WmCommand;
+use spiders_core::event::WmEvent;
+use spiders_core::query::{QueryRequest, QueryResponse};
 use tracing::{debug, warn};
 
 use crate::{
@@ -20,20 +21,9 @@ pub struct IpcServerState {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum IpcServerHandleResult {
-    Query {
-        client_id: IpcClientId,
-        request_id: Option<String>,
-        query: QueryRequest,
-    },
-    Command {
-        client_id: IpcClientId,
-        request_id: Option<String>,
-        command: WmCommand,
-    },
-    Response {
-        client_id: IpcClientId,
-        response: IpcResponse,
-    },
+    Query { client_id: IpcClientId, request_id: Option<String>, query: QueryRequest },
+    Command { client_id: IpcClientId, request_id: Option<String>, command: WmCommand },
+    Response { client_id: IpcClientId, response: IpcResponse },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -66,22 +56,14 @@ impl IpcServerState {
         let client_id = self.next_client_id;
         self.next_client_id += 1;
         self.sessions.insert(client_id, IpcSession::new());
-        debug!(
-            client_id,
-            client_count = self.sessions.len(),
-            "ipc client connected"
-        );
+        debug!(client_id, client_count = self.sessions.len(), "ipc client connected");
         client_id
     }
 
     pub fn remove_client(&mut self, client_id: IpcClientId) -> Option<IpcSession> {
         let removed = self.sessions.remove(&client_id);
         if removed.is_some() {
-            debug!(
-                client_id,
-                client_count = self.sessions.len(),
-                "ipc client disconnected"
-            );
+            debug!(client_id, client_count = self.sessions.len(), "ipc client disconnected");
         } else {
             warn!(client_id, "attempted to remove unknown ipc client");
         }
@@ -110,29 +92,18 @@ impl IpcServerState {
             "handling ipc request"
         );
 
-        let session = self
-            .sessions
-            .get_mut(&client_id)
-            .ok_or(UnknownClientError { client_id })?;
+        let session = self.sessions.get_mut(&client_id).ok_or(UnknownClientError { client_id })?;
 
         Ok(match session.handle_request(request) {
-            IpcSessionHandleResult::Query { request_id, query } => IpcServerHandleResult::Query {
-                client_id,
-                request_id,
-                query,
-            },
-            IpcSessionHandleResult::Command {
-                request_id,
-                command,
-            } => IpcServerHandleResult::Command {
-                client_id,
-                request_id,
-                command,
-            },
-            IpcSessionHandleResult::Response(response) => IpcServerHandleResult::Response {
-                client_id,
-                response,
-            },
+            IpcSessionHandleResult::Query { request_id, query } => {
+                IpcServerHandleResult::Query { client_id, request_id, query }
+            }
+            IpcSessionHandleResult::Command { request_id, command } => {
+                IpcServerHandleResult::Command { client_id, request_id, command }
+            }
+            IpcSessionHandleResult::Response(response) => {
+                IpcServerHandleResult::Response { client_id, response }
+            }
         })
     }
 
@@ -171,14 +142,12 @@ impl IpcServerState {
             .ok_or(UnknownClientError { client_id })
     }
 
-    pub fn broadcast_event(&self, event: CompositorEvent) -> Vec<(IpcClientId, IpcResponse)> {
+    pub fn broadcast_event(&self, event: WmEvent) -> Vec<(IpcClientId, IpcResponse)> {
         let responses: Vec<(IpcClientId, IpcResponse)> = self
             .sessions
             .iter()
             .filter_map(|(client_id, session)| {
-                session
-                    .event_response(event.clone())
-                    .map(|response| (*client_id, response))
+                session.event_response(event.clone()).map(|response| (*client_id, response))
             })
             .collect();
 
@@ -202,9 +171,7 @@ impl IpcServerState {
         E: From<IpcServeError>,
     {
         let request = recv_request(stream).map_err(IpcServeError::from)?;
-        let result = self
-            .handle_request(client_id, request)
-            .map_err(IpcServeError::from)?;
+        let result = self.handle_request(client_id, request).map_err(IpcServeError::from)?;
         let response = match result {
             IpcServerHandleResult::Response { response, .. } => response,
             other => responder(other)?,
@@ -222,6 +189,7 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use crate::{IpcClientMessage, IpcEnvelope, IpcServerMessage, IpcSubscriptionTopic};
+    use spiders_core::event::WmEvent;
 
     use super::*;
 
@@ -312,12 +280,10 @@ mod tests {
                 Some("req-3".into()),
                 QueryResponse::WorkspaceNames(vec!["1".into()]),
             ),
-            Ok(
-                IpcEnvelope::new(IpcServerMessage::Query(QueryResponse::WorkspaceNames(
-                    vec!["1".into()],
-                )))
-                .with_request_id("req-3")
-            )
+            Ok(IpcEnvelope::new(IpcServerMessage::Query(QueryResponse::WorkspaceNames(vec![
+                "1".into()
+            ],)))
+            .with_request_id("req-3"))
         );
         assert_eq!(
             server.command_accepted(client_id, Some("req-4".into())),
@@ -339,10 +305,7 @@ mod tests {
             )
             .unwrap();
         server
-            .handle_request(
-                all_client,
-                IpcEnvelope::new(IpcClientMessage::subscribe_all()),
-            )
+            .handle_request(all_client, IpcEnvelope::new(IpcClientMessage::subscribe_all()))
             .unwrap();
         server
             .handle_request(
@@ -351,20 +314,15 @@ mod tests {
             )
             .unwrap();
 
-        let responses = server.broadcast_event(CompositorEvent::LayoutChange {
-            workspace_id: None,
-            layout: None,
-        });
+        let responses =
+            server.broadcast_event(WmEvent::LayoutChange { workspace_id: None, layout: None });
 
         assert_eq!(responses.len(), 2);
         assert_eq!(responses[0].0, layout_client);
         assert_eq!(responses[1].0, all_client);
         assert!(matches!(
             &responses[0].1,
-            IpcEnvelope {
-                message: IpcServerMessage::Event { .. },
-                ..
-            }
+            IpcEnvelope { message: IpcServerMessage::Event { .. }, .. }
         ));
     }
 
@@ -454,9 +412,10 @@ mod tests {
 
         assert_eq!(
             response,
-            IpcEnvelope::new(IpcServerMessage::Query(QueryResponse::WorkspaceNames(
-                vec!["1".into(), "2".into(),]
-            )))
+            IpcEnvelope::new(IpcServerMessage::Query(QueryResponse::WorkspaceNames(vec![
+                "1".into(),
+                "2".into(),
+            ])))
             .with_request_id("req-10")
         );
 
@@ -518,10 +477,7 @@ mod tests {
     }
 
     fn unique_socket_path(label: &str) -> std::path::PathBuf {
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
+        let nanos = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
         std::env::temp_dir().join(format!("spiders-ipc-server-{label}-{nanos}.sock"))
     }
 }

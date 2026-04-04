@@ -8,9 +8,10 @@ use smithay::input::pointer::{AxisFrame, ButtonEvent, MotionEvent};
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::utils::SERIAL_COUNTER;
 use spiders_config::model::Binding;
+use spiders_core::signal::WmSignal;
 use tracing::debug;
 
-use crate::runtime::{RuntimeCommand, WmCommand};
+use crate::runtime::WmCommand;
 use crate::state::SpidersWm;
 
 impl SpidersWm {
@@ -25,39 +26,32 @@ impl SpidersWm {
                 let bindings = self.config.bindings.clone();
 
                 let command = keyboard
-                    .input(
-                        self,
-                        keycode,
-                        state,
-                        serial,
-                        time,
-                        |_, modifiers, handle| {
-                            let keysym = handle.modified_sym();
-                            debug!(
-                                ?state,
-                                ?modifiers,
-                                ?keycode,
-                                raw_keysym = keysym.raw(),
-                                "keyboard event"
-                            );
+                    .input(self, keycode, state, serial, time, |_, modifiers, handle| {
+                        let keysym = handle.modified_sym();
+                        debug!(
+                            ?state,
+                            ?modifiers,
+                            ?keycode,
+                            raw_keysym = keysym.raw(),
+                            "keyboard event"
+                        );
 
-                            if state == KeyState::Pressed {
-                                binding_command(&bindings, *modifiers, keysym)
-                                    .or_else(|| {
-                                        if bindings.is_empty() {
-                                            bootstrap_shortcut_command(*modifiers, keysym)
-                                        } else {
-                                            None
-                                        }
-                                    })
-                                    .map(Some)
-                                    .map(FilterResult::Intercept)
-                                    .unwrap_or(FilterResult::Forward)
-                            } else {
-                                FilterResult::Forward
-                            }
-                        },
-                    )
+                        if state == KeyState::Pressed {
+                            binding_command(&bindings, *modifiers, keysym)
+                                .or_else(|| {
+                                    if bindings.is_empty() {
+                                        bootstrap_shortcut_command(*modifiers, keysym)
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .map(Some)
+                                .map(FilterResult::Intercept)
+                                .unwrap_or(FilterResult::Forward)
+                        } else {
+                            FilterResult::Forward
+                        }
+                    })
                     .unwrap_or(None);
 
                 if let Some(command) = command {
@@ -66,29 +60,30 @@ impl SpidersWm {
             }
             InputEvent::PointerMotion { .. } => {}
             InputEvent::PointerMotionAbsolute { event, .. } => {
-                let output_geo = self
-                    .current_output_geometry()
-                    .expect("output geometry missing");
+                let output_geo = self.current_output_geometry().expect("output geometry missing");
                 let location =
                     event.position_transformed(output_geo.size) + output_geo.loc.to_f64();
 
                 let serial = SERIAL_COUNTER.next_serial();
                 let pointer = self.seat.get_pointer().expect("pointer missing");
                 let hovered_window_id = self.window_id_under(location);
-                let _ = self.runtime().execute(RuntimeCommand::SyncHoveredWindow {
-                    seat_id: "winit".into(),
-                    hovered_window_id,
-                });
+                let events = {
+                    let mut runtime = self.runtime();
+                    runtime.handle_signal(
+                        &mut crate::runtime::NoopHost,
+                        WmSignal::HoveredWindowChanged {
+                            seat_id: "winit".into(),
+                            hovered_window_id,
+                        },
+                    )
+                };
+                self.broadcast_runtime_events(events);
                 let under = self.surface_under(location);
 
                 pointer.motion(
                     self,
                     under,
-                    &MotionEvent {
-                        location,
-                        serial,
-                        time: event.time_msec(),
-                    },
+                    &MotionEvent { location, serial, time: event.time_msec() },
                 );
                 pointer.frame(self);
             }
@@ -98,12 +93,17 @@ impl SpidersWm {
 
                 if event.state() == ButtonState::Pressed && !pointer.is_grabbed() {
                     let interacted_window_id = self.window_id_under(pointer.current_location());
-                    let _ = self
-                        .runtime()
-                        .execute(RuntimeCommand::SyncInteractedWindow {
-                            seat_id: "winit".into(),
-                            interacted_window_id,
-                        });
+                    let events = {
+                        let mut runtime = self.runtime();
+                        runtime.handle_signal(
+                            &mut crate::runtime::NoopHost,
+                            WmSignal::InteractedWindowChanged {
+                                seat_id: "winit".into(),
+                                interacted_window_id,
+                            },
+                        )
+                    };
+                    self.broadcast_runtime_events(events);
                     if let Some(window) = self.window_under(pointer.current_location()) {
                         let surface = window
                             .toplevel()
@@ -274,14 +274,9 @@ mod tests {
 
     #[test]
     fn binding_command_matches_authored_binding() {
-        let bindings = vec![Binding {
-            trigger: "alt+Return".to_string(),
-            command: WmCommand::SpawnTerminal,
-        }];
-        let modifiers = ModifiersState {
-            alt: true,
-            ..ModifiersState::default()
-        };
+        let bindings =
+            vec![Binding { trigger: "alt+Return".to_string(), command: WmCommand::SpawnTerminal }];
+        let modifiers = ModifiersState { alt: true, ..ModifiersState::default() };
 
         assert_eq!(
             binding_command(&bindings, modifiers, Keysym::Return),
@@ -293,34 +288,21 @@ mod tests {
     fn binding_command_normalizes_shifted_letter_triggers() {
         let bindings = vec![Binding {
             trigger: "alt+shift+N".to_string(),
-            command: WmCommand::Spawn {
-                command: "notes".to_string(),
-            },
+            command: WmCommand::Spawn { command: "notes".to_string() },
         }];
-        let modifiers = ModifiersState {
-            alt: true,
-            shift: true,
-            ..ModifiersState::default()
-        };
+        let modifiers = ModifiersState { alt: true, shift: true, ..ModifiersState::default() };
 
         assert_eq!(
             binding_command(&bindings, modifiers, Keysym::N),
-            Some(WmCommand::Spawn {
-                command: "notes".to_string(),
-            })
+            Some(WmCommand::Spawn { command: "notes".to_string() })
         );
     }
 
     #[test]
     fn binding_command_supports_super_aliases() {
-        let bindings = vec![Binding {
-            trigger: "mod4+Return".to_string(),
-            command: WmCommand::SpawnTerminal,
-        }];
-        let modifiers = ModifiersState {
-            logo: true,
-            ..ModifiersState::default()
-        };
+        let bindings =
+            vec![Binding { trigger: "mod4+Return".to_string(), command: WmCommand::SpawnTerminal }];
+        let modifiers = ModifiersState { logo: true, ..ModifiersState::default() };
 
         assert_eq!(
             binding_command(&bindings, modifiers, Keysym::Return),
@@ -330,11 +312,7 @@ mod tests {
 
     #[test]
     fn bootstrap_shortcut_command_preserves_minimal_fallbacks() {
-        let modifiers = ModifiersState {
-            alt: true,
-            shift: true,
-            ..ModifiersState::default()
-        };
+        let modifiers = ModifiersState { alt: true, shift: true, ..ModifiersState::default() };
 
         assert_eq!(
             bootstrap_shortcut_command(modifiers, Keysym::Tab),

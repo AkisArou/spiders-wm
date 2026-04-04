@@ -1,34 +1,13 @@
 use serde::{Deserialize, Serialize};
 
-use crate::snapshot::{OutputSnapshot, StateSnapshot, WindowSnapshot, WorkspaceSnapshot};
+use crate::snapshot::OutputSnapshot;
+use crate::snapshot::WindowSnapshot;
 use crate::types::LayoutRef;
 use crate::{LayoutRect, OutputId, WindowId, WorkspaceId};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum QueryRequest {
-    State,
-    FocusedWindow,
-    CurrentOutput,
-    CurrentWorkspace,
-    MonitorList,
-    WorkspaceNames,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "type", content = "payload", rename_all = "kebab-case")]
-pub enum QueryResponse {
-    State(StateSnapshot),
-    FocusedWindow(Option<WindowSnapshot>),
-    CurrentOutput(Option<OutputSnapshot>),
-    CurrentWorkspace(Option<WorkspaceSnapshot>),
-    MonitorList(Vec<OutputSnapshot>),
-    WorkspaceNames(Vec<String>),
-}
-
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
-pub enum CompositorEvent {
+pub enum WmEvent {
     FocusChange {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         focused_window_id: Option<WindowId>,
@@ -47,9 +26,16 @@ pub enum CompositorEvent {
         window_id: WindowId,
         workspaces: Vec<String>,
     },
+    WindowIdentityChange {
+        window: WindowSnapshot,
+    },
     WindowFloatingChange {
         window_id: WindowId,
         floating: bool,
+    },
+    WindowMappedChange {
+        window_id: WindowId,
+        mapped: bool,
     },
     WindowGeometryChange {
         window_id: WindowId,
@@ -74,6 +60,9 @@ pub enum CompositorEvent {
         workspace_id: Option<WorkspaceId>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         layout: Option<LayoutRef>,
+    },
+    OutputChange {
+        output: OutputSnapshot,
     },
     ConfigReloaded,
 }

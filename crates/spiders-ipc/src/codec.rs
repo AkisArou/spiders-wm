@@ -51,8 +51,9 @@ where
 
 #[cfg(test)]
 mod tests {
-    use spiders_core::api::{CompositorEvent, QueryRequest};
     use spiders_core::WindowId;
+    use spiders_core::event::WmEvent;
+    use spiders_core::query::QueryRequest;
 
     use crate::{IpcClientMessage, IpcEnvelope, IpcServerMessage, IpcSubscriptionTopic};
 
@@ -75,11 +76,10 @@ mod tests {
 
     #[test]
     fn response_line_round_trips() {
-        let response =
-            IpcEnvelope::new(IpcServerMessage::event(CompositorEvent::WindowDestroyed {
-                window_id: WindowId::from("w1"),
-            }))
-            .with_request_id("sub-1");
+        let response = IpcEnvelope::new(IpcServerMessage::event(WmEvent::WindowDestroyed {
+            window_id: WindowId::from("w1"),
+        }))
+        .with_request_id("sub-1");
 
         let line = encode_response_line(&response).unwrap();
         let decoded = decode_response_line(&line).unwrap();

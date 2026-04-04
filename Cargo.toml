@@ -2,7 +2,6 @@
 resolver = "2"
 members = [
   "crates/spiders-wm-runtime",
-  "crates/spiders-web-bindings",
   "crates/spiders-cli",
   "crates/spiders-core",
   "crates/spiders-css",

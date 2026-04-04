@@ -1,9 +1,9 @@
 use std::collections::{BTreeMap, VecDeque};
 
 use spiders_config::model::Config;
-use spiders_core::snapshot::{OutputSnapshot, StateSnapshot, WindowSnapshot, WorkspaceSnapshot};
-use spiders_core::types::{OutputTransform, ShellKind, WindowMode};
 use spiders_core::LayoutRect;
+use spiders_core::snapshot::{OutputSnapshot, StateSnapshot, WindowSnapshot, WorkspaceSnapshot};
+use spiders_core::types::{LayoutRef, OutputTransform, ShellKind, WindowMode};
 use spiders_core::{OutputId, WindowId, WorkspaceId};
 
 use crate::model::{OutputState, SeatPointerOpState, SeatState, WindowState, WorkspaceState};
@@ -40,6 +40,13 @@ impl WmState {
                         id,
                         name: name.clone(),
                         tag_mask,
+                        effective_layout: config
+                            .layout_selection
+                            .per_workspace
+                            .get(idx)
+                            .cloned()
+                            .or_else(|| config.layout_selection.default.clone())
+                            .map(|name| LayoutRef { name }),
                     },
                 )
             })
@@ -47,33 +54,22 @@ impl WmState {
 
         let current_workspace_id = workspaces.keys().next().cloned();
 
-        Self {
-            workspaces,
-            current_workspace_id,
-            ..Self::default()
-        }
+        Self { workspaces, current_workspace_id, ..Self::default() }
     }
 
     pub fn workspace_names(&self) -> Vec<&str> {
-        self.workspaces
-            .values()
-            .map(|workspace| workspace.name.as_str())
-            .collect()
+        self.workspaces.values().map(|workspace| workspace.name.as_str()).collect()
     }
 
     pub fn workspace_order_index(&self, workspace_id: &WorkspaceId) -> Option<usize> {
         let mut workspaces = self.workspaces.values().collect::<Vec<_>>();
         workspaces.sort_by_key(|workspace| workspace.tag_mask);
-        workspaces
-            .iter()
-            .position(|workspace| &workspace.id == workspace_id)
+        workspaces.iter().position(|workspace| &workspace.id == workspace_id)
     }
 
     pub fn current_workspace_name(&self) -> Option<&str> {
         let current = self.current_workspace_id.as_ref()?;
-        self.workspaces
-            .get(current)
-            .map(|workspace| workspace.name.as_str())
+        self.workspaces.get(current).map(|workspace| workspace.name.as_str())
     }
 
     pub fn insert_output(&mut self, output_id: OutputId, name: String) {
@@ -137,10 +133,8 @@ impl WmState {
     pub fn focus_output(&mut self, output_id: &OutputId) {
         if self.outputs.contains_key(output_id) {
             self.current_output_id = Some(output_id.clone());
-            if let Some(workspace_id) = self
-                .outputs
-                .get(output_id)
-                .and_then(|output| output.focused_workspace_id.clone())
+            if let Some(workspace_id) =
+                self.outputs.get(output_id).and_then(|output| output.focused_workspace_id.clone())
             {
                 self.current_workspace_id = Some(workspace_id);
             }
@@ -475,7 +469,7 @@ impl WmState {
                     active_workspaces: vec![workspace.name],
                     focused,
                     visible: focused,
-                    effective_layout: None,
+                    effective_layout: workspace.effective_layout,
                 }
             })
             .collect();
@@ -517,11 +511,7 @@ impl WmState {
             workspaces,
             windows,
             visible_window_ids: self.visible_window_ids(),
-            workspace_names: self
-                .workspace_names()
-                .into_iter()
-                .map(str::to_owned)
-                .collect(),
+            workspace_names: self.workspace_names().into_iter().map(str::to_owned).collect(),
         }
     }
 }

@@ -3,7 +3,8 @@ use std::collections::BTreeSet;
 use serde::{Deserialize, Serialize};
 use spiders_core::snapshot::WindowSnapshot;
 use spiders_core::types::{ShellKind, WindowMode};
-use spiders_core::{RemainingTake, ResolvedLayoutNode, SlotTake};
+use spiders_core::wm::WindowGeometry;
+use spiders_core::{OutputId, RemainingTake, ResolvedLayoutNode, SlotTake, WindowId, WorkspaceId};
 use spiders_css::style::FlexDirectionValue;
 use spiders_scene::LayoutSnapshotNode;
 use spiders_scene::ast::{AuthoredLayoutNode, AuthoredNodeMeta, ValidatedLayoutTree};
@@ -11,31 +12,9 @@ use spiders_scene::pipeline::{LayoutPipelineError, compile_stylesheet, compute_l
 use wasm_bindgen::JsValue;
 
 use crate::{PreviewDiagnostic, PreviewSnapshotClasses, PreviewSnapshotNode};
+use crate::PreviewWindow;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PreviewLayoutWindow {
-    pub id: String,
-    #[serde(default, rename = "app_id", alias = "appId")]
-    pub app_id: Option<String>,
-    #[serde(default)]
-    pub title: Option<String>,
-    #[serde(default)]
-    pub class: Option<String>,
-    #[serde(default)]
-    pub instance: Option<String>,
-    #[serde(default)]
-    pub role: Option<String>,
-    #[serde(default)]
-    pub shell: Option<String>,
-    #[serde(default, rename = "window_type", alias = "windowType")]
-    pub window_type: Option<String>,
-    #[serde(default)]
-    pub floating: bool,
-    #[serde(default)]
-    pub fullscreen: bool,
-    #[serde(default)]
-    pub focused: bool,
-}
+pub const PREVIEW_OUTPUT_ID: &str = "preview-output";
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -83,7 +62,7 @@ struct JsLayoutProps {
 
 pub fn compute_layout_preview(
     layout: JsValue,
-    windows: &[PreviewLayoutWindow],
+    windows: &[PreviewWindow],
     stylesheet_source: &str,
     width: f32,
     height: f32,
@@ -224,7 +203,7 @@ fn split_classes(class_name: Option<String>) -> Vec<String> {
         .collect()
 }
 
-fn window_snapshot(window: PreviewLayoutWindow) -> WindowSnapshot {
+fn window_snapshot(window: PreviewWindow) -> WindowSnapshot {
     let mode = if window.fullscreen {
         WindowMode::Fullscreen
     } else if window.floating {
@@ -255,6 +234,41 @@ fn window_snapshot(window: PreviewLayoutWindow) -> WindowSnapshot {
         workspace_id: None,
         workspaces: Vec::new(),
     }
+}
+
+pub fn preview_window_snapshot(window: &PreviewWindow, workspace_name: Option<&str>) -> WindowSnapshot {
+    let mut snapshot = window_snapshot(window.clone());
+    snapshot.output_id = Some(OutputId::from(PREVIEW_OUTPUT_ID));
+    snapshot.workspace_id = workspace_name.map(WorkspaceId::from);
+    snapshot.workspaces = workspace_name.into_iter().map(ToOwned::to_owned).collect();
+    snapshot
+}
+
+pub fn collect_snapshot_geometries(
+    node: &PreviewSnapshotNode,
+    out: &mut std::collections::BTreeMap<WindowId, WindowGeometry>,
+) {
+    if node.node_type == "window"
+        && let (Some(window_id), Some(rect)) = (node.window_id.as_ref(), node.rect)
+    {
+        out.insert(
+            window_id.clone(),
+            WindowGeometry {
+                x: rect.x.round() as i32,
+                y: rect.y.round() as i32,
+                width: rect.width.round() as i32,
+                height: rect.height.round() as i32,
+            },
+        );
+    }
+
+    for child in &node.children {
+        collect_snapshot_geometries(child, out);
+    }
+}
+
+pub fn empty_window_geometry() -> WindowGeometry {
+    WindowGeometry { x: 0, y: 0, width: 0, height: 0 }
 }
 
 fn collect_claimed_window_ids(root: &ResolvedLayoutNode) -> BTreeSet<String> {
@@ -337,7 +351,7 @@ fn layout_reverse(styles: Option<&spiders_scene::SceneNodeStyle>) -> bool {
 }
 
 fn unclaimed_window_ids(
-    windows: &[PreviewLayoutWindow],
+    windows: &[PreviewWindow],
     claimed_ids: &BTreeSet<String>,
 ) -> Vec<String> {
     windows

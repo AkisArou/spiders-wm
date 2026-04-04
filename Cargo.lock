@@ -3983,19 +3983,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "spiders-web-bindings"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde-wasm-bindgen",
- "serde_json",
- "spiders-core",
- "spiders-css",
- "spiders-scene",
- "wasm-bindgen",
-]
-
-[[package]]
 name = "spiders-wm"
 version = "0.1.0"
 dependencies = [

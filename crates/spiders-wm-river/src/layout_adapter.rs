@@ -3,17 +3,16 @@ use std::sync::{Mutex, OnceLock};
 
 use spiders_config::authoring_layout::AuthoringLayoutService;
 use spiders_config::model::Config;
-use spiders_runtime_js::DefaultLayoutRuntime;
-use spiders_scene::ast::ValidatedLayoutTree;
-use spiders_scene::pipeline::SceneCache;
-use spiders_scene::{CompiledKeyframesRule, LayoutSnapshotNode, SceneRequest};
 use spiders_core::runtime::prepared_layout::PreparedStylesheet;
 use spiders_core::snapshot::WindowSnapshot;
-use spiders_core::types::LayoutRef;
 use spiders_core::{
     LayoutNodeMeta, RemainingTake, ResolvedLayoutNode, SlotTake, SourceLayoutNode, WindowId,
     WorkspaceId,
 };
+use spiders_runtime_js::DefaultLayoutRuntime;
+use spiders_scene::ast::ValidatedLayoutTree;
+use spiders_scene::pipeline::SceneCache;
+use spiders_scene::{CompiledKeyframesRule, LayoutSnapshotNode, SceneRequest};
 use tracing::{debug, warn};
 
 use crate::model::WmState;
@@ -64,37 +63,9 @@ fn log_fallback_layout_stylesheet(
     }
 }
 
-fn selected_layout_name(
-    config: &Config,
-    state: &spiders_core::snapshot::StateSnapshot,
-) -> Option<String> {
-    let workspace = state.current_workspace()?;
-
-    if let Some(output_id) = workspace.output_id.as_ref()
-        && let Some(output) = state.output_by_id(output_id)
-        && let Some(layout_name) = config.layout_selection.per_monitor.get(&output.name)
-    {
-        return Some(layout_name.clone());
-    }
-
-    if let Some(index) = state
-        .workspace_names
-        .iter()
-        .position(|workspace_name| workspace_name == &workspace.name)
-        && let Some(layout_name) = config.layout_selection.per_workspace.get(index)
-    {
-        return Some(layout_name.clone());
-    }
-
-    config.layout_selection.default.clone()
-}
-
 fn default_source_layout_tree() -> SourceLayoutNode {
     SourceLayoutNode::Workspace {
-        meta: LayoutNodeMeta {
-            class: vec!["river-workspace".into()],
-            ..LayoutNodeMeta::default()
-        },
+        meta: LayoutNodeMeta { class: vec!["river-workspace".into()], ..LayoutNodeMeta::default() },
         children: vec![SourceLayoutNode::Group {
             meta: LayoutNodeMeta {
                 id: Some("primary".into()),
@@ -115,16 +86,9 @@ fn default_source_layout_tree() -> SourceLayoutNode {
 
 fn resolved_workspace_meta(workspace_classes: &[&str]) -> LayoutNodeMeta {
     let mut class = vec!["river-workspace".into()];
-    class.extend(
-        workspace_classes
-            .iter()
-            .map(|class_name| (*class_name).to_owned()),
-    );
+    class.extend(workspace_classes.iter().map(|class_name| (*class_name).to_owned()));
 
-    LayoutNodeMeta {
-        class,
-        ..LayoutNodeMeta::default()
-    }
+    LayoutNodeMeta { class, ..LayoutNodeMeta::default() }
 }
 
 fn visible_window_snapshots(
@@ -134,11 +98,7 @@ fn visible_window_snapshots(
     let windows: Vec<WindowSnapshot> = window_ids
         .iter()
         .filter_map(|window_id| {
-            state
-                .windows
-                .iter()
-                .find(|window| &window.id == window_id)
-                .cloned()
+            state.windows.iter().find(|window| &window.id == window_id).cloned()
         })
         .collect();
 
@@ -185,14 +145,9 @@ fn resolved_layout_root(
 
     let resolved = resolved.map(|mut root| {
         if let ResolvedLayoutNode::Workspace { meta, .. } = &mut root {
-            meta.class
-                .retain(|class_name| class_name != "river-workspace");
+            meta.class.retain(|class_name| class_name != "river-workspace");
             meta.class.insert(0, "river-workspace".into());
-            meta.class.extend(
-                workspace_classes
-                    .iter()
-                    .map(|class_name| (*class_name).to_owned()),
-            );
+            meta.class.extend(workspace_classes.iter().map(|class_name| (*class_name).to_owned()));
         }
 
         root
@@ -231,16 +186,11 @@ pub fn compute_workspace_layout_snapshot(
         .and_then(|workspace| workspace.output_id.clone());
     snapshot.visible_window_ids = window_ids.to_vec();
 
-    let selected_layout = selected_layout_name(config, &snapshot);
     let current_workspace_id = snapshot.current_workspace_id.clone();
-
-    if let Some(current_workspace) = snapshot
-        .workspaces
-        .iter_mut()
-        .find(|workspace| Some(&workspace.id) == snapshot.current_workspace_id.as_ref())
-    {
-        current_workspace.effective_layout = selected_layout.clone().map(|name| LayoutRef { name });
-    }
+    let selected_layout = snapshot
+        .current_workspace()
+        .and_then(|workspace| workspace.effective_layout.as_ref())
+        .map(|layout| layout.name.clone());
 
     let Some(workspace) = snapshot.current_workspace() else {
         warn!(
@@ -312,11 +262,8 @@ pub fn compute_workspace_layout_snapshot(
         }
     };
 
-    let layout_stylesheet_missing = request
-        .stylesheets
-        .layout
-        .as_ref()
-        .is_none_or(|sheet| sheet.source.trim().is_empty());
+    let layout_stylesheet_missing =
+        request.stylesheets.layout.as_ref().is_none_or(|sheet| sheet.source.trim().is_empty());
 
     debug!(
         %workspace_id,
@@ -345,11 +292,7 @@ pub fn compute_workspace_layout_snapshot(
         });
     }
 
-    let layout_name = request
-        .layout_name
-        .as_deref()
-        .unwrap_or("__default__")
-        .to_string();
+    let layout_name = request.layout_name.as_deref().unwrap_or("__default__").to_string();
 
     match scene_cache.compute_layout_from_request(&request) {
         Ok(response) => {
@@ -451,10 +394,7 @@ mod tests {
     use spiders_core::{MatchClause, MatchKey, OutputId, WindowMatch};
 
     fn fixture_state() -> spiders_core::snapshot::StateSnapshot {
-        let config = Config {
-            workspaces: vec!["1".into()],
-            ..Config::default()
-        };
+        let config = Config { workspaces: vec!["1".into()], ..Config::default() };
         let mut state = WmState::from_config(&config);
         let output_id = OutputId::from("out-1");
         state.insert_output(output_id.clone(), "HDMI-A-1".into());
@@ -483,10 +423,7 @@ mod tests {
             meta: LayoutNodeMeta::default(),
             children: vec![
                 SourceLayoutNode::Group {
-                    meta: LayoutNodeMeta {
-                        id: Some("top".into()),
-                        ..LayoutNodeMeta::default()
-                    },
+                    meta: LayoutNodeMeta { id: Some("top".into()), ..LayoutNodeMeta::default() },
                     children: vec![SourceLayoutNode::Slot {
                         meta: LayoutNodeMeta::default(),
                         window_match: Some(WindowMatch {
@@ -499,10 +436,7 @@ mod tests {
                     }],
                 },
                 SourceLayoutNode::Group {
-                    meta: LayoutNodeMeta {
-                        id: Some("bottom".into()),
-                        ..LayoutNodeMeta::default()
-                    },
+                    meta: LayoutNodeMeta { id: Some("bottom".into()), ..LayoutNodeMeta::default() },
                     children: vec![SourceLayoutNode::Slot {
                         meta: LayoutNodeMeta::default(),
                         window_match: None,
@@ -524,18 +458,10 @@ mod tests {
         };
         assert_eq!(children.len(), 2);
 
-        let ResolvedLayoutNode::Group {
-            children: top_children,
-            ..
-        } = &children[0]
-        else {
+        let ResolvedLayoutNode::Group { children: top_children, .. } = &children[0] else {
             panic!("expected top group");
         };
-        let ResolvedLayoutNode::Group {
-            children: bottom_children,
-            ..
-        } = &children[1]
-        else {
+        let ResolvedLayoutNode::Group { children: bottom_children, .. } = &children[1] else {
             panic!("expected bottom group");
         };
 
@@ -562,15 +488,9 @@ mod tests {
         let source_tree = SourceLayoutNode::Workspace {
             meta: LayoutNodeMeta::default(),
             children: vec![SourceLayoutNode::Window {
-                meta: LayoutNodeMeta {
-                    id: Some("matched".into()),
-                    ..LayoutNodeMeta::default()
-                },
+                meta: LayoutNodeMeta { id: Some("matched".into()), ..LayoutNodeMeta::default() },
                 window_match: Some(WindowMatch {
-                    clauses: vec![MatchClause {
-                        key: MatchKey::Title,
-                        value: "Terminal".into(),
-                    }],
+                    clauses: vec![MatchClause { key: MatchKey::Title, value: "Terminal".into() }],
                 }),
             }],
         };
@@ -606,15 +526,7 @@ mod tests {
             panic!("expected workspace root");
         };
 
-        assert!(
-            meta.class
-                .iter()
-                .any(|class_name| class_name == "river-workspace")
-        );
-        assert!(
-            meta.class
-                .iter()
-                .any(|class_name| class_name == "enter-from-left")
-        );
+        assert!(meta.class.iter().any(|class_name| class_name == "river-workspace"));
+        assert!(meta.class.iter().any(|class_name| class_name == "enter-from-left"));
     }
 }
