@@ -20,10 +20,7 @@ impl RuntimePathResolver {
         project_root: impl Into<std::path::PathBuf>,
         runtime_root: impl Into<std::path::PathBuf>,
     ) -> Self {
-        Self {
-            project_root: project_root.into(),
-            runtime_root: runtime_root.into(),
-        }
+        Self { project_root: project_root.into(), runtime_root: runtime_root.into() }
     }
 
     pub fn resolve_module_path(&self, module: &str) -> std::path::PathBuf {
@@ -117,19 +114,14 @@ impl JsLayoutSourceLoader for InlineLayoutSourceLoader {
         config: &Config,
         workspace: &spiders_core::snapshot::WorkspaceSnapshot,
     ) -> Result<Option<PreparedLayout>, RuntimeError> {
-        let Some(selected_layout) =
-            config
-                .resolve_selected_layout(workspace)
-                .map_err(|error| RuntimeError::Config {
-                    message: error.to_string(),
-                })?
+        let Some(selected_layout) = config
+            .resolve_selected_layout(workspace)
+            .map_err(|error| RuntimeError::Config { message: error.to_string() })?
         else {
             return Ok(None);
         };
 
-        Err(RuntimeError::MissingRuntimeSource {
-            name: selected_layout.module,
-        })
+        Err(RuntimeError::MissingRuntimeSource { name: selected_layout.module })
     }
 }
 
@@ -154,11 +146,8 @@ impl FsLayoutSourceLoader {
                 runtime_graph,
             ));
         }
-        let runtime_source = std::fs::read_to_string(&layout.module).map_err(|_| {
-            LayoutLoadError::MissingRuntimeSource {
-                module: layout.module.clone(),
-            }
-        })?;
+        let runtime_source = std::fs::read_to_string(&layout.module)
+            .map_err(|_| LayoutLoadError::MissingRuntimeSource { module: layout.module.clone() })?;
 
         Ok(loaded_layout_definition(
             layout,
@@ -181,9 +170,7 @@ impl JsLayoutSourceLoader for FsLayoutSourceLoader {
 
         self.load_definition(config.global_stylesheet_path.as_deref(), layout)
             .map(Some)
-            .map_err(|error| RuntimeError::Other {
-                message: error.to_string(),
-            })
+            .map_err(|error| RuntimeError::Other { message: error.to_string() })
     }
 }
 
@@ -199,9 +186,7 @@ impl JsLayoutSourceLoader for RuntimeProjectLayoutSourceLoader {
 
         self.load_definition(config.global_stylesheet_path.as_deref(), layout)
             .map(Some)
-            .map_err(|error| RuntimeError::Other {
-                message: error.to_string(),
-            })
+            .map_err(|error| RuntimeError::Other { message: error.to_string() })
     }
 }
 
@@ -264,10 +249,7 @@ fn load_stylesheet_asset(
         );
     }
 
-    PreparedStylesheet {
-        path: path.into(),
-        source,
-    }
+    PreparedStylesheet { path: path.into(), source }
 }
 
 fn load_global_stylesheet_asset(layout: &LayoutDefinition, path: &str) -> PreparedStylesheet {
@@ -295,10 +277,7 @@ fn load_global_stylesheet_asset(layout: &LayoutDefinition, path: &str) -> Prepar
         );
     }
 
-    PreparedStylesheet {
-        path: path.into(),
-        source,
-    }
+    PreparedStylesheet { path: path.into(), source }
 }
 
 fn load_stylesheet_asset_source(
@@ -384,9 +363,7 @@ mod tests {
             active_workspaces: vec!["1".into()],
             focused: true,
             visible: true,
-            effective_layout: Some(LayoutRef {
-                name: "master-stack".into(),
-            }),
+            effective_layout: Some(LayoutRef { name: "master-stack".into() }),
         }
     }
 
@@ -408,15 +385,11 @@ mod tests {
             ..Config::default()
         };
 
-        let error = loader
-            .load_runtime_source(&config, &workspace())
-            .unwrap_err();
+        let error = loader.load_runtime_source(&config, &workspace()).unwrap_err();
 
         assert_eq!(
             error,
-            RuntimeError::MissingRuntimeSource {
-                name: "layouts/master-stack.js".into(),
-            }
+            RuntimeError::MissingRuntimeSource { name: "layouts/master-stack.js".into() }
         );
     }
 
@@ -434,15 +407,11 @@ mod tests {
             ..Config::default()
         };
 
-        let error = loader
-            .load_runtime_source(&config, &workspace())
-            .unwrap_err();
+        let error = loader.load_runtime_source(&config, &workspace()).unwrap_err();
 
         assert_eq!(
             error,
-            RuntimeError::MissingRuntimeSource {
-                name: "layouts/master-stack.js".into(),
-            }
+            RuntimeError::MissingRuntimeSource { name: "layouts/master-stack.js".into() }
         );
     }
 
@@ -487,19 +456,13 @@ mod tests {
         let runtime_path = runtime_root.join("layouts/master-stack.js");
         fs::write(&runtime_path, "runtime").unwrap();
 
-        assert_eq!(
-            resolver.resolve_module_path("layouts/master-stack.js"),
-            runtime_path
-        );
+        assert_eq!(resolver.resolve_module_path("layouts/master-stack.js"), runtime_path);
 
         let _ = fs::remove_file(runtime_path);
         let project_path = project_root.join("layouts/master-stack.js");
         fs::write(&project_path, "project").unwrap();
 
-        assert_eq!(
-            resolver.resolve_module_path("layouts/master-stack.js"),
-            project_path
-        );
+        assert_eq!(resolver.resolve_module_path("layouts/master-stack.js"), project_path);
 
         let _ = fs::remove_file(project_path);
     }
@@ -576,34 +539,16 @@ mod tests {
             &definition,
             config.global_stylesheet_path.as_deref(),
             definition.module.clone(),
-            single_module_graph(
-                definition.module.clone(),
-                "export default () => null".into(),
-            ),
+            single_module_graph(definition.module.clone(), "export default () => null".into()),
         );
 
         assert_eq!(
-            loaded
-                .stylesheets
-                .layout
-                .as_ref()
-                .map(|sheet| sheet.path.as_str()),
+            loaded.stylesheets.layout.as_ref().map(|sheet| sheet.path.as_str()),
             Some(missing_layout)
         );
+        assert_eq!(loaded.stylesheets.layout.as_ref().map(|sheet| sheet.source.as_str()), Some(""));
         assert_eq!(
-            loaded
-                .stylesheets
-                .layout
-                .as_ref()
-                .map(|sheet| sheet.source.as_str()),
-            Some("")
-        );
-        assert_eq!(
-            loaded
-                .stylesheets
-                .global
-                .as_ref()
-                .map(|sheet| sheet.path.as_str()),
+            loaded.stylesheets.global.as_ref().map(|sheet| sheet.path.as_str()),
             Some(missing_global)
         );
     }

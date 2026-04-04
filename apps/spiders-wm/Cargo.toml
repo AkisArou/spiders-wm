@@ -12,6 +12,7 @@ spiders-ipc = { path = "../../crates/spiders-ipc" }
 spiders-scene = { path = "../../crates/spiders-scene" }
 spiders-css = { path = "../../crates/spiders-css" }
 spiders-core = { path = "../../crates/spiders-core" }
+spiders-runtime-js-native = { path = "../../crates/runtimes/js/native" }
 spiders-wm-runtime = { path = "../../crates/spiders-wm-runtime" }
 thiserror = { workspace = true }
 tracing = { workspace = true }

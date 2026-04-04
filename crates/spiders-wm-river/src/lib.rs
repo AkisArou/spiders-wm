@@ -9,14 +9,15 @@ pub mod runtime;
 use anyhow::Result;
 use spiders_config::authoring_layout::AuthoringLayoutService;
 use spiders_config::model::{Config, ConfigDiscoveryOptions, ConfigPaths};
-use spiders_runtime_js::{DefaultLayoutRuntime, build_authoring_layout_service};
+use spiders_config::runtime::build_authoring_layout_service;
+use spiders_runtime_js_native::JavaScriptNativeRuntimeProvider;
 
 use crate::model::WmState;
 
 #[derive(Debug)]
 pub struct SpidersWm {
     paths: ConfigPaths,
-    layout_service: AuthoringLayoutService<DefaultLayoutRuntime>,
+    layout_service: AuthoringLayoutService,
     config: Config,
     state: WmState,
 }
@@ -28,7 +29,8 @@ impl SpidersWm {
     }
 
     pub fn from_paths(paths: ConfigPaths) -> Result<Self> {
-        let layout_service = build_authoring_layout_service(&paths);
+        let js_provider = JavaScriptNativeRuntimeProvider;
+        let layout_service = build_authoring_layout_service(&paths, &[&js_provider])?;
         let config = layout_service.load_config(&paths)?;
         let state = WmState::from_config(&config);
 
@@ -89,9 +91,10 @@ mod tests {
     #[test]
     fn config_paths_are_exposed() {
         let paths = ConfigPaths::new("/tmp/config.ts", "/tmp/config.js");
+        let js_provider = JavaScriptNativeRuntimeProvider;
         let runtime = SpidersWm {
             paths: paths.clone(),
-            layout_service: build_authoring_layout_service(&paths),
+            layout_service: build_authoring_layout_service(&paths, &[&js_provider]).unwrap(),
             config: Config::default(),
             state: WmState::default(),
         };

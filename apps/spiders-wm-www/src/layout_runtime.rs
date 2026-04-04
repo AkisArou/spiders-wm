@@ -1,10 +1,11 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
+use spiders_config::authoring_layout::SourceBundleAuthoringLayoutService;
+use spiders_config::runtime::build_source_bundle_authoring_layout_service;
 use spiders_core::LayoutId;
-use spiders_wm_runtime::{PreviewSession, build_preview_layout_context, compile_source_bundle_to_module_graph};
-use wasm_bindgen::prelude::*;
-use wasm_bindgen_futures::JsFuture;
+use spiders_runtime_js_browser::JavaScriptBrowserRuntimeProvider;
+use spiders_wm_runtime::{PreviewSession, build_preview_layout_context};
 
 use crate::editor_files::{EDITOR_FILES, EditorFileId, WORKSPACE_FS_ROOT, runtime_path};
 use crate::session::PreviewSessionState;
@@ -33,98 +34,34 @@ impl PreviewRenderRequest {
     }
 }
 
-#[wasm_bindgen(inline_js = r#"
-const importFromPattern = /(\bfrom\s*)(["'])([^"']+)(\2)/g;
-const importOnlyPattern = /(\bimport\s*)(["'])([^"']+)(\2)/g;
-const dynamicImportPattern = /(\bimport\s*\(\s*)(["'])([^"']+)(\2)(\s*\))/g;
-
-function rewriteSource(source, resolvedImports, moduleMap, toUrl) {
-    const resolveSpecifier = (specifier) => {
-        const resolved = resolvedImports[specifier];
-        if (resolved) {
-            return resolved;
-        }
-
-        return moduleMap.has(specifier) ? specifier : null;
-    };
-
-    const replaceImportFrom = (_, prefix, quote, specifier, closingQuote) => {
-        const resolved = resolveSpecifier(specifier);
-        if (!resolved) {
-            return `${prefix}${quote}${specifier}${closingQuote}`;
-        }
-
-        return `${prefix}${quote}${toUrl(resolved)}${closingQuote}`;
-    };
-
-    const replaceDynamicImport = (_, prefix, quote, specifier, closingQuote, suffix) => {
-        const resolved = resolveSpecifier(specifier);
-        if (!resolved) {
-            return `${prefix}${quote}${specifier}${closingQuote}${suffix}`;
-        }
-
-        return `${prefix}${quote}${toUrl(resolved)}${closingQuote}${suffix}`;
-    };
-
-    return source
-        .replace(importFromPattern, replaceImportFrom)
-        .replace(importOnlyPattern, replaceImportFrom)
-        .replace(dynamicImportPattern, replaceDynamicImport);
-}
-
-function moduleUrlFor(specifier, moduleMap, cache, visiting) {
-    if (cache.has(specifier)) {
-        return cache.get(specifier);
-    }
-
-    if (visiting.has(specifier)) {
-        throw new Error(`Circular module graph dependency detected at ${specifier}`);
-    }
-
-    const module = moduleMap.get(specifier);
-    if (!module) {
-        throw new Error(`Missing module ${specifier}`);
-    }
-
-    visiting.add(specifier);
-    const resolvedImports = module.resolved_imports ?? {};
-    const rewritten = rewriteSource(module.source, resolvedImports, moduleMap, (nextSpecifier) =>
-        moduleUrlFor(nextSpecifier, moduleMap, cache, visiting),
-    );
-    const url = `data:text/javascript;charset=utf-8,${encodeURIComponent(rewritten)}`;
-    cache.set(specifier, url);
-    visiting.delete(specifier);
-    return url;
-}
-
-export async function evaluateLayoutModuleGraph(moduleGraph, context) {
-    const moduleMap = new Map(
-        (moduleGraph.modules ?? []).map((module) => [module.specifier, module]),
-    );
-    const cache = new Map();
-    const entryUrl = moduleUrlFor(moduleGraph.entry, moduleMap, cache, new Set());
-    const namespace = await import(entryUrl);
-
-    if (typeof namespace.default !== "function") {
-        throw new Error(`Module ${moduleGraph.entry} does not export a default layout function`);
-    }
-
-    return namespace.default(context);
-}
-"#)]
-extern "C" {
-    #[wasm_bindgen(catch, js_name = evaluateLayoutModuleGraph)]
-    fn evaluate_layout_module_graph(
-        module_graph: JsValue,
-        context: JsValue,
-    ) -> Result<js_sys::Promise, JsValue>;
-}
-
-pub async fn evaluate_layout_renderable(
+pub async fn evaluate_layout_source(
     request: &PreviewRenderRequest,
-) -> Result<JsValue, String> {
-    let graph = compile_request_module_graph(request)?;
-    let graph_value = serde_wasm_bindgen::to_value(&graph).map_err(|error| error.to_string())?;
+) -> Result<spiders_core::SourceLayoutNode, String> {
+    let entry_path = PathBuf::from(runtime_path(layout_entry_file_id(&request.active_layout)));
+    let root_dir = PathBuf::from(WORKSPACE_FS_ROOT);
+    let sources = source_bundle_sources(&request.buffers);
+    let mut service = build_layout_service(&entry_path).map_err(|error| error.to_string())?;
+    let config = service.load_config(&root_dir, &entry_path, &sources).await.map_err(|error| error.to_string())?;
+    let state = build_preview_state_snapshot(request);
+    let workspace = state
+        .current_workspace()
+        .cloned()
+        .ok_or_else(|| "preview workspace is unavailable".to_string())?;
+    let evaluation = service
+        .evaluate_prepared_for_workspace(&root_dir, &sources, &config, &state, &workspace)
+        .await
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "no selected layout for preview workspace".to_string())?;
+    Ok(evaluation.layout)
+}
+
+fn build_layout_service(
+    entry_path: &std::path::Path,
+) -> Result<SourceBundleAuthoringLayoutService, spiders_config::model::LayoutConfigError> {
+    build_source_bundle_authoring_layout_service(entry_path, &[&JavaScriptBrowserRuntimeProvider])
+}
+
+fn build_preview_state_snapshot(request: &PreviewRenderRequest) -> spiders_core::snapshot::StateSnapshot {
     let context = build_preview_layout_context(
         &request.runtime_state,
         Some(request.active_layout.as_str().to_string()),
@@ -132,25 +69,55 @@ pub async fn evaluate_layout_renderable(
         request.canvas_width,
         request.canvas_height,
     );
-    let context_value = serde_wasm_bindgen::to_value(&context).map_err(|error| error.to_string())?;
-    let promise = evaluate_layout_module_graph(graph_value, context_value)
-        .map_err(js_error_to_string)?;
+    let workspace_id = context.workspace_id.clone();
+    let output_id = spiders_core::OutputId::from(spiders_wm_runtime::PREVIEW_OUTPUT_ID);
 
-    JsFuture::from(promise)
-        .await
-        .map_err(js_error_to_string)
+    spiders_core::snapshot::StateSnapshot {
+        focused_window_id: context.state.as_ref().and_then(|state| state.focused_window_id.clone()),
+        current_output_id: Some(output_id.clone()),
+        current_workspace_id: Some(workspace_id.clone()),
+        outputs: vec![spiders_core::snapshot::OutputSnapshot {
+            id: output_id,
+            name: context.monitor.name.clone(),
+            logical_x: 0,
+            logical_y: 0,
+            logical_width: request.canvas_width,
+            logical_height: request.canvas_height,
+            scale: context.monitor.scale.unwrap_or(1),
+            transform: spiders_core::types::OutputTransform::Normal,
+            enabled: true,
+            current_workspace_id: Some(workspace_id.clone()),
+        }],
+        workspaces: vec![spiders_core::snapshot::WorkspaceSnapshot {
+            id: workspace_id,
+            name: context.workspace.name.clone(),
+            output_id: Some(spiders_core::OutputId::from(spiders_wm_runtime::PREVIEW_OUTPUT_ID)),
+            active_workspaces: context.workspace.workspaces.clone(),
+            focused: true,
+            visible: true,
+            effective_layout: Some(spiders_core::types::LayoutRef {
+                name: request.active_layout.as_str().to_string(),
+            }),
+        }],
+        windows: request
+            .runtime_state
+            .windows
+            .iter()
+            .filter(|window| window.workspace_name == request.runtime_state.active_workspace_name)
+            .map(|window| spiders_wm_runtime::preview_window_snapshot(window, Some(window.workspace_name.as_str())))
+            .collect(),
+        visible_window_ids: request
+            .runtime_state
+            .windows
+            .iter()
+            .filter(|window| window.workspace_name == request.runtime_state.active_workspace_name)
+            .map(|window| spiders_core::WindowId::from(window.id.as_str()))
+            .collect(),
+        workspace_names: request.runtime_state.workspace_names.clone(),
+    }
 }
 
-fn compile_request_module_graph(
-    request: &PreviewRenderRequest,
-) -> Result<spiders_wm_runtime::JavaScriptModuleGraph, String> {
-    let entry_path = PathBuf::from(runtime_path(layout_entry_file_id(&request.active_layout)));
-    let root_dir = PathBuf::from(WORKSPACE_FS_ROOT);
-    let sources = source_bundle_sources(&request.buffers);
-    compile_source_bundle_to_module_graph(&root_dir, &entry_path, &sources)
-}
-
-fn source_bundle_sources(
+pub fn source_bundle_sources(
     buffers: &BTreeMap<EditorFileId, String>,
 ) -> BTreeMap<PathBuf, String> {
     EDITOR_FILES
@@ -168,10 +135,4 @@ fn layout_entry_file_id(layout: &LayoutId) -> EditorFileId {
         "focus-repro" => EditorFileId::FocusReproLayoutTsx,
         _ => EditorFileId::LayoutTsx,
     }
-}
-
-fn js_error_to_string(error: JsValue) -> String {
-    error
-        .as_string()
-        .unwrap_or_else(|| format!("{error:?}"))
 }

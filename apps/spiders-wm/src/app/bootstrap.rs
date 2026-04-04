@@ -1,9 +1,10 @@
 use std::sync::Arc;
 use std::sync::mpsc;
 
-use spiders_config::model::{Config, ConfigPaths};
+use spiders_config::model::{Config, ConfigPaths, config_discovery_options_from_env};
+use spiders_config::runtime::build_authoring_layout_service;
 use spiders_core::signal::WmSignal;
-use spiders_wm_runtime::{config_discovery_options_from_env, load_config as load_runtime_config};
+use spiders_runtime_js_native::JavaScriptNativeRuntimeProvider;
 
 use smithay::backend::egl::EGLDevice;
 use smithay::backend::renderer::damage::OutputDamageTracker;
@@ -99,7 +100,41 @@ pub(crate) fn build_state(
 }
 
 pub(crate) fn load_wm_config(existing_paths: Option<ConfigPaths>) -> (Option<ConfigPaths>, Config) {
-    load_runtime_config(existing_paths, config_discovery_options_from_env())
+    let paths = match existing_paths {
+        Some(paths) => paths,
+        None => match ConfigPaths::discover(config_discovery_options_from_env()) {
+            Ok(paths) => paths,
+            Err(error) => {
+                warn!(%error, "wm could not discover config paths; using empty config");
+                return (None, Config::default());
+            }
+        },
+    };
+
+    let js_provider = JavaScriptNativeRuntimeProvider;
+    let service = match build_authoring_layout_service(&paths, &[&js_provider]) {
+        Ok(service) => service,
+        Err(error) => {
+            warn!(
+                authored_config = %paths.authored_config.display(),
+                %error,
+                "wm could not build config runtime; using empty config"
+            );
+            return (Some(paths), Config::default());
+        }
+    };
+    match service.load_config(&paths) {
+        Ok(config) => (Some(paths), config),
+        Err(error) => {
+            warn!(
+                authored_config = %paths.authored_config.display(),
+                prepared_config = %paths.prepared_config.display(),
+                %error,
+                "wm failed to load config; using empty config"
+            );
+            (Some(paths), Config::default())
+        }
+    }
 }
 
 pub(crate) fn init_winit(

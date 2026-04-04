@@ -3881,7 +3881,7 @@ dependencies = [
  "spiders-core",
  "spiders-ipc",
  "spiders-logging",
- "spiders-runtime-js",
+ "spiders-runtime-js-native",
  "spiders-scene",
  "spiders-wm-runtime",
  "tempfile",
@@ -3948,16 +3948,46 @@ dependencies = [
 ]
 
 [[package]]
-name = "spiders-runtime-js"
+name = "spiders-runtime-js-browser"
+version = "0.1.0"
+dependencies = [
+ "js-sys",
+ "serde",
+ "serde-wasm-bindgen",
+ "serde_json",
+ "spiders-config",
+ "spiders-core",
+ "spiders-runtime-js-core",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+]
+
+[[package]]
+name = "spiders-runtime-js-core"
 version = "0.1.0"
 dependencies = [
  "oxc",
  "oxc_resolver",
+ "serde",
+ "serde_json",
+ "spiders-config",
+ "spiders-core",
+ "spiders-scene",
+ "thiserror 2.0.18",
+ "tracing",
+]
+
+[[package]]
+name = "spiders-runtime-js-native"
+version = "0.1.0"
+dependencies = [
+ "oxc",
  "rquickjs",
  "serde",
  "serde_json",
  "spiders-config",
  "spiders-core",
+ "spiders-runtime-js-core",
  "spiders-scene",
  "thiserror 2.0.18",
  "tracing",
@@ -3993,6 +4023,7 @@ dependencies = [
  "spiders-core",
  "spiders-css",
  "spiders-ipc",
+ "spiders-runtime-js-native",
  "spiders-scene",
  "spiders-wm-runtime",
  "thiserror 2.0.18",
@@ -4013,7 +4044,7 @@ dependencies = [
  "spiders-core",
  "spiders-ipc",
  "spiders-logging",
- "spiders-runtime-js",
+ "spiders-runtime-js-native",
  "spiders-scene",
  "spiders-wm-runtime",
  "tempfile",
@@ -4036,7 +4067,6 @@ dependencies = [
  "spiders-config",
  "spiders-core",
  "spiders-css",
- "spiders-runtime-js",
  "spiders-scene",
  "tracing",
  "wasm-bindgen",
@@ -4053,7 +4083,10 @@ dependencies = [
  "leptos_router",
  "serde",
  "serde-wasm-bindgen",
+ "spiders-config",
  "spiders-core",
+ "spiders-runtime-js-browser",
+ "spiders-runtime-js-core",
  "spiders-scene",
  "spiders-wm-runtime",
  "wasm-bindgen",

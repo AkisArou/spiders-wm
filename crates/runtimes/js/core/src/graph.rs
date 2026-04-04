@@ -90,11 +90,7 @@ pub enum GraphError {
     #[error("module `{path}` has parse errors")]
     ParseModule { path: PathBuf },
     #[error("failed to resolve `{specifier}` from `{from}`: {message}")]
-    Resolve {
-        from: PathBuf,
-        specifier: String,
-        message: String,
-    },
+    Resolve { from: PathBuf, specifier: String, message: String },
     #[error("unsupported external import `{specifier}` from `{from}`")]
     UnsupportedImport { from: PathBuf, specifier: String },
 }
@@ -104,52 +100,38 @@ pub fn discover_project_apps(
 ) -> Result<DiscoveredProject, GraphError> {
     let config_entry = config_entry.as_ref();
     if !config_entry.exists() {
-        return Err(GraphError::MissingConfigEntry {
-            path: config_entry.to_path_buf(),
-        });
+        return Err(GraphError::MissingConfigEntry { path: config_entry.to_path_buf() });
     }
     if !config_entry.is_file() {
-        return Err(GraphError::InvalidConfigEntry {
-            path: config_entry.to_path_buf(),
-        });
+        return Err(GraphError::InvalidConfigEntry { path: config_entry.to_path_buf() });
     }
 
-    let root_dir = config_entry
-        .parent()
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| PathBuf::from("."));
+    let root_dir =
+        config_entry.parent().map(Path::to_path_buf).unwrap_or_else(|| PathBuf::from("."));
 
     let config_app = DiscoveredApp {
         kind: AppKind::Config,
         name: "config".into(),
         entry_path: config_entry.to_path_buf(),
         root_dir: root_dir.clone(),
-        stylesheet_path: root_dir
-            .join("index.css")
-            .exists()
-            .then(|| root_dir.join("index.css")),
+        stylesheet_path: root_dir.join("index.css").exists().then(|| root_dir.join("index.css")),
     };
 
     let mut layout_apps = Vec::new();
     let layouts_dir = root_dir.join("layouts");
     if layouts_dir.exists() {
-        for entry in std::fs::read_dir(&layouts_dir).map_err(|_| GraphError::ReadModule {
-            path: layouts_dir.clone(),
-        })? {
-            let entry = entry.map_err(|_| GraphError::ReadModule {
-                path: layouts_dir.clone(),
-            })?;
+        for entry in std::fs::read_dir(&layouts_dir)
+            .map_err(|_| GraphError::ReadModule { path: layouts_dir.clone() })?
+        {
+            let entry = entry.map_err(|_| GraphError::ReadModule { path: layouts_dir.clone() })?;
             let path = entry.path();
             if !path.is_dir() {
                 continue;
             }
 
             if let Some(entry_path) = discover_layout_entry(&path) {
-                let name = path
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    .unwrap_or_default()
-                    .to_owned();
+                let name =
+                    path.file_name().and_then(|name| name.to_str()).unwrap_or_default().to_owned();
                 let stylesheet_path = path.join("index.css");
                 layout_apps.push(DiscoveredApp {
                     kind: AppKind::Layout,
@@ -210,9 +192,7 @@ impl ModuleGraphBuilder {
             ..ResolveOptions::default()
         };
 
-        Self {
-            resolver: Resolver::new(options),
-        }
+        Self { resolver: Resolver::new(options) }
     }
 
     pub fn build(&self, app: &DiscoveredApp) -> Result<ModuleGraph, GraphError> {
@@ -242,11 +222,7 @@ impl ModuleGraphBuilder {
             modules.insert(module_id, record);
         }
 
-        Ok(ModuleGraph {
-            app: app.clone(),
-            modules,
-            order,
-        })
+        Ok(ModuleGraph { app: app.clone(), modules, order })
     }
 
     fn load_module(&self, module_id: &ModuleId) -> Result<ModuleRecord, GraphError> {
@@ -308,14 +284,13 @@ impl ModuleGraphBuilder {
         }
         let from_dir = from_path.parent().unwrap_or_else(|| Path::new("/"));
 
-        let resolution = self
-            .resolver
-            .resolve(from_dir, &import.specifier)
-            .map_err(|error| GraphError::Resolve {
+        let resolution = self.resolver.resolve(from_dir, &import.specifier).map_err(|error| {
+            GraphError::Resolve {
                 from: from_path.clone(),
                 specifier: import.specifier.clone(),
                 message: error.to_string(),
-            })?;
+            }
+        })?;
 
         Ok(ModuleId::File(resolution.full_path().to_path_buf()))
     }
@@ -323,15 +298,11 @@ impl ModuleGraphBuilder {
 
 fn parse_imports(path: &Path, source: &str) -> Result<Vec<ImportedModule>, GraphError> {
     let allocator = Allocator::default();
-    let source_type =
-        SourceType::from_path(path).map_err(|_| GraphError::UnsupportedSourceType {
-            path: path.to_path_buf(),
-        })?;
+    let source_type = SourceType::from_path(path)
+        .map_err(|_| GraphError::UnsupportedSourceType { path: path.to_path_buf() })?;
     let parsed = Parser::new(&allocator, source, source_type).parse();
     if !parsed.errors.is_empty() {
-        return Err(GraphError::ParseModule {
-            path: path.to_path_buf(),
-        });
+        return Err(GraphError::ParseModule { path: path.to_path_buf() });
     }
 
     let mut imports = Vec::new();
@@ -364,10 +335,7 @@ fn classify_import_specifier(specifier: &str) -> ImportedModule {
         ImportedModuleKind::Script
     };
 
-    ImportedModule {
-        specifier: specifier.to_owned(),
-        kind,
-    }
+    ImportedModule { specifier: specifier.to_owned(), kind }
 }
 
 fn is_virtual_sdk_specifier(specifier: &str) -> bool {
@@ -380,10 +348,8 @@ mod tests {
     use std::fs;
 
     fn unique_root(name: &str) -> PathBuf {
-        let unique = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
+        let unique =
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
         std::env::temp_dir().join(format!("spiders-config-graph-{name}-{unique}"))
     }
 
@@ -440,58 +406,28 @@ mod tests {
             "#,
         )
         .unwrap();
-        fs::write(
-            root.join("config/bindings.ts"),
-            "export const bindings = {};\n",
-        )
-        .unwrap();
+        fs::write(root.join("config/bindings.ts"), "export const bindings = {};\n").unwrap();
         fs::write(root.join("index.css"), "workspace {}\n").unwrap();
 
         let project = discover_project_apps(root.join("config.ts")).unwrap();
-        let graph = ModuleGraphBuilder::new()
-            .build(&project.config_app)
-            .unwrap();
+        let graph = ModuleGraphBuilder::new().build(&project.config_app).unwrap();
 
-        assert!(
-            graph
-                .modules
-                .contains_key(&ModuleId::File(root.join("config.ts")))
-        );
-        assert!(
-            graph
-                .modules
-                .contains_key(&ModuleId::File(root.join("config/bindings.ts")))
-        );
-        assert!(
-            graph
-                .modules
-                .contains_key(&ModuleId::Virtual("@spiders-wm/sdk/config".into()))
-        );
-        assert!(
-            graph
-                .modules
-                .contains_key(&ModuleId::File(root.join("index.css")))
-        );
-        assert_eq!(
-            graph.order.first(),
-            Some(&ModuleId::File(root.join("config.ts")))
-        );
+        assert!(graph.modules.contains_key(&ModuleId::File(root.join("config.ts"))));
+        assert!(graph.modules.contains_key(&ModuleId::File(root.join("config/bindings.ts"))));
+        assert!(graph.modules.contains_key(&ModuleId::Virtual("@spiders-wm/sdk/config".into())));
+        assert!(graph.modules.contains_key(&ModuleId::File(root.join("index.css"))));
+        assert_eq!(graph.order.first(), Some(&ModuleId::File(root.join("config.ts"))));
     }
 
     #[test]
     fn graph_builder_rejects_non_virtual_package_imports() {
         let root = unique_root("unsupported");
         fs::create_dir_all(&root).unwrap();
-        fs::write(
-            root.join("config.ts"),
-            "import foo from 'left-pad'; export default foo;",
-        )
-        .unwrap();
+        fs::write(root.join("config.ts"), "import foo from 'left-pad'; export default foo;")
+            .unwrap();
 
         let project = discover_project_apps(root.join("config.ts")).unwrap();
-        let error = ModuleGraphBuilder::new()
-            .build(&project.config_app)
-            .unwrap_err();
+        let error = ModuleGraphBuilder::new().build(&project.config_app).unwrap_err();
 
         assert!(matches!(
             error,

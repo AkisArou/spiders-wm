@@ -13,7 +13,7 @@ spiders-config = { path = "../spiders-config" }
 spiders-ipc = { path = "../spiders-ipc" }
 spiders-logging = { path = "../spiders-logging" }
 spiders-scene = { path = "../spiders-scene" }
-spiders-runtime-js = { path = "../runtimes/js" }
+spiders-runtime-js-native = { path = "../runtimes/js/native" }
 spiders-core = { path = "../spiders-core" }
 spiders-wm-runtime = { path = "../spiders-wm-runtime" }
 tracing.workspace = true

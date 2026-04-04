@@ -422,25 +422,20 @@ fn strip_stylesheet_imports(path: &Path, source: &str) -> Result<String, String>
 }
 
 fn read_virtual_module_source(specifier: &str) -> Result<String, String> {
-    let path = match specifier {
-        "@spiders-wm/sdk/commands" => PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../../packages/spiders-wm-sdk/src/commands.js"),
-        "@spiders-wm/sdk/config" => {
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/virtual/config.js")
+    let source = match specifier {
+        "@spiders-wm/sdk/commands" => {
+            include_str!("../../../../../packages/spiders-wm-sdk/src/commands.js")
         }
-        "@spiders-wm/sdk/jsx-runtime" => PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../../packages/spiders-wm-sdk/src/jsx-runtime.js"),
-        "@spiders-wm/sdk/layout" => {
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/virtual/layout.js")
+        "@spiders-wm/sdk/config" => include_str!("virtual/config.js"),
+        "@spiders-wm/sdk/jsx-runtime" => {
+            include_str!("../../../../../packages/spiders-wm-sdk/src/jsx-runtime.js")
         }
-        "@spiders-wm/sdk/api" => {
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/virtual/api.js")
-        }
+        "@spiders-wm/sdk/layout" => include_str!("virtual/layout.js"),
+        "@spiders-wm/sdk/api" => include_str!("virtual/api.js"),
         _ => return Err(format!("unsupported virtual module {specifier}")),
     };
 
-    std::fs::read_to_string(&path)
-        .map_err(|_| format!("failed to read virtual module source {}", path.display()))
+    Ok(source.to_string())
 }
 
 fn module_key(root_dir: &Path, module_id: &SourceModuleId) -> String {

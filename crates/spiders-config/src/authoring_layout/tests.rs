@@ -1,10 +1,10 @@
 use std::fs;
+use std::future::Future;
+use std::pin::Pin;
 
 use spiders_core::runtime::layout_context::LayoutEvaluationContext;
 use spiders_core::runtime::prepared_layout::{PreparedLayout, SelectedLayout};
-use spiders_core::runtime::runtime_contract::{
-    AuthoringLayoutRuntime, LayoutModuleContract, PreparedLayoutRuntime,
-};
+use spiders_core::runtime::runtime_contract::{LayoutModuleContract, PreparedLayoutRuntime};
 use spiders_core::runtime::runtime_error::{RuntimeError, RuntimeRefreshSummary};
 use spiders_core::snapshot::{OutputSnapshot, StateSnapshot, WorkspaceSnapshot};
 use spiders_core::types::{LayoutRef, OutputTransform};
@@ -13,6 +13,9 @@ use tempfile::TempDir;
 
 use super::*;
 use crate::model::{Config, ConfigDiscoveryOptions, ConfigPaths, LayoutDefinition};
+use crate::runtime::{
+    AuthoringConfigRuntime, SourceBundle, SourceBundleConfigRuntime, SourceBundlePreparedLayoutRuntime,
+};
 
 #[derive(Debug, Clone)]
 struct StubRuntime {
@@ -29,9 +32,7 @@ impl PreparedLayoutRuntime for StubRuntime {
         _workspace: &WorkspaceSnapshot,
     ) -> Result<Option<PreparedLayout>, RuntimeError> {
         if let Some(message) = &self.error_message {
-            return Err(RuntimeError::Other {
-                message: message.clone(),
-            });
+            return Err(RuntimeError::Other { message: message.clone() });
         }
 
         Ok(self.loaded.clone())
@@ -43,10 +44,7 @@ impl PreparedLayoutRuntime for StubRuntime {
         workspace: &WorkspaceSnapshot,
         artifact: Option<&PreparedLayout>,
     ) -> LayoutEvaluationContext {
-        state.layout_context(
-            workspace,
-            artifact.map(|artifact| artifact.selected.clone()),
-        )
+        state.layout_context(workspace, artifact.map(|artifact| artifact.selected.clone()))
     }
 
     fn evaluate_layout(
@@ -54,10 +52,7 @@ impl PreparedLayoutRuntime for StubRuntime {
         _prepared_layout: &PreparedLayout,
         _context: &LayoutEvaluationContext,
     ) -> Result<SourceLayoutNode, RuntimeError> {
-        Ok(SourceLayoutNode::Workspace {
-            meta: Default::default(),
-            children: vec![],
-        })
+        Ok(SourceLayoutNode::Workspace { meta: Default::default(), children: vec![] })
     }
 
     fn contract(&self) -> LayoutModuleContract {
@@ -65,14 +60,12 @@ impl PreparedLayoutRuntime for StubRuntime {
     }
 }
 
-impl AuthoringLayoutRuntime for StubRuntime {
-    fn load_authored_config(&self, _path: &std::path::Path) -> Result<Self::Config, RuntimeError> {
-        Err(RuntimeError::NotImplemented(
-            "authored config loading".into(),
-        ))
+impl AuthoringConfigRuntime for StubRuntime {
+    fn load_authored_config(&self, _path: &std::path::Path) -> Result<Config, RuntimeError> {
+        Err(RuntimeError::NotImplemented("authored config loading".into()))
     }
 
-    fn load_prepared_config(&self, _path: &std::path::Path) -> Result<Self::Config, RuntimeError> {
+    fn load_prepared_config(&self, _path: &std::path::Path) -> Result<Config, RuntimeError> {
         Ok(Config {
             layouts: vec![LayoutDefinition {
                 name: "master-stack".into(),
@@ -98,9 +91,7 @@ impl AuthoringLayoutRuntime for StubRuntime {
         _authored: &std::path::Path,
         _runtime: &std::path::Path,
     ) -> Result<RuntimeRefreshSummary, RuntimeError> {
-        Err(RuntimeError::NotImplemented(
-            "prepared config rebuild".into(),
-        ))
+        Err(RuntimeError::NotImplemented("prepared config rebuild".into()))
     }
 }
 
@@ -120,9 +111,7 @@ impl PreparedLayoutRuntime for StubAuthoredRuntime {
         _workspace: &WorkspaceSnapshot,
     ) -> Result<Option<PreparedLayout>, RuntimeError> {
         if let Some(message) = &self.error_message {
-            return Err(RuntimeError::Other {
-                message: message.clone(),
-            });
+            return Err(RuntimeError::Other { message: message.clone() });
         }
 
         Ok(self.loaded.clone())
@@ -134,11 +123,7 @@ impl PreparedLayoutRuntime for StubAuthoredRuntime {
         workspace: &WorkspaceSnapshot,
         artifact: Option<&PreparedLayout>,
     ) -> LayoutEvaluationContext {
-        StubRuntime {
-            loaded: None,
-            error_message: None,
-        }
-        .build_context(state, workspace, artifact)
+        StubRuntime { loaded: None, error_message: None }.build_context(state, workspace, artifact)
     }
 
     fn evaluate_layout(
@@ -146,11 +131,7 @@ impl PreparedLayoutRuntime for StubAuthoredRuntime {
         prepared_layout: &PreparedLayout,
         context: &LayoutEvaluationContext,
     ) -> Result<SourceLayoutNode, RuntimeError> {
-        StubRuntime {
-            loaded: None,
-            error_message: None,
-        }
-        .evaluate_layout(prepared_layout, context)
+        StubRuntime { loaded: None, error_message: None }.evaluate_layout(prepared_layout, context)
     }
 
     fn contract(&self) -> LayoutModuleContract {
@@ -158,12 +139,12 @@ impl PreparedLayoutRuntime for StubAuthoredRuntime {
     }
 }
 
-impl AuthoringLayoutRuntime for StubAuthoredRuntime {
-    fn load_authored_config(&self, _path: &std::path::Path) -> Result<Self::Config, RuntimeError> {
+impl AuthoringConfigRuntime for StubAuthoredRuntime {
+    fn load_authored_config(&self, _path: &std::path::Path) -> Result<Config, RuntimeError> {
         Ok(self.config.clone())
     }
 
-    fn load_prepared_config(&self, _path: &std::path::Path) -> Result<Self::Config, RuntimeError> {
+    fn load_prepared_config(&self, _path: &std::path::Path) -> Result<Config, RuntimeError> {
         Ok(self.config.clone())
     }
 
@@ -181,6 +162,80 @@ impl AuthoringLayoutRuntime for StubAuthoredRuntime {
         _runtime: &std::path::Path,
     ) -> Result<RuntimeRefreshSummary, RuntimeError> {
         Ok(RuntimeRefreshSummary::default())
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+struct StubSourceBundleRuntime {
+    config: Config,
+    loaded: Option<PreparedLayout>,
+}
+
+impl SourceBundleConfigRuntime for StubSourceBundleRuntime {
+    fn load_config<'a>(
+        &'a self,
+        _root_dir: &'a std::path::Path,
+        _entry_path: &'a std::path::Path,
+        _sources: &'a SourceBundle,
+    ) -> Pin<Box<dyn Future<Output = Result<Config, crate::model::LayoutConfigError>> + 'a>> {
+        let config = self.config.clone();
+        Box::pin(async move { Ok(config) })
+    }
+}
+
+impl SourceBundlePreparedLayoutRuntime for StubSourceBundleRuntime {
+    fn prepare_layout<'a>(
+        &'a self,
+        _root_dir: &'a std::path::Path,
+        _sources: &'a SourceBundle,
+        _config: &'a Config,
+        _workspace: &'a WorkspaceSnapshot,
+    ) -> Pin<Box<dyn Future<Output = Result<Option<PreparedLayout>, crate::model::LayoutConfigError>> + 'a>> {
+        let loaded = self.loaded.clone();
+        Box::pin(async move { Ok(loaded) })
+    }
+
+    fn build_context(
+        &self,
+        state: &StateSnapshot,
+        workspace: &WorkspaceSnapshot,
+        artifact: Option<&PreparedLayout>,
+    ) -> LayoutEvaluationContext {
+        state.layout_context(workspace, artifact.map(|artifact| artifact.selected.clone()))
+    }
+
+    fn evaluate_layout<'a>(
+        &'a self,
+        _root_dir: &'a std::path::Path,
+        _sources: &'a SourceBundle,
+        _artifact: &'a PreparedLayout,
+        _context: &'a LayoutEvaluationContext,
+    ) -> Pin<Box<dyn Future<Output = Result<SourceLayoutNode, crate::model::LayoutConfigError>> + 'a>> {
+        Box::pin(async move {
+            Ok(SourceLayoutNode::Workspace { meta: Default::default(), children: vec![] })
+        })
+    }
+}
+
+fn block_on<F: Future>(future: F) -> F::Output {
+    use std::sync::Arc;
+    use std::task::{Context, Poll, Wake, Waker};
+
+    struct NoopWake;
+
+    impl Wake for NoopWake {
+        fn wake(self: Arc<Self>) {}
+    }
+
+    let waker = Waker::from(Arc::new(NoopWake));
+    let mut future = std::pin::pin!(future);
+    let mut context = Context::from_waker(&waker);
+
+    loop {
+        match future.as_mut().poll(&mut context) {
+            Poll::Ready(output) => return output,
+            Poll::Pending => std::thread::yield_now(),
+        }
     }
 }
 
@@ -215,9 +270,7 @@ fn workspace() -> WorkspaceSnapshot {
         active_workspaces: vec!["1".into()],
         focused: true,
         visible: true,
-        effective_layout: Some(LayoutRef {
-            name: "master-stack".into(),
-        }),
+        effective_layout: Some(LayoutRef { name: "master-stack".into() }),
     }
 }
 
@@ -251,7 +304,7 @@ fn authoring_layout_service_loads_and_caches_prepared_layout() {
         loaded: Some(prepared_layout("master-stack", "layouts/master-stack.js")),
         error_message: None,
     };
-    let mut service = AuthoringLayoutService::new(runtime);
+    let mut service = AuthoringLayoutService::new(runtime.clone(), runtime);
     let config = Config {
         layouts: vec![LayoutDefinition {
             name: "master-stack".into(),
@@ -263,10 +316,7 @@ fn authoring_layout_service_loads_and_caches_prepared_layout() {
         ..Config::default()
     };
 
-    let loaded = service
-        .prepare_for_workspace(&config, &workspace())
-        .unwrap()
-        .unwrap();
+    let loaded = service.prepare_for_workspace(&config, &workspace()).unwrap().unwrap();
 
     assert_eq!(loaded.selected.name, "master-stack");
     assert!(service.cache().contains_key("master-stack"));
@@ -278,7 +328,7 @@ fn authoring_layout_service_evaluates_prepared_layout_for_workspace() {
         loaded: Some(prepared_layout("master-stack", "layouts/master-stack.js")),
         error_message: None,
     };
-    let mut service = AuthoringLayoutService::new(runtime);
+    let mut service = AuthoringLayoutService::new(runtime.clone(), runtime);
     let config = Config {
         layouts: vec![LayoutDefinition {
             name: "master-stack".into(),
@@ -290,16 +340,11 @@ fn authoring_layout_service_evaluates_prepared_layout_for_workspace() {
         ..Config::default()
     };
 
-    let evaluated = service
-        .evaluate_prepared_for_workspace(&config, &state(), &workspace())
-        .unwrap()
-        .unwrap();
+    let evaluated =
+        service.evaluate_prepared_for_workspace(&config, &state(), &workspace()).unwrap().unwrap();
 
     assert_eq!(evaluated.artifact.selected.name, "master-stack");
-    assert!(matches!(
-        evaluated.layout,
-        SourceLayoutNode::Workspace { .. }
-    ));
+    assert!(matches!(evaluated.layout, SourceLayoutNode::Workspace { .. }));
 }
 
 #[test]
@@ -308,13 +353,9 @@ fn authoring_layout_service_loads_config_from_runtime_path() {
     let prepared_config_path = temp_dir.path().join("config.js");
     fs::write(&prepared_config_path, "export default {};").unwrap();
 
-    let service: AuthoringLayoutService<_> = AuthoringLayoutService::new(StubRuntime {
-        loaded: None,
-        error_message: None,
-    });
-    let config = service
-        .load_config(&ConfigPaths::new("unused", &prepared_config_path))
-        .unwrap();
+    let runtime = StubRuntime { loaded: None, error_message: None };
+    let service = AuthoringLayoutService::new(runtime.clone(), runtime);
+    let config = service.load_config(&ConfigPaths::new("unused", &prepared_config_path)).unwrap();
 
     assert_eq!(config.layouts[0].module, "layouts/master-stack.js");
 }
@@ -329,10 +370,8 @@ fn authoring_layout_service_discovers_config_paths_from_options() {
     let _ = fs::create_dir_all(&data_dir);
     fs::write(config_dir.join("config.ts"), "export default {};").unwrap();
 
-    let service: AuthoringLayoutService<_> = AuthoringLayoutService::new(StubRuntime {
-        loaded: None,
-        error_message: None,
-    });
+    let runtime = StubRuntime { loaded: None, error_message: None };
+    let service = AuthoringLayoutService::new(runtime.clone(), runtime);
     let paths = service
         .discover_config_paths(ConfigDiscoveryOptions {
             home_dir: Some(home_dir.clone()),
@@ -340,24 +379,17 @@ fn authoring_layout_service_discovers_config_paths_from_options() {
         })
         .unwrap();
 
-    assert!(
-        paths
-            .authored_config
-            .ends_with(".config/spiders-wm/config.ts")
-    );
-    assert!(
-        paths
-            .prepared_config
-            .ends_with(".cache/spiders-wm/config.js")
-    );
+    assert!(paths.authored_config.ends_with(".config/spiders-wm/config.ts"));
+    assert!(paths.prepared_config.ends_with(".cache/spiders-wm/config.js"));
 }
 
 #[test]
 fn authoring_layout_service_reports_missing_layout_module_sources() {
-    let service: AuthoringLayoutService<_> = AuthoringLayoutService::new(StubRuntime {
+    let runtime = StubRuntime {
         loaded: None,
         error_message: Some("layout module `layouts/missing.js` source is unavailable".into()),
-    });
+    };
+    let service = AuthoringLayoutService::new(runtime.clone(), runtime);
     let config = Config {
         layouts: vec![LayoutDefinition {
             name: "missing".into(),
@@ -391,11 +423,9 @@ fn authoring_layout_service_loads_authored_config_when_runtime_js_is_missing() {
         ..Config::default()
     };
 
-    let service: AuthoringLayoutService<_> = AuthoringLayoutService::new(StubAuthoredRuntime {
-        loaded: None,
-        error_message: None,
-        config: authored_config,
-    });
+    let runtime =
+        StubAuthoredRuntime { loaded: None, error_message: None, config: authored_config };
+    let service = AuthoringLayoutService::new(runtime.clone(), runtime);
     let config = service
         .load_config(&ConfigPaths::new(
             project_root.path().join("config.ts"),
@@ -407,4 +437,80 @@ fn authoring_layout_service_loads_authored_config_when_runtime_js_is_missing() {
     assert_eq!(config.bindings.len(), 0);
     assert_eq!(config.layouts.len(), 1);
     assert!(config.layouts[0].runtime_cache_payload.is_some());
+}
+
+#[test]
+fn source_bundle_authoring_layout_service_loads_config() {
+    let runtime = StubSourceBundleRuntime {
+        config: Config {
+            workspaces: vec!["1".into()],
+            layouts: vec![LayoutDefinition {
+                name: "master-stack".into(),
+                directory: "layouts/master-stack".into(),
+                module: "layouts/master-stack/index.tsx".into(),
+                stylesheet_path: Some("layouts/master-stack/index.css".into()),
+                runtime_cache_payload: Some(runtime_cache_payload("layouts/master-stack/index.tsx")),
+            }],
+            ..Config::default()
+        },
+        loaded: None,
+    };
+    let service = SourceBundleAuthoringLayoutService::from_runtime_bundle(
+        Box::new(runtime.clone()),
+        Box::new(runtime),
+    );
+
+    let config = block_on(service.load_config(
+        std::path::Path::new("/workspace"),
+        std::path::Path::new("/workspace/config.ts"),
+        &SourceBundle::new(),
+    ))
+    .unwrap();
+
+    assert_eq!(config.workspaces, vec!["1"]);
+    assert_eq!(config.layouts.len(), 1);
+}
+
+#[test]
+fn source_bundle_authoring_layout_service_evaluates_prepared_layout() {
+    let runtime = StubSourceBundleRuntime {
+        config: Config {
+            layouts: vec![LayoutDefinition {
+                name: "master-stack".into(),
+                directory: "layouts/master-stack".into(),
+                module: "layouts/master-stack/index.tsx".into(),
+                stylesheet_path: Some("layouts/master-stack/index.css".into()),
+                runtime_cache_payload: Some(runtime_cache_payload("layouts/master-stack/index.tsx")),
+            }],
+            ..Config::default()
+        },
+        loaded: Some(prepared_layout("master-stack", "layouts/master-stack/index.tsx")),
+    };
+    let mut service = SourceBundleAuthoringLayoutService::from_runtime_bundle(
+        Box::new(runtime.clone()),
+        Box::new(runtime),
+    );
+    let config = Config {
+        layouts: vec![LayoutDefinition {
+            name: "master-stack".into(),
+            directory: "layouts/master-stack".into(),
+            module: "layouts/master-stack/index.tsx".into(),
+            stylesheet_path: Some("layouts/master-stack/index.css".into()),
+            runtime_cache_payload: Some(runtime_cache_payload("layouts/master-stack/index.tsx")),
+        }],
+        ..Config::default()
+    };
+
+    let evaluated = block_on(service.evaluate_prepared_for_workspace(
+        std::path::Path::new("/workspace"),
+        &SourceBundle::new(),
+        &config,
+        &state(),
+        &workspace(),
+    ))
+    .unwrap()
+    .unwrap();
+
+    assert_eq!(evaluated.artifact.selected.name, "master-stack");
+    assert!(matches!(evaluated.layout, SourceLayoutNode::Workspace { .. }));
 }

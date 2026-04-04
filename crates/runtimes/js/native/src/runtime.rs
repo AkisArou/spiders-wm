@@ -1,157 +1,22 @@
-use std::collections::BTreeMap;
-
-use serde::Deserialize;
 use spiders_config::model::Config;
-use spiders_scene::ast::{
-    AuthoredLayoutNode, AuthoredNodeMeta, LayoutValidationError, ValidatedLayoutTree,
-};
+use spiders_config::runtime::AuthoringConfigRuntime;
+use spiders_core::SourceLayoutNode;
 use spiders_core::runtime::layout_context::LayoutEvaluationContext;
 use spiders_core::runtime::prepared_layout::{PreparedLayout, SelectedLayout};
-use spiders_core::runtime::runtime_contract::{
-    AuthoringLayoutRuntime, LayoutModuleContract, PreparedLayoutRuntime,
-};
+use spiders_core::runtime::runtime_contract::{LayoutModuleContract, PreparedLayoutRuntime};
 use spiders_core::runtime::runtime_error::RuntimeError;
-use spiders_core::{SlotTake, SourceLayoutNode};
+use spiders_scene::ast::LayoutValidationError;
 use tracing::{debug, warn};
 
-use crate::loader::{InlineLayoutSourceLoader, JsLayoutSourceLoader};
-use crate::module_graph::{JavaScriptModule, JavaScriptModuleGraph};
 use crate::module_graph_runtime::call_entry_export_with_json_arg;
-use crate::payload::{decode_runtime_graph_payload, encode_runtime_graph_payload};
+use spiders_runtime_js_core::loader::{InlineLayoutSourceLoader, JsLayoutSourceLoader};
+use spiders_runtime_js_core::{
+    JavaScriptModule, JavaScriptModuleGraph, decode_js_layout_value, decode_runtime_graph_payload,
+    encode_runtime_graph_payload,
+};
 
 #[cfg(test)]
-use crate::loader::FsLayoutSourceLoader;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct DecodePath(Vec<String>);
-
-impl DecodePath {
-    fn root() -> Self {
-        Self(vec!["root".into()])
-    }
-
-    fn field(&self, field: &str) -> Self {
-        let mut path = self.0.clone();
-        path.push(field.to_owned());
-        Self(path)
-    }
-
-    fn index(&self, index: usize) -> Self {
-        let mut path = self.0.clone();
-        path.push(format!("[{index}]"));
-        Self(path)
-    }
-
-    fn display(&self) -> String {
-        self.0.join(".")
-    }
-}
-
-#[derive(Debug, Deserialize, Clone, Default)]
-struct JsAuthoredNodeMeta {
-    #[serde(default)]
-    id: Option<String>,
-    #[serde(default)]
-    class: JsClassName,
-    #[serde(default)]
-    name: Option<String>,
-    #[serde(default)]
-    data: BTreeMap<String, String>,
-}
-
-#[derive(Debug, Deserialize, Clone, Default)]
-#[serde(untagged)]
-enum JsClassName {
-    #[default]
-    Missing,
-    One(String),
-    Many(Vec<String>),
-}
-
-impl JsClassName {
-    fn into_vec(self) -> Vec<String> {
-        match self {
-            Self::Missing => Vec::new(),
-            Self::One(value) => value
-                .split_ascii_whitespace()
-                .filter(|value| !value.is_empty())
-                .map(str::to_owned)
-                .collect(),
-            Self::Many(values) => values,
-        }
-    }
-}
-
-#[derive(Debug, Deserialize, Clone, Default)]
-struct JsAuthoredNodeProps {
-    #[serde(flatten)]
-    meta: JsAuthoredNodeMeta,
-    #[serde(default, rename = "match")]
-    match_expr: Option<String>,
-    #[serde(default)]
-    take: Option<SlotTake>,
-}
-
-impl JsAuthoredNodeProps {
-    fn merge(self, nested: JsAuthoredNodeProps) -> Self {
-        Self {
-            meta: self.meta.merge(nested.meta),
-            match_expr: nested.match_expr.or(self.match_expr),
-            take: nested.take.or(self.take),
-        }
-    }
-}
-
-impl JsAuthoredNodeMeta {
-    fn merge(self, nested: JsAuthoredNodeMeta) -> Self {
-        Self {
-            id: nested.id.or(self.id),
-            class: match nested.class {
-                JsClassName::Missing => self.class,
-                other => other,
-            },
-            name: nested.name.or(self.name),
-            data: if nested.data.is_empty() {
-                self.data
-            } else {
-                nested.data
-            },
-        }
-    }
-}
-
-#[derive(Debug, Deserialize, Clone)]
-#[serde(tag = "type", rename_all = "kebab-case")]
-enum JsAuthoredLayoutNode {
-    Workspace {
-        #[serde(default)]
-        props: Option<JsAuthoredNodeProps>,
-        #[serde(flatten)]
-        legacy: JsAuthoredNodeProps,
-        #[serde(default)]
-        children: Vec<JsAuthoredLayoutNode>,
-    },
-    Group {
-        #[serde(default)]
-        props: Option<JsAuthoredNodeProps>,
-        #[serde(flatten)]
-        legacy: JsAuthoredNodeProps,
-        #[serde(default)]
-        children: Vec<JsAuthoredLayoutNode>,
-    },
-    Window {
-        #[serde(default)]
-        props: Option<JsAuthoredNodeProps>,
-        #[serde(flatten)]
-        legacy: JsAuthoredNodeProps,
-    },
-    Slot {
-        #[serde(default)]
-        props: Option<JsAuthoredNodeProps>,
-        #[serde(flatten)]
-        legacy: JsAuthoredNodeProps,
-    },
-}
+use spiders_runtime_js_core::loader::FsLayoutSourceLoader;
 
 #[derive(Debug, thiserror::Error, PartialEq)]
 pub enum PreparedLayoutRuntimeError {
@@ -172,7 +37,7 @@ pub enum PreparedLayoutRuntimeError {
 #[derive(Debug, Default, Clone, Copy)]
 pub struct StubPreparedLayoutRuntime;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct QuickJsPreparedLayoutRuntime<L = InlineLayoutSourceLoader> {
     contract: LayoutModuleContract,
     loader: L,
@@ -180,10 +45,7 @@ pub struct QuickJsPreparedLayoutRuntime<L = InlineLayoutSourceLoader> {
 
 impl Default for QuickJsPreparedLayoutRuntime<InlineLayoutSourceLoader> {
     fn default() -> Self {
-        Self {
-            contract: LayoutModuleContract::default(),
-            loader: InlineLayoutSourceLoader,
-        }
+        Self { contract: LayoutModuleContract::default(), loader: InlineLayoutSourceLoader }
     }
 }
 
@@ -195,10 +57,7 @@ impl QuickJsPreparedLayoutRuntime<InlineLayoutSourceLoader> {
 
 impl<L> QuickJsPreparedLayoutRuntime<L> {
     pub fn with_loader(loader: L) -> Self {
-        Self {
-            contract: LayoutModuleContract::default(),
-            loader,
-        }
+        Self { contract: LayoutModuleContract::default(), loader }
     }
 
     pub fn evaluate_module_source(
@@ -221,13 +80,6 @@ impl<L> QuickJsPreparedLayoutRuntime<L> {
         )
     }
 
-    pub fn normalize_authored_layout(
-        &self,
-        root: AuthoredLayoutNode,
-    ) -> Result<SourceLayoutNode, PreparedLayoutRuntimeError> {
-        Ok(ValidatedLayoutTree::from_authored(root)?.root)
-    }
-
     fn evaluate_module_graph(
         &self,
         selected_layout: &SelectedLayout,
@@ -235,9 +87,7 @@ impl<L> QuickJsPreparedLayoutRuntime<L> {
         graph: &JavaScriptModuleGraph,
     ) -> Result<SourceLayoutNode, PreparedLayoutRuntimeError> {
         let context_value = serde_json::to_value(context).map_err(|error| {
-            PreparedLayoutRuntimeError::JavaScript {
-                message: error.to_string(),
-            }
+            PreparedLayoutRuntimeError::JavaScript { message: error.to_string() }
         })?;
 
         let json = call_entry_export_with_json_arg(
@@ -264,15 +114,12 @@ impl<L> QuickJsPreparedLayoutRuntime<L> {
             message: "layout function returned undefined".into(),
         })?;
 
-        let authored =
-            decode_authored_layout_node(&json, &DecodePath::root()).map_err(|message| {
-                PreparedLayoutRuntimeError::ValueConversion {
-                    name: selected_layout.name.clone(),
-                    message,
-                }
-            })?;
-
-        self.normalize_authored_layout(authored)
+        decode_js_layout_value(&json).map_err(|message| {
+            PreparedLayoutRuntimeError::ValueConversion {
+                name: selected_layout.name.clone(),
+                message,
+            }
+        })
     }
 }
 
@@ -306,17 +153,14 @@ impl PreparedLayoutRuntime for StubPreparedLayoutRuntime {
     ) -> Result<Option<PreparedLayout>, RuntimeError> {
         Ok(config
             .resolve_selected_layout(workspace)
-            .map_err(|error| RuntimeError::Config {
-                message: error.to_string(),
-            })?
+            .map_err(|error| RuntimeError::Config { message: error.to_string() })?
             .map(|selected| PreparedLayout {
                 selected,
                 runtime_payload: encode_runtime_graph_payload(&JavaScriptModuleGraph {
                     entry: String::new(),
                     modules: Vec::new(),
                 }),
-                stylesheets: spiders_core::runtime::prepared_layout::PreparedStylesheets::default(
-                ),
+                stylesheets: spiders_core::runtime::prepared_layout::PreparedStylesheets::default(),
             }))
     }
 
@@ -326,10 +170,7 @@ impl PreparedLayoutRuntime for StubPreparedLayoutRuntime {
         workspace: &spiders_core::snapshot::WorkspaceSnapshot,
         artifact: Option<&PreparedLayout>,
     ) -> LayoutEvaluationContext {
-        state.layout_context(
-            workspace,
-            artifact.map(|artifact| artifact.selected.clone()),
-        )
+        state.layout_context(workspace, artifact.map(|artifact| artifact.selected.clone()))
     }
 
     fn evaluate_layout(
@@ -337,10 +178,7 @@ impl PreparedLayoutRuntime for StubPreparedLayoutRuntime {
         loaded_layout: &PreparedLayout,
         _context: &LayoutEvaluationContext,
     ) -> Result<SourceLayoutNode, RuntimeError> {
-        Err(RuntimeError::NotImplemented(format!(
-            "layout {}",
-            loaded_layout.selected.name
-        )))
+        Err(RuntimeError::NotImplemented(format!("layout {}", loaded_layout.selected.name)))
     }
 
     fn contract(&self) -> LayoutModuleContract {
@@ -365,10 +203,7 @@ impl<L: JsLayoutSourceLoader> PreparedLayoutRuntime for QuickJsPreparedLayoutRun
         workspace: &spiders_core::snapshot::WorkspaceSnapshot,
         artifact: Option<&PreparedLayout>,
     ) -> LayoutEvaluationContext {
-        state.layout_context(
-            workspace,
-            artifact.map(|artifact| artifact.selected.clone()),
-        )
+        state.layout_context(workspace, artifact.map(|artifact| artifact.selected.clone()))
     }
 
     fn evaluate_layout(
@@ -384,9 +219,7 @@ impl<L: JsLayoutSourceLoader> PreparedLayoutRuntime for QuickJsPreparedLayoutRun
             warn!(layout = %loaded_layout.selected.name, module = %loaded_layout.selected.module, %error, "layout evaluation failed");
         }
 
-        result.map_err(|error| RuntimeError::Other {
-            message: error.to_string(),
-        })
+        result.map_err(|error| RuntimeError::Other { message: error.to_string() })
     }
 
     fn contract(&self) -> LayoutModuleContract {
@@ -394,27 +227,23 @@ impl<L: JsLayoutSourceLoader> PreparedLayoutRuntime for QuickJsPreparedLayoutRun
     }
 }
 
-impl<L: JsLayoutSourceLoader> AuthoringLayoutRuntime for QuickJsPreparedLayoutRuntime<L> {
-    fn load_authored_config(&self, path: &std::path::Path) -> Result<Self::Config, RuntimeError> {
+impl<L: JsLayoutSourceLoader> AuthoringConfigRuntime for QuickJsPreparedLayoutRuntime<L> {
+    fn load_authored_config(&self, path: &std::path::Path) -> Result<Config, RuntimeError> {
         debug!(path = %path.display(), "loading authored config");
         let result = crate::authored::load_authored_config(path);
         if let Err(error) = &result {
             warn!(path = %path.display(), %error, "failed loading authored config");
         }
-        result.map_err(|error| RuntimeError::Config {
-            message: error.to_string(),
-        })
+        result.map_err(|error| RuntimeError::Config { message: error.to_string() })
     }
 
-    fn load_prepared_config(&self, path: &std::path::Path) -> Result<Self::Config, RuntimeError> {
+    fn load_prepared_config(&self, path: &std::path::Path) -> Result<Config, RuntimeError> {
         debug!(path = %path.display(), "loading prepared config");
         let result = crate::authored::load_prepared_config(path);
         if let Err(error) = &result {
             warn!(path = %path.display(), %error, "failed loading prepared config");
         }
-        result.map_err(|error| RuntimeError::Config {
-            message: error.to_string(),
-        })
+        result.map_err(|error| RuntimeError::Config { message: error.to_string() })
     }
 
     fn refresh_prepared_config(
@@ -425,9 +254,7 @@ impl<L: JsLayoutSourceLoader> AuthoringLayoutRuntime for QuickJsPreparedLayoutRu
         debug!(authored = %authored.display(), runtime = %runtime.display(), "refreshing prepared config");
         crate::authored::refresh_prepared_config(authored, runtime)
             .map(runtime_refresh_summary)
-            .map_err(|error| RuntimeError::Config {
-                message: error.to_string(),
-            })
+            .map_err(|error| RuntimeError::Config { message: error.to_string() })
     }
 
     fn rebuild_prepared_config(
@@ -438,23 +265,17 @@ impl<L: JsLayoutSourceLoader> AuthoringLayoutRuntime for QuickJsPreparedLayoutRu
         debug!(authored = %authored.display(), runtime = %runtime.display(), "rebuilding prepared config");
         crate::authored::rebuild_prepared_config(authored, runtime)
             .map(runtime_refresh_summary)
-            .map_err(|error| RuntimeError::Config {
-                message: error.to_string(),
-            })
+            .map_err(|error| RuntimeError::Config { message: error.to_string() })
     }
 }
 
-impl AuthoringLayoutRuntime for StubPreparedLayoutRuntime {
-    fn load_authored_config(&self, _path: &std::path::Path) -> Result<Self::Config, RuntimeError> {
-        Err(RuntimeError::NotImplemented(
-            "authored config loading".into(),
-        ))
+impl AuthoringConfigRuntime for StubPreparedLayoutRuntime {
+    fn load_authored_config(&self, _path: &std::path::Path) -> Result<Config, RuntimeError> {
+        Err(RuntimeError::NotImplemented("authored config loading".into()))
     }
 
-    fn load_prepared_config(&self, _path: &std::path::Path) -> Result<Self::Config, RuntimeError> {
-        Err(RuntimeError::NotImplemented(
-            "runtime config loading".into(),
-        ))
+    fn load_prepared_config(&self, _path: &std::path::Path) -> Result<Config, RuntimeError> {
+        Err(RuntimeError::NotImplemented("runtime config loading".into()))
     }
 
     fn refresh_prepared_config(
@@ -462,9 +283,7 @@ impl AuthoringLayoutRuntime for StubPreparedLayoutRuntime {
         _authored: &std::path::Path,
         _runtime: &std::path::Path,
     ) -> Result<spiders_core::runtime::runtime_error::RuntimeRefreshSummary, RuntimeError> {
-        Err(RuntimeError::NotImplemented(
-            "prepared config refresh".into(),
-        ))
+        Err(RuntimeError::NotImplemented("prepared config refresh".into()))
     }
 
     fn rebuild_prepared_config(
@@ -472,9 +291,7 @@ impl AuthoringLayoutRuntime for StubPreparedLayoutRuntime {
         _authored: &std::path::Path,
         _runtime: &std::path::Path,
     ) -> Result<spiders_core::runtime::runtime_error::RuntimeRefreshSummary, RuntimeError> {
-        Err(RuntimeError::NotImplemented(
-            "prepared config rebuild".into(),
-        ))
+        Err(RuntimeError::NotImplemented("prepared config rebuild".into()))
     }
 }
 
@@ -484,91 +301,6 @@ fn runtime_refresh_summary(
     spiders_core::runtime::runtime_error::RuntimeRefreshSummary {
         refreshed_files: update.rebuilt_files + update.copied_stylesheets,
         pruned_files: update.pruned_files,
-    }
-}
-
-fn decode_authored_layout_node(
-    value: &serde_json::Value,
-    path: &DecodePath,
-) -> Result<AuthoredLayoutNode, String> {
-    let node: JsAuthoredLayoutNode = serde_json::from_value(value.clone())
-        .map_err(|error| format!("{}: {error}", path.display()))?;
-
-    decode_authored_layout_node_from_node(node, path)
-}
-
-fn decode_children(
-    children: Vec<JsAuthoredLayoutNode>,
-    path: &DecodePath,
-) -> Result<Vec<AuthoredLayoutNode>, String> {
-    children
-        .into_iter()
-        .enumerate()
-        .map(|(index, child)| decode_authored_layout_node_from_node(child, &path.index(index)))
-        .collect()
-}
-
-fn decode_authored_layout_node_from_node(
-    node: JsAuthoredLayoutNode,
-    path: &DecodePath,
-) -> Result<AuthoredLayoutNode, String> {
-    Ok(match node {
-        JsAuthoredLayoutNode::Workspace {
-            props,
-            legacy,
-            children,
-        } => {
-            let props = merge_node_props(props, legacy);
-            AuthoredLayoutNode::Workspace {
-                meta: decode_meta(props.meta),
-                children: decode_children(children, &path.field("children"))?,
-            }
-        }
-        JsAuthoredLayoutNode::Group {
-            props,
-            legacy,
-            children,
-        } => {
-            let props = merge_node_props(props, legacy);
-            AuthoredLayoutNode::Group {
-                meta: decode_meta(props.meta),
-                children: decode_children(children, &path.field("children"))?,
-            }
-        }
-        JsAuthoredLayoutNode::Window { props, legacy } => {
-            let props = merge_node_props(props, legacy);
-            AuthoredLayoutNode::Window {
-                meta: decode_meta(props.meta),
-                match_expr: props.match_expr,
-            }
-        }
-        JsAuthoredLayoutNode::Slot { props, legacy } => {
-            let props = merge_node_props(props, legacy);
-            AuthoredLayoutNode::Slot {
-                meta: decode_meta(props.meta),
-                match_expr: props.match_expr,
-                take: props.take.unwrap_or_default(),
-            }
-        }
-    })
-}
-
-fn merge_node_props(
-    props: Option<JsAuthoredNodeProps>,
-    legacy: JsAuthoredNodeProps,
-) -> JsAuthoredNodeProps {
-    match props {
-        Some(props) => legacy.merge(props),
-        None => legacy,
-    }
-}
-
-fn decode_meta(meta: JsAuthoredNodeMeta) -> AuthoredNodeMeta {
-    AuthoredNodeMeta {
-        id: meta.id,
-        class: meta.class.into_vec(),
-        name: meta.name,
-        data: meta.data,
     }
 }
 
@@ -598,9 +330,7 @@ mod tests {
             active_workspaces: vec!["1".into()],
             focused: true,
             visible: true,
-            effective_layout: Some(LayoutRef {
-                name: "master-stack".into(),
-            }),
+            effective_layout: Some(LayoutRef { name: "master-stack".into() }),
         }
     }
 
@@ -668,23 +398,20 @@ mod tests {
             }]
         });
 
-        let decoded = decode_authored_layout_node(&value, &DecodePath::root()).unwrap();
+        let decoded = decode_js_layout_value(&value).unwrap();
 
-        let AuthoredLayoutNode::Workspace { meta, children } = decoded else {
+        let SourceLayoutNode::Workspace { meta, children } = decoded else {
             panic!("expected workspace root");
         };
         assert_eq!(meta.id.as_deref(), Some("root"));
 
-        let AuthoredLayoutNode::Group {
-            meta: group_meta,
-            children: group_children,
-        } = &children[0]
+        let SourceLayoutNode::Group { meta: group_meta, children: group_children } = &children[0]
         else {
             panic!("expected frame group");
         };
         assert_eq!(group_meta.id.as_deref(), Some("frame"));
 
-        let AuthoredLayoutNode::Slot { meta, take, .. } = &group_children[0] else {
+        let SourceLayoutNode::Slot { meta, take, .. } = &group_children[0] else {
             panic!("expected master slot");
         };
         assert_eq!(meta.id.as_deref(), Some("master"));
@@ -714,10 +441,7 @@ mod tests {
             ..Config::default()
         };
 
-        let loaded = runtime
-            .prepare_layout(&config, &workspace())
-            .unwrap()
-            .unwrap();
+        let loaded = runtime.prepare_layout(&config, &workspace()).unwrap().unwrap();
         let layout = runtime
             .evaluate_layout(
                 &loaded,
@@ -767,10 +491,7 @@ mod tests {
         let authored_config = repo_root.join("test_config/config.ts");
         let runtime_root = std::env::temp_dir().join(format!(
             "spiders-runtime-genymotion-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
         ));
         let runtime_entry = runtime_root.join("config.js");
 
@@ -779,9 +500,7 @@ mod tests {
         let config = load_prepared_config(&runtime_entry).unwrap();
         let runtime = QuickJsPreparedLayoutRuntime::with_loader(FsLayoutSourceLoader);
         let workspace = WorkspaceSnapshot {
-            effective_layout: Some(LayoutRef {
-                name: "genymotion".into(),
-            }),
+            effective_layout: Some(LayoutRef { name: "genymotion".into() }),
             ..workspace()
         };
 
@@ -808,9 +527,7 @@ mod tests {
         let config = load_prepared_config(&prepared_config).unwrap();
         let runtime = QuickJsPreparedLayoutRuntime::with_loader(FsLayoutSourceLoader);
         let workspace = WorkspaceSnapshot {
-            effective_layout: Some(LayoutRef {
-                name: "genymotion".into(),
-            }),
+            effective_layout: Some(LayoutRef { name: "genymotion".into() }),
             ..workspace()
         };
 
@@ -836,10 +553,7 @@ mod tests {
         let authored_config = repo_root.join("template/config.ts");
         let runtime_root = std::env::temp_dir().join(format!(
             "spiders-runtime-template-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
         ));
         let runtime_entry = runtime_root.join("config.js");
 

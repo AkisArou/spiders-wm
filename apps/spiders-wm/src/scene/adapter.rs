@@ -1,19 +1,19 @@
 use std::collections::BTreeSet;
 
 use smithay::utils::{Logical, Point, Size};
+use spiders_config::authoring_layout::AuthoringLayoutService;
 use spiders_config::model::{Config, ConfigPaths};
+use spiders_config::runtime::build_authoring_layout_service;
 use spiders_core::focus::{FocusTree, FocusTreeWindowGeometry};
 use spiders_core::query::state_snapshot_for_model;
 use spiders_core::runtime::prepared_layout::{PreparedStylesheet, PreparedStylesheets};
 use spiders_core::snapshot::{StateSnapshot, WindowSnapshot};
 use spiders_core::workspace::{fallback_master_stack_layout_tree, flat_workspace_root};
 use spiders_core::{LayoutRect, LayoutSpace, ResolvedLayoutNode, SourceLayoutNode, WindowId};
+use spiders_runtime_js_native::JavaScriptNativeRuntimeProvider;
 use spiders_scene::ast::ValidatedLayoutTree;
 use spiders_scene::pipeline::SceneCache;
 use spiders_scene::{LayoutSnapshotNode, SceneRequest};
-use spiders_wm_runtime::{
-    AuthoringLayoutService, DefaultLayoutRuntime, build_authoring_layout_service,
-};
 use tracing::{debug, warn};
 
 use spiders_core::wm::WmModel;
@@ -31,20 +31,27 @@ pub(crate) struct LayoutTarget {
 #[derive(Debug, Default)]
 pub(crate) struct SceneLayoutState {
     config_paths: Option<ConfigPaths>,
-    layout_service: Option<AuthoringLayoutService<DefaultLayoutRuntime>>,
+    layout_service: Option<AuthoringLayoutService>,
     cache: SceneCache,
 }
 
 impl SceneLayoutState {
     pub(crate) fn new(config_paths: Option<ConfigPaths>) -> Self {
-        let layout_service = config_paths.as_ref().map(build_authoring_layout_service);
+        let js_provider = JavaScriptNativeRuntimeProvider;
+        let layout_service = config_paths
+            .as_ref()
+            .and_then(|paths| build_authoring_layout_service(paths, &[&js_provider]).ok());
 
         Self { config_paths, layout_service, cache: SceneCache::new() }
     }
 
     pub(crate) fn set_config_paths(&mut self, config_paths: Option<ConfigPaths>) {
         self.config_paths = config_paths;
-        self.layout_service = self.config_paths.as_ref().map(build_authoring_layout_service);
+        let js_provider = JavaScriptNativeRuntimeProvider;
+        self.layout_service = self
+            .config_paths
+            .as_ref()
+            .and_then(|paths| build_authoring_layout_service(paths, &[&js_provider]).ok());
         self.cache.clear();
     }
 

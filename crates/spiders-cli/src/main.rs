@@ -6,7 +6,7 @@ use report::{
     BuildConfigReport, DiscoveryReport, ErrorReport, IpcCommandReport, IpcMonitorReport,
     IpcQueryReport, IpcSmokeReport, OutputMode, SuccessCheckReport, emit,
 };
-use spiders_wm_runtime::config_discovery_options_from_env;
+use spiders_config::model::config_discovery_options_from_env;
 use tracing::info;
 
 #[derive(Debug, Clone)]

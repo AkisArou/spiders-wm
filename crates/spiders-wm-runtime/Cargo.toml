@@ -13,6 +13,5 @@ spiders-config = { path = "../spiders-config" }
 spiders-core = { path = "../spiders-core" }
 spiders-css = { path = "../spiders-css" }
 spiders-scene = { path = "../spiders-scene" }
-spiders-runtime-js = { path = "../runtimes/js" }
 tracing.workspace = true
 wasm-bindgen.workspace = true

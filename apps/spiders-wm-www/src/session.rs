@@ -12,13 +12,12 @@ pub use spiders_wm_runtime::{PreviewDiagnostic, PreviewSnapshotNode};
 use spiders_wm_runtime::{
     PreviewLayoutComputation, PreviewSession as RuntimePreviewSession, PreviewWindow, WmHost,
     apply_preview_command as apply_runtime_preview_command, collect_snapshot_geometries,
-    compute_layout_preview as compute_runtime_layout_preview,
+    compute_layout_preview_from_source_layout as compute_runtime_layout_preview,
     dispatch_wm_command as dispatch_runtime_wm_command, display_command_label,
     empty_window_geometry, preview_window_snapshot,
     select_preview_workspace as select_runtime_preview_workspace,
     set_preview_focused_window as set_runtime_preview_focused_window,
 };
-use wasm_bindgen::JsValue;
 
 const CANVAS_WIDTH: i32 = 3440;
 const CANVAS_HEIGHT: i32 = 1440;
@@ -321,7 +320,7 @@ impl PreviewSessionState {
         self.push_log(format!("Selected {to} from {from}"));
     }
 
-    pub fn apply_layout_renderable(&mut self, layout_renderable: JsValue) {
+    pub fn apply_layout_source(&mut self, layout: spiders_core::SourceLayoutNode) {
         let layout_windows = self
             .runtime_state
             .windows
@@ -334,7 +333,7 @@ impl PreviewSessionState {
             .collect::<Vec<_>>();
 
         let result = compute_runtime_layout_preview(
-            layout_renderable,
+            &layout,
             &layout_windows,
             self.stylesheets_by_layout
                 .get(&self.runtime_state.active_layout)

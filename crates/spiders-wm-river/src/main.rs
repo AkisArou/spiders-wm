@@ -1,6 +1,6 @@
 use anyhow::Result;
+use spiders_config::model::config_discovery_options_from_env;
 use spiders_wm_river::SpidersWm;
-use spiders_wm_runtime::config_discovery_options_from_env;
 
 fn main() -> Result<()> {
     spiders_logging::init("spiders_wm_river");

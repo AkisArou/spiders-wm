@@ -8,7 +8,8 @@ use spiders_config::authoring_layout::AuthoringLayoutService;
 use spiders_config::model::ConfigPaths;
 use spiders_config::model::InputConfig;
 use spiders_config::model::{Binding, Config};
-use spiders_runtime_js::{DefaultLayoutRuntime, build_authoring_layout_service};
+use spiders_config::runtime::build_authoring_layout_service;
+use spiders_runtime_js_native::JavaScriptNativeRuntimeProvider;
 use spiders_scene::pipeline::SceneCache;
 use spiders_core::command::{FocusDirection, WmCommand};
 use tracing::{debug, info, warn};
@@ -136,7 +137,7 @@ impl RiverConnection {
 #[derive(Debug)]
 struct RiverBackendState {
     config: Config,
-    layout_service: AuthoringLayoutService<DefaultLayoutRuntime>,
+    layout_service: AuthoringLayoutService,
     scene_cache: SceneCache,
     protocol_support: RiverProtocolSupport,
     runtime_state: WmState,
@@ -497,9 +498,10 @@ impl RiverBackendState {
     }
 
     fn new(paths: ConfigPaths, config: Config, runtime_state: WmState) -> Self {
+        let js_provider = JavaScriptNativeRuntimeProvider;
         let mut state = Self {
             config,
-            layout_service: build_authoring_layout_service(&paths),
+            layout_service: build_authoring_layout_service(&paths, &[&js_provider]).unwrap(),
             scene_cache: SceneCache::new(),
             protocol_support: RiverProtocolSupport::default(),
             runtime_state,

@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use spiders_core::runtime::layout_context::LayoutEvaluationContext;
 use spiders_core::runtime::prepared_layout::PreparedLayout;
-use spiders_core::runtime::runtime_contract::AuthoringLayoutRuntime;
+use spiders_core::runtime::runtime_contract::PreparedLayoutRuntime;
 use spiders_core::runtime::runtime_error::RuntimeError;
 use spiders_core::snapshot::{StateSnapshot, WorkspaceSnapshot};
 use spiders_core::types::LayoutRef;
@@ -12,6 +12,7 @@ use tracing::{debug, info, warn};
 use super::config_paths;
 use super::prepared_cache;
 use crate::model::{Config, ConfigDiscoveryOptions, ConfigPaths, LayoutConfigError};
+use crate::runtime::AuthoringConfigRuntime;
 
 #[derive(Debug, thiserror::Error, PartialEq)]
 pub enum AuthoringLayoutServiceError {
@@ -22,8 +23,9 @@ pub enum AuthoringLayoutServiceError {
 }
 
 #[derive(Debug)]
-pub struct AuthoringLayoutService<R> {
-    runtime: R,
+pub struct AuthoringLayoutService {
+    config_runtime: Box<dyn AuthoringConfigRuntime>,
+    layout_runtime: Box<dyn PreparedLayoutRuntime<Config = Config>>,
     cache: BTreeMap<String, PreparedLayout>,
     paths: Option<ConfigPaths>,
 }
@@ -35,28 +37,41 @@ pub struct PreparedLayoutEvaluation {
     pub layout: SourceLayoutNode,
 }
 
-impl<R> AuthoringLayoutService<R> {
-    pub fn new(runtime: R) -> Self {
+impl AuthoringLayoutService {
+    pub fn new<C, L>(config_runtime: C, layout_runtime: L) -> Self
+    where
+        C: AuthoringConfigRuntime + 'static,
+        L: PreparedLayoutRuntime<Config = Config> + 'static,
+    {
         Self {
-            runtime,
+            config_runtime: Box::new(config_runtime),
+            layout_runtime: Box::new(layout_runtime),
             cache: BTreeMap::new(),
             paths: None,
         }
     }
 
-    pub fn with_paths(runtime: R, paths: ConfigPaths) -> Self {
+    pub fn with_paths<C, L>(config_runtime: C, layout_runtime: L, paths: ConfigPaths) -> Self
+    where
+        C: AuthoringConfigRuntime + 'static,
+        L: PreparedLayoutRuntime<Config = Config> + 'static,
+    {
         Self {
-            runtime,
+            config_runtime: Box::new(config_runtime),
+            layout_runtime: Box::new(layout_runtime),
             cache: BTreeMap::new(),
             paths: Some(paths),
         }
     }
-}
 
-impl<R> AuthoringLayoutService<R>
-where
-    R: AuthoringLayoutRuntime<Config = Config>,
-{
+    pub(crate) fn from_runtime_bundle(
+        config_runtime: Box<dyn AuthoringConfigRuntime>,
+        layout_runtime: Box<dyn PreparedLayoutRuntime<Config = Config>>,
+        paths: ConfigPaths,
+    ) -> Self {
+        Self { config_runtime, layout_runtime, cache: BTreeMap::new(), paths: Some(paths) }
+    }
+
     pub fn discover_config_paths(
         &self,
         options: ConfigDiscoveryOptions,
@@ -73,20 +88,17 @@ where
         &self,
         paths: &ConfigPaths,
     ) -> Result<
-        (
-            Config,
-            Option<spiders_core::runtime::runtime_error::RuntimeRefreshSummary>,
-        ),
+        (Config, Option<spiders_core::runtime::runtime_error::RuntimeRefreshSummary>),
         AuthoringLayoutServiceError,
     > {
-        prepared_cache::load_config_with_cache_update(&self.runtime, paths)
+        prepared_cache::load_config_with_cache_update(self.config_runtime.as_ref(), paths)
     }
 
     pub fn load_authored_config(
         &self,
         paths: &ConfigPaths,
     ) -> Result<Config, AuthoringLayoutServiceError> {
-        prepared_cache::load_authored_config(&self.runtime, paths)
+        prepared_cache::load_authored_config(self.config_runtime.as_ref(), paths)
     }
 
     pub fn write_prepared_config(
@@ -97,12 +109,13 @@ where
         spiders_core::runtime::runtime_error::RuntimeRefreshSummary,
         AuthoringLayoutServiceError,
     > {
-        prepared_cache::write_prepared_config(&self.runtime, paths)
+        prepared_cache::write_prepared_config(self.config_runtime.as_ref(), paths)
     }
 
     pub fn reload_config(&mut self) -> Result<Config, AuthoringLayoutServiceError> {
         debug!("reloading config and clearing prepared layout cache");
-        let config = prepared_cache::reload_config(&self.runtime, self.paths.as_ref())?;
+        let config =
+            prepared_cache::reload_config(self.config_runtime.as_ref(), self.paths.as_ref())?;
         self.cache.clear();
         info!(
             layout_count = config.layouts.len(),
@@ -116,16 +129,13 @@ where
         &self,
         config: &Config,
     ) -> Result<Vec<String>, AuthoringLayoutServiceError> {
-        debug!(
-            layout_count = config.layouts.len(),
-            "validating layout modules"
-        );
+        debug!(layout_count = config.layouts.len(), "validating layout modules");
         let mut errors = Vec::new();
 
         for layout in &config.layouts {
             let workspace = validation_workspace(&layout.name);
 
-            if let Err(error) = self.runtime.prepare_layout(config, &workspace) {
+            if let Err(error) = self.layout_runtime.prepare_layout(config, &workspace) {
                 warn!(layout = %layout.name, %error, "layout validation failed");
                 errors.push(format!("{}: {error}", layout.name));
             }
@@ -140,7 +150,7 @@ where
         workspace: &WorkspaceSnapshot,
     ) -> Result<Option<&PreparedLayout>, AuthoringLayoutServiceError> {
         debug!(workspace_id = %workspace.id, workspace_name = %workspace.name, "preparing layout for workspace");
-        let Some(loaded) = self.runtime.prepare_layout(config, workspace)? else {
+        let Some(loaded) = self.layout_runtime.prepare_layout(config, workspace)? else {
             debug!(workspace_id = %workspace.id, workspace_name = %workspace.name, "no selected layout for workspace");
             return Ok(None);
         };
@@ -161,16 +171,12 @@ where
         let Some(loaded) = self.prepare_for_workspace(config, workspace)?.cloned() else {
             return Ok(None);
         };
-        let context = self.runtime.build_context(state, workspace, Some(&loaded));
-        let layout = self.runtime.evaluate_layout(&loaded, &context)?;
+        let context = self.layout_runtime.build_context(state, workspace, Some(&loaded));
+        let layout = self.layout_runtime.evaluate_layout(&loaded, &context)?;
 
         debug!(workspace_id = %workspace.id, workspace_name = %workspace.name, layout = %loaded.selected.name, "evaluated prepared layout");
 
-        Ok(Some(PreparedLayoutEvaluation {
-            artifact: loaded,
-            context,
-            layout,
-        }))
+        Ok(Some(PreparedLayoutEvaluation { artifact: loaded, context, layout }))
     }
 
     pub fn cache(&self) -> &BTreeMap<String, PreparedLayout> {
@@ -186,8 +192,6 @@ fn validation_workspace(layout_name: &str) -> WorkspaceSnapshot {
         active_workspaces: vec![],
         focused: true,
         visible: true,
-        effective_layout: Some(LayoutRef {
-            name: layout_name.into(),
-        }),
+        effective_layout: Some(LayoutRef { name: layout_name.into() }),
     }
 }

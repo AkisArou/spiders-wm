@@ -10,7 +10,9 @@ members = [
   "crates/spiders-logging",
   "crates/spiders-wm-river",
   "crates/spiders-scene",
-  "crates/runtimes/js",
+  "crates/runtimes/js/core",
+  "crates/runtimes/js/browser",
+  "crates/runtimes/js/native",
   "apps/spiders-wm",
   "apps/spiders-wm-www",
 ]

@@ -1,6 +1,4 @@
-pub use spiders_wm_runtime::{
-    ParsedBindingEntry, ParsedBindingsState, format_binding_token, parse_bindings_source,
-};
+pub use spiders_wm_runtime::{ParsedBindingEntry, ParsedBindingsState, format_binding_token};
 
 use spiders_wm_runtime::{BindingKeyEvent, matches_binding_key_event, normalize_key_input};
 

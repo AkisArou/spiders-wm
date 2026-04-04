@@ -4,13 +4,11 @@ use serde::{Deserialize, Serialize};
 use spiders_core::snapshot::WindowSnapshot;
 use spiders_core::types::{ShellKind, WindowMode};
 use spiders_core::wm::WindowGeometry;
-use spiders_core::{OutputId, RemainingTake, ResolvedLayoutNode, SlotTake, WindowId, WorkspaceId};
+use spiders_core::{OutputId, ResolvedLayoutNode, WindowId, WorkspaceId};
 use spiders_css::style::FlexDirectionValue;
 use spiders_scene::LayoutSnapshotNode;
-use spiders_scene::ast::{AuthoredLayoutNode, AuthoredNodeMeta, ValidatedLayoutTree};
+use spiders_scene::ast::ValidatedLayoutTree;
 use spiders_scene::pipeline::{LayoutPipelineError, compile_stylesheet, compute_layout_from_sheet};
-use wasm_bindgen::JsValue;
-
 use crate::{PreviewDiagnostic, PreviewSnapshotClasses, PreviewSnapshotNode};
 use crate::PreviewWindow;
 
@@ -26,61 +24,16 @@ pub struct PreviewLayoutComputation {
     pub unclaimed_window_ids: Vec<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
-#[allow(dead_code)]
-#[serde(untagged)]
-enum JsLayoutValue {
-    Node(JsLayoutNode),
-    Array(Vec<JsLayoutValue>),
-    Null(Option<()>),
-    Bool(bool),
-    String(String),
-    Number(f64),
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct JsLayoutNode {
-    #[serde(rename = "type")]
-    node_type: String,
-    #[serde(default)]
-    props: JsLayoutProps,
-    #[serde(default)]
-    children: Vec<JsLayoutValue>,
-}
-
-#[derive(Debug, Clone, Default, Deserialize)]
-struct JsLayoutProps {
-    #[serde(default)]
-    id: Option<String>,
-    #[serde(default)]
-    class: Option<String>,
-    #[serde(default, rename = "match")]
-    match_expr: Option<String>,
-    #[serde(default)]
-    take: Option<u32>,
-}
-
-pub fn compute_layout_preview(
-    layout: JsValue,
+pub fn compute_layout_preview_from_source_layout(
+    layout: &spiders_core::SourceLayoutNode,
     windows: &[PreviewWindow],
     stylesheet_source: &str,
     width: f32,
     height: f32,
 ) -> PreviewLayoutComputation {
-    let authored_root = match deserialize_authored_root(layout) {
-        Ok(root) => root,
-        Err(error) => {
-            return PreviewLayoutComputation {
-                snapshot_root: None,
-                diagnostics: vec![layout_diagnostic(js_error_to_string(error))],
-                unclaimed_window_ids: windows.iter().map(|window| window.id.clone()).collect(),
-            };
-        }
-    };
-
     let window_snapshots = windows.iter().cloned().map(window_snapshot).collect::<Vec<_>>();
 
-    match ValidatedLayoutTree::from_authored(authored_root) {
+    match ValidatedLayoutTree::new(layout.clone()) {
         Ok(validated) => match validated.resolve(&window_snapshots) {
             Ok(resolved) => {
                 let root = resolved.root;
@@ -112,95 +65,6 @@ pub fn compute_layout_preview(
             unclaimed_window_ids: windows.iter().map(|window| window.id.clone()).collect(),
         },
     }
-}
-
-fn deserialize_authored_root(value: JsValue) -> Result<AuthoredLayoutNode, JsValue> {
-    let renderable: JsLayoutValue = serde_wasm_bindgen::from_value(value).map_err(into_js_error)?;
-    let mut nodes = Vec::new();
-    collect_root_nodes(renderable, &mut nodes)?;
-
-    match nodes.len() {
-        0 => Err(JsValue::from_str("layout must return a workspace root node")),
-        1 => nodes
-            .into_iter()
-            .next()
-            .ok_or_else(|| JsValue::from_str("layout must return a workspace root node")),
-        _ => Err(JsValue::from_str("layout must return exactly one root node")),
-    }
-}
-
-fn collect_root_nodes(
-    value: JsLayoutValue,
-    out: &mut Vec<AuthoredLayoutNode>,
-) -> Result<(), JsValue> {
-    match value {
-        JsLayoutValue::Node(node) => out.push(authored_node(node)?),
-        JsLayoutValue::Array(values) => {
-            for value in values {
-                collect_root_nodes(value, out)?;
-            }
-        }
-        JsLayoutValue::Null(_) | JsLayoutValue::Bool(_) => {}
-        JsLayoutValue::String(_) | JsLayoutValue::Number(_) => {
-            return Err(JsValue::from_str(
-                "layout renderables must be workspace/group/window/slot nodes",
-            ));
-        }
-    }
-
-    Ok(())
-}
-
-fn authored_node(node: JsLayoutNode) -> Result<AuthoredLayoutNode, JsValue> {
-    let meta = AuthoredNodeMeta {
-        id: node.props.id,
-        class: split_classes(node.props.class),
-        name: None,
-        data: Default::default(),
-    };
-
-    match node.node_type.as_str() {
-        "workspace" => {
-            Ok(AuthoredLayoutNode::Workspace { meta, children: authored_children(node.children)? })
-        }
-        "group" => {
-            Ok(AuthoredLayoutNode::Group { meta, children: authored_children(node.children)? })
-        }
-        "window" => Ok(AuthoredLayoutNode::Window { meta, match_expr: node.props.match_expr }),
-        "slot" => Ok(AuthoredLayoutNode::Slot {
-            meta,
-            match_expr: node.props.match_expr,
-            take: node
-                .props
-                .take
-                .map(SlotTake::Count)
-                .unwrap_or(SlotTake::Remaining(RemainingTake::Remaining)),
-        }),
-        other => Err(JsValue::from_str(&format!("unsupported layout node type: {other}"))),
-    }
-}
-
-fn authored_children(children: Vec<JsLayoutValue>) -> Result<Vec<AuthoredLayoutNode>, JsValue> {
-    let mut nodes = Vec::new();
-
-    for child in children {
-        collect_root_nodes(child, &mut nodes)?;
-    }
-
-    Ok(nodes)
-}
-
-fn split_classes(class_name: Option<String>) -> Vec<String> {
-    class_name
-        .into_iter()
-        .flat_map(|value| {
-            value
-                .split_whitespace()
-                .filter(|segment| !segment.is_empty())
-                .map(ToOwned::to_owned)
-                .collect::<Vec<_>>()
-        })
-        .collect()
 }
 
 fn window_snapshot(window: PreviewWindow) -> WindowSnapshot {
@@ -371,12 +235,4 @@ fn css_diagnostic(error: LayoutPipelineError) -> PreviewDiagnostic {
         level: "error".to_string(),
         message: error.to_string(),
     }
-}
-
-fn into_js_error(error: serde_wasm_bindgen::Error) -> JsValue {
-    JsValue::from_str(&error.to_string())
-}
-
-fn js_error_to_string(error: JsValue) -> String {
-    error.as_string().unwrap_or_else(|| format!("{error:?}"))
 }

@@ -7,13 +7,12 @@ use serde_json::Value;
 use spiders_core::command::{FocusDirection, WmCommand};
 use tracing::debug;
 
-use crate::compile::{AppBuildPlan, compile_app, compiled_app_to_module_graph};
-use crate::graph::{ModuleGraphBuilder, discover_project_apps};
-use crate::module_graph::{JavaScriptModule, JavaScriptModuleGraph};
+use spiders_runtime_js_core::compile::{AppBuildPlan, compile_app, compiled_app_to_module_graph};
+use spiders_runtime_js_core::graph::{DiscoveredApp, ModuleGraph, ModuleGraphBuilder, discover_project_apps};
+use spiders_runtime_js_core::{
+    JavaScriptModule, JavaScriptModuleGraph, encode_runtime_graph_payload,
+};
 use crate::module_graph_runtime::evaluate_entry_export_to_json;
-#[cfg(test)]
-use crate::payload::decode_runtime_graph_payload;
-use crate::payload::encode_runtime_graph_payload;
 use spiders_config::model::{
     Binding, Config, ConfigOptions, InputConfig, LayoutConfigError, LayoutDefinition,
     LayoutSelectionConfig, TitlebarFontConfig, WindowRule,
@@ -191,7 +190,7 @@ fn evaluate_compiled_config(
 }
 
 fn write_compiled_app(
-    app: &crate::graph::DiscoveredApp,
+    app: &DiscoveredApp,
     runtime_root: &Path,
     runtime_entry_path: &Path,
     force_rebuild: bool,
@@ -206,8 +205,8 @@ fn write_compiled_app(
         .modules
         .values()
         .filter_map(|record| match &record.id {
-            crate::graph::ModuleId::File(path) => match record.kind {
-                crate::graph::ModuleKind::Script => Some(
+            spiders_runtime_js_core::graph::ModuleId::File(path) => match record.kind {
+                spiders_runtime_js_core::graph::ModuleKind::Script => Some(
                     runtime_root.join(runtime_relative_path(
                         path,
                         &graph.app.root_dir,
@@ -216,10 +215,10 @@ fn write_compiled_app(
                             .and_then(|name| name.to_str()),
                     )),
                 ),
-                crate::graph::ModuleKind::Stylesheet => {
+                spiders_runtime_js_core::graph::ModuleKind::Stylesheet => {
                     Some(runtime_root.join(runtime_static_relative_path(path, &graph.app.root_dir)))
                 }
-                crate::graph::ModuleKind::Virtual => None,
+                spiders_runtime_js_core::graph::ModuleKind::Virtual => None,
             },
             _ => None,
         })
@@ -316,7 +315,7 @@ fn write_compiled_app(
 }
 
 fn app_cache_is_fresh(
-    graph: &crate::graph::ModuleGraph,
+    graph: &ModuleGraph,
     runtime_root: &Path,
     runtime_entry_path: &Path,
 ) -> bool {
@@ -325,10 +324,11 @@ fn app_cache_is_fresh(
         .modules
         .values()
         .filter_map(|record| match &record.id {
-            crate::graph::ModuleId::File(path)
+            spiders_runtime_js_core::graph::ModuleId::File(path)
                 if matches!(
                     record.kind,
-                    crate::graph::ModuleKind::Script | crate::graph::ModuleKind::Stylesheet
+                    spiders_runtime_js_core::graph::ModuleKind::Script
+                        | spiders_runtime_js_core::graph::ModuleKind::Stylesheet
                 ) =>
             {
                 Some(path)
@@ -371,7 +371,7 @@ fn app_cache_is_fresh(
 
 fn generated_stylesheet_matches_cached(
     plan: &AppBuildPlan,
-    graph: &crate::graph::ModuleGraph,
+    graph: &ModuleGraph,
     runtime_root: &Path,
 ) -> bool {
     let Some(stylesheet_path) = graph.app.stylesheet_path.as_ref() else {

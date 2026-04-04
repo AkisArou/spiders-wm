@@ -16,7 +16,6 @@ mod views;
 mod workspace;
 
 use app_state::AppState;
-use bindings::parse_bindings_source;
 use layout_runtime::PreviewRenderRequest;
 use views::editor::EditorView;
 use views::preview::PreviewView;
@@ -33,6 +32,7 @@ fn App() -> impl IntoView {
     provide_context(app_state);
 
     install_keyboard_listener(app_state);
+    install_config_loader(app_state);
     install_preview_renderer(app_state);
 
     view! {
@@ -137,15 +137,13 @@ fn install_preview_renderer(app_state: AppState) {
             .set(preview_request_key.clone());
 
         wasm_bindgen_futures::spawn_local(async move {
-            match layout_runtime::evaluate_layout_renderable(&preview_request).await {
-                Ok(layout_renderable) => {
+            match layout_runtime::evaluate_layout_source(&preview_request).await {
+                Ok(layout) => {
                     if app_state.latest_preview_request_key.get_untracked() != preview_request_key {
                         return;
                     }
 
-                    app_state
-                        .session
-                        .update(|state| state.apply_layout_renderable(layout_renderable));
+                    app_state.session.update(|state| state.apply_layout_source(layout));
                 }
                 Err(error) => {
                     if app_state.latest_preview_request_key.get_untracked() != preview_request_key {
@@ -155,6 +153,36 @@ fn install_preview_renderer(app_state: AppState) {
                     app_state
                         .session
                         .update(|state| state.apply_preview_failure("layout", error));
+                }
+            }
+        });
+    });
+}
+
+fn install_config_loader(app_state: AppState) {
+    Effect::new(move |_| {
+        let buffers = app_state.editor_buffers.get();
+        let request_key = format!("{buffers:?}");
+
+        if app_state.latest_config_request_key.get_untracked() == request_key {
+            return;
+        }
+
+        app_state.latest_config_request_key.set(request_key.clone());
+
+        wasm_bindgen_futures::spawn_local(async move {
+            match app_state::load_config_from_buffers(&buffers).await {
+                Ok(config) => {
+                    if app_state.latest_config_request_key.get_untracked() != request_key {
+                        return;
+                    }
+                    app_state.apply_loaded_config(config);
+                }
+                Err(_) => {
+                    if app_state.latest_config_request_key.get_untracked() != request_key {
+                        return;
+                    }
+                    app_state.apply_config_error();
                 }
             }
         });
@@ -178,8 +206,7 @@ fn install_keyboard_listener(app_state: AppState) {
                     return;
                 }
 
-                let buffers = app_state.editor_buffers.get_untracked();
-                let bindings = parse_bindings_source(binding_source(&buffers));
+                let bindings = app_state.parsed_bindings();
                 let Some(entry) = bindings.entries.iter().find(|entry| {
                     bindings::matches_web_keyboard_event(entry, &event, &bindings.mod_key)
                 }) else {
@@ -197,14 +224,5 @@ fn install_keyboard_listener(app_state: AppState) {
         let _ =
             window.add_event_listener_with_callback("keydown", closure.as_ref().unchecked_ref());
         closure.forget();
-    });
-}
-
-fn binding_source(
-    buffers: &std::collections::BTreeMap<editor_files::EditorFileId, String>,
-) -> &str {
-    buffers
-        .get(&editor_files::EditorFileId::ConfigBindings)
-        .map(String::as_str)
-        .unwrap_or_else(|| editor_files::initial_content(editor_files::EditorFileId::ConfigBindings))
+        });
 }

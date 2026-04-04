@@ -9,7 +9,6 @@ use spiders_core::{
     LayoutNodeMeta, RemainingTake, ResolvedLayoutNode, SlotTake, SourceLayoutNode, WindowId,
     WorkspaceId,
 };
-use spiders_runtime_js::DefaultLayoutRuntime;
 use spiders_scene::ast::ValidatedLayoutTree;
 use spiders_scene::pipeline::SceneCache;
 use spiders_scene::{CompiledKeyframesRule, LayoutSnapshotNode, SceneRequest};
@@ -169,7 +168,7 @@ fn resolved_layout_root(
 }
 
 pub fn compute_workspace_layout_snapshot(
-    layout_service: &mut AuthoringLayoutService<DefaultLayoutRuntime>,
+    layout_service: &mut AuthoringLayoutService,
     scene_cache: &mut SceneCache,
     config: &Config,
     state: &WmState,
@@ -368,7 +367,7 @@ pub fn compute_workspace_layout_snapshot(
 }
 
 pub fn compute_layout_snapshot(
-    layout_service: &mut AuthoringLayoutService<DefaultLayoutRuntime>,
+    layout_service: &mut AuthoringLayoutService,
     scene_cache: &mut SceneCache,
     config: &Config,
     state: &WmState,

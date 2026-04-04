@@ -2,12 +2,12 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use spiders_scene::SceneRequest;
 use spiders_core::command::WmCommand;
 use spiders_core::runtime::prepared_layout::{PreparedLayout, SelectedLayout};
 use spiders_core::snapshot::{OutputSnapshot, StateSnapshot, WorkspaceSnapshot};
 use spiders_core::types::LayoutRef;
 use spiders_core::{LayoutSpace, ResolvedLayoutNode};
+use spiders_scene::SceneRequest;
 use thiserror::Error;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -163,12 +163,27 @@ pub struct ConfigDiscoveryOptions {
     pub authored_config_override: Option<PathBuf>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuntimeKind {
+    JavaScript,
+    Lua,
+    Rust,
+}
+
+pub fn config_discovery_options_from_env() -> ConfigDiscoveryOptions {
+    ConfigDiscoveryOptions {
+        home_dir: std::env::var_os("SPIDERS_WM_HOME")
+            .or_else(|| std::env::var_os("HOME"))
+            .map(PathBuf::from),
+        config_dir_override: std::env::var_os("SPIDERS_WM_CONFIG_DIR").map(PathBuf::from),
+        cache_dir_override: std::env::var_os("SPIDERS_WM_CACHE_DIR").map(PathBuf::from),
+        authored_config_override: std::env::var_os("SPIDERS_WM_AUTHORED_CONFIG").map(PathBuf::from),
+    }
+}
+
 impl ConfigPaths {
     pub fn new(authored_config: impl Into<PathBuf>, prepared_config: impl Into<PathBuf>) -> Self {
-        Self {
-            authored_config: authored_config.into(),
-            prepared_config: prepared_config.into(),
-        }
+        Self { authored_config: authored_config.into(), prepared_config: prepared_config.into() }
     }
 
     pub fn discover(options: ConfigDiscoveryOptions) -> Result<Self, LayoutConfigError> {
@@ -179,24 +194,28 @@ impl ConfigPaths {
             authored_config_override,
         } = options;
 
-        let config_root = match config_dir_override {
-            Some(path) => path,
-            None => home_dir
-                .as_ref()
-                .map(|path| path.join(".config/spiders-wm"))
-                .ok_or_else(|| LayoutConfigError::ReadConfig {
-                    path: PathBuf::from("config discovery requires a home_dir or config_dir_override"),
-                })?,
-        };
-        let cache_root = match cache_dir_override {
-            Some(path) => path,
-            None => home_dir
-                .as_ref()
-                .map(|path| path.join(".cache/spiders-wm"))
-                .ok_or_else(|| LayoutConfigError::ReadConfig {
-                    path: PathBuf::from("config discovery requires a home_dir or cache_dir_override"),
-                })?,
-        };
+        let config_root =
+            match config_dir_override {
+                Some(path) => path,
+                None => home_dir.as_ref().map(|path| path.join(".config/spiders-wm")).ok_or_else(
+                    || LayoutConfigError::ReadConfig {
+                        path: PathBuf::from(
+                            "config discovery requires a home_dir or config_dir_override",
+                        ),
+                    },
+                )?,
+            };
+        let cache_root =
+            match cache_dir_override {
+                Some(path) => path,
+                None => home_dir.as_ref().map(|path| path.join(".cache/spiders-wm")).ok_or_else(
+                    || LayoutConfigError::ReadConfig {
+                        path: PathBuf::from(
+                            "config discovery requires a home_dir or cache_dir_override",
+                        ),
+                    },
+                )?,
+            };
 
         let authored_config = authored_config_override.unwrap_or_else(|| {
             if config_root.join("config.ts").exists() {
@@ -207,23 +226,42 @@ impl ConfigPaths {
         });
         let prepared_config = cache_root.join("config.js");
 
-        Ok(Self {
-            authored_config,
-            prepared_config,
-        })
+        Ok(Self { authored_config, prepared_config })
     }
+
+    pub fn runtime_kind(&self) -> Option<RuntimeKind> {
+        runtime_kind_for_path(&self.authored_config)
+    }
+}
+
+pub fn runtime_kind_for_path(path: &Path) -> Option<RuntimeKind> {
+    let file_name = path.file_name()?.to_str()?;
+    if file_name.ends_with(".ts")
+        || file_name.ends_with(".tsx")
+        || file_name.ends_with(".js")
+        || file_name.ends_with(".jsx")
+        || file_name.ends_with(".mjs")
+        || file_name.ends_with(".cjs")
+    {
+        return Some(RuntimeKind::JavaScript);
+    }
+    if file_name.ends_with(".lua") {
+        return Some(RuntimeKind::Lua);
+    }
+    if file_name.ends_with(".rs") {
+        return Some(RuntimeKind::Rust);
+    }
+    None
 }
 
 impl Config {
     pub fn from_path(path: impl AsRef<Path>) -> Result<Self, LayoutConfigError> {
         let path = path.as_ref();
-        let text = std::fs::read_to_string(path).map_err(|_| LayoutConfigError::ReadConfig {
-            path: path.to_path_buf(),
-        })?;
+        let text = std::fs::read_to_string(path)
+            .map_err(|_| LayoutConfigError::ReadConfig { path: path.to_path_buf() })?;
 
-        serde_json::from_str(&text).map_err(|_| LayoutConfigError::ParseConfig {
-            path: path.to_path_buf(),
-        })
+        serde_json::from_str(&text)
+            .map_err(|_| LayoutConfigError::ParseConfig { path: path.to_path_buf() })
     }
 
     pub fn layout_by_name(&self, name: &str) -> Option<&LayoutDefinition> {
@@ -234,10 +272,7 @@ impl Config {
         &'a self,
         workspace: &'a WorkspaceSnapshot,
     ) -> Option<&'a LayoutDefinition> {
-        workspace
-            .effective_layout
-            .as_ref()
-            .and_then(|layout| self.layout_by_name(&layout.name))
+        workspace.effective_layout.as_ref().and_then(|layout| self.layout_by_name(&layout.name))
     }
 
     pub fn resolve_selected_layout(
@@ -254,9 +289,7 @@ impl Config {
             })
             .or_else(|| {
                 workspace.effective_layout.as_ref().map(|layout| {
-                    Err(LayoutConfigError::UnknownLayout {
-                        name: layout.name.clone(),
-                    })
+                    Err(LayoutConfigError::UnknownLayout { name: layout.name.clone() })
                 })
             })
             .transpose()
@@ -283,19 +316,12 @@ impl Config {
         Ok(SceneRequest {
             workspace_id: workspace.id.clone(),
             output_id: output.map(|output| output.id.clone()),
-            layout_name: workspace
-                .effective_layout
-                .as_ref()
-                .map(|layout| layout.name.clone()),
+            layout_name: workspace.effective_layout.as_ref().map(|layout| layout.name.clone()),
             root,
             stylesheets: artifact.stylesheets.clone(),
             space: LayoutSpace {
-                width: output
-                    .map(|output| output.logical_width as f32)
-                    .unwrap_or_default(),
-                height: output
-                    .map(|output| output.logical_height as f32)
-                    .unwrap_or_default(),
+                width: output.map(|output| output.logical_width as f32).unwrap_or_default(),
+                height: output.map(|output| output.logical_height as f32).unwrap_or_default(),
             },
         })
     }
@@ -309,21 +335,16 @@ impl Config {
         let Some(workspace) = state.current_workspace() else {
             return Ok(None);
         };
-        let output = workspace
-            .output_id
-            .as_ref()
-            .and_then(|output_id| state.output_by_id(output_id));
+        let output =
+            workspace.output_id.as_ref().and_then(|output_id| state.output_by_id(output_id));
 
-        self.build_scene_request(workspace, output, root, artifact)
-            .map(Some)
+        self.build_scene_request(workspace, output, root, artifact).map(Some)
     }
 }
 
 impl From<&LayoutDefinition> for LayoutRef {
     fn from(value: &LayoutDefinition) -> Self {
-        Self {
-            name: value.name.clone(),
-        }
+        Self { name: value.name.clone() }
     }
 }
 
@@ -344,9 +365,7 @@ mod tests {
             active_workspaces: vec!["1".into()],
             focused: true,
             visible: true,
-            effective_layout: Some(LayoutRef {
-                name: layout_name.into(),
-            }),
+            effective_layout: Some(LayoutRef { name: layout_name.into() }),
         }
     }
 
@@ -416,10 +435,7 @@ mod tests {
             .build_scene_request(
                 &workspace("master-stack"),
                 Some(&output()),
-                ResolvedLayoutNode::Workspace {
-                    meta: Default::default(),
-                    children: vec![],
-                },
+                ResolvedLayoutNode::Workspace { meta: Default::default(), children: vec![] },
                 &artifact("master-stack", "layouts/master-stack.js"),
             )
             .unwrap();
@@ -442,9 +458,7 @@ mod tests {
             ..Config::default()
         };
 
-        let selected = config
-            .resolve_selected_layout(&workspace("master-stack"))
-            .unwrap();
+        let selected = config.resolve_selected_layout(&workspace("master-stack")).unwrap();
 
         assert_eq!(
             selected,
@@ -482,10 +496,7 @@ mod tests {
         let request = config
             .build_scene_request_from_state(
                 &state,
-                ResolvedLayoutNode::Workspace {
-                    meta: Default::default(),
-                    children: vec![],
-                },
+                ResolvedLayoutNode::Workspace { meta: Default::default(), children: vec![] },
                 &artifact("master-stack", "layouts/master-stack.js"),
             )
             .unwrap()
@@ -503,20 +514,12 @@ mod tests {
             .build_scene_request(
                 &workspace("missing"),
                 Some(&output()),
-                ResolvedLayoutNode::Workspace {
-                    meta: Default::default(),
-                    children: vec![],
-                },
+                ResolvedLayoutNode::Workspace { meta: Default::default(), children: vec![] },
                 &artifact("missing", "layouts/missing.js"),
             )
             .unwrap_err();
 
-        assert_eq!(
-            error,
-            LayoutConfigError::UnknownLayout {
-                name: "missing".into(),
-            }
-        );
+        assert_eq!(error, LayoutConfigError::UnknownLayout { name: "missing".into() });
     }
 
     #[test]
@@ -536,10 +539,7 @@ mod tests {
             .build_scene_request(
                 &workspace("master-stack"),
                 Some(&output()),
-                ResolvedLayoutNode::Workspace {
-                    meta: Default::default(),
-                    children: vec![],
-                },
+                ResolvedLayoutNode::Workspace { meta: Default::default(), children: vec![] },
                 &artifact("secondary", "layouts/secondary.js"),
             )
             .unwrap_err();
@@ -582,12 +582,7 @@ mod tests {
 
         let error = Config::from_path(&config_path).unwrap_err();
 
-        assert_eq!(
-            error,
-            LayoutConfigError::ParseConfig {
-                path: config_path.clone(),
-            }
-        );
+        assert_eq!(error, LayoutConfigError::ParseConfig { path: config_path.clone() });
 
         let _ = fs::remove_file(config_path);
     }
@@ -608,16 +603,8 @@ mod tests {
         })
         .unwrap();
 
-        assert!(
-            paths
-                .authored_config
-                .ends_with(".config/spiders-wm/config.ts")
-        );
-        assert!(
-            paths
-                .prepared_config
-                .ends_with(".cache/spiders-wm/config.js")
-        );
+        assert!(paths.authored_config.ends_with(".config/spiders-wm/config.ts"));
+        assert!(paths.prepared_config.ends_with(".cache/spiders-wm/config.js"));
 
         let _ = fs::remove_file(config_dir.join("config.ts"));
     }
@@ -655,5 +642,27 @@ mod tests {
 
         assert_eq!(paths.authored_config, authored);
         assert_eq!(paths.prepared_config, runtime);
+    }
+
+    #[test]
+    fn runtime_kind_detects_javascript_lua_and_rust_configs() {
+        assert_eq!(
+            runtime_kind_for_path(Path::new("/tmp/config.ts")),
+            Some(RuntimeKind::JavaScript)
+        );
+        assert_eq!(
+            runtime_kind_for_path(Path::new("/tmp/config.jsx")),
+            Some(RuntimeKind::JavaScript)
+        );
+        assert_eq!(runtime_kind_for_path(Path::new("/tmp/config.lua")), Some(RuntimeKind::Lua));
+        assert_eq!(runtime_kind_for_path(Path::new("/tmp/config.rs")), Some(RuntimeKind::Rust));
+        assert_eq!(runtime_kind_for_path(Path::new("/tmp/config.txt")), None);
+    }
+
+    #[test]
+    fn config_paths_runtime_kind_uses_authored_config_path() {
+        let paths = ConfigPaths::new("/tmp/config.ts", "/tmp/config.js");
+
+        assert_eq!(paths.runtime_kind(), Some(RuntimeKind::JavaScript));
     }
 }
