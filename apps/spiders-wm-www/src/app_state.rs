@@ -12,7 +12,7 @@ use crate::bindings::{ParsedBindingEntry, ParsedBindingsState};
 use crate::editor_files::{
     EditorFileId, initial_content, initial_editor_buffers, initial_open_editor_files, runtime_path,
 };
-use crate::layout_runtime::source_bundle_sources;
+use crate::layout_runtime::{EvaluatedPreviewLayout, source_bundle_sources};
 use crate::session::PreviewSessionState;
 use crate::workspace::initial_open_directories;
 
@@ -26,6 +26,7 @@ pub struct AppState {
     pub latest_preview_request_key: RwSignal<String>,
     pub latest_config_request_key: RwSignal<String>,
     pub loaded_config: RwSignal<Option<Config>>,
+    pub loaded_preview_layout: RwSignal<Option<EvaluatedPreviewLayout>>,
     pub loaded_bindings: RwSignal<ParsedBindingsState>,
 }
 
@@ -47,6 +48,7 @@ impl AppState {
             latest_preview_request_key: RwSignal::new(String::new()),
             latest_config_request_key: RwSignal::new(String::new()),
             loaded_config: RwSignal::new(None),
+            loaded_preview_layout: RwSignal::new(None),
             loaded_bindings: RwSignal::new(default_bindings_state()),
         }
     }
@@ -74,6 +76,7 @@ impl AppState {
 
     pub fn apply_config_error(&self) {
         self.loaded_config.set(None);
+        self.loaded_preview_layout.set(None);
         self.loaded_bindings.set(default_bindings_state());
         let buffers = self.editor_buffers.get_untracked();
         let next_environment = build_preview_environment(&buffers, None);
@@ -88,6 +91,23 @@ impl AppState {
     pub fn update_buffer(&self, file_id: EditorFileId, next_value: String) {
         self.editor_buffers.update(|buffers| {
             buffers.insert(file_id, next_value);
+        });
+    }
+
+    pub fn apply_loaded_preview_layout(&self, layout: EvaluatedPreviewLayout) {
+        self.loaded_preview_layout.set(Some(layout));
+    }
+
+    pub fn apply_preview_failure_state(&self) {
+        self.loaded_preview_layout.set(None);
+    }
+
+    pub fn refresh_preview_from_loaded_state(&self) {
+        let loaded_preview_layout = self.loaded_preview_layout.get_untracked();
+        self.session.update(|state| {
+            if let Some(layout) = loaded_preview_layout.as_ref() {
+                state.apply_layout_source(layout.layout.clone(), Some(&layout.config));
+            }
         });
     }
 

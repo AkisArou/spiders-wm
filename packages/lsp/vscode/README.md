@@ -73,3 +73,13 @@ pnpm --filter spiders-css-lsp-vscode package
 ```
 
 The icon is generated from `assets/spiders-wm-mark.svg` using `rsvg-convert`.
+
+## Other Editors
+
+Neovim and other editors do not need a separate client package in this repo right now.
+
+Build `spiders-css-lsp` and point your editor's LSP configuration directly at the binary.
+
+For the current recommended manual Neovim setup, see:
+
+- `docs/css-lsp.md`

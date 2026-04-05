@@ -143,6 +143,7 @@ fn install_preview_renderer(app_state: AppState) {
                         return;
                     }
 
+                    app_state.apply_loaded_preview_layout(layout.clone());
                     app_state.session.update(|state| state.apply_layout_source(layout.layout, Some(&layout.config)));
                 }
                 Err(error) => {
@@ -150,6 +151,7 @@ fn install_preview_renderer(app_state: AppState) {
                         return;
                     }
 
+                    app_state.apply_preview_failure_state();
                     app_state
                         .session
                         .update(|state| state.apply_preview_failure("layout", error));
@@ -218,6 +220,7 @@ fn install_keyboard_listener(app_state: AppState) {
 
                 event.prevent_default();
                 app_state.session.update(|state| state.apply_command(command));
+                app_state.refresh_preview_from_loaded_state();
             },
         ));
 

@@ -35,6 +35,7 @@ impl PreviewRenderRequest {
     }
 }
 
+#[derive(Clone)]
 pub struct EvaluatedPreviewLayout {
     pub config: Config,
     pub layout: spiders_core::SourceLayoutNode,

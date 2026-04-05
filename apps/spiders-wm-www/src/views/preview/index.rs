@@ -729,6 +729,7 @@ pub fn PreviewView() -> impl IntoView {
                                                             state.set_focus(titlebar_focus_target.clone());
                                                             state.apply_command(command);
                                                         });
+                                                        app_state.refresh_preview_from_loaded_state();
                                                     });
                                                     let body_style_value = body_style(layout_style.as_ref());
                                                     let resolved_titlebar_height = titlebar_height_px(
@@ -768,6 +769,7 @@ pub fn PreviewView() -> impl IntoView {
                                                                 app_state
                                                                     .session
                                                                     .update(|state| state.set_focus(pane_focus_target.clone()));
+                                                                app_state.refresh_preview_from_loaded_state();
                                                             }
                                                         >
                                                             <Show

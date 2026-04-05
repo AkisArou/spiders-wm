@@ -194,6 +194,56 @@ Notes:
 - `css.validate: false` reduces duplicate diagnostics from VS Code's built-in CSS validation
 - if needed, the built-in `CSS Language Features` extension can also be disabled for that workspace from the Extensions view
 
+## Neovim Setup
+
+Neovim does not need a separate client package in this repo.
+
+For now, the expected setup is:
+
+1. build `spiders-css-lsp`
+2. point your Neovim LSP config at the built binary
+3. use spiders config files as root markers so the client only attaches in real spiders workspaces
+
+Build the server with:
+
+```sh
+cargo build -p spiders-css-lsp --release
+```
+
+Then configure your Neovim LSP client to use:
+
+- `cmd = { "/path/to/spiders-wm/target/release/spiders-css-lsp" }`
+- `filetypes = { "css" }`
+- root markers based on spiders config discovery, for example:
+  - `config.ts`
+  - `config.tsx`
+  - `config.js`
+  - `config.jsx`
+  - `.git`
+
+Example:
+
+```lua
+--- @type vim.lsp.Config
+return {
+  cmd = { "/home/you/projects/spiders-wm/target/release/spiders-css-lsp" },
+  filetypes = { "css" },
+  root_markers = {
+    "config.ts",
+    "config.tsx",
+    "config.js",
+    "config.jsx",
+    ".git",
+  },
+}
+```
+
+Recommended coexistence notes:
+
+- do not attach this server to `scss` or `less`
+- if you already use a generic CSS LSP in Neovim, avoid running both on the same spiders CSS buffer unless you want duplicate diagnostics and overlapping completions
+- for spiders config workspaces, prefer `spiders-css-lsp` over a generic CSS server for authored spiders CSS files
+
 ## Future Work
 
 Natural next directions include:

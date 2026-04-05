@@ -1,184 +1,234 @@
 # CSS
 
-`spiders-wm` uses a single CSS surface for layout selection, window styling,
-and future compositor-rendered visuals. The selected layout currently provides
-one stylesheet, typically `index.css`.
+`spiders-wm` uses a spiders-specific CSS subset for layout selection, window styling,
+and compositor-managed presentation.
 
-Today, CSS is parsed by `spiders-scene`, applied to the resolved
-`workspace/group/window` tree, and used to compute layout geometry. `spiders-wm`
-also consumes a subset of the resulting style data for compositor behavior such
-as window borders.
+The language source of truth lives in `crates/css` (`spiders-css`).
 
-Unsupported selectors and properties fail clearly during parsing. They are not
-silently ignored.
+Unsupported selectors and properties fail clearly. They are not silently ignored.
+
+## Ownership
+
+`spiders-css` owns:
+
+- supported selector metadata
+- supported property metadata
+- parsing and compilation
+- structured analysis and diagnostics
+
+`spiders-scene` consumes compiled stylesheet data for layout matching and geometry.
+
+`spiders-wm` consumes the resulting layout and compositor-relevant style data.
 
 ## Pipeline
 
-1. A selected layout provides a JSX tree and a CSS stylesheet.
-2. The runtime resolves the current `workspace/group/window` tree.
-3. `spiders-scene` matches selectors and computes styles for each node.
+1. A selected config or layout app provides authored CSS.
+2. `spiders-css` parses and compiles the stylesheet.
+3. `spiders-scene` and related runtime code match selectors against the resolved layout tree.
 4. Layout properties determine geometry.
-5. `spiders-wm` applies geometry and compositor-backed rendering details.
+5. `spiders-wm` consumes compositor-backed presentation details such as borders, titlebars, and motion.
 
-## Selectors
+## Selector Targets
 
-### Workspace Transitions
+Supported selector targets:
+
+- `workspace`
+- `group`
+- `window`
+
+Invalid selector targets:
+
+- `slot`
+
+`slot` is not a valid CSS selector target and produces an error.
+
+## Supported Selectors
+
+Supported now:
 
 - `workspace`
 - `group`
 - `window`
 - `#id`
 - `.class`
-- `window[key="value"]` exact-match metadata selectors for `app_id`, `title`, `class`, `instance`, `role`, `shell`, and `window_type`
-- `window:focused`
-- `window:floating`
-- `window:fullscreen`
-- `window:urgent`
-- runtime window state class aliases: `.focused`, `.floating`, `.fullscreen`, `.urgent`
+- exact-match window metadata selectors, including:
+- `window[app_id="..."]`
+- `window[title="..."]`
+- `window[class="..."]`
+- `window[instance="..."]`
+- `window[role="..."]`
+- `window[shell="..."]`
+- `window[window_type="..."]`
 
-### Supported Now
+Supported pseudo-classes:
 
-- `workspace:enter-from-left`
-- `workspace:enter-from-right`
-- `workspace:exit-to-left`
-- `workspace:exit-to-right`
+- `:focused`
+- `:floating`
+- `:fullscreen`
+- `:urgent`
+- `:closing`
+- `:enter-from-left`
+- `:enter-from-right`
+- `:exit-to-left`
+- `:exit-to-right`
 
-### Notes
+Supported pseudo-elements:
 
-- `slot` is not a valid CSS selector target and currently produces a parse error.
-- Selector matching is currently structural and metadata-based.
-- The state class aliases remain available and match the same runtime state as the pseudo selectors above.
+- `window::titlebar`
+
+Notes:
+
+- runtime window state class aliases like `.focused`, `.floating`, `.fullscreen`, and `.urgent` are still supported as runtime state classes
+- selector matching is structural and metadata-based
 
 ## Properties
 
-### Layout And Sizing
+The canonical supported property list lives in `crates/css/src/language.rs`.
 
-Supported now:
+The groups below summarize the currently supported surface.
+
+### Layout And Sizing
 
 - `display`
 - `box-sizing`
 - `aspect-ratio`
 - `position`
-- `inset`, `top`, `right`, `bottom`, `left`
-- `overflow`, `overflow-x`, `overflow-y`
-- `width`, `height`
-- `min-width`, `min-height`
-- `max-width`, `max-height`
+- `inset`
+- `top`
+- `right`
+- `bottom`
+- `left`
+- `overflow`
+- `overflow-x`
+- `overflow-y`
+- `width`
+- `height`
+- `min-width`
+- `min-height`
+- `max-width`
+- `max-height`
 
-### Flexbox
-
-Supported now:
+### Flexbox And Alignment
 
 - `flex-direction`
 - `flex-wrap`
 - `flex-grow`
 - `flex-shrink`
 - `flex-basis`
-- `align-items`, `align-self`
-- `justify-items`, `justify-self`
-- `align-content`, `justify-content`
-- `gap`, `row-gap`, `column-gap`
+- `align-items`
+- `align-self`
+- `justify-items`
+- `justify-self`
+- `align-content`
+- `justify-content`
+- `gap`
+- `row-gap`
+- `column-gap`
 
 ### Grid
 
-Supported now:
-
-- `grid-template-rows`, `grid-template-columns`
-- `grid-auto-rows`, `grid-auto-columns`, `grid-auto-flow`
+- `grid-template-rows`
+- `grid-template-columns`
+- `grid-auto-rows`
+- `grid-auto-columns`
+- `grid-auto-flow`
 - `grid-template-areas`
-- `grid-row`, `grid-column`
-- `grid-row-start`, `grid-row-end`, `grid-column-start`, `grid-column-end`
-- named grid lines, named spans, and `repeat(...)`
+- `grid-row`
+- `grid-column`
+- `grid-row-start`
+- `grid-row-end`
+- `grid-column-start`
+- `grid-column-end`
 
-### Box Model
+Named grid lines, named spans, and `repeat(...)` are supported.
 
-Supported now:
+### Box Model And Borders
 
+- `padding`
+- `padding-top`
+- `padding-right`
+- `padding-bottom`
+- `padding-left`
+- `margin`
+- `margin-top`
+- `margin-right`
+- `margin-bottom`
+- `margin-left`
 - `border-width`
 - `border-top-width`
 - `border-right-width`
 - `border-bottom-width`
 - `border-left-width`
+- `border-color`
+- `border-top-color`
+- `border-right-color`
+- `border-bottom-color`
+- `border-left-color`
 - `border-style`
 - `border-top-style`
 - `border-right-style`
 - `border-bottom-style`
 - `border-left-style`
-- `padding`, `padding-top`, `padding-right`, `padding-bottom`, `padding-left`
-- `margin`, `margin-top`, `margin-right`, `margin-bottom`, `margin-left`
 
-Current behavior:
+Runtime notes:
 
-- `border-width` on `window` nodes is used by `spiders-wm` for compositor-drawn borders.
-- `border-style` on `window` nodes suppresses compositor border edges whose style is `none`.
-- `border-color` on `window` nodes is used by `spiders-wm` for compositor-drawn borders.
-- `opacity` on `window` nodes currently scales compositor-drawn border alpha only. It does not change client content opacity.
-- When CSS does not provide a border color, `spiders-wm` falls back to the existing focused and unfocused compositor border palette.
+- border properties are partial because compositor consumption is selective
+- `border-width` on `window` nodes drives compositor-drawn border width
+- `border-style` can suppress compositor border edges whose style is `none`
+- `border-color` is consumed for compositor borders where supported
+- when CSS does not provide a border color, `spiders-wm` can still fall back to compositor defaults
 
 ### Window Presentation
 
-- `appearance`
-- `opacity` partial for compositor-drawn borders only
-- `border-radius` partial for titlebar top-corner fallback only
-- `box-shadow` partial for compositor titlebar shadow fallback only
-- `backdrop-filter` `(TODO)`
-- `transform` parsed and typed in `spiders-scene`; `spiders-wm` currently consumes translated offsets for compositor window positioning and titlebar decoration offsets, but does not yet apply scale visually
+- `appearance` partial
+- `background` partial
+- `background-color` partial
+- `color` partial
+- `opacity` partial
+- `border-radius` partial
+- `box-shadow` partial
+- `backdrop-filter` planned
+- `transform` partial
+
+Notes:
+
+- `appearance` currently accepts `none`, `client-side`, and `server-side`
+- `opacity` currently affects compositor-managed presentation rather than arbitrary client content opacity
+- `transform` is typed and sampled, but runtime visual support is still partial
 
 ### Titlebar
 
-Supported now:
+Supported on `window::titlebar`:
 
-- `window::titlebar`
 - `background`
 - `background-color`
 - `height`
 - `border-bottom-width`
-- `border-bottom-style` with `solid` and `none`
+- `border-bottom-style`
 - `border-bottom-color`
 - `padding`
 - `color`
 - `opacity`
 - `text-align`
 - `text-transform`
-- `font-family` best-effort from common system family mappings
-- `font-size` with `px` and `%`
-- `font-weight` with `normal`, `bold`, `400`, and `700`
-- `letter-spacing` with `px` values and `normal`
-- `box-shadow` best-effort for multiple non-inset shadows
-- `border-radius` best-effort for rounded top corners on compositor titlebars
+- `font-family`
+- `font-size`
+- `font-weight`
+- `letter-spacing`
+- `box-shadow`
+- `border-radius`
 
-Planned semantics:
+Runtime notes:
 
-- `appearance: auto` prefers compositor-rendered titlebars only when `window::titlebar` contributes style and river exposes the required decoration support. Otherwise it falls back to client-side decorations.
-- `appearance: none` suppresses titlebars and requests a titlebar-free window.
-- compositor titlebars currently render a solid background strip above the window using the computed `window::titlebar` `height` and `background` or `background-color`.
-- when `window::titlebar` sets `border-bottom-width`, the compositor draws a bottom rule only if `border-bottom-style` is not `none`.
-- that bottom rule uses `border-bottom-color` if present, otherwise `border-color`, otherwise the titlebar background color.
-- compositor titlebars now draw a single-line text label from the window title, falling back to `app_id`, and `padding`, `color`, and `opacity` affect that rendered label.
-- `text-align` supports `left`, `right`, `center`, `start`, and `end` for compositor titlebar labels.
-- `text-transform` supports `none`, `uppercase`, `lowercase`, and `capitalize` for compositor titlebar labels.
-- `font-family` currently resolves a small set of common family names and generics such as `sans-serif`, `serif`, and `monospace`; `options.titlebar_font` still takes precedence when configured.
-- `font-size` supports `px` and `%` values for compositor titlebar labels.
-- `font-weight` supports `normal`, `bold`, `400`, and `700` via regular and bold font selection when both are available.
-- `letter-spacing` supports `normal` and `px` values for compositor titlebar labels.
-- `box-shadow` currently renders a first-pass shadow approximation for all declared non-inset shadows.
-- titlebar shadows are drawn on a separate layer beneath the clipped titlebar body.
-- titlebar shadow geometry reuses the same rounded-top shape model as the compositor titlebar body.
-- `window` `box-shadow` now acts as a fallback source for compositor titlebar shadows when `window::titlebar` does not provide its own shadow value.
-- `border-radius` currently rounds the top corners of compositor titlebars only; it does not clip client window content.
-- `window` `border-radius` currently acts as a fallback source for those titlebar top-corner radii when `window::titlebar` does not provide its own value.
-- `appearance: none` is currently implemented as a best-effort `use_ssd()` request for SSD-capable clients while omitting compositor titlebar surfaces.
-- clients that only support CSD can still show their own client-drawn decorations; river does not provide a stronger override for those windows.
+- compositor titlebars consume `window::titlebar` styles when supported
+- titlebar rendering is currently compositor-managed and still partly best-effort
+- `window` `box-shadow` and `border-radius` can still act as titlebar fallbacks when `window::titlebar` does not provide them
 
 ### Motion
 
-Supported now in `spiders-scene` parsing and computed styles:
+Supported motion properties:
 
-- `transition-property`
-- `transition-duration`
-- `transition-timing-function`
-- `transition-delay`
-- `transition` shorthand via Stylo expansion to the typed longhands above
+- `animation`
 - `animation-name`
 - `animation-duration`
 - `animation-timing-function`
@@ -187,22 +237,42 @@ Supported now in `spiders-scene` parsing and computed styles:
 - `animation-direction`
 - `animation-fill-mode`
 - `animation-play-state`
-- `animation` shorthand via Stylo expansion to the typed longhands above
-- `@keyframes` retained in the compiled scene stylesheet
+- `transition`
+- `transition-property`
+- `transition-duration`
+- `transition-timing-function`
+- `transition-delay`
+- `transition-behavior` partial
+- `@keyframes`
 
-Current behavior:
+Runtime notes:
 
-- motion declarations are parsed into typed scene values instead of being kept as raw CSS strings
-- timing functions are available as structured easing values, including keyword easings, `cubic-bezier(...)`, `steps(...)`, and `linear(...)`
-- `spiders-scene` now preserves compiled keyframe blocks for later runtime use
-- `spiders-wm` now executes `opacity` transitions and keyframe animations over time for compositor-managed window borders and compositor titlebars
-- motion advancement currently uses `manage_dirty()` to request follow-up manage/render sequences while an opacity transition or animation remains active
-- `spiders-scene` now also resolves typed `transform` transitions and keyframe animations into sampled translation and scale values
-- `spiders-wm` currently applies the translation portion of those sampled transforms to compositor window positions and titlebar offsets
-- broader runtime transform support is still incomplete: scale is sampled but not yet visually applied by `spiders-wm` `(TODO)`
-- `window:closing` now resolves for user-initiated close commands: the wm marks the window as closing, lets closing motion run while the window remains present, and sends the actual close request once that window no longer has active motion
-- workspace transition selectors now resolve during workspace activation: the outgoing workspace gets `:exit-to-left` or `:exit-to-right`, and the incoming workspace gets the matching `:enter-from-right` or `:enter-from-left`
-- externally initiated closes still cannot drive `window:closing`; river currently only reports the terminal `Closed` event, not a pre-close hook the wm could animate against
+- motion values are parsed into typed data, not kept as raw CSS strings
+- `transition-behavior` is currently accepted for compatibility but ignored by runtime compilation
+- `spiders-wm` currently executes compositor-managed opacity motion and keyframe animation for supported window presentation paths
+- typed transform motion is sampled, but broader runtime transform application is still incomplete
+- `window:closing` is available for wm-managed close flows
+- workspace transition pseudos are available during workspace activation flows
+
+## Analysis And Diagnostics
+
+`spiders-css` now exposes structured analysis for authored CSS.
+
+That includes:
+
+- structured diagnostics with ranges
+- rule and `@keyframes` symbols
+- `animation-name` references
+
+Current analysis diagnostics include:
+
+- invalid syntax
+- unsupported selectors
+- unsupported properties
+- unsupported values
+- inapplicable properties
+- unknown `animation-name`
+- unsupported selector attribute keys
 
 ## Example
 
@@ -227,6 +297,11 @@ workspace {
 window {
   border-width: 2px;
 }
+
+window::titlebar {
+  height: 28px;
+  text-align: center;
+}
 ```
 
-See [CSS-PLAN.md](/home/akisarou/projects/spiders-wm/CSS-PLAN.md) for the implementation roadmap.
+For editor and project-aware behavior, see `docs/css-lsp.md`.
