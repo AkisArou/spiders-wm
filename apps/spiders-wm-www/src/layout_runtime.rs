@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::fs;
 use std::path::PathBuf;
 
 use spiders_config::model::Config;
@@ -130,12 +131,48 @@ fn build_preview_state_snapshot(request: &PreviewRenderRequest) -> spiders_core:
 pub fn source_bundle_sources(
     buffers: &BTreeMap<EditorFileId, String>,
 ) -> BTreeMap<PathBuf, String> {
-    EDITOR_FILES
-        .iter()
-        .map(|file| {
-            let path = PathBuf::from(runtime_path(file.id));
-            let source = buffers.get(&file.id).cloned().unwrap_or_default();
-            (path, source)
-        })
-        .collect()
+    let mut sources = fixture_source_bundle();
+
+    for file in EDITOR_FILES {
+        if let Some(source) = buffers.get(&file.id) {
+            sources.insert(PathBuf::from(runtime_path(file.id)), source.clone());
+        }
+    }
+
+    sources
+}
+
+fn fixture_source_bundle() -> BTreeMap<PathBuf, String> {
+    let fixture_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fixtures/spiders-wm");
+    let runtime_root = PathBuf::from(WORKSPACE_FS_ROOT);
+    let mut sources = BTreeMap::new();
+    collect_fixture_sources(&fixture_root, &runtime_root, &mut sources);
+    sources
+}
+
+fn collect_fixture_sources(
+    fixture_root: &std::path::Path,
+    runtime_root: &std::path::Path,
+    sources: &mut BTreeMap<PathBuf, String>,
+) {
+    let Ok(entries) = fs::read_dir(fixture_root) else {
+        return;
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_fixture_sources(&path, runtime_root, sources);
+            continue;
+        }
+
+        let Ok(relative) = path.strip_prefix(fixture_root) else {
+            continue;
+        };
+        let Ok(source) = fs::read_to_string(&path) else {
+            continue;
+        };
+
+        sources.insert(runtime_root.join(relative), source);
+    }
 }

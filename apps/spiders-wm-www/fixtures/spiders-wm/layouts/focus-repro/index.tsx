@@ -1,5 +1,3 @@
-/** @jsxImportSource @spiders-wm/sdk */
-
 import type { LayoutContext } from "@spiders-wm/sdk/layout";
 
 export default function layout(ctx: LayoutContext) {

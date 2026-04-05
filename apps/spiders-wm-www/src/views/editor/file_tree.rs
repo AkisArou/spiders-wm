@@ -3,6 +3,7 @@ use leptos::prelude::*;
 use wasm_bindgen_futures::spawn_local;
 
 use crate::app_state::AppState;
+use crate::components::Tooltip;
 use crate::editor_files::file_by_id;
 use crate::editor_host::download_directory;
 use crate::workspace::{EditorFileTreeDirectory, EditorFileTreeNode};
@@ -82,25 +83,33 @@ pub fn FileTreeDirectoryView(
                                     let directory_label = directory_for_download.name;
 
                                     view! {
-                                        <button
-                                            class="py-0 px-1.5 uppercase rounded-full border border-terminal-border bg-terminal-bg-panel text-terminal-dim text-[10px] tracking-[0.16em] hover:border-terminal-info hover:text-terminal-fg"
-                                            title=download_title.clone()
-                                            on:click=move |event| {
-                                                event.stop_propagation();
-                                                let items = collect_directory_download_items(
-                                                    &directory_for_download,
-                                                    &app_state.editor_buffers.get_untracked(),
-                                                );
-                                                if items.is_empty() {
-                                                    return;
-                                                }
-                                                spawn_local(async move {
-                                                    let _ = download_directory(directory_label, &items).await;
-                                                });
-                                            }
+                                        <Tooltip
+                                            content=Signal::derive({
+                                                let download_title = download_title.clone();
+                                                move || download_title.clone()
+                                            })
+                                            class="ml-auto"
                                         >
-                                            "dl"
-                                        </button>
+                                            <button
+                                                class="py-0 px-1.5 uppercase rounded-full border border-terminal-border bg-terminal-bg-panel text-terminal-dim text-[10px] tracking-[0.16em] hover:border-terminal-info hover:text-terminal-fg"
+                                                aria-label=download_title.clone()
+                                                on:click=move |event| {
+                                                    event.stop_propagation();
+                                                    let items = collect_directory_download_items(
+                                                        &directory_for_download,
+                                                        &app_state.editor_buffers.get_untracked(),
+                                                    );
+                                                    if items.is_empty() {
+                                                        return;
+                                                    }
+                                                    spawn_local(async move {
+                                                        let _ = download_directory(directory_label, &items).await;
+                                                    });
+                                                }
+                                            >
+                                                "dl"
+                                            </button>
+                                        </Tooltip>
                                     }
                                 })}
                         </div>
@@ -152,7 +161,17 @@ pub fn FileTreeNodeView(node: EditorFileTreeNode, #[prop(optional)] depth: usize
                         style=padding_left
                         on:click=move |_| app_state.select_editor_file(file_id)
                     >
-                        <span class="text-terminal-info shrink-0">{badge}</span>
+                        <span
+                            class=move || {
+                                if file.language == "css" {
+                                    "shrink-0 text-[#7b4fc9]"
+                                } else {
+                                    "shrink-0 text-terminal-info"
+                                }
+                            }
+                        >
+                            {badge}
+                        </span>
                         <span class="flex-1 min-w-0 truncate">{label}</span>
 
                         <Show when=move || app_state.open_file_ids.get().contains(&file_id)>

@@ -68,7 +68,16 @@ fn AppShell() -> impl IntoView {
 
     view! {
         <main class="flex overflow-hidden flex-col h-screen bg-terminal-bg text-terminal-fg">
-            <div class="px-2 pt-1 border-b border-terminal-border bg-terminal-bg-subtle">
+            <div class="overflow-hidden flex-1 min-h-0">
+                <Routes fallback=NotFoundRoute>
+                    <Route path=path!("/") view=PreviewRoute />
+                    <Route path=path!("/preview") view=PreviewRoute />
+                    <Route path=path!("/editor") view=EditorRoute />
+                    <Route path=path!("/system") view=SystemRoute />
+                </Routes>
+            </div>
+
+            <div class="px-2 pb-1 border-t border-terminal-border bg-terminal-bg-subtle">
                 <nav class="flex overflow-x-auto flex-wrap gap-1">
                     <A href="/" attr:class=move || tab_class("/")>
                         "1:preview"
@@ -80,15 +89,6 @@ fn AppShell() -> impl IntoView {
                         "3:system"
                     </A>
                 </nav>
-            </div>
-
-            <div class="overflow-hidden flex-1 p-2 min-h-0">
-                <Routes fallback=NotFoundRoute>
-                    <Route path=path!("/") view=PreviewRoute />
-                    <Route path=path!("/preview") view=PreviewRoute />
-                    <Route path=path!("/editor") view=EditorRoute />
-                    <Route path=path!("/system") view=SystemRoute />
-                </Routes>
             </div>
         </main>
     }

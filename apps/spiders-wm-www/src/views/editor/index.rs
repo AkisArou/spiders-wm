@@ -111,7 +111,17 @@ pub fn EditorView() -> impl IntoView {
                                                                 app_state.select_editor_file(file_id);
                                                             }
                                                         >
-                                                            <span class="text-terminal-info">{badge}</span>
+                                                            <span
+                                                                class=move || {
+                                                                    if file.language == "css" {
+                                                                        "text-[#7b4fc9]"
+                                                                    } else {
+                                                                        "text-terminal-info"
+                                                                    }
+                                                                }
+                                                            >
+                                                                {badge}
+                                                            </span>
                                                             <span class="truncate">{label}</span>
 
                                                             <Show when=move || is_file_dirty(&app_state.editor_buffers.get(), file_id)>

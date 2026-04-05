@@ -440,7 +440,7 @@ fn decode_sdk_icon_node(value: &JsonValue) -> Result<TitlebarIconNode, serde_jso
         .unwrap_or_default();
 
     match kind {
-        "icon" | "icon.svg" => Ok(TitlebarIconNode::Svg {
+        "svg" | "icon" | "icon.svg" => Ok(TitlebarIconNode::Svg {
             view_box: props.get("viewBox").and_then(JsonValue::as_str).map(str::to_string),
             children: decode_sdk_icon_children(object.get("children"))?,
         }),
@@ -1388,6 +1388,60 @@ mod tests {
                     Some("close")
                 );
             }
+            other => panic!("expected button node, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn decode_titlebar_rules_accepts_raw_svg_children_in_sdk_icon_nodes() {
+        let value = serde_json::json!([
+            {
+                "type": "titlebar",
+                "props": { "class": "default-titlebar" },
+                "children": [
+                    {
+                        "type": "titlebar.button",
+                        "props": {
+                            "class": "close-button",
+                            "onClick": { "action": "close" }
+                        },
+                        "children": [
+                            {
+                                "type": "titlebar.icon",
+                                "props": { "class": "close-icon" },
+                                "children": [
+                                    {
+                                        "type": "svg",
+                                        "props": { "viewBox": "0 0 16 16" },
+                                        "children": [
+                                            {
+                                                "type": "path",
+                                                "props": { "d": "M1 1 L15 15" },
+                                                "children": []
+                                            }
+                                        ]
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            }
+        ]);
+
+        let rules = decode_titlebar_rules(&value).expect("sdk jsx icon nodes should decode");
+
+        match &rules[0].children[0] {
+            TitlebarNode::Button { children, .. } => match &children[0] {
+                TitlebarNode::Icon { children, .. } => match &children[0] {
+                    TitlebarIconNode::Svg { view_box, children } => {
+                        assert_eq!(view_box.as_deref(), Some("0 0 16 16"));
+                        assert!(matches!(children[0], TitlebarIconNode::Path { .. }));
+                    }
+                    other => panic!("expected svg icon child, got {other:?}"),
+                },
+                other => panic!("expected icon child, got {other:?}"),
+            },
             other => panic!("expected button node, got {other:?}"),
         }
     }

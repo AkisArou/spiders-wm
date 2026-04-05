@@ -523,7 +523,9 @@ Rules:
 - `class` is allowed on titlebar elements as a styling hook
 - layout/styling props like `height`, `padding`, `transform`, `font-size`, etc. should stay in CSS
 - `titlebar.icon` should render user-owned icon content or assets, not titlebar-owned built-in icons
-- `titlebar.button` should accept arbitrary JS callbacks and shared action helpers
+- `titlebar.button` currently supports shared serializable action descriptors, not arbitrary JS callbacks
+- arbitrary JS callbacks may be supported in the future, but are not implemented today
+- shared action helpers remain a future-facing authoring goal and should normalize to the serializable action shape
 
 ## CSS Ownership
 

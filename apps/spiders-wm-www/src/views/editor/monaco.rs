@@ -4,6 +4,7 @@ use std::rc::Rc;
 
 use leptos::html;
 use leptos::prelude::*;
+use leptos::serde_json;
 use wasm_bindgen_futures::spawn_local;
 
 use crate::app_state::AppState;
@@ -33,13 +34,22 @@ fn monaco_models(buffers: &BTreeMap<EditorFileId, String>) -> Vec<MonacoModel> {
         .iter()
         .map(|file| MonacoModel {
             path: model_path(file.id).to_string(),
-            language: file.language.to_string(),
+            language: monaco_language(file.id).to_string(),
             value: buffers
                 .get(&file.id)
                 .cloned()
                 .unwrap_or_else(|| initial_content(file.id).to_string()),
         })
         .collect()
+}
+
+fn monaco_language(file_id: EditorFileId) -> &'static str {
+    match file_id {
+        EditorFileId::RootCss
+        | EditorFileId::LayoutCss
+        | EditorFileId::FocusReproLayoutCss => "css",
+        _ => "typescript",
+    }
 }
 
 fn sdk_type_libs() -> Vec<MonacoExtraLib> {
@@ -56,6 +66,7 @@ fn sdk_type_libs() -> Vec<MonacoExtraLib> {
                 "export * from \"./jsx-dev-runtime\";\n",
                 "export * from \"./jsx-runtime\";\n",
                 "export * from \"./layout\";\n",
+                "export * from \"./titlebar\";\n",
             ),
         },
         MonacoExtraLib {
@@ -85,6 +96,10 @@ fn sdk_type_libs() -> Vec<MonacoExtraLib> {
         MonacoExtraLib {
           file_path: format!("{workspace_node_modules}/layout.d.ts"),
         content: include_str!("../../../../../packages/sdk/js/src/layout.d.ts"),
+        },
+        MonacoExtraLib {
+          file_path: format!("{workspace_node_modules}/titlebar.d.ts"),
+        content: include_str!("../../../../../packages/sdk/js/src/titlebar.d.ts"),
         },
     ]
 }
@@ -238,6 +253,10 @@ function syncModels(handle, models) {
       continue;
     }
 
+    if (existingModel.getLanguageId() !== model.language) {
+      handle.monaco.editor.setModelLanguage(existingModel, model.language);
+    }
+
     if (existingModel.getValue() !== model.value) {
       existingModel.setValue(model.value);
     }
@@ -271,6 +290,9 @@ export async function createMonacoEditor(host, activePath, models, extraLibs, on
   };
 
   syncModels(handle, models);
+  const initialModel = activePath
+    ? monaco.editor.getModel(monaco.Uri.parse(activePath))
+    : null;
 
   handle.editor = monaco.editor.create(host, {
     automaticLayout: true,
@@ -305,6 +327,7 @@ export async function createMonacoEditor(host, activePath, models, extraLibs, on
     tabSize: 2,
     theme: monacoTheme,
     wordWrap: "off",
+    model: initialModel,
   });
 
   monaco.editor.setTheme(monacoTheme);
@@ -321,8 +344,13 @@ export async function createMonacoEditor(host, activePath, models, extraLibs, on
   });
 
   handle.openerDisposable = monaco.editor.registerEditorOpener({
-    openCodeEditor(_source, resource) {
-      onOpen(resource.toString());
+    openCodeEditor(_source, resource, selectionOrPosition) {
+      onOpen(
+        JSON.stringify({
+          path: resource.toString(),
+          selectionOrPosition: selectionOrPosition ?? null,
+        }),
+      );
       return true;
     },
   });
@@ -337,6 +365,30 @@ export function updateMonacoEditor(handle, activePath, models) {
 
   syncModels(handle, models);
   setActiveModel(handle, activePath);
+}
+
+export function revealMonacoPosition(handle, lineNumber, column) {
+  if (!handle?.editor) {
+    return;
+  }
+
+  const position = { lineNumber, column };
+  handle.editor.setPosition(position);
+  handle.editor.revealPositionInCenter(position);
+  handle.editor.focus();
+}
+
+export function monacoMarkerCount(handle) {
+  if (!handle?.editor || !handle?.monaco) {
+    return 0;
+  }
+
+  const model = handle.editor.getModel();
+  if (!model) {
+    return 0;
+  }
+
+  return handle.monaco.editor.getModelMarkers({ resource: model.uri }).length;
 }
 
 export function disposeMonacoEditor(handle) {
@@ -372,6 +424,16 @@ export function disposeMonacoEditor(handle) {
             models: JsValue,
         ) -> Result<(), JsValue>;
 
+        #[wasm_bindgen(catch, js_name = revealMonacoPosition)]
+        fn reveal_monaco_position_js(
+            handle: &JsValue,
+            line_number: u32,
+            column: u32,
+        ) -> Result<(), JsValue>;
+
+        #[wasm_bindgen(catch, js_name = monacoMarkerCount)]
+        fn monaco_marker_count_js(handle: &JsValue) -> Result<u32, JsValue>;
+
         #[wasm_bindgen(catch, js_name = disposeMonacoEditor)]
         fn dispose_monaco_editor_js(handle: &JsValue) -> Result<(), JsValue>;
     }
@@ -383,14 +445,23 @@ export function disposeMonacoEditor(handle) {
     }
 
     impl MonacoEditorHandle {
-      pub(super) fn sync(
-        &self,
-        active_path: Option<&str>,
-        models: &[MonacoModel],
-      ) -> Result<(), String> {
+        pub(super) fn sync(
+            &self,
+            active_path: Option<&str>,
+            models: &[MonacoModel],
+        ) -> Result<(), String> {
             let models = serde_wasm_bindgen::to_value(models).map_err(|error| error.to_string())?;
             update_monaco_editor_js(&self.handle, active_path.unwrap_or_default(), models)
                 .map_err(js_error_message)
+        }
+
+        pub(super) fn reveal_position(&self, line_number: u32, column: u32) -> Result<(), String> {
+            reveal_monaco_position_js(&self.handle, line_number, column).map_err(js_error_message)
+        }
+
+        #[allow(dead_code)]
+        pub(super) fn marker_count(&self) -> Result<u32, String> {
+            monaco_marker_count_js(&self.handle).map_err(js_error_message)
         }
     }
 
@@ -440,6 +511,27 @@ export function disposeMonacoEditor(handle) {
 pub use wasm::MonacoEditorHandle;
 use wasm::mount_monaco_editor;
 
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MonacoOpenPayload {
+    path: String,
+    #[serde(default)]
+    selection_or_position: Option<MonacoSelection>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MonacoSelection {
+    start_line_number: u32,
+    start_column: u32,
+}
+
+#[derive(Debug, Clone)]
+struct PendingNavigation {
+    path: String,
+    selection: MonacoSelection,
+}
+
 #[component]
 pub fn MonacoEditorPane() -> impl IntoView {
     let app_state = expect_context::<AppState>();
@@ -447,10 +539,11 @@ pub fn MonacoEditorPane() -> impl IntoView {
     let monaco_error = RwSignal::new(None::<String>);
     let monaco_loading = RwSignal::new(false);
     let _monaco_handle = Rc::new(RefCell::new(None::<MonacoEditorHandle>));
+    let pending_navigation = RwSignal::new(None::<PendingNavigation>);
 
     {
         let editor_mount = editor_mount.clone();
-      let monaco_handle = Rc::clone(&_monaco_handle);
+        let monaco_handle = Rc::clone(&_monaco_handle);
         let app_state_for_mount = app_state;
         Effect::new(move |_| {
             let Some(host) = editor_mount.get() else {
@@ -468,13 +561,14 @@ pub fn MonacoEditorPane() -> impl IntoView {
                 .map(|file_id| model_path(file_id).to_string());
             let monaco_handle = Rc::clone(&monaco_handle);
             let callback_state = app_state_for_mount;
+            let pending_navigation = pending_navigation;
 
             monaco_loading.set(true);
             monaco_error.set(None);
 
             spawn_local(async move {
                 let result = mount_monaco_editor(
-                  host.into(),
+                    host.into(),
                     active_path.as_deref(),
                     &models,
                     move |path, value| {
@@ -494,7 +588,20 @@ pub fn MonacoEditorPane() -> impl IntoView {
                         }
                     },
                     move |path| {
-                        if let Some(file_id) = crate::editor_files::file_id_by_model_path(&path) {
+                        let payload = serde_json::from_str::<MonacoOpenPayload>(&path).ok();
+                        let target_path = payload
+                            .as_ref()
+                            .map(|payload| payload.path.clone())
+                            .unwrap_or(path);
+                        let selection = payload.and_then(|payload| payload.selection_or_position);
+
+                        if let Some(file_id) = crate::editor_files::file_id_by_model_path(&target_path) {
+                            if let Some(selection) = selection {
+                                pending_navigation.set(Some(PendingNavigation {
+                                    path: target_path.clone(),
+                                    selection,
+                                }));
+                            }
                             callback_state.select_editor_file(file_id);
                         }
                     },
@@ -504,7 +611,7 @@ pub fn MonacoEditorPane() -> impl IntoView {
                 match result {
                     Ok(handle) => {
                         *monaco_handle.borrow_mut() = Some(handle);
-                    monaco_error.set(None);
+                        monaco_error.set(None);
                     }
                     Err(error) => {
                         monaco_error.set(Some(error));
@@ -529,17 +636,43 @@ pub fn MonacoEditorPane() -> impl IntoView {
                 }
             }
         });
+
+        let monaco_handle = Rc::clone(&_monaco_handle);
+        Effect::new(move |_| {
+            let Some(navigation) = pending_navigation.get() else {
+                return;
+            };
+            let Some(active_file_id) = app_state.active_file_id.get() else {
+                return;
+            };
+            if model_path(active_file_id) != navigation.path {
+                return;
+            }
+
+            let monaco_handle = monaco_handle.borrow();
+            let Some(handle) = monaco_handle.as_ref() else {
+                return;
+            };
+
+            if let Err(error) = handle.reveal_position(
+                navigation.selection.start_line_number,
+                navigation.selection.start_column,
+            ) {
+                monaco_error.set(Some(error));
+            }
+            pending_navigation.set(None);
+        });
     }
 
     if cfg!(target_arch = "wasm32") {
         view! {
-            <div class="relative flex-1 min-h-120 bg-[linear-gradient(180deg,rgba(255,255,255,0.015),transparent)]">
+            <div class="relative flex h-full min-h-0 flex-1 bg-[linear-gradient(180deg,rgba(255,255,255,0.015),transparent)]">
                 <Show
                     when=move || monaco_error.get().is_none()
                     fallback=move || {
                         view! {
                             <textarea
-                                class="flex py-4 px-4 w-full h-full font-mono text-white bg-transparent outline-none resize-none min-h-120 text-[0.94rem] leading-[1.55]"
+                                class="flex h-full w-full min-h-0 px-4 py-4 font-mono text-[0.94rem] leading-[1.55] text-white bg-transparent outline-none resize-none"
                                 prop:value=move || active_buffer_text(app_state)
                                 prop:spellcheck=false
                                 on:input=move |event| {
@@ -553,7 +686,7 @@ pub fn MonacoEditorPane() -> impl IntoView {
                         }
                     }
                 >
-                    <div node_ref=editor_mount class="w-full h-full min-h-120" />
+                    <div node_ref=editor_mount class="h-full w-full min-h-0" />
                     <Show when=move || monaco_loading.get()>
                         <div class="grid absolute inset-0 place-items-center uppercase pointer-events-none bg-[linear-gradient(180deg,rgba(4,8,12,0.82),rgba(9,17,26,0.78))] text-[0.72rem] tracking-[0.18em] text-slate-400">
                             "loading monaco..."
@@ -566,7 +699,7 @@ pub fn MonacoEditorPane() -> impl IntoView {
     } else {
         view! {
             <textarea
-                class="flex-1 py-4 px-4 font-mono text-white outline-none resize-none min-h-120 bg-[linear-gradient(180deg,rgba(255,255,255,0.015),transparent)] text-[0.94rem] leading-[1.55]"
+                class="flex-1 h-full min-h-0 px-4 py-4 font-mono text-[0.94rem] leading-[1.55] text-white outline-none resize-none bg-[linear-gradient(180deg,rgba(255,255,255,0.015),transparent)]"
                 prop:value=move || active_buffer_text(app_state)
                 prop:spellcheck=false
                 on:input=move |event| {
