@@ -13,9 +13,13 @@ catalog:
   "@types/babel__core": ^7.20.5
   "@types/react": ^19.2.14
   "@types/react-dom": ^19.2.3
+  "@types/node": ^24.6.0
+  "@types/vscode": ^1.95.0
+  "@vscode/vsce": ^3.6.2
   "@vitejs/plugin-react": ^6.0.1
   babel-plugin-react-compiler: ^1.0.0
   vite: ^8.0.1
+  vscode-languageclient: ^9.0.1
   tailwindcss: 4.2.2
   "@tailwindcss/vite": 4.2.2
   clsx: 2.1.1

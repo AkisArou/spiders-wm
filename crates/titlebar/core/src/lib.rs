@@ -1,5 +1,9 @@
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
-use spiders_core::WindowId;
+use serde_json::Value as JsonValue;
+use spiders_core::runtime::layout_context::LayoutWindowContext;
+use spiders_core::{LayoutNodeMeta, ResolvedLayoutNode, RuntimeContentKind, WindowId};
 use spiders_css::{
     AppearanceValue, BorderStyleValue, BoxShadowValue, ColorValue, FontQuery, FontWeightValue,
     LengthPercentage, TextAlignValue, TextTransformValue,
@@ -114,6 +118,649 @@ pub struct TitlebarPlanPreset {
     pub font_unfocused_weight: FontWeightValue,
     pub padding_left: i32,
     pub padding_right: i32,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TitlebarWhen {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slot: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none", alias = "appId")]
+    pub app_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub floating: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fullscreen: Option<bool>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TitlebarRule {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<TitlebarWhen>,
+    #[serde(default)]
+    pub disabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub class: Option<String>,
+    #[serde(default)]
+    pub children: Vec<TitlebarNode>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ResolvedTitlebarContext {
+    pub workspace: Option<String>,
+    pub slot: Option<String>,
+    pub app_id: Option<String>,
+    pub title: Option<String>,
+    pub floating: bool,
+    pub fullscreen: bool,
+}
+
+impl From<&LayoutWindowContext> for ResolvedTitlebarContext {
+    fn from(value: &LayoutWindowContext) -> Self {
+        Self {
+            workspace: None,
+            slot: None,
+            app_id: value.app_id.clone(),
+            title: value.title.clone(),
+            floating: value.floating,
+            fullscreen: value.fullscreen,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedTitlebarTree {
+    pub meta: LayoutNodeMeta,
+    pub children: Vec<ResolvedTitlebarNode>,
+}
+
+pub const TITLEBAR_ACTION_KEY: &str = "titlebar_action";
+pub const TITLEBAR_ICON_ASSET_KEY: &str = "titlebar_icon_asset";
+pub const TITLEBAR_ICON_CHILDREN_KEY: &str = "titlebar_icon_children";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ResolvedTitlebarNode {
+    Group {
+        meta: LayoutNodeMeta,
+        children: Vec<ResolvedTitlebarNode>,
+    },
+    WindowTitle {
+        meta: LayoutNodeMeta,
+        text: Option<String>,
+    },
+    WorkspaceName {
+        meta: LayoutNodeMeta,
+        text: Option<String>,
+    },
+    Text {
+        meta: LayoutNodeMeta,
+        text: String,
+    },
+    Badge {
+        meta: LayoutNodeMeta,
+        text: String,
+    },
+    Button {
+        meta: LayoutNodeMeta,
+        action: Option<TitlebarButtonAction>,
+        children: Vec<ResolvedTitlebarNode>,
+    },
+    Icon {
+        meta: LayoutNodeMeta,
+        asset: Option<String>,
+        children: Vec<TitlebarIconNode>,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TitlebarButtonAction {
+    Close,
+    ToggleFullscreen,
+    ToggleFloating,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum TitlebarNode {
+    Group {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        class: Option<String>,
+        #[serde(default)]
+        children: Vec<TitlebarNode>,
+    },
+    WindowTitle {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        class: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        fallback: Option<String>,
+    },
+    WorkspaceName {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        class: Option<String>,
+    },
+    Text {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        class: Option<String>,
+        text: String,
+    },
+    Badge {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        class: Option<String>,
+        text: String,
+    },
+    Button {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        class: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none", alias = "onClick")]
+        on_click: Option<JsonValue>,
+        #[serde(default)]
+        children: Vec<TitlebarNode>,
+    },
+    Icon {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        class: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        asset: Option<String>,
+        #[serde(default)]
+        children: Vec<TitlebarIconNode>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum TitlebarIconNode {
+    Svg {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        view_box: Option<String>,
+        #[serde(default)]
+        children: Vec<TitlebarIconNode>,
+    },
+    Path {
+        d: String,
+    },
+}
+
+pub fn decode_titlebar_rules(value: &JsonValue) -> Result<Vec<TitlebarRule>, serde_json::Error> {
+    if looks_like_normalized_titlebar_rules(value)
+        && let Ok(rules) = serde_json::from_value(value.clone())
+    {
+        return Ok(rules);
+    }
+
+    decode_sdk_titlebar_rules(value)
+}
+
+fn looks_like_normalized_titlebar_rules(value: &JsonValue) -> bool {
+    value
+        .as_array()
+        .is_some_and(|entries| entries.iter().all(looks_like_normalized_titlebar_rule))
+}
+
+fn looks_like_normalized_titlebar_rule(value: &JsonValue) -> bool {
+    value.as_object().is_some_and(|object| {
+        if object.contains_key("props") || matches!(object.get("type").and_then(JsonValue::as_str), Some("titlebar")) {
+            return false;
+        }
+
+        object
+            .get("children")
+            .and_then(JsonValue::as_array)
+            .is_some_and(|children| children.iter().all(looks_like_normalized_titlebar_node))
+    })
+}
+
+fn looks_like_normalized_titlebar_node(value: &JsonValue) -> bool {
+    value.as_object().is_some_and(|object| {
+        matches!(
+            object.get("type").and_then(JsonValue::as_str),
+            Some("group" | "windowTitle" | "workspaceName" | "text" | "badge" | "button" | "icon")
+        )
+    })
+}
+
+fn decode_sdk_titlebar_rules(value: &JsonValue) -> Result<Vec<TitlebarRule>, serde_json::Error> {
+    let Some(entries) = value.as_array() else {
+        return Err(serde_json::Error::io(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "titlebars must be an array",
+        )));
+    };
+
+    entries.iter().map(decode_sdk_titlebar_rule).collect()
+}
+
+fn decode_sdk_titlebar_rule(value: &JsonValue) -> Result<TitlebarRule, serde_json::Error> {
+    let object = expect_object(value, "titlebar rule")?;
+    let kind = expect_string(object.get("type"), "titlebar rule type")?;
+    if kind != "titlebar" {
+        return Err(invalid_data_error("titlebar rule must have type `titlebar`"));
+    }
+    let props = object
+        .get("props")
+        .map(|value| expect_object(value, "titlebar props"))
+        .transpose()?
+        .cloned()
+        .unwrap_or_default();
+    let children = decode_sdk_titlebar_children(object.get("children"))?;
+
+    Ok(TitlebarRule {
+        when: props.get("when").map(normalize_sdk_when_value).transpose()?,
+        disabled: props.get("disabled").and_then(JsonValue::as_bool).unwrap_or(false),
+        class: props.get("class").and_then(JsonValue::as_str).map(str::to_string),
+        children,
+    })
+}
+
+fn decode_sdk_titlebar_children(
+    value: Option<&JsonValue>,
+) -> Result<Vec<TitlebarNode>, serde_json::Error> {
+    let Some(value) = value else {
+        return Ok(Vec::new());
+    };
+    let Some(entries) = value.as_array() else {
+        return Err(invalid_data_error("titlebar children must be an array"));
+    };
+
+    entries.iter().filter(|entry| !entry.is_null()).map(decode_sdk_titlebar_node).collect()
+}
+
+fn decode_sdk_titlebar_node(value: &JsonValue) -> Result<TitlebarNode, serde_json::Error> {
+    if let Some(text) = value.as_str() {
+        return Ok(TitlebarNode::Text { class: None, text: text.to_string() });
+    }
+    if let Some(number) = value.as_i64() {
+        return Ok(TitlebarNode::Text { class: None, text: number.to_string() });
+    }
+
+    let object = expect_object(value, "titlebar node")?;
+    let kind = expect_string(object.get("type"), "titlebar node type")?;
+    let props = object
+        .get("props")
+        .map(|value| expect_object(value, "titlebar node props"))
+        .transpose()?
+        .cloned()
+        .unwrap_or_default();
+    let class = props.get("class").and_then(JsonValue::as_str).map(str::to_string);
+
+    match kind {
+        "titlebar.group" => Ok(TitlebarNode::Group {
+            class,
+            children: decode_sdk_titlebar_children(object.get("children"))?,
+        }),
+        "titlebar.windowTitle" => Ok(TitlebarNode::WindowTitle {
+            class,
+            fallback: props.get("fallback").and_then(JsonValue::as_str).map(str::to_string),
+        }),
+        "titlebar.workspaceName" => Ok(TitlebarNode::WorkspaceName { class }),
+        "titlebar.text" => {
+            Ok(TitlebarNode::Text { class, text: decode_sdk_text_content(object.get("children"))? })
+        }
+        "titlebar.badge" => Ok(TitlebarNode::Badge {
+            class,
+            text: decode_sdk_text_content(object.get("children"))?,
+        }),
+        "titlebar.button" => Ok(TitlebarNode::Button {
+            class,
+            on_click: props.get("onClick").cloned(),
+            children: decode_sdk_titlebar_children(object.get("children"))?,
+        }),
+        "titlebar.icon" => Ok(TitlebarNode::Icon {
+            class,
+            asset: props.get("asset").and_then(JsonValue::as_str).map(str::to_string),
+            children: decode_sdk_icon_children(object.get("children"))?,
+        }),
+        other => Err(invalid_data_error(&format!("unsupported titlebar node type `{other}`"))),
+    }
+}
+
+fn decode_sdk_icon_children(
+    value: Option<&JsonValue>,
+) -> Result<Vec<TitlebarIconNode>, serde_json::Error> {
+    let Some(value) = value else {
+        return Ok(Vec::new());
+    };
+    let Some(entries) = value.as_array() else {
+        return Err(invalid_data_error("titlebar icon children must be an array"));
+    };
+
+    entries.iter().filter(|entry| !entry.is_null()).map(decode_sdk_icon_node).collect()
+}
+
+fn decode_sdk_icon_node(value: &JsonValue) -> Result<TitlebarIconNode, serde_json::Error> {
+    let object = expect_object(value, "titlebar icon node")?;
+    let kind = expect_string(object.get("type"), "titlebar icon node type")?;
+    let props = object
+        .get("props")
+        .map(|value| expect_object(value, "titlebar icon node props"))
+        .transpose()?
+        .cloned()
+        .unwrap_or_default();
+
+    match kind {
+        "icon" | "icon.svg" => Ok(TitlebarIconNode::Svg {
+            view_box: props.get("viewBox").and_then(JsonValue::as_str).map(str::to_string),
+            children: decode_sdk_icon_children(object.get("children"))?,
+        }),
+        "path" | "icon.path" => Ok(TitlebarIconNode::Path {
+            d: expect_string(props.get("d"), "icon path d")?.to_string(),
+        }),
+        other => Err(invalid_data_error(&format!("unsupported titlebar icon node type `{other}`"))),
+    }
+}
+
+fn decode_sdk_text_content(value: Option<&JsonValue>) -> Result<String, serde_json::Error> {
+    let Some(value) = value else {
+        return Ok(String::new());
+    };
+    let Some(entries) = value.as_array() else {
+        return Err(invalid_data_error("titlebar text children must be an array"));
+    };
+
+    let mut out = String::new();
+    for entry in entries {
+        if let Some(text) = entry.as_str() {
+            out.push_str(text);
+        } else if let Some(number) = entry.as_i64() {
+            out.push_str(&number.to_string());
+        } else if let Some(number) = entry.as_u64() {
+            out.push_str(&number.to_string());
+        } else if let Some(number) = entry.as_f64() {
+            out.push_str(&number.to_string());
+        } else if entry.is_null() {
+            continue;
+        } else {
+            return Err(invalid_data_error("titlebar text children must be primitive text"));
+        }
+    }
+
+    Ok(out)
+}
+
+fn normalize_sdk_when_value(value: &JsonValue) -> Result<TitlebarWhen, serde_json::Error> {
+    let object = expect_object(value, "titlebar when")?;
+    Ok(TitlebarWhen {
+        workspace: object.get("workspace").and_then(JsonValue::as_str).map(str::to_string),
+        slot: object.get("slot").and_then(JsonValue::as_str).map(str::to_string),
+        app_id: object
+            .get("app_id")
+            .or_else(|| object.get("appId"))
+            .and_then(JsonValue::as_str)
+            .map(str::to_string),
+        title: object.get("title").and_then(JsonValue::as_str).map(str::to_string),
+        floating: object.get("floating").and_then(JsonValue::as_bool),
+        fullscreen: object.get("fullscreen").and_then(JsonValue::as_bool),
+    })
+}
+
+fn expect_object<'a>(
+    value: &'a JsonValue,
+    label: &str,
+) -> Result<&'a serde_json::Map<String, JsonValue>, serde_json::Error> {
+    value.as_object().ok_or_else(|| invalid_data_error(&format!("expected object for {label}")))
+}
+
+fn expect_string<'a>(
+    value: Option<&'a JsonValue>,
+    label: &str,
+) -> Result<&'a str, serde_json::Error> {
+    value
+        .and_then(JsonValue::as_str)
+        .ok_or_else(|| invalid_data_error(&format!("expected string for {label}")))
+}
+
+fn invalid_data_error(message: &str) -> serde_json::Error {
+    serde_json::Error::io(std::io::Error::new(std::io::ErrorKind::InvalidData, message.to_string()))
+}
+
+pub fn select_titlebar_rule<'a>(
+    rules: &'a [TitlebarRule],
+    context: &ResolvedTitlebarContext,
+) -> Option<&'a TitlebarRule> {
+    rules.iter().filter(|rule| titlebar_rule_matches(rule, context)).last()
+}
+
+pub fn resolve_titlebar_tree(
+    rule: &TitlebarRule,
+    context: &ResolvedTitlebarContext,
+) -> ResolvedTitlebarTree {
+    ResolvedTitlebarTree {
+        meta: titlebar_meta(rule.class.as_deref(), "titlebar"),
+        children: rule.children.iter().map(|node| resolve_titlebar_node(node, context)).collect(),
+    }
+}
+
+pub fn titlebar_tree_to_runtime_node(tree: &ResolvedTitlebarTree) -> ResolvedLayoutNode {
+    ResolvedLayoutNode::Content {
+        meta: tree.meta.clone(),
+        kind: RuntimeContentKind::Container,
+        text: None,
+        children: tree.children.iter().map(titlebar_runtime_node_from_resolved).collect(),
+    }
+}
+
+pub fn titlebar_rule_matches(rule: &TitlebarRule, context: &ResolvedTitlebarContext) -> bool {
+    let Some(when) = rule.when.as_ref() else {
+        return true;
+    };
+
+    when.workspace.as_ref().is_none_or(|workspace| context.workspace.as_ref() == Some(workspace))
+        && when.slot.as_ref().is_none_or(|slot| context.slot.as_ref() == Some(slot))
+        && when.app_id.as_ref().is_none_or(|app_id| context.app_id.as_ref() == Some(app_id))
+        && when.title.as_ref().is_none_or(|title| {
+            context.title.as_ref().is_some_and(|window_title| window_title.contains(title))
+        })
+        && when.floating.is_none_or(|floating| context.floating == floating)
+        && when.fullscreen.is_none_or(|fullscreen| context.fullscreen == fullscreen)
+}
+
+pub fn titlebar_icon_nodes_from_data(
+    data: &BTreeMap<String, String>,
+) -> Option<Vec<TitlebarIconNode>> {
+    let encoded = data.get(TITLEBAR_ICON_CHILDREN_KEY)?;
+    serde_json::from_str(encoded).ok()
+}
+
+pub fn titlebar_icon_asset_from_data(data: &BTreeMap<String, String>) -> Option<String> {
+    data.get(TITLEBAR_ICON_ASSET_KEY).cloned().filter(|asset| !asset.trim().is_empty())
+}
+
+pub fn titlebar_button_action_from_data(
+    data: &BTreeMap<String, String>,
+) -> Option<TitlebarButtonAction> {
+    data.get(TITLEBAR_ACTION_KEY)
+        .map(String::as_str)
+        .and_then(parse_button_action_name)
+}
+
+pub fn titlebar_icon_view_box(nodes: &[TitlebarIconNode]) -> Option<String> {
+    for node in nodes {
+        match node {
+            TitlebarIconNode::Svg { view_box, children } => {
+                if view_box.as_ref().is_some_and(|value| !value.trim().is_empty()) {
+                    return view_box.clone();
+                }
+                if let Some(view_box) = titlebar_icon_view_box(children) {
+                    return Some(view_box);
+                }
+            }
+            TitlebarIconNode::Path { .. } => {}
+        }
+    }
+
+    None
+}
+
+pub fn titlebar_icon_paths(nodes: &[TitlebarIconNode]) -> Vec<String> {
+    let mut paths = Vec::new();
+    collect_titlebar_icon_paths(nodes, &mut paths);
+    paths
+}
+
+fn resolve_titlebar_node(
+    node: &TitlebarNode,
+    context: &ResolvedTitlebarContext,
+) -> ResolvedTitlebarNode {
+    match node {
+        TitlebarNode::Group { class, children } => ResolvedTitlebarNode::Group {
+            meta: titlebar_meta(class.as_deref(), "titlebar-group"),
+            children: children.iter().map(|child| resolve_titlebar_node(child, context)).collect(),
+        },
+        TitlebarNode::WindowTitle { class, fallback } => ResolvedTitlebarNode::WindowTitle {
+            meta: titlebar_meta(class.as_deref(), "titlebar-window-title"),
+            text: context
+                .title
+                .as_ref()
+                .filter(|title| !title.trim().is_empty())
+                .cloned()
+                .or_else(|| fallback.clone()),
+        },
+        TitlebarNode::WorkspaceName { class } => ResolvedTitlebarNode::WorkspaceName {
+            meta: titlebar_meta(class.as_deref(), "titlebar-workspace-name"),
+            text: context.workspace.clone(),
+        },
+        TitlebarNode::Text { class, text } => ResolvedTitlebarNode::Text {
+            meta: titlebar_meta(class.as_deref(), "titlebar-text"),
+            text: text.clone(),
+        },
+        TitlebarNode::Badge { class, text } => ResolvedTitlebarNode::Badge {
+            meta: titlebar_meta(class.as_deref(), "titlebar-badge"),
+            text: text.clone(),
+        },
+        TitlebarNode::Button { class, on_click, children } => ResolvedTitlebarNode::Button {
+            meta: titlebar_meta(class.as_deref(), "titlebar-button"),
+            action: on_click.as_ref().and_then(normalize_button_action),
+            children: children.iter().map(|child| resolve_titlebar_node(child, context)).collect(),
+        },
+        TitlebarNode::Icon { class, asset, children } => ResolvedTitlebarNode::Icon {
+            meta: titlebar_meta(class.as_deref(), "titlebar-icon"),
+            asset: asset.clone().or_else(|| context.app_id.clone()),
+            children: children.clone(),
+        },
+    }
+}
+
+fn titlebar_runtime_node_from_resolved(node: &ResolvedTitlebarNode) -> ResolvedLayoutNode {
+    match node {
+        ResolvedTitlebarNode::Group { meta, children } => ResolvedLayoutNode::Content {
+            meta: meta.clone(),
+            kind: RuntimeContentKind::Container,
+            text: None,
+            children: children.iter().map(titlebar_runtime_node_from_resolved).collect(),
+        },
+        ResolvedTitlebarNode::WindowTitle { meta, text } => ResolvedLayoutNode::Content {
+            meta: meta.clone(),
+            kind: RuntimeContentKind::Text,
+            text: text.clone(),
+            children: Vec::new(),
+        },
+        ResolvedTitlebarNode::WorkspaceName { meta, text } => ResolvedLayoutNode::Content {
+            meta: meta.clone(),
+            kind: RuntimeContentKind::Text,
+            text: text.clone(),
+            children: Vec::new(),
+        },
+        ResolvedTitlebarNode::Text { meta, text } | ResolvedTitlebarNode::Badge { meta, text } => {
+            ResolvedLayoutNode::Content {
+                meta: meta.clone(),
+                kind: RuntimeContentKind::Text,
+                text: Some(text.clone()),
+                children: Vec::new(),
+            }
+        }
+        ResolvedTitlebarNode::Button {
+            meta,
+            action,
+            children,
+        } => ResolvedLayoutNode::Content {
+            meta: titlebar_button_meta(meta, *action),
+            kind: RuntimeContentKind::Container,
+            text: None,
+            children: children.iter().map(titlebar_runtime_node_from_resolved).collect(),
+        },
+        ResolvedTitlebarNode::Icon {
+            meta,
+            asset,
+            children,
+        } => ResolvedLayoutNode::Content {
+            meta: titlebar_icon_meta(meta, asset.as_deref(), children),
+            kind: RuntimeContentKind::Container,
+            text: None,
+            children: Vec::new(),
+        },
+    }
+}
+
+fn titlebar_meta(class: Option<&str>, node_name: &str) -> LayoutNodeMeta {
+    let mut meta = LayoutNodeMeta::default();
+    meta.name = Some(node_name.to_string());
+    if let Some(class) = class {
+        meta.class = class.split_whitespace().map(str::to_string).collect();
+    }
+    meta
+}
+
+fn titlebar_button_meta(meta: &LayoutNodeMeta, action: Option<TitlebarButtonAction>) -> LayoutNodeMeta {
+    let mut meta = meta.clone();
+    if let Some(action) = action {
+        meta.data.insert(TITLEBAR_ACTION_KEY.to_string(), titlebar_button_action_name(action).to_string());
+    }
+    meta
+}
+
+fn titlebar_icon_meta(
+    meta: &LayoutNodeMeta,
+    asset: Option<&str>,
+    children: &[TitlebarIconNode],
+) -> LayoutNodeMeta {
+    let mut meta = meta.clone();
+    if let Some(asset) = asset.filter(|asset| !asset.trim().is_empty()) {
+        meta.data.insert(TITLEBAR_ICON_ASSET_KEY.to_string(), asset.to_string());
+    }
+    if !children.is_empty() && let Ok(serialized) = serde_json::to_string(children) {
+        meta.data.insert(TITLEBAR_ICON_CHILDREN_KEY.to_string(), serialized);
+    }
+    meta
+}
+
+fn collect_titlebar_icon_paths(nodes: &[TitlebarIconNode], out: &mut Vec<String>) {
+    for node in nodes {
+        match node {
+            TitlebarIconNode::Svg { children, .. } => collect_titlebar_icon_paths(children, out),
+            TitlebarIconNode::Path { d } => out.push(d.clone()),
+        }
+    }
+}
+
+fn titlebar_button_action_name(action: TitlebarButtonAction) -> &'static str {
+    match action {
+        TitlebarButtonAction::Close => "close",
+        TitlebarButtonAction::ToggleFullscreen => "toggle-fullscreen",
+        TitlebarButtonAction::ToggleFloating => "toggle-floating",
+    }
+}
+
+fn normalize_button_action(value: &JsonValue) -> Option<TitlebarButtonAction> {
+    if let Some(action) = value.as_str() {
+        return parse_button_action_name(action);
+    }
+
+    let object = value.as_object()?;
+    object
+        .get("action")
+        .and_then(JsonValue::as_str)
+        .and_then(parse_button_action_name)
+}
+
+fn parse_button_action_name(name: &str) -> Option<TitlebarButtonAction> {
+    match name {
+        "close" | "close-window" | "closeFocusedWindow" => Some(TitlebarButtonAction::Close),
+        "toggle-fullscreen" | "toggleFullscreen" => Some(TitlebarButtonAction::ToggleFullscreen),
+        "toggle-floating" | "toggleFloating" => Some(TitlebarButtonAction::ToggleFloating),
+        _ => None,
+    }
 }
 
 impl Default for TitlebarPlanPreset {
@@ -594,5 +1241,460 @@ mod tests {
         assert_eq!(plan.padding_left, 8);
         assert_eq!(plan.padding_right, 8);
         assert_eq!(plan.buttons[0].rect, TitlebarButtonRect { x: 8, y: 4, width: 16, height: 16 });
+    }
+
+    #[test]
+    fn decode_titlebar_rules_parses_structured_rule_tree() {
+        let value = serde_json::json!([
+            {
+                "class": "default-titlebar",
+                "children": [
+                    {
+                        "type": "group",
+                        "class": "left",
+                        "children": [
+                            { "type": "workspaceName", "class": "workspace-name" },
+                            { "type": "windowTitle", "class": "window-title" }
+                        ]
+                    },
+                    {
+                        "type": "button",
+                        "class": "close-button",
+                        "on_click": { "action": "close" },
+                        "children": [
+                            { "type": "icon", "asset": "close" }
+                        ]
+                    }
+                ]
+            },
+            {
+                "when": { "app_id": "foot", "workspace": "code" },
+                "disabled": true,
+                "children": []
+            }
+        ]);
+
+        let rules = decode_titlebar_rules(&value).expect("rules should decode");
+
+        assert_eq!(rules.len(), 2);
+        assert_eq!(rules[0].class.as_deref(), Some("default-titlebar"));
+        assert!(!rules[0].disabled);
+        assert_eq!(rules[1].when.as_ref().and_then(|when| when.app_id.as_deref()), Some("foot"));
+        assert_eq!(rules[1].when.as_ref().and_then(|when| when.workspace.as_deref()), Some("code"));
+        assert!(rules[1].disabled);
+    }
+
+    #[test]
+    fn decode_titlebar_rules_parses_sdk_jsx_node_shape() {
+        let value = serde_json::json!([
+            {
+                "type": "titlebar",
+                "props": {
+                    "class": "default-titlebar"
+                },
+                "children": [
+                    {
+                        "type": "titlebar.group",
+                        "props": { "class": "left" },
+                        "children": [
+                            {
+                                "type": "titlebar.workspaceName",
+                                "props": { "class": "workspace-name" },
+                                "children": []
+                            }
+                        ]
+                    },
+                    {
+                        "type": "titlebar.button",
+                        "props": {
+                            "class": "close-button",
+                            "onClick": { "action": "close" }
+                        },
+                        "children": [
+                            {
+                                "type": "titlebar.icon",
+                                "props": { "asset": "close" },
+                                "children": []
+                            }
+                        ]
+                    }
+                ]
+            },
+            {
+                "type": "titlebar",
+                "props": {
+                    "when": { "app_id": "foot" },
+                    "disabled": true
+                },
+                "children": []
+            }
+        ]);
+
+        let rules = decode_titlebar_rules(&value).expect("sdk jsx nodes should decode");
+
+        assert_eq!(rules.len(), 2);
+        assert_eq!(rules[0].class.as_deref(), Some("default-titlebar"));
+        assert!(matches!(rules[0].children[0], TitlebarNode::Group { .. }));
+        assert!(matches!(rules[0].children[1], TitlebarNode::Button { .. }));
+        assert_eq!(rules[1].when.as_ref().and_then(|when| when.app_id.as_deref()), Some("foot"));
+        assert!(rules[1].disabled);
+    }
+
+    #[test]
+    fn decode_titlebar_rules_normalizes_sdk_camel_case_when_keys() {
+        let value = serde_json::json!([
+            {
+                "type": "titlebar",
+                "props": {
+                    "when": {
+                        "appId": "foot",
+                        "workspace": "code"
+                    },
+                    "disabled": true
+                },
+                "children": []
+            }
+        ]);
+
+        let rules = decode_titlebar_rules(&value).expect("sdk jsx nodes should decode");
+
+        assert_eq!(rules[0].when.as_ref().and_then(|when| when.app_id.as_deref()), Some("foot"));
+        assert_eq!(rules[0].when.as_ref().and_then(|when| when.workspace.as_deref()), Some("code"));
+        assert!(rules[0].disabled);
+    }
+
+    #[test]
+    fn decode_titlebar_rules_accepts_normalized_on_click_alias() {
+        let value = serde_json::json!([
+            {
+                "class": "default-titlebar",
+                "children": [
+                    {
+                        "type": "button",
+                        "class": "close-button",
+                        "onClick": { "action": "close" },
+                        "children": []
+                    }
+                ]
+            }
+        ]);
+
+        let rules = decode_titlebar_rules(&value).expect("normalized titlebar rules should decode");
+
+        match &rules[0].children[0] {
+            TitlebarNode::Button { on_click, .. } => {
+                assert_eq!(
+                    on_click.as_ref().and_then(|value| value.get("action")).and_then(JsonValue::as_str),
+                    Some("close")
+                );
+            }
+            other => panic!("expected button node, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn decode_titlebar_rules_rejects_missing_node_type() {
+        let value = serde_json::json!([
+            {
+                "children": [
+                    { "class": "broken" }
+                ]
+            }
+        ]);
+
+        assert!(decode_titlebar_rules(&value).is_err());
+    }
+
+    #[test]
+    fn select_titlebar_rule_uses_last_matching_rule() {
+        let rules = vec![
+            TitlebarRule {
+                when: None,
+                disabled: false,
+                class: Some("default-titlebar".into()),
+                children: Vec::new(),
+            },
+            TitlebarRule {
+                when: Some(TitlebarWhen {
+                    workspace: Some("code".into()),
+                    ..TitlebarWhen::default()
+                }),
+                disabled: false,
+                class: Some("workspace-titlebar".into()),
+                children: Vec::new(),
+            },
+            TitlebarRule {
+                when: Some(TitlebarWhen {
+                    workspace: Some("code".into()),
+                    app_id: Some("foot".into()),
+                    ..TitlebarWhen::default()
+                }),
+                disabled: true,
+                class: Some("foot-titlebar".into()),
+                children: Vec::new(),
+            },
+        ];
+
+        let selected = select_titlebar_rule(
+            &rules,
+            &ResolvedTitlebarContext {
+                workspace: Some("code".into()),
+                app_id: Some("foot".into()),
+                ..ResolvedTitlebarContext::default()
+            },
+        )
+        .expect("a rule should match");
+
+        assert_eq!(selected.class.as_deref(), Some("foot-titlebar"));
+        assert!(selected.disabled);
+    }
+
+    #[test]
+    fn titlebar_rule_matches_all_supported_fields() {
+        let rule = TitlebarRule {
+            when: Some(TitlebarWhen {
+                workspace: Some("code".into()),
+                slot: Some("main".into()),
+                app_id: Some("firefox".into()),
+                title: Some("Mozilla".into()),
+                floating: Some(false),
+                fullscreen: Some(true),
+            }),
+            disabled: false,
+            class: None,
+            children: Vec::new(),
+        };
+
+        assert!(titlebar_rule_matches(
+            &rule,
+            &ResolvedTitlebarContext {
+                workspace: Some("code".into()),
+                slot: Some("main".into()),
+                app_id: Some("firefox".into()),
+                title: Some("Mozilla Firefox".into()),
+                floating: false,
+                fullscreen: true,
+            }
+        ));
+
+        assert!(!titlebar_rule_matches(
+            &rule,
+            &ResolvedTitlebarContext {
+                workspace: Some("code".into()),
+                slot: Some("main".into()),
+                app_id: Some("firefox".into()),
+                title: Some("Mozilla Firefox".into()),
+                floating: true,
+                fullscreen: true,
+            }
+        ));
+    }
+
+    #[test]
+    fn resolve_titlebar_tree_preserves_classes_and_structure() {
+        let rule = TitlebarRule {
+            when: None,
+            disabled: false,
+            class: Some("default-titlebar root".into()),
+            children: vec![TitlebarNode::Group {
+                class: Some("left cluster".into()),
+                children: vec![TitlebarNode::Text {
+                    class: Some("label strong".into()),
+                    text: "DEV".into(),
+                }],
+            }],
+        };
+
+        let tree = resolve_titlebar_tree(&rule, &ResolvedTitlebarContext::default());
+
+        assert_eq!(tree.meta.name.as_deref(), Some("titlebar"));
+        assert_eq!(tree.meta.class, vec!["default-titlebar", "root"]);
+        match &tree.children[0] {
+            ResolvedTitlebarNode::Group { meta, children } => {
+                assert_eq!(meta.name.as_deref(), Some("titlebar-group"));
+                assert_eq!(meta.class, vec!["left", "cluster"]);
+                assert!(matches!(
+                    &children[0],
+                    ResolvedTitlebarNode::Text { text, .. } if text == "DEV"
+                ));
+            }
+            other => panic!("expected group node, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn resolve_titlebar_tree_uses_context_for_dynamic_icon_asset_fallback() {
+        let rule = TitlebarRule {
+            when: None,
+            disabled: false,
+            class: None,
+            children: vec![TitlebarNode::Icon { class: None, asset: None, children: Vec::new() }],
+        };
+
+        let tree = resolve_titlebar_tree(
+            &rule,
+            &ResolvedTitlebarContext {
+                app_id: Some("firefox".into()),
+                ..ResolvedTitlebarContext::default()
+            },
+        );
+
+        match &tree.children[0] {
+            ResolvedTitlebarNode::Icon { asset, .. } => {
+                assert_eq!(asset.as_deref(), Some("firefox"));
+            }
+            other => panic!("expected icon node, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn titlebar_tree_maps_into_generic_runtime_content_nodes() {
+        let tree = resolve_titlebar_tree(
+            &TitlebarRule {
+                when: None,
+                disabled: false,
+                class: Some("default-titlebar".into()),
+                children: vec![
+                    TitlebarNode::Group {
+                        class: Some("left".into()),
+                        children: vec![TitlebarNode::Text {
+                            class: Some("label".into()),
+                            text: "DEV".into(),
+                        }],
+                    },
+                    TitlebarNode::WindowTitle {
+                        class: Some("window-title".into()),
+                        fallback: Some("fallback".into()),
+                    },
+                ],
+            },
+            &ResolvedTitlebarContext::default(),
+        );
+
+        let runtime = titlebar_tree_to_runtime_node(&tree);
+
+        match runtime {
+            ResolvedLayoutNode::Content { meta, kind, children, .. } => {
+                assert_eq!(meta.name.as_deref(), Some("titlebar"));
+                assert_eq!(kind, RuntimeContentKind::Container);
+                assert_eq!(children.len(), 2);
+                assert!(matches!(
+                    &children[0],
+                    ResolvedLayoutNode::Content { kind: RuntimeContentKind::Container, .. }
+                ));
+                assert!(matches!(
+                    &children[1],
+                    ResolvedLayoutNode::Content {
+                        kind: RuntimeContentKind::Text,
+                        text: Some(text),
+                        ..
+                    } if text == "fallback"
+                ));
+            }
+            other => panic!("expected runtime content root, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn resolve_titlebar_tree_fills_dynamic_window_and_workspace_text() {
+        let tree = resolve_titlebar_tree(
+            &TitlebarRule {
+                when: None,
+                disabled: false,
+                class: None,
+                children: vec![
+                    TitlebarNode::WorkspaceName {
+                        class: Some("workspace-name".into()),
+                    },
+                    TitlebarNode::WindowTitle {
+                        class: Some("window-title".into()),
+                        fallback: Some("fallback".into()),
+                    },
+                ],
+            },
+            &ResolvedTitlebarContext {
+                workspace: Some("code".into()),
+                title: Some("Mozilla Firefox".into()),
+                ..ResolvedTitlebarContext::default()
+            },
+        );
+
+        assert!(matches!(
+            &tree.children[0],
+            ResolvedTitlebarNode::WorkspaceName { text: Some(text), .. } if text == "code"
+        ));
+        assert!(matches!(
+            &tree.children[1],
+            ResolvedTitlebarNode::WindowTitle { text: Some(text), .. } if text == "Mozilla Firefox"
+        ));
+    }
+
+    #[test]
+    fn titlebar_button_action_maps_into_runtime_meta_data() {
+        let tree = resolve_titlebar_tree(
+            &TitlebarRule {
+                when: None,
+                disabled: false,
+                class: None,
+                children: vec![TitlebarNode::Button {
+                    class: Some("close-button".into()),
+                    on_click: Some(serde_json::json!({ "action": "close" })),
+                    children: vec![TitlebarNode::Text { class: None, text: "x".into() }],
+                }],
+            },
+            &ResolvedTitlebarContext::default(),
+        );
+
+        let runtime = titlebar_tree_to_runtime_node(&tree);
+
+        match runtime {
+            ResolvedLayoutNode::Content { children, .. } => match &children[0] {
+                ResolvedLayoutNode::Content { meta, .. } => {
+                    assert_eq!(meta.data.get(TITLEBAR_ACTION_KEY).map(String::as_str), Some("close"));
+                }
+                other => panic!("expected content button node, got {other:?}"),
+            },
+            other => panic!("expected runtime content root, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn titlebar_icon_maps_vector_payload_into_runtime_meta_data() {
+        let tree = resolve_titlebar_tree(
+            &TitlebarRule {
+                when: None,
+                disabled: false,
+                class: None,
+                children: vec![TitlebarNode::Icon {
+                    class: Some("close-icon".into()),
+                    asset: Some("close".into()),
+                    children: vec![TitlebarIconNode::Svg {
+                        view_box: Some("0 0 16 16".into()),
+                        children: vec![
+                            TitlebarIconNode::Path { d: "M2 2 L14 14".into() },
+                            TitlebarIconNode::Path { d: "M14 2 L2 14".into() },
+                        ],
+                    }],
+                }],
+            },
+            &ResolvedTitlebarContext::default(),
+        );
+
+        let runtime = titlebar_tree_to_runtime_node(&tree);
+
+        match runtime {
+            ResolvedLayoutNode::Content { children, .. } => match &children[0] {
+                ResolvedLayoutNode::Content { meta, kind, text, .. } => {
+                    assert_eq!(*kind, RuntimeContentKind::Container);
+                    assert_eq!(text, &None);
+                    assert_eq!(titlebar_icon_asset_from_data(&meta.data).as_deref(), Some("close"));
+                    let nodes = titlebar_icon_nodes_from_data(&meta.data).expect("icon metadata missing");
+                    assert_eq!(titlebar_icon_view_box(&nodes).as_deref(), Some("0 0 16 16"));
+                    assert_eq!(titlebar_icon_paths(&nodes).len(), 2);
+                }
+                other => panic!("expected content icon node, got {other:?}"),
+            },
+            other => panic!("expected runtime content root, got {other:?}"),
+        }
     }
 }

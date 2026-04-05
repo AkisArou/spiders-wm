@@ -13,6 +13,8 @@ spiders-scene = { path = "../../crates/scene" }
 spiders-css = { path = "../../crates/css" }
 spiders-core = { path = "../../crates/core" }
 spiders-runtime-js-native = { path = "../../crates/runtimes/js/native" }
+spiders-titlebar-core = { path = "../../crates/titlebar/core" }
+spiders-titlebar-native = { path = "../../crates/titlebar/native" }
 spiders-wm-runtime = { path = "../../crates/wm-runtime" }
 thiserror = { workspace = true }
 tracing = { workspace = true }

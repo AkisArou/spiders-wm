@@ -90,6 +90,8 @@ pub(crate) fn build_state(
         config,
         managed_windows: Vec::new(),
         frame_sync: FrameSyncState::default(),
+        titlebar_overlays: Default::default(),
+        titlebar_layout: Default::default(),
         ipc_server: spiders_ipc::IpcServerState::new(),
         ipc_clients: std::collections::BTreeMap::new(),
         ipc_socket_path,

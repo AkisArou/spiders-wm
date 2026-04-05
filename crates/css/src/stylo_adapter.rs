@@ -22,7 +22,8 @@ use style::shared_lock::SharedRwLock;
 #[cfg(test)]
 use style::stylesheets::{AllowImportRules, Origin, Stylesheet};
 
-use spiders_core::{ResolvedLayoutNode, RuntimeLayoutNodeType};
+use crate::language::{is_supported_pseudo_class, is_supported_pseudo_element};
+use spiders_core::{ResolvedLayoutNode, RuntimeContentKind, RuntimeLayoutNodeType};
 
 #[derive(Debug, Clone)]
 pub struct LayoutDomTree {
@@ -215,7 +216,14 @@ impl<'i> SelectorParserTrait<'i> for LayoutSelectorParser {
         location: cssparser::SourceLocation,
         name: cssparser::CowRcStr<'i>,
     ) -> Result<LayoutPseudoClass, cssparser::ParseError<'i, SelectorParseErrorKind<'i>>> {
-        match name.as_ref().to_ascii_lowercase().as_str() {
+        let name = name.as_ref().to_ascii_lowercase();
+        if !is_supported_pseudo_class(&name) {
+            return Err(location.new_custom_error(
+                SelectorParseErrorKind::UnsupportedPseudoClassOrElement(name.into()),
+            ));
+        }
+
+        match name.as_str() {
             "focused" => Ok(LayoutPseudoClass::Focused),
             "floating" => Ok(LayoutPseudoClass::Floating),
             "fullscreen" => Ok(LayoutPseudoClass::Fullscreen),
@@ -225,9 +233,7 @@ impl<'i> SelectorParserTrait<'i> for LayoutSelectorParser {
             "enter-from-right" => Ok(LayoutPseudoClass::EnterFromRight),
             "exit-to-left" => Ok(LayoutPseudoClass::ExitToLeft),
             "exit-to-right" => Ok(LayoutPseudoClass::ExitToRight),
-            _ => Err(location.new_custom_error(
-                SelectorParseErrorKind::UnsupportedPseudoClassOrElement(name),
-            )),
+            _ => unreachable!("supported pseudo-class must map to enum variant"),
         }
     }
 
@@ -236,31 +242,29 @@ impl<'i> SelectorParserTrait<'i> for LayoutSelectorParser {
         location: cssparser::SourceLocation,
         name: cssparser::CowRcStr<'i>,
     ) -> Result<LayoutPseudoElement, cssparser::ParseError<'i, SelectorParseErrorKind<'i>>> {
-        match name.as_ref().to_ascii_lowercase().as_str() {
+        let name = name.as_ref().to_ascii_lowercase();
+        if !is_supported_pseudo_element(&name) {
+            return Err(location.new_custom_error(
+                SelectorParseErrorKind::UnsupportedPseudoClassOrElement(name.into()),
+            ));
+        }
+
+        match name.as_str() {
             "titlebar" => Ok(LayoutPseudoElement::Titlebar),
-            _ => Err(location.new_custom_error(
-                SelectorParseErrorKind::UnsupportedPseudoClassOrElement(name),
-            )),
+            _ => unreachable!("supported pseudo-element must map to enum variant"),
         }
     }
 }
 
 impl LayoutDomTree {
     pub fn from_resolved_root(root: &ResolvedLayoutNode) -> Self {
-        let mut tree = Self {
-            nodes: Vec::new(),
-            root: 0,
-        };
+        let mut tree = Self { nodes: Vec::new(), root: 0 };
         tree.root = tree.push_node(root.clone(), None, None);
         tree
     }
 
     pub fn root_element(&self) -> LayoutElement<'_> {
-        LayoutElement {
-            tree: self,
-            index: self.root,
-            pseudo: None,
-        }
+        LayoutElement { tree: self, index: self.root, pseudo: None }
     }
 
     #[cfg(test)]
@@ -268,20 +272,12 @@ impl LayoutDomTree {
         &self,
         window_id: &spiders_core::WindowId,
     ) -> Option<LayoutElement<'_>> {
-        self.nodes
-            .iter()
-            .enumerate()
-            .find_map(|(index, node)| match &node.node {
-                ResolvedLayoutNode::Window {
-                    window_id: Some(id),
-                    ..
-                } if id == window_id => Some(LayoutElement {
-                    tree: self,
-                    index,
-                    pseudo: None,
-                }),
-                _ => None,
-            })
+        self.nodes.iter().enumerate().find_map(|(index, node)| match &node.node {
+            ResolvedLayoutNode::Window { window_id: Some(id), .. } if id == window_id => {
+                Some(LayoutElement { tree: self, index, pseudo: None })
+            }
+            _ => None,
+        })
     }
 
     fn push_node(
@@ -301,8 +297,9 @@ impl LayoutDomTree {
 
         let children = match node {
             ResolvedLayoutNode::Workspace { children, .. }
-            | ResolvedLayoutNode::Group { children, .. } => children,
-            ResolvedLayoutNode::Window { .. } => Vec::new(),
+            | ResolvedLayoutNode::Group { children, .. }
+            | ResolvedLayoutNode::Window { children, .. }
+            | ResolvedLayoutNode::Content { children, .. } => children,
         };
 
         let mut prev_child = None;
@@ -327,10 +324,22 @@ impl<'a> LayoutElement<'a> {
     }
 
     fn local_name_str(&self) -> &'static str {
-        match self.node().node.node_type() {
-            RuntimeLayoutNodeType::Workspace => "workspace",
-            RuntimeLayoutNodeType::Group => "group",
-            RuntimeLayoutNodeType::Window => "window",
+        match &self.node().node {
+            ResolvedLayoutNode::Content { meta, kind, .. } => {
+                if let Some(name) = meta.name.as_deref() {
+                    return Box::leak(name.to_string().into_boxed_str());
+                }
+                match kind {
+                    RuntimeContentKind::Container => "content",
+                    RuntimeContentKind::Text => "text",
+                }
+            }
+            _ => match self.node().node.node_type() {
+                RuntimeLayoutNodeType::Workspace => "workspace",
+                RuntimeLayoutNodeType::Group => "group",
+                RuntimeLayoutNodeType::Window => "window",
+                RuntimeLayoutNodeType::Content => "content",
+            },
         }
     }
 }
@@ -343,11 +352,7 @@ impl<'a> Element for LayoutElement<'a> {
     }
 
     fn parent_element(&self) -> Option<Self> {
-        self.node().parent.map(|index| Self {
-            tree: self.tree,
-            index,
-            pseudo: None,
-        })
+        self.node().parent.map(|index| Self { tree: self.tree, index, pseudo: None })
     }
 
     fn parent_node_is_shadow_root(&self) -> bool {
@@ -361,27 +366,15 @@ impl<'a> Element for LayoutElement<'a> {
     }
 
     fn prev_sibling_element(&self) -> Option<Self> {
-        self.node().prev_sibling.map(|index| Self {
-            tree: self.tree,
-            index,
-            pseudo: None,
-        })
+        self.node().prev_sibling.map(|index| Self { tree: self.tree, index, pseudo: None })
     }
 
     fn next_sibling_element(&self) -> Option<Self> {
-        self.node().next_sibling.map(|index| Self {
-            tree: self.tree,
-            index,
-            pseudo: None,
-        })
+        self.node().next_sibling.map(|index| Self { tree: self.tree, index, pseudo: None })
     }
 
     fn first_element_child(&self) -> Option<Self> {
-        self.node().first_child.map(|index| Self {
-            tree: self.tree,
-            index,
-            pseudo: None,
-        })
+        self.node().first_child.map(|index| Self { tree: self.tree, index, pseudo: None })
     }
 
     fn is_html_element_in_html_document(&self) -> bool {
@@ -438,12 +431,7 @@ impl<'a> Element for LayoutElement<'a> {
             LayoutPseudoClass::ExitToRight => "exit-to-right",
         };
 
-        self.node()
-            .node
-            .meta()
-            .class
-            .iter()
-            .any(|class| class == class_name)
+        self.node().node.meta().class.iter().any(|class| class == class_name)
     }
 
     fn match_pseudo_element(
@@ -578,10 +566,7 @@ mod tests {
 
     fn tree() -> LayoutDomTree {
         LayoutDomTree::from_resolved_root(&ResolvedLayoutNode::Workspace {
-            meta: LayoutNodeMeta {
-                id: Some("root".into()),
-                ..LayoutNodeMeta::default()
-            },
+            meta: LayoutNodeMeta { id: Some("root".into()), ..LayoutNodeMeta::default() },
             children: vec![ResolvedLayoutNode::Group {
                 meta: LayoutNodeMeta {
                     id: Some("stack".into()),
@@ -596,6 +581,7 @@ mod tests {
                         ..LayoutNodeMeta::default()
                     },
                     window_id: Some(WindowId::from("w1")),
+                    children: Vec::new(),
                 }],
             }],
         })
@@ -635,6 +621,7 @@ mod tests {
             children: vec![ResolvedLayoutNode::Window {
                 meta: LayoutNodeMeta::default(),
                 window_id: Some(WindowId::from("w1")),
+                children: Vec::new(),
             }],
         };
         let stylesheet = parse_stylesheet_with_stylo("window { width: 100%; }").unwrap();

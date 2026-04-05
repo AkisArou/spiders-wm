@@ -8,7 +8,13 @@ publish.workspace = true
 [dependencies]
 ab_glyph = "0.2"
 spiders-config = { path = "../../config" }
+spiders-core = { path = "../../core" }
 spiders-css = { path = "../../css" }
 spiders-fonts-native = { path = "../../fonts/native" }
+spiders-scene = { path = "../../scene" }
 spiders-titlebar-core = { path = "../core" }
 tiny-skia = "0.11"
+svgtypes = "0.15"
+
+[dev-dependencies]
+serde_json.workspace = true

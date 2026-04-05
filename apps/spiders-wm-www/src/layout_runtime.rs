@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
+use spiders_config::model::Config;
 use spiders_config::authoring_layout::SourceBundleAuthoringLayoutService;
 use spiders_config::runtime::build_source_bundle_authoring_layout_service;
 use spiders_core::LayoutId;
@@ -10,7 +11,7 @@ use spiders_wm_runtime::{PreviewSession, build_preview_layout_context};
 use crate::editor_files::{EDITOR_FILES, EditorFileId, WORKSPACE_FS_ROOT, runtime_path};
 use crate::session::PreviewSessionState;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct PreviewRenderRequest {
     pub active_layout: LayoutId,
     pub runtime_state: PreviewSession,
@@ -34,9 +35,14 @@ impl PreviewRenderRequest {
     }
 }
 
+pub struct EvaluatedPreviewLayout {
+    pub config: Config,
+    pub layout: spiders_core::SourceLayoutNode,
+}
+
 pub async fn evaluate_layout_source(
     request: &PreviewRenderRequest,
-) -> Result<spiders_core::SourceLayoutNode, String> {
+) -> Result<EvaluatedPreviewLayout, String> {
     let config_entry_path = PathBuf::from(runtime_path(EditorFileId::Config));
     let root_dir = PathBuf::from(WORKSPACE_FS_ROOT);
     let sources = source_bundle_sources(&request.buffers);
@@ -55,7 +61,7 @@ pub async fn evaluate_layout_source(
         .await
         .map_err(|error| error.to_string())?
         .ok_or_else(|| "no selected layout for preview workspace".to_string())?;
-    Ok(evaluation.layout)
+    Ok(EvaluatedPreviewLayout { config, layout: evaluation.layout })
 }
 
 fn build_layout_service(

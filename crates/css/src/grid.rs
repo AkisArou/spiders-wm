@@ -6,9 +6,10 @@ use cssparser::{
 };
 
 use crate::compile::*;
+use crate::language::is_supported_property;
 use crate::parse_values::*;
-use crate::tokenizer::parse_component_values;
 use crate::style::*;
+use crate::tokenizer::parse_component_values;
 
 #[derive(Default)]
 pub(super) struct GridFallbackDeclarationParser;
@@ -24,7 +25,7 @@ impl<'i> DeclarationParser<'i> for GridFallbackDeclarationParser {
         _declaration_start: &cssparser::ParserState,
     ) -> Result<Self::Declaration, cssparser::ParseError<'i, Self::Error>> {
         let property = name.to_ascii_lowercase();
-        if !crate::parsing::SUPPORTED_PROPERTIES.contains(&property.as_str()) {
+        if !is_supported_property(&property) {
             return Err(input.new_custom_error(
                 crate::parsing::CssParseError::UnsupportedProperty { property },
             ));
@@ -33,10 +34,7 @@ impl<'i> DeclarationParser<'i> for GridFallbackDeclarationParser {
         let value_start = input.state();
         let components = parse_component_values(input)?;
         let text = input.slice_from(value_start.position()).trim().to_string();
-        let parsed = ParsedDeclaration {
-            property,
-            value: CssValue { text, components },
-        };
+        let parsed = ParsedDeclaration { property, value: CssValue { text, components } };
         compile_declaration(&parsed)
             .map_err(|error| input.new_custom_error(crate::parsing::CssParseError::CssValue(error)))
     }
@@ -118,10 +116,7 @@ pub(super) fn parse_grid_tracks(
                     }
                     _ => GridTemplateComponent::Single(parse_grid_track(
                         property,
-                        &CssValue {
-                            text: component_text(token),
-                            components: vec![token.clone()],
-                        },
+                        &CssValue { text: component_text(token), components: vec![token.clone()] },
                     )?),
                 };
 
@@ -134,10 +129,7 @@ pub(super) fn parse_grid_tracks(
 
     line_names.push(pending_line_names);
 
-    Ok(GridTemplate {
-        components: template_components,
-        line_names,
-    })
+    Ok(GridTemplate { components: template_components, line_names })
 }
 
 pub(super) fn parse_grid_auto_tracks(
@@ -202,10 +194,7 @@ pub(super) fn parse_line_name_block(
         .filter_map(|component| match component {
             CssValueToken::Whitespace => None,
             CssValueToken::Ident(name) => Some(Ok(name.clone())),
-            _ => Some(Err(invalid_value(
-                property,
-                &components_to_text(&block.value),
-            ))),
+            _ => Some(Err(invalid_value(property, &components_to_text(&block.value)))),
         })
         .collect::<Result<Vec<_>, _>>()?;
 
@@ -232,11 +221,7 @@ pub(super) fn parse_grid_track_repeat(
     let tracks = parse_grid_tracks(
         property,
         &CssValue {
-            text: args[1..]
-                .iter()
-                .map(|arg| arg.text.as_str())
-                .collect::<Vec<_>>()
-                .join(" "),
+            text: args[1..].iter().map(|arg| arg.text.as_str()).collect::<Vec<_>>().join(" "),
             components: args[1..]
                 .iter()
                 .flat_map(|arg| {
@@ -255,10 +240,9 @@ pub(super) fn parse_grid_track_repeat(
             .into_iter()
             .map(|component| match component {
                 GridTemplateComponent::Single(track) => Ok(track),
-                GridTemplateComponent::Repeat(_) => Err(invalid_value(
-                    property,
-                    &components_to_text(&function.value),
-                )),
+                GridTemplateComponent::Repeat(_) => {
+                    Err(invalid_value(property, &components_to_text(&function.value)))
+                }
             })
             .collect::<Result<Vec<_>, _>>()?,
         line_names: tracks.line_names,
@@ -338,14 +322,12 @@ pub(super) fn parse_grid_line_side(
 ) -> Result<Line<GridPlacementValue>, CssValueError> {
     let placement = parse_grid_placement(property, value)?;
     Ok(match property {
-        "grid-row-start" | "grid-column-start" => Line {
-            start: placement,
-            end: GridPlacementValue::Auto,
-        },
-        "grid-row-end" | "grid-column-end" => Line {
-            start: GridPlacementValue::Auto,
-            end: placement,
-        },
+        "grid-row-start" | "grid-column-start" => {
+            Line { start: placement, end: GridPlacementValue::Auto }
+        }
+        "grid-row-end" | "grid-column-end" => {
+            Line { start: GridPlacementValue::Auto, end: placement }
+        }
         _ => return Err(invalid_value(property, text_for_value(value))),
     })
 }
@@ -379,13 +361,13 @@ pub(super) fn parse_grid_placement(
                 .map(GridPlacementValue::Span)
                 .map_err(|_| invalid_value(property, text_for_value(value)))
         }
-        [
-            CssValueToken::Ident(span),
-            CssValueToken::Number(number),
-            CssValueToken::Ident(name),
-        ] if span == "span" && number.fract() == 0.0 => u16::try_from(*number as i64)
-            .map(|count| GridPlacementValue::NamedSpan(name.clone(), count))
-            .map_err(|_| invalid_value(property, text_for_value(value))),
+        [CssValueToken::Ident(span), CssValueToken::Number(number), CssValueToken::Ident(name)]
+            if span == "span" && number.fract() == 0.0 =>
+        {
+            u16::try_from(*number as i64)
+                .map(|count| GridPlacementValue::NamedSpan(name.clone(), count))
+                .map_err(|_| invalid_value(property, text_for_value(value)))
+        }
         [CssValueToken::Ident(name)] => Ok(GridPlacementValue::NamedLine(name.clone(), 1)),
         [CssValueToken::Ident(name), CssValueToken::Integer(index)] => i16::try_from(*index)
             .map(|line_index| GridPlacementValue::NamedLine(name.clone(), line_index))
@@ -470,13 +452,7 @@ pub(super) fn parse_grid_template_areas(
                 }
             }
 
-            Ok(GridTemplateArea {
-                name,
-                row_start,
-                row_end,
-                column_start,
-                column_end,
-            })
+            Ok(GridTemplateArea { name, row_start, row_end, column_start, column_end })
         })
         .collect()
 }

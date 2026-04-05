@@ -6,6 +6,7 @@ use spiders_config::model::{Config, ConfigPaths};
 use spiders_config::runtime::build_authoring_layout_service;
 use spiders_core::focus::{FocusTree, FocusTreeWindowGeometry};
 use spiders_core::query::state_snapshot_for_model;
+use spiders_core::runtime::layout_context::LayoutWindowContext;
 use spiders_core::runtime::prepared_layout::{PreparedStylesheet, PreparedStylesheets};
 use spiders_core::snapshot::{StateSnapshot, WindowSnapshot};
 use spiders_core::workspace::{fallback_master_stack_layout_tree, flat_workspace_root};
@@ -104,6 +105,29 @@ impl SceneLayoutState {
             .map(|target| (target.location, target.size))
     }
 
+    pub(crate) fn compute_layout_snapshot(
+        &mut self,
+        config: &Config,
+        model: &mut WmModel,
+        visible_window_ids: &[WindowId],
+    ) -> Option<LayoutSnapshotNode> {
+        if let Some(root) = self.compute_authored_layout_snapshot(config, model, visible_window_ids)
+        {
+            let targets = scene_targets_from_snapshot(&root);
+            if targets_cover_windows(&targets, visible_window_ids) {
+                return Some(root);
+            }
+        }
+
+        let root = self.compute_fallback_layout_snapshot(config, model, visible_window_ids)?;
+        let targets = scene_targets_from_snapshot(&root);
+        targets_cover_windows(&targets, visible_window_ids).then_some(root)
+    }
+
+    pub(crate) fn clear_cache(&mut self) {
+        self.cache.clear();
+    }
+
     fn compute_authored_layout_snapshot(
         &mut self,
         config: &Config,
@@ -129,7 +153,12 @@ impl SceneLayoutState {
         };
 
         let windows = visible_window_snapshots(&snapshot, visible_window_ids);
-        let resolved_root = resolve_layout_root(evaluation.layout, &windows, visible_window_ids);
+        let resolved_root = attach_titlebar_content(
+            resolve_layout_root(evaluation.layout, &windows, visible_window_ids),
+            &windows,
+            config,
+            Some(workspace.name.as_str()),
+        );
         let request = match config.build_scene_request_from_state(
             &snapshot,
             resolved_root,
@@ -169,8 +198,12 @@ impl SceneLayoutState {
         let output =
             workspace.output_id.as_ref().and_then(|output_id| snapshot.output_by_id(output_id));
         let windows = visible_window_snapshots(&snapshot, visible_window_ids);
-        let resolved_root =
-            resolve_layout_root(fallback_master_stack_layout_tree(), &windows, visible_window_ids);
+        let resolved_root = attach_titlebar_content(
+            resolve_layout_root(fallback_master_stack_layout_tree(), &windows, visible_window_ids),
+            &windows,
+            config,
+            Some(workspace.name.as_str()),
+        );
         let request = SceneRequest {
             workspace_id: workspace.id,
             output_id: output.map(|output| output.id.clone()),
@@ -247,7 +280,95 @@ fn resolve_layout_root(
     }
 }
 
-fn scene_targets_from_snapshot(root: &LayoutSnapshotNode) -> Vec<LayoutTarget> {
+fn attach_titlebar_content(
+    node: ResolvedLayoutNode,
+    windows: &[WindowSnapshot],
+    config: &Config,
+    workspace_name: Option<&str>,
+) -> ResolvedLayoutNode {
+    match node {
+        ResolvedLayoutNode::Workspace { meta, children } => ResolvedLayoutNode::Workspace {
+            meta,
+            children: children
+                .into_iter()
+                .map(|child| attach_titlebar_content(child, windows, config, workspace_name))
+                .collect(),
+        },
+        ResolvedLayoutNode::Group { meta, children } => ResolvedLayoutNode::Group {
+            meta,
+            children: children
+                .into_iter()
+                .map(|child| attach_titlebar_content(child, windows, config, workspace_name))
+                .collect(),
+        },
+        ResolvedLayoutNode::Content {
+            meta,
+            kind,
+            text,
+            children,
+        } => ResolvedLayoutNode::Content {
+            meta,
+            kind,
+            text,
+            children: children
+                .into_iter()
+                .map(|child| attach_titlebar_content(child, windows, config, workspace_name))
+                .collect(),
+        },
+        ResolvedLayoutNode::Window {
+            meta,
+            window_id,
+            mut children,
+        } => {
+            children = children
+                .into_iter()
+                .map(|child| attach_titlebar_content(child, windows, config, workspace_name))
+                .collect();
+
+            if let Some(window_id) = window_id.as_ref()
+                && let Some(window) = windows.iter().find(|window| &window.id == window_id)
+                && let Ok(Some(titlebar)) = config.resolve_titlebar_runtime_node(
+                    &layout_window_context(window),
+                    workspace_name,
+                    None,
+                )
+            {
+                children.insert(0, titlebar);
+            }
+
+            ResolvedLayoutNode::Window {
+                meta,
+                window_id,
+                children,
+            }
+        }
+    }
+}
+
+fn layout_window_context(window: &WindowSnapshot) -> LayoutWindowContext {
+    LayoutWindowContext {
+        id: window.id.clone(),
+        app_id: window.app_id.clone(),
+        title: window.title.clone(),
+        class: window.class.clone(),
+        instance: window.instance.clone(),
+        role: window.role.clone(),
+        shell: Some(
+            match window.shell {
+                spiders_core::types::ShellKind::X11 => "x11",
+                spiders_core::types::ShellKind::XdgToplevel => "xdg_toplevel",
+                spiders_core::types::ShellKind::Unknown => "unknown",
+            }
+            .to_string(),
+        ),
+        window_type: window.window_type.clone(),
+        floating: window.mode.is_floating(),
+        fullscreen: window.mode.is_fullscreen(),
+        focused: window.focused,
+    }
+}
+
+pub(crate) fn scene_targets_from_snapshot(root: &LayoutSnapshotNode) -> Vec<LayoutTarget> {
     root.window_nodes()
         .into_iter()
         .filter_map(|node| match node {
@@ -293,6 +414,11 @@ fn collect_focus_tree_window_geometries(
             })
         }
         LayoutSnapshotNode::Window { window_id: None, .. } => {}
+        LayoutSnapshotNode::Content { children, .. } => {
+            for child in children {
+                collect_focus_tree_window_geometries(child, out);
+            }
+        }
     }
 }
 
@@ -328,6 +454,7 @@ mod tests {
                 rect: LayoutRect { x: 10.0, y: 20.0, width: 33.6, height: 40.2 },
                 styles: None,
                 window_id: Some(window_id(7)),
+                children: vec![],
             }],
         };
 

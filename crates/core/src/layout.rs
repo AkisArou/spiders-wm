@@ -33,6 +33,13 @@ pub enum RuntimeLayoutNodeType {
     Workspace,
     Group,
     Window,
+    Content,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RuntimeContentKind {
+    Container,
+    Text,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -174,6 +181,17 @@ pub enum ResolvedLayoutNode {
         meta: LayoutNodeMeta,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         window_id: Option<WindowId>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        children: Vec<ResolvedLayoutNode>,
+    },
+    Content {
+        #[serde(flatten)]
+        meta: LayoutNodeMeta,
+        kind: RuntimeContentKind,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        text: Option<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        children: Vec<ResolvedLayoutNode>,
     },
 }
 
@@ -183,6 +201,7 @@ impl ResolvedLayoutNode {
             Self::Workspace { .. } => RuntimeLayoutNodeType::Workspace,
             Self::Group { .. } => RuntimeLayoutNodeType::Group,
             Self::Window { .. } => RuntimeLayoutNodeType::Window,
+            Self::Content { .. } => RuntimeLayoutNodeType::Content,
         }
     }
 
@@ -190,14 +209,17 @@ impl ResolvedLayoutNode {
         match self {
             Self::Workspace { meta, .. }
             | Self::Group { meta, .. }
-            | Self::Window { meta, .. } => meta,
+            | Self::Window { meta, .. }
+            | Self::Content { meta, .. } => meta,
         }
     }
 
     pub fn children(&self) -> &[ResolvedLayoutNode] {
         match self {
-            Self::Workspace { children, .. } | Self::Group { children, .. } => children,
-            Self::Window { .. } => &[],
+            Self::Workspace { children, .. }
+            | Self::Group { children, .. }
+            | Self::Window { children, .. }
+            | Self::Content { children, .. } => children,
         }
     }
 }

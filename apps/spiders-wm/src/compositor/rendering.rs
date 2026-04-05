@@ -1,22 +1,46 @@
 use smithay::backend::renderer::damage::OutputDamageTracker;
 use smithay::output::Output;
-use smithay::utils::Rectangle;
+use smithay::utils::{Point, Rectangle};
 use smithay::wayland::compositor::CompositorHandler;
 
-use crate::frame_sync::SnapshotRenderElement;
+use crate::frame_sync::{SnapshotRenderElement, memory_render_element};
 use crate::state::SpidersWm;
 
 impl SpidersWm {
     pub(crate) fn notify_blocker_cleared(&mut self) {
         let display_handle = self.display_handle.clone();
         while let Ok(client) = self.blocker_cleared_rx.try_recv() {
-            self.client_compositor_state(&client)
-                .blocker_cleared(self, &display_handle);
+            self.client_compositor_state(&client).blocker_cleared(self, &display_handle);
         }
     }
 
     pub(crate) fn prune_completed_closing_overlays(&mut self) {
         self.frame_sync.prune_completed_closing_overlays();
+    }
+
+    pub(crate) fn titlebar_render_elements(
+        &self,
+        renderer: &mut smithay::backend::renderer::gles::GlesRenderer,
+        scale: smithay::utils::Scale<f64>,
+    ) -> Vec<SnapshotRenderElement> {
+        self.titlebar_overlays
+            .values()
+            .filter_map(|overlay| {
+                let location =
+                    Point::from((overlay.rect.x.round() as i32, overlay.rect.y.round() as i32))
+                        .to_f64()
+                        .to_physical_precise_round(scale);
+                memory_render_element(
+                    renderer,
+                    location,
+                    scale,
+                    1.0,
+                    &overlay.pixels,
+                    overlay.rect.width.round() as i32,
+                    overlay.rect.height.round() as i32,
+                )
+            })
+            .collect()
     }
 
     pub(crate) fn send_frames_for_windows(&self, output: &Output) {
@@ -42,17 +66,15 @@ impl SpidersWm {
         self.notify_blocker_cleared();
         self.prune_completed_closing_overlays();
 
-        let mut backend = self
-            .backend
-            .take()
-            .expect("winit backend missing during redraw");
+        let mut backend = self.backend.take().expect("winit backend missing during redraw");
         let size = backend.window_size();
         let damage = Rectangle::from_size(size);
 
         {
             let (renderer, mut framebuffer) = backend.bind().expect("failed to bind winit backend");
             let scale = output.current_scale().fractional_scale().into();
-            let custom_elements = self.frame_sync.render_elements(renderer, scale, 1.0);
+            let mut custom_elements = self.frame_sync.render_elements(renderer, scale, 1.0);
+            custom_elements.extend(self.titlebar_render_elements(renderer, scale));
 
             smithay::desktop::space::render_output::<_, SnapshotRenderElement, _, _>(
                 output,
@@ -68,9 +90,7 @@ impl SpidersWm {
             .expect("failed to render output");
         }
 
-        backend
-            .submit(Some(&[damage]))
-            .expect("failed to submit frame");
+        backend.submit(Some(&[damage])).expect("failed to submit frame");
 
         self.frame_sync.mark_closing_overlays_presented();
 

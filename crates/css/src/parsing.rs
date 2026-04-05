@@ -11,6 +11,7 @@ use crate::compiled::{
     CompiledKeyframeStep, CompiledKeyframesRule, CompiledStyleRule, CompiledStyleSheet,
 };
 use crate::grid::parse_grid_fallback_declarations;
+use crate::language::{is_invalid_selector_target, is_supported_property};
 use crate::parse_values::{CssValue, ParsedDeclaration};
 use crate::tokenizer::parse_value_tokens;
 use style::parser::ParserContext;
@@ -37,108 +38,6 @@ pub enum CssParseError {
     #[error(transparent)]
     CssValue(#[from] CssValueError),
 }
-
-pub(super) const SUPPORTED_PROPERTIES: &[&str] = &[
-    "display",
-    "box-sizing",
-    "aspect-ratio",
-    "appearance",
-    "background",
-    "background-color",
-    "color",
-    "opacity",
-    "border-color",
-    "border-style",
-    "border-radius",
-    "box-shadow",
-    "backdrop-filter",
-    "transform",
-    "text-align",
-    "text-transform",
-    "font-family",
-    "font-size",
-    "font-weight",
-    "letter-spacing",
-    "animation",
-    "animation-name",
-    "animation-duration",
-    "animation-timing-function",
-    "animation-delay",
-    "animation-iteration-count",
-    "animation-direction",
-    "animation-fill-mode",
-    "animation-play-state",
-    "transition",
-    "transition-property",
-    "transition-duration",
-    "transition-timing-function",
-    "transition-delay",
-    "transition-behavior",
-    "flex-direction",
-    "flex-wrap",
-    "flex-grow",
-    "flex-shrink",
-    "flex-basis",
-    "position",
-    "inset",
-    "top",
-    "right",
-    "bottom",
-    "left",
-    "overflow",
-    "overflow-x",
-    "overflow-y",
-    "width",
-    "height",
-    "min-width",
-    "min-height",
-    "max-width",
-    "max-height",
-    "align-items",
-    "align-self",
-    "justify-items",
-    "justify-self",
-    "align-content",
-    "justify-content",
-    "gap",
-    "row-gap",
-    "column-gap",
-    "grid-template-rows",
-    "grid-template-columns",
-    "grid-auto-rows",
-    "grid-auto-columns",
-    "grid-auto-flow",
-    "grid-template-areas",
-    "grid-row",
-    "grid-column",
-    "grid-row-start",
-    "grid-row-end",
-    "grid-column-start",
-    "grid-column-end",
-    "border-width",
-    "border-top-width",
-    "border-right-width",
-    "border-bottom-width",
-    "border-left-width",
-    "border-top-color",
-    "border-right-color",
-    "border-bottom-color",
-    "border-left-color",
-    "border-top-style",
-    "border-right-style",
-    "border-bottom-style",
-    "border-left-style",
-    "padding",
-    "padding-top",
-    "padding-right",
-    "padding-bottom",
-    "padding-left",
-    "margin",
-    "margin-top",
-    "margin-right",
-    "margin-bottom",
-    "margin-left",
-];
 
 #[derive(Default)]
 struct LayoutCssRuleParser;
@@ -179,9 +78,7 @@ impl<'i> AtRuleParser<'i> for LayoutCssRuleParser {
         name: CowRcStr<'i>,
         input: &mut Parser<'i, 't>,
     ) -> Result<Self::Prelude, cssparser::ParseError<'i, Self::Error>> {
-        Err(input.new_custom_error(CssParseError::UnsupportedAtRule {
-            name: name.to_string(),
-        }))
+        Err(input.new_custom_error(CssParseError::UnsupportedAtRule { name: name.to_string() }))
     }
 }
 
@@ -203,21 +100,15 @@ impl<'i> QualifiedRuleParser<'i> for LayoutCssRuleParser {
 
         let selector = input.slice_from(start.position()).trim().to_string();
         let trimmed = selector.trim_start();
-        let slot_type_selected = trimmed == "slot"
-            || trimmed
-                .strip_prefix("slot")
-                .and_then(|rest| rest.chars().next())
-                .is_some_and(|ch| {
-                    matches!(ch, ' ' | '.' | '#' | '[' | ':' | '>' | '+' | '~' | ',')
-                });
+        let slot_type_selected = is_invalid_selector_target(trimmed)
+            || trimmed.strip_prefix("slot").and_then(|rest| rest.chars().next()).is_some_and(
+                |ch| matches!(ch, ' ' | '.' | '#' | '[' | ':' | '>' | '+' | '~' | ','),
+            );
         if slot_type_selected {
             return Err(input.new_custom_error(CssParseError::UnsupportedSelector { selector }));
         }
 
-        Ok(ParsedSelectorPrelude {
-            selectors: parsed,
-            source: selector,
-        })
+        Ok(ParsedSelectorPrelude { selectors: parsed, source: selector })
     }
 
     fn parse_block<'t>(
@@ -267,9 +158,8 @@ fn extract_keyframes_and_strip(
         let start = index + relative;
         result.push_str(&input[index..start]);
 
-        let open_brace_offset = input[start..]
-            .find('{')
-            .ok_or(CssParseError::InvalidSyntax { line: 1, column: 1 })?;
+        let open_brace_offset =
+            input[start..].find('{').ok_or(CssParseError::InvalidSyntax { line: 1, column: 1 })?;
         let open_brace = start + open_brace_offset;
         let end = matching_brace_end(input, open_brace)
             .ok_or(CssParseError::InvalidSyntax { line: 1, column: 1 })?;
@@ -312,7 +202,7 @@ fn compile_declarations_from_raw_block(
     let mut declarations = Vec::new();
     for declaration in block.normal_declaration_iter() {
         let property = declaration.id().to_css_string();
-        if !SUPPORTED_PROPERTIES.contains(&property.as_str()) {
+        if !is_supported_property(&property) {
             if is_ignored_background_expansion(&property) {
                 continue;
             }
@@ -331,10 +221,7 @@ fn compile_declarations_from_raw_block(
 
         let parsed = ParsedDeclaration {
             property,
-            value: CssValue {
-                text: value.clone(),
-                components: parse_value_tokens(&value)?,
-            },
+            value: CssValue { text: value.clone(), components: parse_value_tokens(&value)? },
         };
         let compiled = compile_declaration(&parsed).map_err(CssParseError::CssValue)?;
         declarations.push(compiled);
@@ -342,54 +229,35 @@ fn compile_declarations_from_raw_block(
 
     if raw_block.contains("appearance:")
         && !declarations.iter().any(|declaration| {
-            matches!(
-                declaration,
-                crate::compile::CompiledDeclaration::Appearance(_)
-            )
+            matches!(declaration, crate::compile::CompiledDeclaration::Appearance(_))
         })
     {
         let fallback = parse_grid_fallback_declarations(raw_block)?;
         declarations.extend(fallback.into_iter().filter(|declaration| {
-            matches!(
-                declaration,
-                crate::compile::CompiledDeclaration::Appearance(_)
-            )
+            matches!(declaration, crate::compile::CompiledDeclaration::Appearance(_))
         }));
     }
 
     if raw_block.contains("background:")
         && !declarations.iter().any(|declaration| {
-            matches!(
-                declaration,
-                crate::compile::CompiledDeclaration::Background(_)
-            )
+            matches!(declaration, crate::compile::CompiledDeclaration::Background(_))
         })
     {
         let fallback = parse_grid_fallback_declarations(raw_block)?;
         declarations.extend(fallback.into_iter().filter(|declaration| {
-            matches!(
-                declaration,
-                crate::compile::CompiledDeclaration::Background(_)
-            )
+            matches!(declaration, crate::compile::CompiledDeclaration::Background(_))
         }));
     }
 
     if raw_block.contains("border-color:")
         && !declarations.iter().any(|declaration| {
-            matches!(
-                declaration,
-                crate::compile::CompiledDeclaration::BorderColor(_)
-            )
+            matches!(declaration, crate::compile::CompiledDeclaration::BorderColor(_))
         })
     {
         append_raw_property_fallbacks(raw_block, &mut declarations, &["border-color"])?;
     }
 
-    append_raw_property_fallbacks(
-        raw_block,
-        &mut declarations,
-        &["border-radius", "box-shadow"],
-    )?;
+    append_raw_property_fallbacks(raw_block, &mut declarations, &["border-radius", "box-shadow"])?;
 
     if declarations.is_empty() && needs_grid_fallback(raw_block) {
         declarations = parse_grid_fallback_declarations(raw_block)?;
@@ -410,10 +278,8 @@ fn parse_keyframes_rule(name: String, body: &str) -> Result<CompiledKeyframesRul
         let declarations =
             compile_declarations_from_raw_block(&body[block_start + 1..block_end - 1])?;
 
-        for selector in selector_text
-            .split(',')
-            .map(str::trim)
-            .filter(|selector| !selector.is_empty())
+        for selector in
+            selector_text.split(',').map(str::trim).filter(|selector| !selector.is_empty())
         {
             steps.push(CompiledKeyframeStep {
                 offset: parse_keyframe_offset(selector)?,
@@ -425,9 +291,7 @@ fn parse_keyframes_rule(name: String, body: &str) -> Result<CompiledKeyframesRul
     }
 
     steps.sort_by(|left, right| {
-        left.offset
-            .partial_cmp(&right.offset)
-            .unwrap_or(std::cmp::Ordering::Equal)
+        left.offset.partial_cmp(&right.offset).unwrap_or(std::cmp::Ordering::Equal)
     });
 
     Ok(CompiledKeyframesRule { name, steps })
@@ -441,9 +305,7 @@ fn parse_keyframe_offset(selector: &str) -> Result<f32, CssParseError> {
             .strip_suffix('%')
             .and_then(|value| value.trim().parse::<f32>().ok())
             .map(|value| (value / 100.0).clamp(0.0, 1.0))
-            .ok_or(CssParseError::UnsupportedSelector {
-                selector: selector.to_string(),
-            }),
+            .ok_or(CssParseError::UnsupportedSelector { selector: selector.to_string() }),
     }
 }
 
@@ -465,11 +327,7 @@ fn matching_brace_end(input: &str, open_brace: usize) -> Option<usize> {
 }
 
 fn selector_target_pseudo(selector: &str) -> Option<LayoutPseudoElement> {
-    if selector.contains("::titlebar") {
-        Some(LayoutPseudoElement::Titlebar)
-    } else {
-        None
-    }
+    if selector.contains("::titlebar") { Some(LayoutPseudoElement::Titlebar) } else { None }
 }
 
 fn selector_base_selectors(
@@ -486,9 +344,7 @@ fn selector_base_selectors(
     let mut parser_input = Parser::new(&mut input);
     parse_selector_list_from_parser(&LayoutSelectorParser, &mut parser_input)
         .map(Some)
-        .map_err(|_| CssParseError::UnsupportedSelector {
-            selector: error_selector,
-        })
+        .map_err(|_| CssParseError::UnsupportedSelector { selector: error_selector })
 }
 
 fn is_ignored_background_expansion(property: &str) -> bool {
@@ -521,14 +377,12 @@ fn append_raw_property_fallbacks(
 
         let property_name = *property;
         let already_present =
-            declarations
-                .iter()
-                .any(|declaration| match (property_name, declaration) {
-                    ("border-radius", crate::compile::CompiledDeclaration::BorderRadius(_)) => true,
-                    ("border-color", crate::compile::CompiledDeclaration::BorderColor(_)) => true,
-                    ("box-shadow", crate::compile::CompiledDeclaration::BoxShadow(_)) => true,
-                    _ => false,
-                });
+            declarations.iter().any(|declaration| match (property_name, declaration) {
+                ("border-radius", crate::compile::CompiledDeclaration::BorderRadius(_)) => true,
+                ("border-color", crate::compile::CompiledDeclaration::BorderColor(_)) => true,
+                ("box-shadow", crate::compile::CompiledDeclaration::BoxShadow(_)) => true,
+                _ => false,
+            });
         if already_present {
             continue;
         }
@@ -536,10 +390,7 @@ fn append_raw_property_fallbacks(
         if let Some(value) = extract_raw_property_value(raw_block, property_name) {
             let compiled = compile_declaration_from_value(
                 property_name,
-                &CssValue {
-                    text: value.clone(),
-                    components: parse_value_tokens(&value)?,
-                },
+                &CssValue { text: value.clone(), components: parse_value_tokens(&value)? },
             )
             .map_err(CssParseError::CssValue)?;
             declarations.push(compiled);

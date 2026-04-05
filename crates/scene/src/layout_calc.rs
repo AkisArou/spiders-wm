@@ -52,13 +52,19 @@ impl LaidOutNode {
                 styles,
                 children: self.children.iter().map(Self::snapshot).collect(),
             },
-            ResolvedLayoutNode::Window {
-                meta, window_id, ..
-            } => LayoutSnapshotNode::Window {
+            ResolvedLayoutNode::Content { meta, text, .. } => LayoutSnapshotNode::Content {
+                meta: meta.clone(),
+                rect: self.geometry,
+                styles,
+                text: text.clone(),
+                children: self.children.iter().map(Self::snapshot).collect(),
+            },
+            ResolvedLayoutNode::Window { meta, window_id, .. } => LayoutSnapshotNode::Window {
                 meta: meta.clone(),
                 rect: self.geometry,
                 styles,
                 window_id: window_id.clone(),
+                children: self.children.iter().map(Self::snapshot).collect(),
             },
         }
     }
@@ -93,10 +99,7 @@ fn scene_style_from_node(node: &LaidOutNode) -> Option<SceneNodeStyle> {
     if base_is_default && node.titlebar.is_none() {
         None
     } else {
-        Some(SceneNodeStyle {
-            layout: node.computed.clone(),
-            titlebar: node.titlebar.clone(),
-        })
+        Some(SceneNodeStyle { layout: node.computed.clone(), titlebar: node.titlebar.clone() })
     }
 }
 

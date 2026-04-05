@@ -25,7 +25,7 @@ use self::{
 
 use crate::state::SpidersWm;
 
-pub(crate) use render_snapshot::SnapshotRenderElement;
+pub(crate) use render_snapshot::{SnapshotRenderElement, memory_render_element};
 
 #[derive(Debug, Clone)]
 pub(crate) struct SyncHandle(transaction::Transaction);

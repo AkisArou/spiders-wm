@@ -7,7 +7,7 @@ publish.workspace = true
 
 [dependencies]
 spiders-core = { path = "../core" }
-cssparser = "0.36"
+cssparser.workspace = true
 precomputed-hash = "0.1"
 selectors = "0.36.1"
 stylo = "0.14.0"

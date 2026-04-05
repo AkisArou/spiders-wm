@@ -1,8 +1,8 @@
 use spiders_core::ResolvedLayoutNode;
 
 use crate::{
-    CompiledStyleRule, CompiledStyleSheet, LayoutDomTree, LayoutPseudoElement,
-    LayoutSelectorImpl, selector_matches_element,
+    CompiledStyleRule, CompiledStyleSheet, LayoutDomTree, LayoutPseudoElement, LayoutSelectorImpl,
+    selector_matches_element,
 };
 
 pub fn matching_rules<'a>(

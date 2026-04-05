@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use spiders_core::{LayoutRect, WindowId};
 use spiders_scene::ComputedStyle;
+use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
@@ -30,6 +31,10 @@ pub struct PreviewSnapshotNode {
     pub layout_style: Option<ComputedStyle>,
     #[serde(default)]
     pub titlebar_style: Option<ComputedStyle>,
+    #[serde(default)]
+    pub text: Option<String>,
+    #[serde(default)]
+    pub data: BTreeMap<String, String>,
     #[serde(default)]
     pub children: Vec<PreviewSnapshotNode>,
 }

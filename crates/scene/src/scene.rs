@@ -18,11 +18,19 @@ pub enum LayoutSnapshotNode {
         styles: Option<SceneNodeStyle>,
         children: Vec<LayoutSnapshotNode>,
     },
+    Content {
+        meta: LayoutNodeMeta,
+        rect: LayoutRect,
+        styles: Option<SceneNodeStyle>,
+        text: Option<String>,
+        children: Vec<LayoutSnapshotNode>,
+    },
     Window {
         meta: LayoutNodeMeta,
         rect: LayoutRect,
         styles: Option<SceneNodeStyle>,
         window_id: Option<WindowId>,
+        children: Vec<LayoutSnapshotNode>,
     },
 }
 
@@ -50,24 +58,28 @@ pub struct SceneNodeStyle {
 impl LayoutSnapshotNode {
     pub fn rect(&self) -> LayoutRect {
         match self {
-            Self::Workspace { rect, .. } | Self::Group { rect, .. } | Self::Window { rect, .. } => {
-                *rect
-            }
+            Self::Workspace { rect, .. }
+            | Self::Group { rect, .. }
+            | Self::Content { rect, .. }
+            | Self::Window { rect, .. } => *rect,
         }
     }
 
     pub fn meta(&self) -> &LayoutNodeMeta {
         match self {
-            Self::Workspace { meta, .. } | Self::Group { meta, .. } | Self::Window { meta, .. } => {
-                meta
-            }
+            Self::Workspace { meta, .. }
+            | Self::Group { meta, .. }
+            | Self::Content { meta, .. }
+            | Self::Window { meta, .. } => meta,
         }
     }
 
     pub fn children(&self) -> &[LayoutSnapshotNode] {
         match self {
-            Self::Workspace { children, .. } | Self::Group { children, .. } => children,
-            Self::Window { .. } => &[],
+            Self::Workspace { children, .. }
+            | Self::Group { children, .. }
+            | Self::Content { children, .. }
+            | Self::Window { children, .. } => children,
         }
     }
 
@@ -75,6 +87,7 @@ impl LayoutSnapshotNode {
         match self {
             Self::Workspace { styles, .. }
             | Self::Group { styles, .. }
+            | Self::Content { styles, .. }
             | Self::Window { styles, .. } => styles.as_ref(),
         }
     }
@@ -84,9 +97,7 @@ impl LayoutSnapshotNode {
             return Some(self);
         }
 
-        self.children()
-            .iter()
-            .find_map(|child| child.find_by_node_id(node_id))
+        self.children().iter().find_map(|child| child.find_by_node_id(node_id))
     }
 
     pub fn find_by_window_id(&self, window_id: &WindowId) -> Option<&LayoutSnapshotNode> {
@@ -94,9 +105,7 @@ impl LayoutSnapshotNode {
             return Some(self);
         }
 
-        self.children()
-            .iter()
-            .find_map(|child| child.find_by_window_id(window_id))
+        self.children().iter().find_map(|child| child.find_by_window_id(window_id))
     }
 
     pub fn collect_windows<'a>(&'a self, windows: &mut Vec<&'a LayoutSnapshotNode>) {

@@ -72,7 +72,7 @@ The deprecated river path already has:
 
 Web now has a real titlebar subsystem.
 
-The current browser preview renders titlebars through `crates/titlebar/web` from a shared `TitlebarPlan`, not through the old native renderer.
+The current browser preview renders titlebars through `crates/titlebar/web` from shared titlebar planning output, not through the old native renderer.
 
 ## CSS Reality Check
 
@@ -104,6 +104,7 @@ These are genuinely modeled in shared style types today:
 ### Not actually shared yet
 
 These semantics are still incomplete or not fully shared yet:
+- scene-backed titlebar child layout from a declarative titlebar tree
 - shared exact text measurement/truncation policy across native and web
 - host-independent titlebar motion application
 - clickable native button hit-regions on compositor backends
@@ -195,7 +196,7 @@ Not shared:
 
 ## Final Mental Model
 
-There are three titlebar concerns.
+There are four titlebar concerns.
 
 ### 1. Titlebar style semantics
 
@@ -211,21 +212,34 @@ Examples:
 
 This already mostly lives in `spiders-css` and `spiders-scene`.
 
-### 2. Titlebar planning
+### 2. Titlebar structure
+
+Owned by the config/runtime layer and compiled into a shared titlebar tree.
+
+This layer should:
+- let users define titlebar rules with `titlebars: [<titlebar ...> ...]`
+- support `when` conditions and `disabled`
+- support shared titlebar child nodes like `titlebar.group`, `titlebar.windowTitle`, `titlebar.button`, `titlebar.icon`
+- keep layout/styling props out of JSX and in CSS
+
+This is the declarative structure layer.
+
+### 3. Titlebar planning
 
 Owned by a new shared titlebar core crate.
 
 This layer should:
 - read resolved/computed style data
+- read the resolved titlebar structure tree
 - combine `window` and `window::titlebar` fallback rules
 - apply host-independent semantics
-- produce a canonical `TitlebarPlan`
+- produce a canonical titlebar plan / layout-ready representation
 
 It should consume shared font intent/types, not load fonts.
 
 This is the cross-platform part.
 
-### 3. Titlebar rendering
+### 4. Titlebar rendering
 
 Owned by backend crates.
 
@@ -249,6 +263,7 @@ Owns:
 - `DecorationMode`
 - `TitlebarPlanInput`
 - `TitlebarPlanPreset`
+- titlebar rule selection inputs and resolved titlebar tree types
 - titlebar fallback rules between `window` and `window::titlebar`
 - titlebar text selection policy
 - titlebar text transform policy
@@ -291,7 +306,7 @@ Does not own:
 Owns web-facing titlebar rendering helpers.
 
 Initial target:
-- produce a web render model or style map from `TitlebarPlan`
+- produce a web render model or style map from shared titlebar planning output
 - support DOM/HTML rendering first
 
 Implemented now:
@@ -422,13 +437,169 @@ Implemented today:
 - semantic trailing content support for web hosts
 
 Still intentionally not shared or not finished:
+- declarative `titlebars: [<titlebar ...>]` config rules
+- scene-backed titlebar child layout
 - exact native/web text truncation parity
 - native clickable titlebar buttons on river
 - host-independent animation/runtime behavior
 
+## Final Config Shape
+
+The final user-facing configuration should be rule-based and titlebar-specific.
+
+Use:
+
+```tsx
+export default () => ({
+  titlebars: [
+    <titlebar class="default-titlebar">
+      <titlebar.group class="left">
+        <titlebar.icon asset="app-icon" class="app-icon" />
+        <titlebar.workspaceName class="workspace-name" />
+      </titlebar.group>
+
+      <titlebar.group class="center">
+        <titlebar.windowTitle class="window-title" />
+      </titlebar.group>
+
+      <titlebar.group class="right">
+        <titlebar.badge class="env-badge">DEV</titlebar.badge>
+
+        <titlebar.button class="floating-button" onClick={actions.toggleFloating}>
+          <titlebar.icon asset="pin" />
+        </titlebar.button>
+
+        <titlebar.button class="close-button" onClick={actions.close}>
+          <titlebar.icon asset="close" />
+        </titlebar.button>
+      </titlebar.group>
+    </titlebar>,
+
+    <titlebar when={{ workspace: "code" }} class="code-titlebar">
+      <titlebar.group class="left">
+        <titlebar.text class="workspace-label">CODE</titlebar.text>
+      </titlebar.group>
+
+      <titlebar.group class="center">
+        <titlebar.windowTitle class="window-title" />
+      </titlebar.group>
+    </titlebar>,
+
+    <titlebar when={{ appId: "foot" }} disabled />,
+  ],
+})
+```
+
+Rules:
+- `titlebars` is an ordered list
+- the rule without `when` is the default rule
+- later matching rules override earlier rules
+- last match wins
+- `disabled` means no custom titlebar for that match
+
+`when` should support:
+- `workspace`
+- `slot`
+- `appId`
+- `title`
+- `floating`
+- `fullscreen`
+
+## Final Element Set
+
+Use a constrained shared titlebar DSL, not arbitrary web DOM/components.
+
+Supported elements:
+- `<titlebar>`
+- `<titlebar.group>`
+- `<titlebar.windowTitle>`
+- `<titlebar.workspaceName>`
+- `<titlebar.text>`
+- `<titlebar.badge>`
+- `<titlebar.button>`
+- `<titlebar.icon>`
+
+Rules:
+- `class` is allowed on titlebar elements as a styling hook
+- layout/styling props like `height`, `padding`, `transform`, `font-size`, etc. should stay in CSS
+- `titlebar.icon` should render user-owned icon content or assets, not titlebar-owned built-in icons
+- `titlebar.button` should accept arbitrary JS callbacks and shared action helpers
+
+## CSS Ownership
+
+CSS should own titlebar layout and appearance.
+
+That includes:
+- `display`
+- flex/grid/block layout
+- `gap`
+- `align-items`
+- `justify-content`
+- `height`
+- `padding`
+- `font-*`
+- colors
+- borders
+- shadows
+- transforms
+
+JSX should define structure and behavior, not box-model props.
+
+Example:
+
+```css
+window::titlebar.default-titlebar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 24px;
+  padding: 0 8px;
+  background: rgba(22, 31, 45, 0.96);
+  color: rgba(230, 233, 239, 1);
+}
+
+window::titlebar-group.left,
+window::titlebar-group.right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+window::titlebar-group.center {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  justify-content: center;
+}
+
+window::titlebar-window-title.window-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+```
+
+This implies titlebar child nodes must become real scene/layout nodes, not just manual button/text offsets.
+
+## Final Internal Direction
+
+The final internal pipeline should be:
+
+1. Parse `titlebars: [<titlebar ...>]` into ordered titlebar rules.
+2. Resolve the active rule via `when` and `disabled`.
+3. Compile the selected rule into a shared titlebar AST.
+4. Convert that AST into scene/layout nodes with shared CSS selector support.
+5. Let the shared style/layout pipeline compute layout.
+6. Render from that layout in:
+   - `titlebar/web` via DOM
+   - `titlebar/native` via raster drawing
+
 ## Canonical Shared Types
 
-Initial shared types should look roughly like:
+Shared titlebar planning still needs canonical host-neutral types, but they now sit behind a declarative titlebar rule and node model.
+
+Important shared planning types include:
 
 ```rust
 pub enum DecorationMode {
@@ -460,7 +631,7 @@ pub struct TitlebarPlan {
 }
 ```
 
-This is intentionally a host-neutral resolved plan, not raw CSS.
+This remains intentionally host-neutral resolved data, not raw CSS.
 
 `FontQuery` should come from shared style/types, not from titlebar-local types.
 
@@ -497,6 +668,9 @@ Completed:
 
 Still optional/future:
 15. Only consider a web canvas backend later if actual parity requirements justify it.
+16. Replace manual titlebar child positioning with scene-backed titlebar node layout.
+17. Introduce `titlebars: [<titlebar ...>]` rule parsing and selection.
+18. Introduce the shared titlebar AST and map it into scene/layout nodes.
 
 ## Decision Summary
 
@@ -510,6 +684,9 @@ Final decisions:
   - `crates/titlebar/web`
 - keep CSS parsing and typed style ownership in `spiders-css` / `spiders-scene`
 - move shared titlebar planning out of deprecated native code
+- use declarative `titlebars: [<titlebar ...>]` rules for structure and rule selection
+- keep titlebar layout/styling in CSS rather than JSX props
+- use user-owned icon assets/content rather than built-in titlebar icon names
 - use HTML/CSS for web titlebar rendering by default
 - do not make canvas the default web titlebar renderer
 
@@ -519,7 +696,7 @@ Remaining questions without changing the direction above:
 
 1. Should exact text truncation behavior be shared across native and web, or is semantic alignment enough?
 2. What backend/protocol path should native hosts use for clickable titlebar buttons?
-3. Do we want additional named presets for non-preview hosts, or should hosts compose `TitlebarPlanPreset` values locally?
+3. How much arbitrary JS callback behavior should be allowed in titlebar button handlers across hosts?
 
 Current recommendation:
 - keep web rendering DOM-first

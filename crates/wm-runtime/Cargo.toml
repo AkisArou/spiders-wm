@@ -15,3 +15,7 @@ spiders-css = { path = "../css" }
 spiders-scene = { path = "../scene" }
 tracing.workspace = true
 wasm-bindgen.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+spiders-titlebar-core = { path = "../titlebar/core" }

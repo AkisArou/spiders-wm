@@ -31,6 +31,10 @@ impl SpidersWm {
             focused_window_id.and_then(|window_id| self.surface_for_window_id(window_id));
         self.apply_backend_focus(focused_surface.clone(), serial);
         self.apply_window_activation(focused_surface.as_ref());
+        self.refresh_titlebar_snapshot_and_overlays();
+        if let Some(backend) = self.backend.as_ref() {
+            backend.window().request_redraw();
+        }
     }
 
     pub(crate) fn set_focus_with_new_serial(&mut self, surface: Option<WlSurface>) {

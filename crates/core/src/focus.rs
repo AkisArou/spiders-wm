@@ -466,6 +466,9 @@ fn collect_focus_tree_node(
                     .push(window_id.clone());
             }
         }
+        ResolvedLayoutNode::Content { children, .. } => {
+            collect_focus_tree_children(children, scope_path, tree);
+        }
         ResolvedLayoutNode::Window { window_id: None, .. } => {}
     }
 }

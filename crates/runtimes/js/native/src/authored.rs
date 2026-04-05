@@ -683,6 +683,7 @@ fn decode_config_value(path: &Path, value: &Value) -> Result<Config, LayoutConfi
         global_stylesheet_path: None,
         layout_selection: decode_layout_selection(root.get("layouts"), path)?,
         rules: decode_rules(root.get("rules"), path)?,
+        titlebars: decode_titlebars(root.get("titlebars"), path)?,
         bindings: decode_bindings(root.get("bindings"), path)?,
         autostart: decode_string_array(root.get("autostart"), path, "root.autostart")?,
         autostart_once: decode_string_array(
@@ -895,6 +896,17 @@ fn decode_rules(value: Option<&Value>, path: &Path) -> Result<Vec<WindowRule>, L
         });
     }
     Ok(rules)
+}
+
+fn decode_titlebars(
+    value: Option<&Value>,
+    path: &Path,
+) -> Result<Vec<Value>, LayoutConfigError> {
+    let Some(value) = value else {
+        return Ok(Vec::new());
+    };
+
+    expect_array(path, value, "root.titlebars").map(|entries| entries.to_vec())
 }
 
 fn decode_bindings(value: Option<&Value>, path: &Path) -> Result<Vec<Binding>, LayoutConfigError> {

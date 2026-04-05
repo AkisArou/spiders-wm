@@ -41,10 +41,7 @@ where
     model.set_current_workspace(workspace_id.clone());
     let focused_window_id = model.preferred_focus_window_on_current_workspace(window_ids);
 
-    Some(WorkspaceSelection {
-        workspace_id,
-        focused_window_id,
-    })
+    Some(WorkspaceSelection { workspace_id, focused_window_id })
 }
 
 pub fn request_select_next_workspace<I>(
@@ -100,10 +97,7 @@ pub fn fallback_master_stack_layout_tree() -> SourceLayoutNode {
         meta: LayoutNodeMeta::default(),
         children: vec![
             SourceLayoutNode::Group {
-                meta: LayoutNodeMeta {
-                    id: Some("main".into()),
-                    ..LayoutNodeMeta::default()
-                },
+                meta: LayoutNodeMeta { id: Some("main".into()), ..LayoutNodeMeta::default() },
                 children: vec![SourceLayoutNode::Slot {
                     meta: LayoutNodeMeta::default(),
                     window_match: None,
@@ -111,10 +105,7 @@ pub fn fallback_master_stack_layout_tree() -> SourceLayoutNode {
                 }],
             },
             SourceLayoutNode::Group {
-                meta: LayoutNodeMeta {
-                    id: Some("stack".into()),
-                    ..LayoutNodeMeta::default()
-                },
+                meta: LayoutNodeMeta { id: Some("stack".into()), ..LayoutNodeMeta::default() },
                 children: vec![SourceLayoutNode::Slot {
                     meta: LayoutNodeMeta::default(),
                     window_match: None,
@@ -136,6 +127,7 @@ where
             .map(|window_id| ResolvedLayoutNode::Window {
                 meta: LayoutNodeMeta::default(),
                 window_id: Some(window_id),
+                children: Vec::new(),
             })
             .collect(),
     }
@@ -155,10 +147,7 @@ mod tests {
         assert_eq!(workspace_id, WorkspaceId("1".to_string()));
         assert_eq!(model.current_workspace_id, Some(WorkspaceId("1".to_string())));
         assert_eq!(
-            model
-                .workspaces
-                .get(&WorkspaceId("1".to_string()))
-                .map(|workspace| workspace.focused),
+            model.workspaces.get(&WorkspaceId("1".to_string())).map(|workspace| workspace.focused),
             Some(true)
         );
     }
@@ -170,7 +159,8 @@ mod tests {
         ensure_workspace(&mut model, "2");
         ensure_default_workspace(&mut model, "1");
 
-        let selected = request_select_workspace(&mut model, WorkspaceId("2".to_string()), Vec::new());
+        let selected =
+            request_select_workspace(&mut model, WorkspaceId("2".to_string()), Vec::new());
 
         assert_eq!(
             selected,
@@ -181,17 +171,11 @@ mod tests {
         );
         assert_eq!(model.current_workspace_id, Some(WorkspaceId("2".to_string())));
         assert_eq!(
-            model
-                .workspaces
-                .get(&WorkspaceId("1".to_string()))
-                .map(|workspace| workspace.focused),
+            model.workspaces.get(&WorkspaceId("1".to_string())).map(|workspace| workspace.focused),
             Some(false)
         );
         assert_eq!(
-            model
-                .workspaces
-                .get(&WorkspaceId("2".to_string()))
-                .map(|workspace| workspace.visible),
+            model.workspaces.get(&WorkspaceId("2".to_string())).map(|workspace| workspace.visible),
             Some(true)
         );
     }
@@ -303,7 +287,8 @@ mod tests {
 
     #[test]
     fn fallback_master_stack_layout_tree_contains_main_and_stack_groups() {
-        let SourceLayoutNode::Workspace { children, .. } = fallback_master_stack_layout_tree() else {
+        let SourceLayoutNode::Workspace { children, .. } = fallback_master_stack_layout_tree()
+        else {
             panic!("expected workspace root");
         };
 

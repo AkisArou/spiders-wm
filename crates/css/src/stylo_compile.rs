@@ -34,10 +34,7 @@ pub(super) fn compile_stylo_declaration(
             .map_err(|_| CssParseError::InvalidSyntax { line: 1, column: 1 })?;
         let parsed = ParsedDeclaration {
             property: property.into(),
-            value: CssValue {
-                text: text.clone(),
-                components: parse_value_tokens(&text)?,
-            },
+            value: CssValue { text: text.clone(), components: parse_value_tokens(&text)? },
         };
         compile_declaration(&parsed).map_err(CssParseError::CssValue)
     }
@@ -136,25 +133,19 @@ fn compile_grid_line_side(
     } else if !value.ident.0.is_empty() {
         crate::style::GridPlacementValue::NamedLine(
             value.ident.to_css_string(),
-            if value.line_num.value() == 0 {
-                1
-            } else {
-                value.line_num.value() as i16
-            },
+            if value.line_num.value() == 0 { 1 } else { value.line_num.value() as i16 },
         )
     } else {
         crate::style::GridPlacementValue::Line(value.line_num.value() as i16)
     };
 
     let line = match property {
-        "grid-row-start" | "grid-column-start" => crate::style::Line {
-            start: placement,
-            end: crate::style::GridPlacementValue::Auto,
-        },
-        "grid-row-end" | "grid-column-end" => crate::style::Line {
-            start: crate::style::GridPlacementValue::Auto,
-            end: placement,
-        },
+        "grid-row-start" | "grid-column-start" => {
+            crate::style::Line { start: placement, end: crate::style::GridPlacementValue::Auto }
+        }
+        "grid-row-end" | "grid-column-end" => {
+            crate::style::Line { start: crate::style::GridPlacementValue::Auto, end: placement }
+        }
         _ => return Err(CssParseError::InvalidSyntax { line: 1, column: 1 }),
     };
 
@@ -207,11 +198,7 @@ fn compile_grid_auto_tracks(
     property: &str,
     value: &StyloImplicitGridTracks<StyloTrackSize<StyloLengthPercentage>>,
 ) -> Result<CompiledDeclaration, CssParseError> {
-    let tracks = value
-        .0
-        .iter()
-        .map(compile_grid_track_size)
-        .collect::<Result<Vec<_>, _>>()?;
+    let tracks = value.0.iter().map(compile_grid_track_size).collect::<Result<Vec<_>, _>>()?;
 
     Ok(match property {
         "grid-auto-rows" => CompiledDeclaration::GridAutoRows(tracks),
@@ -242,10 +229,7 @@ fn compile_grid_track_list(
         .map(|names| names.iter().map(|name| name.to_css_string()).collect())
         .collect();
 
-    Ok(crate::style::GridTemplate {
-        components,
-        line_names,
-    })
+    Ok(crate::style::GridTemplate { components, line_names })
 }
 
 fn compile_grid_track_repeat(
@@ -263,17 +247,10 @@ fn compile_grid_track_repeat(
         .iter()
         .map(|names| names.iter().map(|name| name.to_css_string()).collect())
         .collect();
-    let tracks = value
-        .track_sizes
-        .iter()
-        .map(compile_grid_track_size)
-        .collect::<Result<Vec<_>, _>>()?;
+    let tracks =
+        value.track_sizes.iter().map(compile_grid_track_size).collect::<Result<Vec<_>, _>>()?;
 
-    Ok(crate::style::GridTrackRepeat {
-        count,
-        line_names,
-        tracks,
-    })
+    Ok(crate::style::GridTrackRepeat { count, line_names, tracks })
 }
 
 fn compile_grid_track_size(
@@ -286,9 +263,9 @@ fn compile_grid_track_size(
             compile_grid_track_max_breadth(max)?,
         )),
         StyloTrackSize::FitContent(breadth) => match breadth {
-            StyloTrackBreadth::Breadth(length) => Ok(crate::style::GridTrackValue::FitContent(
-                compile_length_percentage(length)?,
-            )),
+            StyloTrackBreadth::Breadth(length) => {
+                Ok(crate::style::GridTrackValue::FitContent(compile_length_percentage(length)?))
+            }
             _ => Err(CssParseError::InvalidSyntax { line: 1, column: 1 }),
         },
     }

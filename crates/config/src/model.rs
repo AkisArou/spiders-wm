@@ -1,13 +1,20 @@
 use serde::{Deserialize, Serialize};
+use serde_json::Value as JsonValue;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use spiders_core::command::WmCommand;
+use spiders_core::runtime::layout_context::LayoutWindowContext;
 use spiders_core::runtime::prepared_layout::{PreparedLayout, SelectedLayout};
 use spiders_core::snapshot::{OutputSnapshot, StateSnapshot, WorkspaceSnapshot};
 use spiders_core::types::LayoutRef;
 use spiders_core::{LayoutSpace, ResolvedLayoutNode};
 use spiders_scene::SceneRequest;
+use spiders_titlebar_core::{
+    ResolvedTitlebarContext, resolve_titlebar_tree, select_titlebar_rule,
+    titlebar_tree_to_runtime_node,
+};
+use spiders_titlebar_core::{TitlebarRule, decode_titlebar_rules};
 use thiserror::Error;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -124,6 +131,8 @@ pub struct Config {
     #[serde(default)]
     pub rules: Vec<WindowRule>,
     #[serde(default)]
+    pub titlebars: Vec<serde_json::Value>,
+    #[serde(default)]
     pub bindings: Vec<Binding>,
     #[serde(default)]
     pub autostart: Vec<String>,
@@ -218,11 +227,11 @@ impl ConfigPaths {
             };
 
         let authored_config = authored_config_override.unwrap_or_else(|| {
-            if config_root.join("config.ts").exists() {
-                config_root.join("config.ts")
-            } else {
-                config_root.join("config.js")
-            }
+            ["config.tsx", "config.ts", "config.jsx", "config.js"]
+                .into_iter()
+                .map(|name| config_root.join(name))
+                .find(|candidate| candidate.exists())
+                .unwrap_or_else(|| config_root.join("config.ts"))
         });
         let prepared_config = cache_root.join("config.js");
 
@@ -266,6 +275,35 @@ impl Config {
 
     pub fn layout_by_name(&self, name: &str) -> Option<&LayoutDefinition> {
         self.layouts.iter().find(|layout| layout.name == name)
+    }
+
+    pub fn decode_titlebar_rules(&self) -> Result<Vec<TitlebarRule>, serde_json::Error> {
+        decode_titlebar_rules(&JsonValue::Array(self.titlebars.clone()))
+    }
+
+    pub fn resolve_titlebar_runtime_node(
+        &self,
+        window: &LayoutWindowContext,
+        workspace_name: Option<&str>,
+        slot_name: Option<&str>,
+    ) -> Result<Option<ResolvedLayoutNode>, serde_json::Error> {
+        let rules = self.decode_titlebar_rules()?;
+        if rules.is_empty() {
+            return Ok(None);
+        }
+
+        let mut context = ResolvedTitlebarContext::from(window);
+        context.workspace = workspace_name.map(str::to_string);
+        context.slot = slot_name.map(str::to_string);
+
+        let Some(rule) = select_titlebar_rule(&rules, &context) else {
+            return Ok(None);
+        };
+        if rule.disabled {
+            return Ok(None);
+        }
+
+        Ok(Some(titlebar_tree_to_runtime_node(&resolve_titlebar_tree(rule, &context))))
     }
 
     pub fn selected_layout<'a>(
@@ -351,6 +389,7 @@ impl From<&LayoutDefinition> for LayoutRef {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use spiders_core::runtime::layout_context::LayoutWindowContext;
     use spiders_core::runtime::prepared_layout::{PreparedLayout, PreparedStylesheets};
     use spiders_core::snapshot::OutputSnapshot;
     use spiders_core::types::{LayoutRef, OutputTransform};
@@ -396,6 +435,22 @@ mod tests {
                 "modules": [],
             }),
             stylesheets: PreparedStylesheets::default(),
+        }
+    }
+
+    fn layout_window_context(app_id: &str, title: &str) -> LayoutWindowContext {
+        LayoutWindowContext {
+            id: spiders_core::WindowId::from("win-1"),
+            app_id: Some(app_id.into()),
+            title: Some(title.into()),
+            class: None,
+            instance: None,
+            role: None,
+            shell: Some("xdg-toplevel".into()),
+            window_type: None,
+            floating: false,
+            fullscreen: false,
+            focused: true,
         }
     }
 
@@ -588,6 +643,74 @@ mod tests {
     }
 
     #[test]
+    fn resolve_titlebar_runtime_node_selects_and_resolves_matching_rule() {
+        let config = Config {
+            titlebars: vec![serde_json::json!({
+                "type": "titlebar",
+                "props": { "class": "default-titlebar" },
+                "children": [
+                    {
+                        "type": "titlebar.text",
+                        "props": { "class": "label" },
+                        "children": ["DEV"]
+                    }
+                ]
+            })],
+            ..Config::default()
+        };
+
+        let runtime = config
+            .resolve_titlebar_runtime_node(
+                &layout_window_context("firefox", "Mozilla Firefox"),
+                Some("code"),
+                Some("main"),
+            )
+            .expect("titlebar rules should decode")
+            .expect("a titlebar should be resolved");
+
+        match runtime {
+            ResolvedLayoutNode::Content { meta, children, .. } => {
+                assert_eq!(meta.name.as_deref(), Some("titlebar"));
+                assert_eq!(meta.class, vec!["default-titlebar"]);
+                assert_eq!(children.len(), 1);
+            }
+            other => panic!("expected content node, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn resolve_titlebar_runtime_node_returns_none_for_disabled_match() {
+        let config = Config {
+            titlebars: vec![
+                serde_json::json!({
+                    "type": "titlebar",
+                    "props": { "class": "default-titlebar" },
+                    "children": []
+                }),
+                serde_json::json!({
+                    "type": "titlebar",
+                    "props": {
+                        "when": { "appId": "foot" },
+                        "disabled": true
+                    },
+                    "children": []
+                }),
+            ],
+            ..Config::default()
+        };
+
+        let runtime = config
+            .resolve_titlebar_runtime_node(
+                &layout_window_context("foot", "Terminal"),
+                Some("code"),
+                None,
+            )
+            .expect("titlebar rules should decode");
+
+        assert!(runtime.is_none());
+    }
+
+    #[test]
     fn discovers_default_config_paths_from_home_dir() {
         let temp_dir = std::env::temp_dir();
         let home_dir = temp_dir.join("spiders-config-discovery-home");
@@ -595,7 +718,7 @@ mod tests {
         let data_dir = home_dir.join(".cache/spiders-wm");
         let _ = fs::create_dir_all(&config_dir);
         let _ = fs::create_dir_all(&data_dir);
-        fs::write(config_dir.join("config.ts"), "export default {};").unwrap();
+        fs::write(config_dir.join("config.tsx"), "export default {};").unwrap();
 
         let paths = ConfigPaths::discover(ConfigDiscoveryOptions {
             home_dir: Some(home_dir.clone()),
@@ -603,10 +726,10 @@ mod tests {
         })
         .unwrap();
 
-        assert!(paths.authored_config.ends_with(".config/spiders-wm/config.ts"));
+        assert!(paths.authored_config.ends_with(".config/spiders-wm/config.tsx"));
         assert!(paths.prepared_config.ends_with(".cache/spiders-wm/config.js"));
 
-        let _ = fs::remove_file(config_dir.join("config.ts"));
+        let _ = fs::remove_file(config_dir.join("config.tsx"));
     }
 
     #[test]

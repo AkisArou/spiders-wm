@@ -1,6 +1,8 @@
+pub mod analysis;
 pub mod compile;
 pub mod compiled;
 pub mod grid;
+pub mod language;
 pub mod parse_values;
 pub mod parsing;
 mod query;

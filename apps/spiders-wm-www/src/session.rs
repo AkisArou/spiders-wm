@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+use spiders_config::model::Config;
 use spiders_core::command::{LayoutCycleDirection, WmCommand};
 use spiders_core::effect::{
     FocusTarget, WindowToggle, WmHostEffect, WorkspaceAssignment, WorkspaceTarget,
@@ -345,7 +346,11 @@ impl PreviewSessionState {
         self.push_log(format!("Selected {to} from {from}"));
     }
 
-    pub fn apply_layout_source(&mut self, layout: spiders_core::SourceLayoutNode) {
+    pub fn apply_layout_source(
+        &mut self,
+        layout: spiders_core::SourceLayoutNode,
+        config: Option<&Config>,
+    ) {
         let layout_windows = self
             .runtime_state
             .windows
@@ -360,6 +365,8 @@ impl PreviewSessionState {
         let result = compute_runtime_layout_preview(
             &layout,
             &layout_windows,
+            config,
+            Some(&self.runtime_state.active_workspace_name),
             self.stylesheets_by_layout
                 .get(&self.runtime_state.active_layout)
                 .map(String::as_str)

@@ -143,7 +143,7 @@ fn install_preview_renderer(app_state: AppState) {
                         return;
                     }
 
-                    app_state.session.update(|state| state.apply_layout_source(layout));
+                    app_state.session.update(|state| state.apply_layout_source(layout.layout, Some(&layout.config)));
                 }
                 Err(error) => {
                     if app_state.latest_preview_request_key.get_untracked() != preview_request_key {

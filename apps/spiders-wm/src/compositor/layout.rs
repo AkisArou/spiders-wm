@@ -88,6 +88,8 @@ impl SpidersWm {
 
         if visible_window_ids.is_empty() {
             self.model.set_focus_tree(None);
+            self.titlebar_layout.snapshot_root = None;
+            self.titlebar_overlays.clear();
             debug!("wm relayout skipped because there are no visible windows");
             return None;
         }
@@ -112,6 +114,7 @@ impl SpidersWm {
             if let Some(fullscreen_window_id) = fullscreen_window_id.as_ref() {
                 let focus_root = flat_workspace_root([fullscreen_window_id.clone()]);
                 self.model.set_focus_tree(Some(&focus_root));
+                self.titlebar_layout.snapshot_root = None;
                 visible_window_ids
                     .iter()
                     .filter(|window_id| *window_id == fullscreen_window_id)
@@ -132,13 +135,17 @@ impl SpidersWm {
                 let mut targets = if tiled_window_ids.is_empty() {
                     let focus_root = flat_workspace_root(floating_window_ids.iter().cloned());
                     self.model.set_focus_tree(Some(&focus_root));
+                    self.titlebar_layout.snapshot_root = None;
                     Vec::new()
                 } else {
-                    self.scene.compute_layout_targets(
+                    let snapshot = self.scene.compute_layout_snapshot(
                         &self.config,
                         &mut self.model,
                         &tiled_window_ids,
-                    )?
+                    )?;
+                    let targets = crate::scene::adapter::scene_targets_from_snapshot(&snapshot);
+                    self.titlebar_layout.snapshot_root = Some(snapshot);
+                    targets
                 };
                 targets.extend(floating_window_ids.iter().filter_map(|window_id| {
                     self.floating_layout_target(window_id, output_geometry)
@@ -221,13 +228,18 @@ impl SpidersWm {
             }
         }
 
+        self.refresh_titlebar_overlays();
+
         self.log_managed_window_state("after relayout");
         relayout_transaction
     }
 }
 
 impl SpidersWm {
-    fn tiled_visible_window_ids(&self, visible_window_ids: &[WindowId]) -> Vec<WindowId> {
+    pub(crate) fn tiled_visible_window_ids(
+        &self,
+        visible_window_ids: &[WindowId],
+    ) -> Vec<WindowId> {
         visible_window_ids
             .iter()
             .filter(|window_id| !self.window_is_floating(window_id))

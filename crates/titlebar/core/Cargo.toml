@@ -7,6 +7,7 @@ publish.workspace = true
 
 [dependencies]
 serde.workspace = true
+serde_json.workspace = true
 spiders-core = { path = "../../core" }
 spiders-css = { path = "../../css" }
 spiders-scene = { path = "../../scene" }

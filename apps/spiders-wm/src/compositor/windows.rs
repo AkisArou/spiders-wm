@@ -1,13 +1,82 @@
 use smithay::desktop::Window;
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
+use spiders_core::command::WmCommand;
+use spiders_core::LayoutRect;
+use spiders_scene::LayoutSnapshotNode;
+use spiders_titlebar_core::{TitlebarButtonAction, titlebar_button_action_from_data};
+use spiders_titlebar_native::render_titlebar_snapshot;
 use tracing::{debug, info};
 
 use crate::actions::focus::FocusUpdate;
 use crate::frame_sync;
 use spiders_core::window_id;
-use crate::state::{ManagedWindow, SpidersWm};
+use crate::state::{ManagedWindow, NativeTitlebarHitRegion, NativeTitlebarOverlay, SpidersWm};
 
 impl SpidersWm {
+    pub(crate) fn refresh_titlebar_overlays(&mut self) {
+        let Some(root) = self.titlebar_layout.snapshot_root.as_ref() else {
+            self.titlebar_overlays.clear();
+            return;
+        };
+
+        let mut overlays = std::collections::BTreeMap::new();
+        for record in self.managed_windows() {
+            let Some(window_node) = root.find_by_window_id(&record.id) else {
+                continue;
+            };
+            let Some(titlebar) = titlebar_snapshot_node(window_node) else {
+                continue;
+            };
+            let Some(rasterized) =
+                render_titlebar_snapshot(titlebar, 1.0, self.config.options.titlebar_font.as_ref())
+            else {
+                continue;
+            };
+            overlays.insert(
+                record.id.clone(),
+                NativeTitlebarOverlay {
+                    rect: titlebar.rect(),
+                    pixels: rasterized.pixels,
+                    hit_regions: titlebar_hit_regions(titlebar),
+                },
+            );
+        }
+
+        self.titlebar_overlays = overlays;
+    }
+
+    pub(crate) fn refresh_titlebar_snapshot_and_overlays(&mut self) {
+        let visible_window_ids = self.visible_managed_window_ids();
+        let tiled_window_ids = self.tiled_visible_window_ids(&visible_window_ids);
+        let fullscreen_window_id =
+            self.model.fullscreen_window_on_current_workspace(visible_window_ids.iter().cloned());
+
+        if visible_window_ids.is_empty() || fullscreen_window_id.is_some() || tiled_window_ids.is_empty() {
+            self.titlebar_layout.snapshot_root = None;
+            self.titlebar_overlays.clear();
+            return;
+        }
+
+        self.scene.clear_cache();
+        self.titlebar_layout.snapshot_root =
+            self.scene.compute_layout_snapshot(&self.config, &mut self.model, &tiled_window_ids);
+        self.refresh_titlebar_overlays();
+    }
+
+    pub(crate) fn titlebar_action_at(
+        &self,
+        location: smithay::utils::Point<f64, smithay::utils::Logical>,
+    ) -> Option<(spiders_core::WindowId, WmCommand)> {
+        self.titlebar_overlays.iter().find_map(|(window_id, overlay)| {
+            rect_contains_point(overlay.rect, location).then(|| {
+                overlay.hit_regions.iter().find_map(|region| {
+                    rect_contains_point(region.rect, location).then(|| (window_id.clone(), region.command.clone()))
+                })
+            })
+            .flatten()
+        })
+    }
+
     pub fn close_focused_window(&mut self) {
         let closing_window_id = self.runtime().request_close_focused_window_selection().closing_window_id;
         info!(closing_window = ?closing_window_id, "wm close focused window request");
@@ -103,6 +172,7 @@ impl SpidersWm {
         let Some((window_id, window, unmap)) = window_update else {
             return;
         };
+        self.titlebar_overlays.remove(&window_id);
         let snapshot = unmap.snapshot;
         let location = self
             .element_location(&window)
@@ -175,6 +245,7 @@ impl SpidersWm {
         let window_order = self.managed_window_ids();
         let record = self.remove_managed_window_at(position);
         let window_id = record.id.clone();
+        self.titlebar_overlays.remove(&window_id);
         let mut focus_update = FocusUpdate::Unchanged;
         let mut runtime_events = Vec::new();
 
@@ -330,5 +401,120 @@ impl SpidersWm {
         self.start_relayout()
             .or_else(|| self.live_frame_sync_transaction())
             .or_else(|| Some(frame_sync::new_sync_handle(&self.event_loop)))
+    }
+}
+
+fn titlebar_snapshot_node(node: &LayoutSnapshotNode) -> Option<&LayoutSnapshotNode> {
+    node.children().iter().find(|child| {
+        matches!(child, LayoutSnapshotNode::Content { meta, .. } if meta.name.as_deref() == Some("titlebar"))
+    })
+}
+
+fn titlebar_hit_regions(node: &LayoutSnapshotNode) -> Vec<NativeTitlebarHitRegion> {
+    let mut regions = Vec::new();
+    collect_titlebar_hit_regions(node, &mut regions);
+    regions
+}
+
+fn collect_titlebar_hit_regions(node: &LayoutSnapshotNode, out: &mut Vec<NativeTitlebarHitRegion>) {
+    if let LayoutSnapshotNode::Content { meta, rect, .. } = node
+        && let Some(command) = titlebar_action_command(titlebar_button_action_from_data(&meta.data))
+    {
+        out.push(NativeTitlebarHitRegion { rect: *rect, command });
+    }
+
+    for child in node.children() {
+        collect_titlebar_hit_regions(child, out);
+    }
+}
+
+fn titlebar_action_command(action: Option<TitlebarButtonAction>) -> Option<WmCommand> {
+    match action {
+        Some(TitlebarButtonAction::Close) => Some(WmCommand::CloseFocusedWindow),
+        Some(TitlebarButtonAction::ToggleFullscreen) => Some(WmCommand::ToggleFullscreen),
+        Some(TitlebarButtonAction::ToggleFloating) => Some(WmCommand::ToggleFloating),
+        _ => None,
+    }
+}
+
+fn rect_contains_point(
+    rect: LayoutRect,
+    point: smithay::utils::Point<f64, smithay::utils::Logical>,
+) -> bool {
+    point.x >= f64::from(rect.x)
+        && point.x < f64::from(rect.x + rect.width)
+        && point.y >= f64::from(rect.y)
+        && point.y < f64::from(rect.y + rect.height)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use spiders_core::LayoutNodeMeta;
+
+    #[test]
+    fn titlebar_hit_regions_collect_button_commands_from_metadata() {
+        let mut button_meta = LayoutNodeMeta::default();
+        button_meta.name = Some("titlebar-button".into());
+        button_meta.data.insert(
+            spiders_titlebar_core::TITLEBAR_ACTION_KEY.to_string(),
+            "close".into(),
+        );
+
+        let titlebar = LayoutSnapshotNode::Content {
+            meta: LayoutNodeMeta {
+                name: Some("titlebar".into()),
+                ..LayoutNodeMeta::default()
+            },
+            rect: LayoutRect { x: 0.0, y: 0.0, width: 200.0, height: 28.0 },
+            styles: None,
+            text: None,
+            children: vec![LayoutSnapshotNode::Content {
+                meta: button_meta,
+                rect: LayoutRect { x: 8.0, y: 5.0, width: 18.0, height: 18.0 },
+                styles: None,
+                text: None,
+                children: Vec::new(),
+            }],
+        };
+
+        let hit_regions = titlebar_hit_regions(&titlebar);
+
+        assert_eq!(hit_regions.len(), 1);
+        assert_eq!(hit_regions[0].rect, LayoutRect { x: 8.0, y: 5.0, width: 18.0, height: 18.0 });
+        assert_eq!(hit_regions[0].command, WmCommand::CloseFocusedWindow);
+    }
+
+    #[test]
+    fn titlebar_snapshot_node_finds_injected_titlebar_child() {
+        let window = LayoutSnapshotNode::Window {
+            meta: LayoutNodeMeta::default(),
+            rect: LayoutRect { x: 0.0, y: 0.0, width: 800.0, height: 600.0 },
+            styles: None,
+            window_id: None,
+            children: vec![LayoutSnapshotNode::Content {
+                meta: LayoutNodeMeta {
+                    name: Some("titlebar".into()),
+                    ..LayoutNodeMeta::default()
+                },
+                rect: LayoutRect { x: 0.0, y: 0.0, width: 800.0, height: 28.0 },
+                styles: None,
+                text: None,
+                children: Vec::new(),
+            }],
+        };
+
+        let node = titlebar_snapshot_node(&window).expect("titlebar child should be found");
+
+        assert_eq!(node.meta().name.as_deref(), Some("titlebar"));
+    }
+
+    #[test]
+    fn rect_contains_point_uses_half_open_bounds() {
+        let rect = LayoutRect { x: 10.0, y: 20.0, width: 30.0, height: 40.0 };
+
+        assert!(rect_contains_point(rect, (10.0, 20.0).into()));
+        assert!(rect_contains_point(rect, (39.999, 59.999).into()));
+        assert!(!rect_contains_point(rect, (40.0, 60.0).into()));
     }
 }

@@ -903,6 +903,10 @@ mod tests {
             window_id: Some(WindowId::from(window_id)),
             axis: None,
             reverse: false,
+            layout_style: None,
+            titlebar_style: None,
+            text: None,
+            data: Default::default(),
             children: Vec::new(),
         }
     }
@@ -921,6 +925,10 @@ mod tests {
             window_id: None,
             axis: Some("horizontal".to_string()),
             reverse: false,
+            layout_style: None,
+            titlebar_style: None,
+            text: None,
+            data: Default::default(),
             children: vec![
                 PreviewSnapshotNode {
                     node_type: "group".to_string(),
@@ -935,6 +943,10 @@ mod tests {
                     window_id: None,
                     axis: Some("vertical".to_string()),
                     reverse: false,
+                    layout_style: None,
+                    titlebar_style: None,
+                    text: None,
+                    data: Default::default(),
                     children: vec![
                         window_node("win-1", 0.0, 0.0, 2553.0, 702.0),
                         window_node("win-2", 0.0, 702.0, 2553.0, 702.0),
@@ -953,6 +965,10 @@ mod tests {
                     window_id: None,
                     axis: Some("vertical".to_string()),
                     reverse: false,
+                    layout_style: None,
+                    titlebar_style: None,
+                    text: None,
+                    data: Default::default(),
                     children: vec![
                         window_node("win-3", 2553.0, 0.0, 851.0, 464.0),
                         window_node("win-4", 2553.0, 464.0, 851.0, 464.0),
@@ -998,6 +1014,10 @@ mod tests {
             window_id: None,
             axis: Some("horizontal".to_string()),
             reverse: false,
+            layout_style: None,
+            titlebar_style: None,
+            text: None,
+            data: Default::default(),
             children: vec![PreviewSnapshotNode {
                 node_type: "group".to_string(),
                 id: Some("frame".to_string()),
@@ -1011,6 +1031,10 @@ mod tests {
                 window_id: None,
                 axis: Some("horizontal".to_string()),
                 reverse: false,
+                layout_style: None,
+                titlebar_style: None,
+                text: None,
+                data: Default::default(),
                 children: vec![
                     window_node("win-1", 0.0, 0.0, 2064.0, 1440.0),
                     PreviewSnapshotNode {
@@ -1026,6 +1050,10 @@ mod tests {
                         window_id: None,
                         axis: Some("vertical".to_string()),
                         reverse: false,
+                        layout_style: None,
+                        titlebar_style: None,
+                        text: None,
+                        data: Default::default(),
                         children: vec![
                             window_node("win-2", 2064.0, 0.0, 1376.0, 480.0),
                             window_node("win-3", 2064.0, 480.0, 1376.0, 480.0),

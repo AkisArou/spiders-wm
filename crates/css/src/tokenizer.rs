@@ -22,37 +22,23 @@ pub(super) fn parse_component_values<'i, 't>(
         let component = match token.clone() {
             Token::Ident(value) => CssValueToken::Ident(value.to_string()),
             Token::QuotedString(value) => CssValueToken::String(value.to_string()),
-            Token::Number {
-                value, int_value, ..
-            } => match int_value {
+            Token::Number { value, int_value, .. } => match int_value {
                 Some(int) if int as f32 == value => CssValueToken::Integer(int as i64),
                 _ => CssValueToken::Number(value),
             },
-            Token::Percentage {
-                unit_value,
-                int_value,
-                ..
-            } => {
+            Token::Percentage { unit_value, int_value, .. } => {
                 let percent = match int_value {
                     Some(int) => int as f32,
                     None => (unit_value * 100.0 * 1_000_000.0).round() / 1_000_000.0,
                 };
                 CssValueToken::Percentage(percent)
             }
-            Token::Dimension {
-                value,
-                unit,
-                int_value,
-                ..
-            } => {
+            Token::Dimension { value, unit, int_value, .. } => {
                 let value = match int_value {
                     Some(int) if int as f32 == value => int as f32,
                     _ => value,
                 };
-                CssValueToken::Dimension(CssDimension {
-                    value,
-                    unit: unit.to_string(),
-                })
+                CssValueToken::Dimension(CssDimension { value, unit: unit.to_string() })
             }
             Token::WhiteSpace(_) | Token::Comment(_) => CssValueToken::Whitespace,
             Token::Comma => CssValueToken::Delimiter(CssDelimiter::Comma),
@@ -61,10 +47,7 @@ pub(super) fn parse_component_values<'i, 't>(
             Token::Delim(ch) => CssValueToken::Unknown(ch.to_string()),
             Token::Function(name) => {
                 let value = parser.parse_nested_block(parse_component_values)?;
-                CssValueToken::Function(CssFunction {
-                    name: name.to_string(),
-                    value,
-                })
+                CssValueToken::Function(CssFunction { name: name.to_string(), value })
             }
             Token::ParenthesisBlock => {
                 let value = parser.parse_nested_block(parse_component_values)?;
