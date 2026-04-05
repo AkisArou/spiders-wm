@@ -1,6 +1,8 @@
 use crate::compiled::CompiledStyleSheet;
 use crate::language::{StyleTarget, is_supported_attribute_key, property_spec};
 use crate::parse_stylesheet;
+use crate::query::selector_matches;
+use spiders_core::{LayoutNodeMeta, ResolvedLayoutNode};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CssRange {
@@ -95,16 +97,16 @@ struct AuthoredDeclaration {
 }
 
 pub fn analyze_stylesheet(source: &str) -> CssAnalysis {
-    let authored_rules = authored_rules(source);
-
     match parse_stylesheet(source) {
         Ok(stylesheet) => {
+            let authored_rules = authored_rules(source, Some(&stylesheet));
             let diagnostics = semantic_diagnostics(&authored_rules, &stylesheet);
             let symbols = extract_symbols(source, &authored_rules);
             let references = extract_references(&authored_rules);
             CssAnalysis { stylesheet: Some(stylesheet), diagnostics, symbols, references }
         }
         Err(error) => {
+            let authored_rules = authored_rules(source, None);
             let symbols = extract_symbols(source, &authored_rules);
             let references = extract_references(&authored_rules);
             CssAnalysis {
@@ -293,10 +295,11 @@ fn animation_name_reference_range(
         .map(|reference| reference.range)
 }
 
-fn authored_rules(source: &str) -> Vec<AuthoredRule> {
+fn authored_rules(source: &str, stylesheet: Option<&CompiledStyleSheet>) -> Vec<AuthoredRule> {
     let source_map = SourceMap::new(source);
     let mut rules = Vec::new();
     let mut offset = 0;
+    let mut style_rule_index = 0usize;
 
     while let Some(start) = skip_ws_and_comments(source, offset) {
         let Some(prelude_end) = find_top_level_token(source, start, &['{', ';']) else {
@@ -318,13 +321,20 @@ fn authored_rules(source: &str) -> Vec<AuthoredRule> {
                 authored_declarations(source, prelude_end + 1, block_end - 1, &source_map);
             let selector_start = start + leading_trimmed_len(&source[start..prelude_end]);
             let selector_end = prelude_end - trailing_trimmed_len(&source[start..prelude_end]);
+            let targets = stylesheet
+                .and_then(|stylesheet| stylesheet.rules.get(style_rule_index))
+                .map(|rule| infer_style_targets(&rule.selectors, rule.target_pseudo))
+                .unwrap_or_else(|| {
+                    vec![StyleTarget::Workspace, StyleTarget::Group, StyleTarget::Window]
+                });
             rules.push(AuthoredRule {
                 selector_text: source[selector_start..selector_end].to_string(),
                 selector_range: source_map.range(selector_start, selector_end),
                 block_range: source_map.range(start, block_end),
-                targets: infer_style_targets(prelude),
+                targets,
                 declarations,
             });
+            style_rule_index += 1;
         }
 
         offset = block_end;
@@ -446,44 +456,47 @@ fn find_top_level_colon(source: &str, start: usize, end: usize) -> Option<usize>
     None
 }
 
-fn infer_style_targets(selector_text: &str) -> Vec<StyleTarget> {
+fn infer_style_targets(
+    selectors: &selectors::parser::SelectorList<crate::LayoutSelectorImpl>,
+    target_pseudo: Option<crate::LayoutPseudoElement>,
+) -> Vec<StyleTarget> {
     let mut targets = Vec::new();
 
-    for selector in split_top_level_commas(selector_text) {
-        let selector = selector.trim().to_ascii_lowercase();
-        if selector.is_empty() {
-            continue;
-        }
-        if selector.contains("::titlebar") {
-            push_unique(&mut targets, StyleTarget::WindowTitlebar);
-            continue;
-        }
+    if matches!(target_pseudo, Some(crate::LayoutPseudoElement::Titlebar)) {
+        push_unique(&mut targets, StyleTarget::WindowTitlebar);
+        return targets;
+    }
 
-        let mut found_explicit = false;
-        if selector.contains("workspace") {
-            push_unique(&mut targets, StyleTarget::Workspace);
-            found_explicit = true;
-        }
-        if selector.contains("group") {
-            push_unique(&mut targets, StyleTarget::Group);
-            found_explicit = true;
-        }
-        if selector.contains("window") {
-            push_unique(&mut targets, StyleTarget::Window);
-            found_explicit = true;
-        }
-
-        if !found_explicit {
-            push_unique(&mut targets, StyleTarget::Workspace);
-            push_unique(&mut targets, StyleTarget::Group);
-            push_unique(&mut targets, StyleTarget::Window);
-        }
+    if selector_matches(selectors, &synthetic_workspace_node()) {
+        push_unique(&mut targets, StyleTarget::Workspace);
+    }
+    if selector_matches(selectors, &synthetic_group_node()) {
+        push_unique(&mut targets, StyleTarget::Group);
+    }
+    if selector_matches(selectors, &synthetic_window_node()) {
+        push_unique(&mut targets, StyleTarget::Window);
     }
 
     if targets.is_empty() {
         vec![StyleTarget::Workspace, StyleTarget::Group, StyleTarget::Window]
     } else {
         targets
+    }
+}
+
+fn synthetic_workspace_node() -> ResolvedLayoutNode {
+    ResolvedLayoutNode::Workspace { meta: LayoutNodeMeta::default(), children: Vec::new() }
+}
+
+fn synthetic_group_node() -> ResolvedLayoutNode {
+    ResolvedLayoutNode::Group { meta: LayoutNodeMeta::default(), children: Vec::new() }
+}
+
+fn synthetic_window_node() -> ResolvedLayoutNode {
+    ResolvedLayoutNode::Window {
+        meta: LayoutNodeMeta::default(),
+        window_id: None,
+        children: Vec::new(),
     }
 }
 
@@ -937,6 +950,21 @@ impl<'a> SourceMap<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn class_names_containing_group_do_not_become_group_targets() {
+        let analysis =
+            analyze_stylesheet(".stack-group__item { border-width: 1px; border-color: #2f3647; }");
+
+        assert!(!analysis.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == CssDiagnosticCode::InapplicableProperty
+                && diagnostic.message.contains("border-width")
+        }));
+        assert!(!analysis.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == CssDiagnosticCode::InapplicableProperty
+                && diagnostic.message.contains("border-color")
+        }));
+    }
 
     #[test]
     fn reports_titlebar_only_property_on_window_rule() {

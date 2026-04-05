@@ -4,7 +4,8 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "build": "vite build"
+    "build": "pnpm build:css-lsp-web && vite build",
+    "build:css-lsp-web": "wasm-pack build ../../../crates/css-lsp/web --target web --out-dir /home/akisarou/projects/spiders-wm/apps/spiders-wm-www/js/src/generated/css-lsp-web --out-name index"
   },
   "dependencies": {
     "monaco-editor": "catalog:"

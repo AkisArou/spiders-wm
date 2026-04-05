@@ -1,5 +1,5 @@
 use cssparser::{Parser, ParserInput, Token};
-use tower_lsp::lsp_types::{Position, Range};
+use lsp_types::{Position, Range};
 
 use spiders_css::analysis::{CssAnalysis, CssRange, CssReferenceKind, CssSymbolKind};
 

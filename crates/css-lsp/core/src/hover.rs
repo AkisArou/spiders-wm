@@ -1,9 +1,9 @@
+use lsp_types::{Hover, HoverContents, MarkupContent, MarkupKind, Position, Range};
 use spiders_css::analysis::{CssReferenceKind, CssSymbolKind, analyze_stylesheet};
 use spiders_css::language::{
     SelectorTarget, StyleTarget, SupportStatus, attribute_key_spec, property_spec,
     pseudo_class_spec, pseudo_element_spec,
 };
-use tower_lsp::lsp_types::{Hover, HoverContents, MarkupContent, MarkupKind, Position, Range};
 
 use crate::project::{ProjectIndex, ProjectSelectorKind};
 use crate::syntax::{
@@ -14,7 +14,7 @@ use crate::syntax::{
 };
 
 pub fn hover_for(
-    uri: &tower_lsp::lsp_types::Url,
+    uri: &lsp_types::Url,
     source: &str,
     position: Position,
     project_index: &ProjectIndex,
@@ -46,12 +46,12 @@ pub fn hover_for(
 }
 
 fn project_selector_hover(
-    uri: &tower_lsp::lsp_types::Url,
+    uri: &lsp_types::Url,
     source: &str,
     offset: usize,
     project_index: &ProjectIndex,
 ) -> Option<String> {
-    let path = uri.to_file_path().ok()?;
+    let path = crate::uri::path_from_url(uri)?;
     let reference = selector_reference_at_offset(source, offset)?;
 
     let kind = match reference.kind {

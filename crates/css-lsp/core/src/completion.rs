@@ -1,10 +1,10 @@
+use lsp_types::{
+    CompletionItem, CompletionItemKind, CompletionResponse, Documentation, InsertTextFormat,
+    MarkupContent, MarkupKind, Position, Url,
+};
 use spiders_css::analysis::{CssSymbolKind, analyze_stylesheet};
 use spiders_css::language::{
     attribute_key_specs, property_spec, property_specs, pseudo_class_specs, pseudo_element_specs,
-};
-use tower_lsp::lsp_types::{
-    CompletionItem, CompletionItemKind, CompletionResponse, Documentation, InsertTextFormat,
-    MarkupContent, MarkupKind, Position, Url,
 };
 
 use crate::project::ProjectIndex;
@@ -108,9 +108,7 @@ fn pseudo_class_items() -> Vec<CompletionItem> {
 }
 
 fn selector_id_items(uri: &Url, project_index: &ProjectIndex) -> Vec<CompletionItem> {
-    let ids = uri
-        .to_file_path()
-        .ok()
+    let ids = crate::uri::path_from_url(uri)
         .map(|path| project_index.ids_for_path(&path))
         .unwrap_or_else(|| project_index.ids().cloned().collect());
 
@@ -129,9 +127,7 @@ fn selector_id_items(uri: &Url, project_index: &ProjectIndex) -> Vec<CompletionI
 }
 
 fn selector_class_items(uri: &Url, project_index: &ProjectIndex) -> Vec<CompletionItem> {
-    let classes = uri
-        .to_file_path()
-        .ok()
+    let classes = crate::uri::path_from_url(uri)
         .map(|path| project_index.classes_for_path(&path))
         .unwrap_or_else(|| project_index.classes().cloned().collect());
 

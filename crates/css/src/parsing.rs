@@ -2,6 +2,7 @@ use cssparser::{
     AtRuleParser, CowRcStr, Parser, ParserInput, QualifiedRuleParser, StyleSheetParser,
 };
 
+use crate::selector_matches;
 use crate::stylo_adapter::{
     LayoutPseudoElement, LayoutSelectorImpl, LayoutSelectorParser, parse_selector_list_from_parser,
 };
@@ -11,7 +12,7 @@ use crate::compiled::{
     CompiledKeyframeStep, CompiledKeyframesRule, CompiledStyleRule, CompiledStyleSheet,
 };
 use crate::grid::parse_grid_fallback_declarations;
-use crate::language::{is_invalid_selector_target, is_supported_property};
+use crate::language::is_supported_property;
 use crate::parse_values::{CssValue, ParsedDeclaration};
 use crate::tokenizer::parse_value_tokens;
 use style::parser::ParserContext;
@@ -22,7 +23,8 @@ use style_traits::values::ToCss;
 
 struct ParsedSelectorPrelude {
     selectors: selectors::parser::SelectorList<LayoutSelectorImpl>,
-    source: String,
+    target_pseudo: Option<LayoutPseudoElement>,
+    pseudo_base_selectors: Option<selectors::parser::SelectorList<LayoutSelectorImpl>>,
 }
 
 #[derive(Debug, thiserror::Error, PartialEq)]
@@ -99,16 +101,19 @@ impl<'i> QualifiedRuleParser<'i> for LayoutCssRuleParser {
         })?;
 
         let selector = input.slice_from(start.position()).trim().to_string();
-        let trimmed = selector.trim_start();
-        let slot_type_selected = is_invalid_selector_target(trimmed)
-            || trimmed.strip_prefix("slot").and_then(|rest| rest.chars().next()).is_some_and(
-                |ch| matches!(ch, ' ' | '.' | '#' | '[' | ':' | '>' | '+' | '~' | ','),
-            );
-        if slot_type_selected {
+        let target_pseudo = selector_target_pseudo(&selector);
+        let pseudo_base_selectors =
+            selector_base_selectors(&target_pseudo, &selector).map_err(|_| {
+                input.new_custom_error(CssParseError::UnsupportedSelector {
+                    selector: selector.clone(),
+                })
+            })?;
+
+        if selector_matches_slot(&parsed) {
             return Err(input.new_custom_error(CssParseError::UnsupportedSelector { selector }));
         }
 
-        Ok(ParsedSelectorPrelude { selectors: parsed, source: selector })
+        Ok(ParsedSelectorPrelude { selectors: parsed, target_pseudo, pseudo_base_selectors })
     }
 
     fn parse_block<'t>(
@@ -134,14 +139,10 @@ impl<'i> QualifiedRuleParser<'i> for LayoutCssRuleParser {
         let declarations = compile_declarations_from_raw_block(&raw_block)
             .map_err(|error| input.new_custom_error(error))?;
 
-        let target_pseudo = selector_target_pseudo(&prelude.source);
-        let pseudo_base_selectors = selector_base_selectors(&target_pseudo, &prelude.source)
-            .map_err(|error| input.new_custom_error(error))?;
-
         Ok(CompiledStyleRule {
             selectors: prelude.selectors,
-            target_pseudo,
-            pseudo_base_selectors,
+            target_pseudo: prelude.target_pseudo,
+            pseudo_base_selectors: prelude.pseudo_base_selectors,
             declarations,
         })
     }
@@ -347,6 +348,22 @@ fn selector_base_selectors(
         .map_err(|_| CssParseError::UnsupportedSelector { selector: error_selector })
 }
 
+fn selector_matches_slot(selectors: &selectors::parser::SelectorList<LayoutSelectorImpl>) -> bool {
+    selector_matches(selectors, &synthetic_slot_node())
+}
+
+fn synthetic_slot_node() -> spiders_core::ResolvedLayoutNode {
+    spiders_core::ResolvedLayoutNode::Content {
+        meta: spiders_core::LayoutNodeMeta {
+            name: Some("slot".to_string()),
+            ..spiders_core::LayoutNodeMeta::default()
+        },
+        kind: spiders_core::RuntimeContentKind::Container,
+        text: None,
+        children: Vec::new(),
+    }
+}
+
 fn is_ignored_background_expansion(property: &str) -> bool {
     matches!(
         property,
@@ -415,4 +432,27 @@ fn needs_grid_fallback(raw_block: &str) -> bool {
         || raw_block.contains("grid-row-end:")
         || raw_block.contains("grid-column-start:")
         || raw_block.contains("grid-column-end:")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rejects_real_slot_selectors() {
+        let parsed = parse_stylesheet("slot { display: flex; }");
+        assert!(matches!(parsed, Err(CssParseError::UnsupportedSelector { .. })));
+    }
+
+    #[test]
+    fn does_not_reject_class_names_containing_slot() {
+        let parsed = parse_stylesheet(".slot-item { display: flex; }");
+        assert!(parsed.is_ok());
+    }
+
+    #[test]
+    fn keeps_window_titlebar_supported() {
+        let parsed = parse_stylesheet("window::titlebar { text-align: center; }");
+        assert!(parsed.is_ok());
+    }
 }

@@ -2,10 +2,21 @@
 import "monaco-editor/min/vs/editor/editor.main.css";
 import "monaco-editor/esm/vs/editor/editor.main.js";
 import * as monaco from "monaco-editor/esm/vs/editor/editor.api.js";
+import * as monacoCss from "monaco-editor/esm/vs/language/css/monaco.contribution.js";
 import * as monacoTypescript from "monaco-editor/esm/vs/language/typescript/monaco.contribution.js";
 import EditorWorker from "monaco-editor/esm/vs/editor/editor.worker?worker";
 import CssWorker from "monaco-editor/esm/vs/language/css/css.worker?worker";
 import TsWorker from "monaco-editor/esm/vs/language/typescript/ts.worker?worker";
+import {
+  closeCssDocument,
+  requestCssCompletion,
+  requestCssDefinition,
+  requestCssHover,
+  requestCssReferences,
+  requestCssRename,
+  syncCssDocument,
+  updateCssDocument,
+} from "./css-lsp-client";
 
 interface MonacoModel {
   path: string;
@@ -47,6 +58,7 @@ self.MonacoEnvironment = {
 };
 
 let configured = false;
+let cssLspRegistered = false;
 
 function ensureMonacoStyles() {
   const styleId = "spiders-wm-monaco-host-css";
@@ -89,6 +101,22 @@ function ensureConfigured(extraLibs: MonacoExtraLib[]) {
     });
     monacoTypescript.typescriptDefaults.setEagerModelSync(true);
 
+    monacoCss.cssDefaults.setModeConfiguration({
+      completionItems: false,
+      colors: false,
+      diagnostics: false,
+      documentFormattingEdits: false,
+      documentHighlights: false,
+      documentLinks: false,
+      documentRangeFormattingEdits: false,
+      documentSymbols: false,
+      foldingRanges: false,
+      hovers: false,
+      references: false,
+      rename: false,
+      selectionRanges: false,
+    });
+
     for (const lib of extraLibs) {
       monacoTypescript.typescriptDefaults.addExtraLib(
         lib.content,
@@ -115,6 +143,134 @@ function ensureConfigured(extraLibs: MonacoExtraLib[]) {
 
     configured = true;
   }
+
+  if (!cssLspRegistered) {
+    registerCssLspProviders();
+    cssLspRegistered = true;
+  }
+}
+
+function registerCssLspProviders() {
+  monaco.languages.registerHoverProvider("css", {
+    async provideHover(model, position) {
+      const result = await requestCssHover(model, position);
+      const hover = result as {
+        contents?: { kind?: string; value?: string } | Array<{ value?: string }>;
+        range?: {
+          start: { line: number; character: number };
+          end: { line: number; character: number };
+        };
+      } | null;
+      if (!hover?.contents) return null;
+
+      const contents = Array.isArray(hover.contents)
+        ? hover.contents.map((item) => ({ value: item.value ?? "" }))
+        : [{ value: hover.contents.value ?? "" }];
+
+      return {
+        contents,
+        range: hover.range
+          ? new monaco.Range(
+              hover.range.start.line + 1,
+              hover.range.start.character + 1,
+              hover.range.end.line + 1,
+              hover.range.end.character + 1,
+            )
+          : undefined,
+      };
+    },
+  });
+
+  monaco.languages.registerCompletionItemProvider("css", {
+    triggerCharacters: ["-", ":", ".", "#"],
+    async provideCompletionItems(model, position) {
+      const result = await requestCssCompletion(model, position);
+      const response = result as { items?: any[] } | any[] | null;
+      const items = Array.isArray(response) ? response : response?.items ?? [];
+      return {
+        suggestions: items.map((item) => ({
+          label: item.label,
+          kind: monaco.languages.CompletionItemKind.Property,
+          insertText: item.insertText ?? item.label,
+          detail: item.detail,
+          documentation:
+            typeof item.documentation === "string"
+              ? item.documentation
+              : item.documentation?.value,
+          range: undefined,
+        })),
+      };
+    },
+  });
+
+  monaco.languages.registerDefinitionProvider("css", {
+    async provideDefinition(model, position) {
+      const result = await requestCssDefinition(model, position);
+      return toMonacoLocations(result);
+    },
+  });
+
+  monaco.languages.registerReferenceProvider("css", {
+    async provideReferences(model, position) {
+      const result = await requestCssReferences(model, position);
+      return toMonacoLocations(result);
+    },
+  });
+
+  monaco.languages.registerRenameProvider("css", {
+    async provideRenameEdits(model, position, newName) {
+      const result = await requestCssRename(model, position, newName);
+      const edit = result as {
+        changes?: Record<string, Array<{ range: any; newText: string }>>;
+      } | null;
+
+      const edits: monaco.languages.IWorkspaceTextEdit[] = [];
+      for (const [uri, textEdits] of Object.entries(edit?.changes ?? {})) {
+        for (const textEdit of textEdits) {
+          edits.push({
+            resource: monaco.Uri.parse(uri),
+            textEdit: {
+              range: new monaco.Range(
+                textEdit.range.start.line + 1,
+                textEdit.range.start.character + 1,
+                textEdit.range.end.line + 1,
+                textEdit.range.end.character + 1,
+              ),
+              text: textEdit.newText,
+            },
+            versionId: undefined,
+          });
+        }
+      }
+
+      return { edits };
+    },
+    resolveRenameLocation() {
+      return null;
+    },
+  });
+}
+
+function toMonacoLocations(result: unknown) {
+  const locations = (Array.isArray(result) ? result : result ? [result] : []) as Array<{
+    uri?: string;
+    range?: {
+      start: { line: number; character: number };
+      end: { line: number; character: number };
+    };
+  }>;
+
+  return locations
+    .filter((location) => location.uri && location.range)
+    .map((location) => ({
+      uri: monaco.Uri.parse(location.uri!),
+      range: new monaco.Range(
+        location.range!.start.line + 1,
+        location.range!.start.character + 1,
+        location.range!.end.line + 1,
+        location.range!.end.character + 1,
+      ),
+    }));
 }
 
 function syncModels(handle: MonacoHostHandle, models: MonacoModel[]) {
@@ -141,6 +297,12 @@ function syncModels(handle: MonacoHostHandle, models: MonacoModel[]) {
     const existingModel = monaco.editor.getModel(uri);
     if (existingModel && existingModel.getValue() !== model.value) {
       existingModel.setValue(model.value);
+      if (model.language === "css") {
+        void updateCssDocument(existingModel);
+      }
+    }
+    if (existingModel && model.language === "css") {
+      void syncCssDocument(existingModel);
     }
   }
 
@@ -214,6 +376,9 @@ export async function createMonacoEditor(
   editor.updateOptions({ editContext: false });
   if (fileBackedModel) {
     editor.setModel(fileBackedModel);
+    if (fileBackedModel.getLanguageId() === "css") {
+      void syncCssDocument(fileBackedModel);
+    }
   }
 
   const handle: MonacoHostHandle = {
@@ -230,7 +395,12 @@ export async function createMonacoEditor(
 
   handle.changeDisposable = editor.onDidChangeModelContent(() => {
     const model = editor.getModel();
-    if (model) onChange(model.uri.toString(), model.getValue());
+    if (model) {
+      onChange(model.uri.toString(), model.getValue());
+      if (model.getLanguageId() === "css") {
+        void updateCssDocument(model);
+      }
+    }
   });
   handle.openerDisposable = monaco.editor.registerEditorOpener({
     openCodeEditor(_source, resource, selectionOrPosition) {
@@ -276,6 +446,12 @@ export function monacoMarkerCount(handle: MonacoHostHandle) {
 }
 
 export function disposeMonacoEditor(handle: MonacoHostHandle) {
+  for (const path of handle.modelPaths) {
+    const model = monaco.editor.getModel(monaco.Uri.parse(path));
+    if (model?.getLanguageId() === "css") {
+      void closeCssDocument(model);
+    }
+  }
   handle.changeDisposable?.dispose();
   handle.openerDisposable?.dispose();
   handle.editor.dispose();

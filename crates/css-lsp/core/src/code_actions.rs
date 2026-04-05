@@ -1,4 +1,4 @@
-use tower_lsp::lsp_types::{
+use lsp_types::{
     CodeAction, CodeActionKind, CodeActionOrCommand, Diagnostic, NumberOrString, TextEdit, Url,
     WorkspaceEdit,
 };
@@ -11,7 +11,7 @@ pub fn code_actions_for(
     project_index: &ProjectIndex,
     diagnostics: &[Diagnostic],
 ) -> Vec<CodeActionOrCommand> {
-    let Some(path) = uri.to_file_path().ok() else {
+    let Some(path) = crate::uri::path_from_url(uri) else {
         return Vec::new();
     };
 

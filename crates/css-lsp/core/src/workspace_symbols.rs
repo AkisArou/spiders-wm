@@ -1,4 +1,4 @@
-use tower_lsp::lsp_types::{Location, SymbolInformation, SymbolKind};
+use lsp_types::{Location, SymbolInformation, SymbolKind};
 
 use crate::project::{ProjectIndex, ProjectSelectorKind};
 use crate::ranking::similarity_score;

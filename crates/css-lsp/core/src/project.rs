@@ -1,13 +1,13 @@
 use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
+use lsp_types::{Location, Range, Url};
 use oxc::allocator::Allocator;
 use oxc::ast::ast::{
     Expression, JSXAttributeItem, JSXAttributeName, JSXAttributeValue, JSXElementName, Program,
 };
 use oxc::parser::Parser;
 use oxc::span::SourceType;
-use tower_lsp::lsp_types::{Location, Range, Url};
 
 use crate::syntax::range_for;
 
@@ -171,7 +171,7 @@ impl ProjectIndex {
         let mut symbols = Vec::new();
 
         for (path, file) in &self.selector_files {
-            let Ok(uri) = Url::from_file_path(path) else {
+            let Some(uri) = crate::uri::url_from_path(path) else {
                 continue;
             };
 
@@ -221,7 +221,7 @@ impl ProjectIndex {
         paths
             .into_iter()
             .filter_map(|path| {
-                let uri = Url::from_file_path(&path).ok()?;
+                let uri = crate::uri::url_from_path(&path)?;
                 let source = self.stylesheet_sources.get(&path)?.clone();
                 Some((uri, source))
             })
@@ -276,7 +276,7 @@ impl ProjectIndex {
         let mut locations = Vec::new();
 
         for path in files {
-            let Ok(uri) = Url::from_file_path(path) else {
+            let Some(uri) = crate::uri::url_from_path(path) else {
                 continue;
             };
             let Some(file) = self.selector_files.get(path) else {

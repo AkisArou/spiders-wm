@@ -1,9 +1,9 @@
 use std::path::Path;
 
+use lsp_types::{Diagnostic, DiagnosticSeverity, NumberOrString, Position, Range, Url};
 use spiders_css::analysis::{
     CssDiagnostic, CssDiagnosticCode, CssDiagnosticSeverity, CssSymbolKind, analyze_stylesheet,
 };
-use tower_lsp::lsp_types::{Diagnostic, DiagnosticSeverity, NumberOrString, Position, Range, Url};
 
 use crate::project::ProjectIndex;
 use crate::syntax::{position_to_offset, selector_references_in_segment};
@@ -13,15 +13,6 @@ pub fn diagnostics_for(uri: &Url, source: &str, project_index: &ProjectIndex) ->
     let mut diagnostics: Vec<_> = analysis.diagnostics.iter().map(to_lsp_diagnostic).collect();
     diagnostics.extend(project_selector_diagnostics(uri, source, &analysis, project_index));
     diagnostics
-}
-
-pub async fn publish_diagnostics(
-    client: &tower_lsp::Client,
-    uri: Url,
-    source: &str,
-    project_index: &ProjectIndex,
-) {
-    client.publish_diagnostics(uri.clone(), diagnostics_for(&uri, source, project_index), None).await;
 }
 
 fn to_lsp_diagnostic(diagnostic: &CssDiagnostic) -> Diagnostic {
@@ -71,7 +62,7 @@ fn project_selector_diagnostics(
     analysis: &spiders_css::analysis::CssAnalysis,
     project_index: &ProjectIndex,
 ) -> Vec<Diagnostic> {
-    let Ok(path) = uri.to_file_path() else {
+    let Some(path) = crate::uri::path_from_url(uri) else {
         return Vec::new();
     };
     if project_index.is_empty() {
@@ -134,7 +125,10 @@ fn selector_reference_diagnostics(
                         reference.start,
                         reference.end,
                         "unknown-selector-id",
-                        format!("unknown selector id `#{}` in authored TSX layouts", reference.name),
+                        format!(
+                            "unknown selector id `#{}` in authored TSX layouts",
+                            reference.name
+                        ),
                     ));
                 }
             }
@@ -221,8 +215,11 @@ mod tests {
             &project_index,
         );
 
-        assert!(diagnostics.iter().any(|diagnostic| diagnostic.code == Some(NumberOrString::String("unknown-selector-id".to_string()))));
-        assert!(diagnostics.iter().any(|diagnostic| diagnostic.code == Some(NumberOrString::String("unknown-selector-class".to_string())) && diagnostic.message.contains(".stack")));
+        assert!(diagnostics.iter().any(|diagnostic| diagnostic.code
+            == Some(NumberOrString::String("unknown-selector-id".to_string()))));
+        assert!(diagnostics.iter().any(|diagnostic| diagnostic.code
+            == Some(NumberOrString::String("unknown-selector-class".to_string()))
+            && diagnostic.message.contains(".stack")));
         assert!(!diagnostics.iter().any(|diagnostic| diagnostic.message.contains(".shell")));
         assert!(!diagnostics.iter().any(|diagnostic| diagnostic.message.contains("#ignored")));
     }

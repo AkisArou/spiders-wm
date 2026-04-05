@@ -1,5 +1,5 @@
+use lsp_types::{DocumentSymbol, Position, Range, SymbolKind};
 use spiders_css::analysis::{CssRange, CssSymbolKind, analyze_stylesheet};
-use tower_lsp::lsp_types::{DocumentSymbol, Position, Range, SymbolKind};
 
 pub fn document_symbols_for(source: &str) -> Vec<DocumentSymbol> {
     let analysis = analyze_stylesheet(source);

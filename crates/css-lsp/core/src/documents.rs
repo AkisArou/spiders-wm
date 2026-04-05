@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use tower_lsp::lsp_types::Url;
+use lsp_types::Url;
 
 #[derive(Debug, Default)]
 pub struct DocumentStore {

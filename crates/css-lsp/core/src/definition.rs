@@ -1,5 +1,5 @@
+use lsp_types::{GotoDefinitionResponse, Location, Position, Url};
 use spiders_css::analysis::{CssReferenceKind, CssSymbolKind, analyze_stylesheet};
-use tower_lsp::lsp_types::{GotoDefinitionResponse, Location, Position, Url};
 
 use crate::project::{ProjectIndex, ProjectSelectorKind};
 use crate::syntax::{
@@ -16,7 +16,7 @@ pub fn definition_for(
     let offset = position_to_offset(source, position)?;
 
     if let Some(reference) = selector_reference_at_offset(source, offset) {
-        let path = uri.to_file_path().ok()?;
+        let path = crate::uri::path_from_url(uri)?;
         let locations = project_index.selector_definitions(
             // fallback kept for non-scoped callers if needed later
             match reference.kind {

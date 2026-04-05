@@ -1,5 +1,5 @@
 use spiders_css::analysis::{CssReferenceKind, CssSymbolKind, analyze_stylesheet};
-use tower_lsp::lsp_types::{Position, TextEdit, Url, WorkspaceEdit};
+use lsp_types::{Position, TextEdit, Url, WorkspaceEdit};
 
 use crate::project::{ProjectIndex, ProjectSelectorKind};
 use crate::references::references_for;
@@ -17,7 +17,7 @@ pub fn rename_for(
 ) -> Option<WorkspaceEdit> {
     let analysis = analyze_stylesheet(source);
     let offset = position_to_offset(source, position)?;
-    let path = uri.to_file_path().ok();
+    let path = crate::uri::path_from_url(uri);
 
     if let Some(path) = path.as_deref()
         && let Some(selector) = project_index.selector_at(path, offset)

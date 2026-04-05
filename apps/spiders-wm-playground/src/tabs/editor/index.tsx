@@ -192,7 +192,9 @@ export function EditorPane({
   const pendingNavigationRef = useRef<PendingNavigation | null>(null);
   const [tabContextMenu, setTabContextMenu] =
     useState<TabContextMenuState | null>(null);
-  const [copyFeedback, setCopyFeedback] = useState<"idle" | "copied" | "failed">("idle");
+  const [copyFeedback, setCopyFeedback] = useState<
+    "idle" | "copied" | "failed"
+  >("idle");
   const copyFeedbackTimeoutRef = useRef<number | null>(null);
   const filesById = Object.fromEntries(
     files.map((file) => [file.id, file]),
