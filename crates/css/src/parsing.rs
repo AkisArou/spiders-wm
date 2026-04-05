@@ -1,6 +1,8 @@
 use cssparser::{
     AtRuleParser, CowRcStr, Parser, ParserInput, QualifiedRuleParser, StyleSheetParser,
+    ToCss as CssParserToCss,
 };
+use selectors::parser::{Combinator, Component, Selector};
 
 use crate::selector_matches;
 use crate::stylo_adapter::{
@@ -101,9 +103,9 @@ impl<'i> QualifiedRuleParser<'i> for LayoutCssRuleParser {
         })?;
 
         let selector = input.slice_from(start.position()).trim().to_string();
-        let target_pseudo = selector_target_pseudo(&selector);
+        let target_pseudo = selector_target_pseudo(&parsed);
         let pseudo_base_selectors =
-            selector_base_selectors(&target_pseudo, &selector).map_err(|_| {
+            selector_base_selectors(&parsed, target_pseudo).map_err(|_| {
                 input.new_custom_error(CssParseError::UnsupportedSelector {
                     selector: selector.clone(),
                 })
@@ -228,7 +230,9 @@ fn compile_declarations_from_raw_block(
         declarations.push(compiled);
     }
 
-    if raw_block.contains("appearance:")
+    let fallback_declarations = fallback_declarations(raw_block)?;
+
+    if fallback_declarations.iter().any(|declaration| declaration.property == "appearance")
         && !declarations.iter().any(|declaration| {
             matches!(declaration, crate::compile::CompiledDeclaration::Appearance(_))
         })
@@ -239,7 +243,7 @@ fn compile_declarations_from_raw_block(
         }));
     }
 
-    if raw_block.contains("background:")
+    if fallback_declarations.iter().any(|declaration| declaration.property == "background")
         && !declarations.iter().any(|declaration| {
             matches!(declaration, crate::compile::CompiledDeclaration::Background(_))
         })
@@ -250,17 +254,21 @@ fn compile_declarations_from_raw_block(
         }));
     }
 
-    if raw_block.contains("border-color:")
+    if fallback_declarations.iter().any(|declaration| declaration.property == "border-color")
         && !declarations.iter().any(|declaration| {
             matches!(declaration, crate::compile::CompiledDeclaration::BorderColor(_))
         })
     {
-        append_raw_property_fallbacks(raw_block, &mut declarations, &["border-color"])?;
+        append_fallback_declarations(&fallback_declarations, &mut declarations, &["border-color"])?;
     }
 
-    append_raw_property_fallbacks(raw_block, &mut declarations, &["border-radius", "box-shadow"])?;
+    append_fallback_declarations(
+        &fallback_declarations,
+        &mut declarations,
+        &["border-radius", "box-shadow"],
+    )?;
 
-    if declarations.is_empty() && needs_grid_fallback(raw_block) {
+    if declarations.is_empty() && needs_grid_fallback(&fallback_declarations) {
         declarations = parse_grid_fallback_declarations(raw_block)?;
     }
 
@@ -327,25 +335,43 @@ fn matching_brace_end(input: &str, open_brace: usize) -> Option<usize> {
     None
 }
 
-fn selector_target_pseudo(selector: &str) -> Option<LayoutPseudoElement> {
-    if selector.contains("::titlebar") { Some(LayoutPseudoElement::Titlebar) } else { None }
+fn selector_target_pseudo(
+    selectors: &selectors::parser::SelectorList<LayoutSelectorImpl>,
+) -> Option<LayoutPseudoElement> {
+    let mut found_titlebar = false;
+
+    for selector in selectors.slice() {
+        match selector.pseudo_element() {
+            Some(LayoutPseudoElement::Titlebar) => found_titlebar = true,
+            None => {}
+        }
+    }
+
+    found_titlebar.then_some(LayoutPseudoElement::Titlebar)
 }
 
 fn selector_base_selectors(
-    target_pseudo: &Option<LayoutPseudoElement>,
-    selector: &str,
+    selectors: &selectors::parser::SelectorList<LayoutSelectorImpl>,
+    target_pseudo: Option<LayoutPseudoElement>,
 ) -> Result<Option<selectors::parser::SelectorList<LayoutSelectorImpl>>, CssParseError> {
     let Some(LayoutPseudoElement::Titlebar) = target_pseudo else {
         return Ok(None);
     };
 
-    let stripped = selector.replace("::titlebar", "");
-    let error_selector = stripped.clone();
-    let mut input = ParserInput::new(&stripped);
+    let base_selectors = selectors
+        .slice()
+        .iter()
+        .map(strip_titlebar_from_selector)
+        .collect::<Option<Vec<_>>>()
+        .ok_or_else(|| CssParseError::UnsupportedSelector { selector: "::titlebar".to_string() })?;
+
+    let joined = base_selectors.join(", ");
+    let mut input = ParserInput::new(&joined);
     let mut parser_input = Parser::new(&mut input);
-    parse_selector_list_from_parser(&LayoutSelectorParser, &mut parser_input)
-        .map(Some)
-        .map_err(|_| CssParseError::UnsupportedSelector { selector: error_selector })
+    let parsed = parse_selector_list_from_parser(&LayoutSelectorParser, &mut parser_input)
+        .map_err(|_| CssParseError::UnsupportedSelector { selector: joined.clone() })?;
+
+    Ok(Some(parsed))
 }
 
 fn selector_matches_slot(selectors: &selectors::parser::SelectorList<LayoutSelectorImpl>) -> bool {
@@ -362,6 +388,20 @@ fn synthetic_slot_node() -> spiders_core::ResolvedLayoutNode {
         text: None,
         children: Vec::new(),
     }
+}
+
+fn strip_titlebar_from_selector(selector: &Selector<LayoutSelectorImpl>) -> Option<String> {
+    let mut out = String::new();
+
+    for component in selector.iter_raw_parse_order_from(0) {
+        match component {
+            Component::PseudoElement(LayoutPseudoElement::Titlebar) => continue,
+            Component::Combinator(Combinator::PseudoElement) => continue,
+            other => other.to_css(&mut out).ok()?,
+        }
+    }
+
+    Some(out)
 }
 
 fn is_ignored_background_expansion(property: &str) -> bool {
@@ -382,16 +422,12 @@ fn is_ignored_background_expansion(property: &str) -> bool {
     )
 }
 
-fn append_raw_property_fallbacks(
-    raw_block: &str,
+fn append_fallback_declarations(
+    fallback_declarations: &[ParsedDeclaration],
     declarations: &mut Vec<crate::compile::CompiledDeclaration>,
     properties: &[&str],
 ) -> Result<(), CssParseError> {
     for property in properties {
-        if !raw_block.contains(&format!("{property}:")) {
-            continue;
-        }
-
         let property_name = *property;
         let already_present =
             declarations.iter().any(|declaration| match (property_name, declaration) {
@@ -404,12 +440,13 @@ fn append_raw_property_fallbacks(
             continue;
         }
 
-        if let Some(value) = extract_raw_property_value(raw_block, property_name) {
-            let compiled = compile_declaration_from_value(
-                property_name,
-                &CssValue { text: value.clone(), components: parse_value_tokens(&value)? },
-            )
-            .map_err(CssParseError::CssValue)?;
+        if let Some(value) = fallback_declarations
+            .iter()
+            .find(|declaration| declaration.property == property_name)
+            .map(|declaration| declaration.value.clone())
+        {
+            let compiled = compile_declaration_from_value(property_name, &value)
+                .map_err(CssParseError::CssValue)?;
             declarations.push(compiled);
         }
     }
@@ -417,21 +454,192 @@ fn append_raw_property_fallbacks(
     Ok(())
 }
 
-fn extract_raw_property_value(raw_block: &str, property: &str) -> Option<String> {
-    raw_block
-        .split(';')
-        .filter_map(|declaration| declaration.split_once(':'))
-        .find_map(|(name, value)| (name.trim() == property).then(|| value.trim().to_string()))
+fn needs_grid_fallback(fallback_declarations: &[ParsedDeclaration]) -> bool {
+    fallback_declarations.iter().any(|declaration| {
+        matches!(
+            declaration.property.as_str(),
+            "grid-template-rows"
+                | "grid-template-columns"
+                | "grid-template-areas"
+                | "grid-row"
+                | "grid-column"
+                | "grid-row-start"
+                | "grid-row-end"
+                | "grid-column-start"
+                | "grid-column-end"
+                | "grid-auto-rows"
+                | "grid-auto-columns"
+                | "grid-auto-flow"
+        )
+    })
 }
 
-fn needs_grid_fallback(raw_block: &str) -> bool {
-    raw_block.contains("grid-template-")
-        || raw_block.contains("grid-row:")
-        || raw_block.contains("grid-column:")
-        || raw_block.contains("grid-row-start:")
-        || raw_block.contains("grid-row-end:")
-        || raw_block.contains("grid-column-start:")
-        || raw_block.contains("grid-column-end:")
+fn fallback_declarations(raw_block: &str) -> Result<Vec<ParsedDeclaration>, CssParseError> {
+    let mut declarations = Vec::new();
+    let mut start = 0usize;
+    let mut offset = 0usize;
+    let mut paren_depth = 0i32;
+    let mut bracket_depth = 0i32;
+    let bytes = raw_block.as_bytes();
+
+    while offset < raw_block.len() {
+        if let Some(comment_end) = starts_comment(bytes, offset) {
+            offset = comment_end;
+            continue;
+        }
+        if let Some(string_end) = starts_string(raw_block, offset) {
+            offset = string_end;
+            continue;
+        }
+
+        match bytes[offset] {
+            b'(' => paren_depth += 1,
+            b')' => paren_depth -= 1,
+            b'[' => bracket_depth += 1,
+            b']' => bracket_depth -= 1,
+            b';' if paren_depth == 0 && bracket_depth == 0 => {
+                if let Some(declaration) =
+                    parse_fallback_declaration_segment(raw_block, start, offset)?
+                {
+                    declarations.push(declaration);
+                }
+                start = offset + 1;
+            }
+            _ => {}
+        }
+
+        offset += 1;
+    }
+
+    if let Some(declaration) =
+        parse_fallback_declaration_segment(raw_block, start, raw_block.len())?
+    {
+        declarations.push(declaration);
+    }
+
+    Ok(declarations)
+}
+
+fn parse_fallback_declaration_segment(
+    raw_block: &str,
+    start: usize,
+    end: usize,
+) -> Result<Option<ParsedDeclaration>, CssParseError> {
+    let Some(trimmed_start) = skip_ws_and_comments(raw_block, start, end) else {
+        return Ok(None);
+    };
+    let segment = &raw_block[trimmed_start..end];
+    let trimmed_end = end - trailing_trimmed_len(segment);
+    if trimmed_start >= trimmed_end {
+        return Ok(None);
+    }
+
+    let Some(colon) = find_top_level_colon(raw_block, trimmed_start, trimmed_end) else {
+        return Ok(None);
+    };
+    let property = raw_block[trimmed_start..colon].trim().to_ascii_lowercase();
+    if property.is_empty() {
+        return Ok(None);
+    }
+
+    let value_text = raw_block[colon + 1..trimmed_end].trim().to_string();
+    let components = parse_value_tokens(&value_text)?;
+
+    Ok(Some(ParsedDeclaration { property, value: CssValue { text: value_text, components } }))
+}
+
+fn find_top_level_colon(source: &str, start: usize, end: usize) -> Option<usize> {
+    let mut offset = start;
+    let mut paren_depth = 0i32;
+    let mut bracket_depth = 0i32;
+    let bytes = source.as_bytes();
+
+    while offset < end {
+        if let Some(comment_end) = starts_comment(bytes, offset) {
+            offset = comment_end;
+            continue;
+        }
+        if let Some(string_end) = starts_string(source, offset) {
+            offset = string_end;
+            continue;
+        }
+
+        match bytes[offset] {
+            b'(' => paren_depth += 1,
+            b')' => paren_depth -= 1,
+            b'[' => bracket_depth += 1,
+            b']' => bracket_depth -= 1,
+            b':' if paren_depth == 0 && bracket_depth == 0 => return Some(offset),
+            _ => {}
+        }
+
+        offset += 1;
+    }
+
+    None
+}
+
+fn starts_comment(bytes: &[u8], offset: usize) -> Option<usize> {
+    if bytes.get(offset) == Some(&b'/') && bytes.get(offset + 1) == Some(&b'*') {
+        let mut end = offset + 2;
+        while end + 1 < bytes.len() {
+            if bytes[end] == b'*' && bytes[end + 1] == b'/' {
+                return Some(end + 2);
+            }
+            end += 1;
+        }
+        return Some(bytes.len());
+    }
+
+    None
+}
+
+fn starts_string(source: &str, offset: usize) -> Option<usize> {
+    let quote = match source.as_bytes().get(offset) {
+        Some(b'\'') => b'\'',
+        Some(b'"') => b'"',
+        _ => return None,
+    };
+
+    let mut escaped = false;
+    let mut index = offset + 1;
+    let bytes = source.as_bytes();
+
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if escaped {
+            escaped = false;
+        } else if byte == b'\\' {
+            escaped = true;
+        } else if byte == quote {
+            return Some(index + 1);
+        }
+        index += 1;
+    }
+
+    Some(bytes.len())
+}
+
+fn trailing_trimmed_len(input: &str) -> usize {
+    input.len() - input.trim_end().len()
+}
+
+fn skip_ws_and_comments(source: &str, mut offset: usize, end: usize) -> Option<usize> {
+    let bytes = source.as_bytes();
+
+    while offset < end {
+        if bytes[offset].is_ascii_whitespace() {
+            offset += 1;
+            continue;
+        }
+        if let Some(comment_end) = starts_comment(bytes, offset) {
+            offset = comment_end.min(end);
+            continue;
+        }
+        return Some(offset);
+    }
+
+    None
 }
 
 #[cfg(test)]
@@ -454,5 +662,17 @@ mod tests {
     fn keeps_window_titlebar_supported() {
         let parsed = parse_stylesheet("window::titlebar { text-align: center; }");
         assert!(parsed.is_ok());
+    }
+
+    #[test]
+    fn fallback_property_scan_ignores_comments_and_strings() {
+        let parsed = fallback_declarations(
+            "color: red; /* border-color: hotpink; */ background: rgb(1, 2, 3);",
+        )
+        .unwrap();
+
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0].property, "color");
+        assert_eq!(parsed[1].property, "background");
     }
 }
