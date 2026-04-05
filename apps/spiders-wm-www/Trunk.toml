@@ -1,5 +1,16 @@
 [build]
 target = "index.html"
 
+[watch]
+ignore = ["js/dist", "js/node_modules"]
+
+[[hooks]]
+stage = "pre_build"
+command = "sh"
+command_arguments = [
+  "-lc",
+  "cd js && pnpm build",
+]
+
 [tools]
 tailwindcss = "4.2.2"

@@ -25,7 +25,7 @@ struct MonacoModel {
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct MonacoExtraLib {
-  file_path: String,
+    file_path: String,
     content: &'static str,
 }
 
@@ -34,7 +34,7 @@ fn monaco_models(buffers: &BTreeMap<EditorFileId, String>) -> Vec<MonacoModel> {
         .iter()
         .map(|file| MonacoModel {
             path: model_path(file.id).to_string(),
-            language: monaco_language(file.id).to_string(),
+            language: monaco_language(file.language).to_string(),
             value: buffers
                 .get(&file.id)
                 .cloned()
@@ -43,21 +43,19 @@ fn monaco_models(buffers: &BTreeMap<EditorFileId, String>) -> Vec<MonacoModel> {
         .collect()
 }
 
-fn monaco_language(file_id: EditorFileId) -> &'static str {
-    match file_id {
-        EditorFileId::RootCss
-        | EditorFileId::LayoutCss
-        | EditorFileId::FocusReproLayoutCss => "css",
+fn monaco_language(language: &str) -> &'static str {
+    match language {
+        "css" => "css",
         _ => "typescript",
     }
 }
 
 fn sdk_type_libs() -> Vec<MonacoExtraLib> {
-  let workspace_node_modules = format!("{WORKSPACE_FS_ROOT}/node_modules/@spiders-wm/sdk");
+    let workspace_node_modules = format!("file://{WORKSPACE_FS_ROOT}/node_modules/@spiders-wm/sdk");
 
     vec![
         MonacoExtraLib {
-      file_path: format!("{workspace_node_modules}/index.d.ts"),
+            file_path: format!("{workspace_node_modules}/index.d.ts"),
             content: concat!(
                 "export * from \"./api\";\n",
                 "export * from \"./commands\";\n",
@@ -70,36 +68,36 @@ fn sdk_type_libs() -> Vec<MonacoExtraLib> {
             ),
         },
         MonacoExtraLib {
-          file_path: format!("{workspace_node_modules}/api.d.ts"),
-        content: include_str!("../../../../../packages/sdk/js/src/api.d.ts"),
+            file_path: format!("{workspace_node_modules}/api.d.ts"),
+            content: include_str!("../../../../../packages/sdk/js/src/api.d.ts"),
         },
         MonacoExtraLib {
-          file_path: format!("{workspace_node_modules}/commands.d.ts"),
-        content: include_str!("../../../../../packages/sdk/js/src/commands.d.ts"),
+            file_path: format!("{workspace_node_modules}/commands.d.ts"),
+            content: include_str!("../../../../../packages/sdk/js/src/commands.d.ts"),
         },
         MonacoExtraLib {
-          file_path: format!("{workspace_node_modules}/config.d.ts"),
-        content: include_str!("../../../../../packages/sdk/js/src/config.d.ts"),
+            file_path: format!("{workspace_node_modules}/config.d.ts"),
+            content: include_str!("../../../../../packages/sdk/js/src/config.d.ts"),
         },
         MonacoExtraLib {
-          file_path: format!("{workspace_node_modules}/css.d.ts"),
-        content: include_str!("../../../../../packages/sdk/js/src/css.d.ts"),
+            file_path: format!("{workspace_node_modules}/css.d.ts"),
+            content: include_str!("../../../../../packages/sdk/js/src/css.d.ts"),
         },
         MonacoExtraLib {
-          file_path: format!("{workspace_node_modules}/jsx-dev-runtime.d.ts"),
-        content: include_str!("../../../../../packages/sdk/js/src/jsx-dev-runtime.d.ts"),
+            file_path: format!("{workspace_node_modules}/jsx-dev-runtime.d.ts"),
+            content: include_str!("../../../../../packages/sdk/js/src/jsx-dev-runtime.d.ts"),
         },
         MonacoExtraLib {
-          file_path: format!("{workspace_node_modules}/jsx-runtime.d.ts"),
-        content: include_str!("../../../../../packages/sdk/js/src/jsx-runtime.d.ts"),
+            file_path: format!("{workspace_node_modules}/jsx-runtime.d.ts"),
+            content: include_str!("../../../../../packages/sdk/js/src/jsx-runtime.d.ts"),
         },
         MonacoExtraLib {
-          file_path: format!("{workspace_node_modules}/layout.d.ts"),
-        content: include_str!("../../../../../packages/sdk/js/src/layout.d.ts"),
+            file_path: format!("{workspace_node_modules}/layout.d.ts"),
+            content: include_str!("../../../../../packages/sdk/js/src/layout.d.ts"),
         },
         MonacoExtraLib {
-          file_path: format!("{workspace_node_modules}/titlebar.d.ts"),
-        content: include_str!("../../../../../packages/sdk/js/src/titlebar.d.ts"),
+            file_path: format!("{workspace_node_modules}/titlebar.d.ts"),
+            content: include_str!("../../../../../packages/sdk/js/src/titlebar.d.ts"),
         },
     ]
 }
@@ -113,299 +111,7 @@ mod wasm {
 
     use super::{MonacoModel, sdk_type_libs};
 
-    #[wasm_bindgen(inline_js = r##"
-let monacoPromise;
-let monacoConfigured = false;
-const monacoTheme = "spiders-terminal";
-const monacoCdnRoot = "https://cdn.jsdelivr.net/npm/monaco-editor@0.52.2/+esm";
-const workspaceRootUri = "file:///home/demo/.config/spiders-wm";
-const monacoWorkerUrls = {
-  default: "https://cdn.jsdelivr.net/npm/monaco-editor@0.52.2/esm/vs/editor/editor.worker.js/+esm",
-  css: "https://cdn.jsdelivr.net/npm/monaco-editor@0.52.2/esm/vs/language/css/css.worker.js/+esm",
-  html: "https://cdn.jsdelivr.net/npm/monaco-editor@0.52.2/esm/vs/language/html/html.worker.js/+esm",
-  handlebars: "https://cdn.jsdelivr.net/npm/monaco-editor@0.52.2/esm/vs/language/html/html.worker.js/+esm",
-  javascript: "https://cdn.jsdelivr.net/npm/monaco-editor@0.52.2/esm/vs/language/typescript/ts.worker.js/+esm",
-  json: "https://cdn.jsdelivr.net/npm/monaco-editor@0.52.2/esm/vs/language/json/json.worker.js/+esm",
-  less: "https://cdn.jsdelivr.net/npm/monaco-editor@0.52.2/esm/vs/language/css/css.worker.js/+esm",
-  razor: "https://cdn.jsdelivr.net/npm/monaco-editor@0.52.2/esm/vs/language/html/html.worker.js/+esm",
-  scss: "https://cdn.jsdelivr.net/npm/monaco-editor@0.52.2/esm/vs/language/css/css.worker.js/+esm",
-  typescript: "https://cdn.jsdelivr.net/npm/monaco-editor@0.52.2/esm/vs/language/typescript/ts.worker.js/+esm",
-};
-const monacoWorkerCache = new Map();
-
-function rawExtraLibs(extraLibs) {
-  return Array.isArray(extraLibs) ? extraLibs : [];
-}
-
-function ensureMonacoEnvironment() {
-  if (globalThis.MonacoEnvironment?.getWorker) {
-    return;
-  }
-
-  globalThis.MonacoEnvironment = {
-    getWorker(_workerId, label) {
-      const workerUrl = monacoWorkerUrls[label] ?? monacoWorkerUrls.default;
-      let blobUrl = monacoWorkerCache.get(workerUrl);
-
-      if (!blobUrl) {
-        const blob = new Blob([`import "${workerUrl}";`], {
-          type: "text/javascript",
-        });
-        blobUrl = URL.createObjectURL(blob);
-        monacoWorkerCache.set(workerUrl, blobUrl);
-      }
-
-      return new Worker(blobUrl, { type: "module" });
-    },
-  };
-}
-
-async function loadMonaco() {
-  if (!monacoPromise) {
-    ensureMonacoEnvironment();
-    monacoPromise = import(monacoCdnRoot);
-  }
-
-  return monacoPromise;
-}
-
-function ensureConfigured(monaco, extraLibs) {
-  if (!monacoConfigured) {
-    const moduleResolutionKind =
-      monaco.languages.typescript.ModuleResolutionKind.Bundler ??
-      monaco.languages.typescript.ModuleResolutionKind.NodeJs;
-
-    monaco.languages.typescript.typescriptDefaults.setCompilerOptions({
-      allowJs: true,
-      allowImportingTsExtensions: true,
-      allowNonTsExtensions: true,
-      allowSyntheticDefaultImports: true,
-      baseUrl: workspaceRootUri,
-      esModuleInterop: true,
-      jsx: monaco.languages.typescript.JsxEmit.ReactJSX,
-      jsxImportSource: "@spiders-wm/sdk",
-      module: monaco.languages.typescript.ModuleKind.ESNext,
-      moduleResolution: moduleResolutionKind,
-      paths: {
-        "@spiders-wm/sdk": ["./node_modules/@spiders-wm/sdk/index.d.ts"],
-        "@spiders-wm/sdk/*": ["./node_modules/@spiders-wm/sdk/*"],
-      },
-      resolveJsonModule: true,
-      target: monaco.languages.typescript.ScriptTarget.ES2022,
-    });
-
-    monaco.languages.typescript.typescriptDefaults.setDiagnosticsOptions({
-      noSemanticValidation: false,
-      noSyntaxValidation: false,
-    });
-
-    monaco.languages.typescript.typescriptDefaults.setEagerModelSync(true);
-
-    for (const lib of rawExtraLibs(extraLibs)) {
-      monaco.languages.typescript.typescriptDefaults.addExtraLib(
-        lib.content,
-        lib.filePath,
-      );
-    }
-
-    monacoConfigured = true;
-  }
-
-  monaco.editor.defineTheme(monacoTheme, {
-    base: "vs-dark",
-    inherit: true,
-    rules: [
-      { token: "comment", foreground: "6A9955" },
-      { token: "keyword", foreground: "569CD6" },
-      { token: "string", foreground: "CE9178" },
-      { token: "number", foreground: "B5CEA8" },
-      { token: "type.identifier", foreground: "4EC9B0" },
-      { token: "delimiter", foreground: "D4D4D4" },
-    ],
-    colors: {
-      "editor.background": "#1F1F1F",
-      "editor.foreground": "#D4D4D4",
-      "editorLineNumber.foreground": "#858585",
-      "editorLineNumber.activeForeground": "#C6C6C6",
-      "editorCursor.foreground": "#AEAFAD",
-      "editor.selectionBackground": "#264F78",
-      "editor.inactiveSelectionBackground": "#3A3D41",
-      editorLineHighlightBackground: "#2A2D2E",
-      "editorIndentGuide.background1": "#404040",
-      "editorIndentGuide.activeBackground1": "#707070",
-      "editorWhitespace.foreground": "#3B3B3B",
-      "editorGutter.background": "#1F1F1F",
-      "editorBracketMatch.border": "#888888",
-    },
-  });
-}
-
-function syncModels(handle, models) {
-  const nextModels = Array.isArray(models) ? models : [];
-  handle.modelPaths = nextModels.map((model) => model.path);
-
-  for (const model of nextModels) {
-    const uri = handle.monaco.Uri.parse(model.path);
-    const existingModel = handle.monaco.editor.getModel(uri);
-
-    if (!existingModel) {
-      handle.monaco.editor.createModel(model.value, model.language, uri);
-      continue;
-    }
-
-    if (existingModel.getLanguageId() !== model.language) {
-      handle.monaco.editor.setModelLanguage(existingModel, model.language);
-    }
-
-    if (existingModel.getValue() !== model.value) {
-      existingModel.setValue(model.value);
-    }
-  }
-}
-
-function setActiveModel(handle, activePath) {
-  if (!activePath) {
-    return;
-  }
-
-  const uri = handle.monaco.Uri.parse(activePath);
-  const model = handle.monaco.editor.getModel(uri);
-
-  if (!model) {
-    return;
-  }
-
-  if (handle.editor.getModel() !== model) {
-    handle.editor.setModel(model);
-  }
-}
-
-export async function createMonacoEditor(host, activePath, models, extraLibs, onChange, onOpen) {
-  const monaco = await loadMonaco();
-  ensureConfigured(monaco, extraLibs);
-
-  const handle = {
-    monaco,
-    modelPaths: [],
-  };
-
-  syncModels(handle, models);
-  const initialModel = activePath
-    ? monaco.editor.getModel(monaco.Uri.parse(activePath))
-    : null;
-
-  handle.editor = monaco.editor.create(host, {
-    automaticLayout: true,
-    contextmenu: true,
-    cursorBlinking: "solid",
-    cursorSmoothCaretAnimation: "off",
-    definitionLinkOpensInPeek: false,
-    fontFamily:
-      '"JetBrainsMono Nerd Font", "Symbols Nerd Font Mono", "IBM Plex Mono", monospace',
-    fontLigatures: false,
-    fontSize: 14,
-    glyphMargin: false,
-    gotoLocation: {
-      multipleDeclarations: "peek",
-      multipleDefinitions: "peek",
-      multipleImplementations: "peek",
-      multipleReferences: "peek",
-      multipleTypeDefinitions: "peek",
-    },
-    lineHeight: 20,
-    minimap: { enabled: false },
-    padding: { top: 8, bottom: 8 },
-    renderLineHighlight: "line",
-    roundedSelection: false,
-    scrollBeyondLastLine: false,
-    scrollbar: {
-      alwaysConsumeMouseWheel: false,
-      horizontalScrollbarSize: 8,
-      verticalScrollbarSize: 8,
-    },
-    smoothScrolling: false,
-    tabSize: 2,
-    theme: monacoTheme,
-    wordWrap: "off",
-    model: initialModel,
-  });
-
-  monaco.editor.setTheme(monacoTheme);
-  setActiveModel(handle, activePath);
-
-  handle.changeDisposable = handle.editor.onDidChangeModelContent(() => {
-    const model = handle.editor.getModel();
-
-    if (!model) {
-      return;
-    }
-
-    onChange(model.uri.toString(), model.getValue());
-  });
-
-  handle.openerDisposable = monaco.editor.registerEditorOpener({
-    openCodeEditor(_source, resource, selectionOrPosition) {
-      onOpen(
-        JSON.stringify({
-          path: resource.toString(),
-          selectionOrPosition: selectionOrPosition ?? null,
-        }),
-      );
-      return true;
-    },
-  });
-
-  return handle;
-}
-
-export function updateMonacoEditor(handle, activePath, models) {
-  if (!handle) {
-    return;
-  }
-
-  syncModels(handle, models);
-  setActiveModel(handle, activePath);
-}
-
-export function revealMonacoPosition(handle, lineNumber, column) {
-  if (!handle?.editor) {
-    return;
-  }
-
-  const position = { lineNumber, column };
-  handle.editor.setPosition(position);
-  handle.editor.revealPositionInCenter(position);
-  handle.editor.focus();
-}
-
-export function monacoMarkerCount(handle) {
-  if (!handle?.editor || !handle?.monaco) {
-    return 0;
-  }
-
-  const model = handle.editor.getModel();
-  if (!model) {
-    return 0;
-  }
-
-  return handle.monaco.editor.getModelMarkers({ resource: model.uri }).length;
-}
-
-export function disposeMonacoEditor(handle) {
-  if (!handle) {
-    return;
-  }
-
-  handle.changeDisposable?.dispose();
-  handle.openerDisposable?.dispose();
-  handle.editor?.dispose();
-
-  for (const path of handle.modelPaths ?? []) {
-    const uri = handle.monaco.Uri.parse(path);
-    handle.monaco.editor.getModel(uri)?.dispose();
-  }
-}
-"##)]
+    #[wasm_bindgen(module = "/src/monaco_host_bundle.js")]
     extern "C" {
         #[wasm_bindgen(catch, js_name = createMonacoEditor)]
         fn create_monaco_editor_js(
@@ -479,8 +185,8 @@ export function disposeMonacoEditor(handle) {
         on_open: impl Fn(String) + 'static,
     ) -> Result<MonacoEditorHandle, String> {
         let models = serde_wasm_bindgen::to_value(models).map_err(|error| error.to_string())?;
-        let extra_libs = serde_wasm_bindgen::to_value(&sdk_type_libs())
-            .map_err(|error| error.to_string())?;
+        let extra_libs =
+            serde_wasm_bindgen::to_value(&sdk_type_libs()).map_err(|error| error.to_string())?;
         let change_callback = Closure::wrap(Box::new(on_change) as Box<dyn Fn(String, String)>);
         let open_callback = Closure::wrap(Box::new(on_open) as Box<dyn Fn(String)>);
         let promise = create_monaco_editor_js(
@@ -502,9 +208,7 @@ export function disposeMonacoEditor(handle) {
     }
 
     fn js_error_message(error: JsValue) -> String {
-        error
-            .as_string()
-            .unwrap_or_else(|| "monaco editor bridge failed".to_string())
+        error.as_string().unwrap_or_else(|| "monaco editor bridge failed".to_string())
     }
 }
 
@@ -540,25 +244,31 @@ pub fn MonacoEditorPane() -> impl IntoView {
     let monaco_loading = RwSignal::new(false);
     let _monaco_handle = Rc::new(RefCell::new(None::<MonacoEditorHandle>));
     let pending_navigation = RwSignal::new(None::<PendingNavigation>);
+    let mounted_file = RwSignal::new(None::<EditorFileId>);
 
     {
         let editor_mount = editor_mount.clone();
         let monaco_handle = Rc::clone(&_monaco_handle);
         let app_state_for_mount = app_state;
+        let mounted_file = mounted_file;
         Effect::new(move |_| {
             let Some(host) = editor_mount.get() else {
                 return;
             };
+
+            let active_file_id = app_state_for_mount.active_file_id.get();
+
+            if mounted_file.get() != active_file_id {
+                monaco_handle.borrow_mut().take();
+                mounted_file.set(active_file_id);
+            }
 
             if monaco_handle.borrow().is_some() || monaco_loading.get() {
                 return;
             }
 
             let models = monaco_models(&app_state_for_mount.editor_buffers.get_untracked());
-            let active_path = app_state_for_mount
-                .active_file_id
-                .get_untracked()
-                .map(|file_id| model_path(file_id).to_string());
+            let active_path = active_file_id.map(|file_id| model_path(file_id).to_string());
             let monaco_handle = Rc::clone(&monaco_handle);
             let callback_state = app_state_for_mount;
             let pending_navigation = pending_navigation;
@@ -572,7 +282,8 @@ pub fn MonacoEditorPane() -> impl IntoView {
                     active_path.as_deref(),
                     &models,
                     move |path, value| {
-                        let Some(file_id) = crate::editor_files::file_id_by_model_path(&path) else {
+                        let Some(file_id) = crate::editor_files::file_id_by_model_path(&path)
+                        else {
                             return;
                         };
 
@@ -589,13 +300,13 @@ pub fn MonacoEditorPane() -> impl IntoView {
                     },
                     move |path| {
                         let payload = serde_json::from_str::<MonacoOpenPayload>(&path).ok();
-                        let target_path = payload
-                            .as_ref()
-                            .map(|payload| payload.path.clone())
-                            .unwrap_or(path);
+                        let target_path =
+                            payload.as_ref().map(|payload| payload.path.clone()).unwrap_or(path);
                         let selection = payload.and_then(|payload| payload.selection_or_position);
 
-                        if let Some(file_id) = crate::editor_files::file_id_by_model_path(&target_path) {
+                        if let Some(file_id) =
+                            crate::editor_files::file_id_by_model_path(&target_path)
+                        {
                             if let Some(selection) = selection {
                                 pending_navigation.set(Some(PendingNavigation {
                                     path: target_path.clone(),
@@ -624,10 +335,8 @@ pub fn MonacoEditorPane() -> impl IntoView {
 
         let monaco_handle = Rc::clone(&_monaco_handle);
         Effect::new(move |_| {
-            let active_path = app_state
-                .active_file_id
-                .get()
-                .map(|file_id| model_path(file_id).to_string());
+            let active_path =
+                app_state.active_file_id.get().map(|file_id| model_path(file_id).to_string());
             let models = monaco_models(&app_state.editor_buffers.get());
 
             if let Some(handle) = monaco_handle.borrow().as_ref() {
