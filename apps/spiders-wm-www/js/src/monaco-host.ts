@@ -1,9 +1,9 @@
 // oxlint-disable import/default
 import "monaco-editor/min/vs/editor/editor.main.css";
 import "monaco-editor/esm/vs/editor/editor.main.js";
-import * as monaco from "monaco-editor/esm/vs/editor/editor.api.js";
-import * as monacoCss from "monaco-editor/esm/vs/language/css/monaco.contribution.js";
-import * as monacoTypescript from "monaco-editor/esm/vs/language/typescript/monaco.contribution.js";
+import * as monaco from "monaco-editor";
+import "monaco-editor/esm/vs/language/css/monaco.contribution.js";
+import "monaco-editor/esm/vs/language/typescript/monaco.contribution.js";
 import EditorWorker from "monaco-editor/esm/vs/editor/editor.worker?worker";
 import CssWorker from "monaco-editor/esm/vs/language/css/css.worker?worker";
 import TsWorker from "monaco-editor/esm/vs/language/typescript/ts.worker?worker";
@@ -16,7 +16,7 @@ import {
   requestCssRename,
   syncCssDocument,
   updateCssDocument,
-} from "./css-lsp-client";
+} from "./css-lsp-client.js";
 
 interface MonacoModel {
   path: string;
@@ -75,39 +75,38 @@ function ensureConfigured(extraLibs: MonacoExtraLib[]) {
   ensureMonacoStyles();
 
   if (!configured) {
-    monacoTypescript.javascriptDefaults.setEagerModelSync(true);
+    monaco.typescript.javascriptDefaults.setEagerModelSync(true);
 
-    monacoTypescript.typescriptDefaults.setCompilerOptions({
+    monaco.typescript.typescriptDefaults.setCompilerOptions({
       allowJs: true,
       allowImportingTsExtensions: true,
       allowNonTsExtensions: true,
       allowSyntheticDefaultImports: true,
       baseUrl: workspaceRootUri,
       esModuleInterop: true,
-      jsx: monacoTypescript.JsxEmit.ReactJSX,
+      jsx: monaco.typescript.JsxEmit.ReactJSX,
       jsxImportSource: "@spiders-wm/sdk",
-      module: monacoTypescript.ModuleKind.ESNext,
-      moduleResolution: monacoTypescript.ModuleResolutionKind.NodeJs,
+      module: monaco.typescript.ModuleKind.ESNext,
+      moduleResolution: monaco.typescript.ModuleResolutionKind.NodeJs,
       paths: {
         "@spiders-wm/sdk": ["./node_modules/@spiders-wm/sdk/index.d.ts"],
         "@spiders-wm/sdk/*": ["./node_modules/@spiders-wm/sdk/*"],
       },
-      target: monacoTypescript.ScriptTarget.ESNext,
+      target: monaco.typescript.ScriptTarget.ESNext,
     });
 
-    monacoTypescript.typescriptDefaults.setDiagnosticsOptions({
+    monaco.typescript.typescriptDefaults.setDiagnosticsOptions({
       noSemanticValidation: false,
       noSyntaxValidation: false,
     });
-    monacoTypescript.typescriptDefaults.setEagerModelSync(true);
+    monaco.typescript.typescriptDefaults.setEagerModelSync(true);
 
-    monacoCss.cssDefaults.setModeConfiguration({
+    monaco.css.cssDefaults.setModeConfiguration({
       completionItems: false,
       colors: false,
       diagnostics: false,
       documentFormattingEdits: false,
       documentHighlights: false,
-      documentLinks: false,
       documentRangeFormattingEdits: false,
       documentSymbols: false,
       foldingRanges: false,
@@ -118,7 +117,7 @@ function ensureConfigured(extraLibs: MonacoExtraLib[]) {
     });
 
     for (const lib of extraLibs) {
-      monacoTypescript.typescriptDefaults.addExtraLib(
+      monaco.typescript.typescriptDefaults.addExtraLib(
         lib.content,
         lib.filePath,
       );
@@ -155,7 +154,9 @@ function registerCssLspProviders() {
     async provideHover(model, position) {
       const result = await requestCssHover(model, position);
       const hover = result as {
-        contents?: { kind?: string; value?: string } | Array<{ value?: string }>;
+        contents?:
+          | { kind?: string; value?: string }
+          | Array<{ value?: string }>;
         range?: {
           start: { line: number; character: number };
           end: { line: number; character: number };
@@ -186,7 +187,9 @@ function registerCssLspProviders() {
     async provideCompletionItems(model, position) {
       const result = await requestCssCompletion(model, position);
       const response = result as { items?: any[] } | any[] | null;
-      const items = Array.isArray(response) ? response : response?.items ?? [];
+      const items = Array.isArray(response)
+        ? response
+        : (response?.items ?? []);
       return {
         suggestions: items.map((item) => ({
           label: item.label,
@@ -197,7 +200,12 @@ function registerCssLspProviders() {
             typeof item.documentation === "string"
               ? item.documentation
               : item.documentation?.value,
-          range: undefined,
+          range: new monaco.Range(
+            position.lineNumber,
+            position.column,
+            position.lineNumber,
+            position.column,
+          ),
         })),
       };
     },
@@ -252,7 +260,9 @@ function registerCssLspProviders() {
 }
 
 function toMonacoLocations(result: unknown) {
-  const locations = (Array.isArray(result) ? result : result ? [result] : []) as Array<{
+  const locations = (
+    Array.isArray(result) ? result : result ? [result] : []
+  ) as Array<{
     uri?: string;
     range?: {
       start: { line: number; character: number };
@@ -285,7 +295,7 @@ function syncModels(handle: MonacoHostHandle, models: MonacoModel[]) {
         existingSourceLib?.dispose.dispose();
         handle.sourceLibs.set(model.path, {
           content: model.value,
-          dispose: monacoTypescript.typescriptDefaults.addExtraLib(
+          dispose: monaco.typescript.typescriptDefaults.addExtraLib(
             model.value,
             model.path,
           ),

@@ -2,7 +2,7 @@
 target = "index.html"
 
 [watch]
-ignore = ["js/dist", "js/node_modules"]
+ignore = ["js/dist", "js/node_modules", "js/generated"]
 
 [[hooks]]
 stage = "pre_build"

@@ -1,6 +1,6 @@
 /// <reference lib="webworker" />
 
-import init, { WasmServer } from "./generated/css-lsp-web/index.js";
+import init, { WasmServer } from "../generated/css-lsp-web/index.js";
 
 type WorkerRequest =
   | { type: "init"; files?: Record<string, string> }
