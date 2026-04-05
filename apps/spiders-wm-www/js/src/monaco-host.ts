@@ -99,6 +99,7 @@ function ensureConfigured(extraLibs: MonacoExtraLib[]) {
       noSemanticValidation: false,
       noSyntaxValidation: false,
     });
+
     monaco.typescript.typescriptDefaults.setEagerModelSync(true);
 
     monaco.css.cssDefaults.setModeConfiguration({
@@ -373,6 +374,24 @@ export async function createMonacoEditor(
       multipleTypeDefinitions: "peek",
     },
     lineHeight: 20,
+    suggest: {
+      insertMode: "replace",
+      localityBonus: true,
+      showSnippets: false,
+      showKeywords: true,
+    },
+    inlineSuggest: {
+      enabled: true,
+    },
+    quickSuggestions: {
+      strings: "on",
+    },
+    suggestSelection: "first",
+    hover: { enabled: true },
+    bracketPairColorization: { enabled: true },
+    linkedEditing: true,
+    formatOnPaste: true,
+    wordBasedSuggestions: "off",
     minimap: { enabled: false },
     padding: { top: 8, bottom: 8 },
     renderLineHighlight: "line",
