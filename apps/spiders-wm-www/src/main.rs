@@ -11,12 +11,14 @@ mod components;
 mod editor_files;
 mod editor_host;
 mod layout_runtime;
+mod perf;
 mod session;
 mod views;
 mod workspace;
 
 use app_state::AppState;
 use layout_runtime::PreviewRenderRequest;
+use perf::{log_timing, now_ms};
 use views::editor::EditorView;
 use views::preview::PreviewView;
 use views::system::SystemView;
@@ -123,8 +125,10 @@ fn NotFoundRoute() -> impl IntoView {
 
 fn install_preview_renderer(app_state: AppState) {
     Effect::new(move |_| {
+        let effect_started = now_ms();
+        let _request_id = app_state.preview_eval_request.get();
         let buffers = app_state.editor_buffers.get();
-        let snapshot = app_state.session.get();
+        let snapshot = app_state.session.get_untracked();
         let preview_request = PreviewRenderRequest::from_state(&buffers, &snapshot);
         let preview_request_key = format!("{preview_request:?}");
 
@@ -136,15 +140,67 @@ fn install_preview_renderer(app_state: AppState) {
             .latest_preview_request_key
             .set(preview_request_key.clone());
 
+        log_timing(
+            "preview-renderer.request-key",
+            effect_started,
+            format!(
+                "layout={} windows={}",
+                preview_request.active_layout.as_str(),
+                preview_request.runtime_state.windows.len()
+            ),
+        );
+
         wasm_bindgen_futures::spawn_local(async move {
+            let async_started = now_ms();
             match layout_runtime::evaluate_layout_source(&preview_request).await {
                 Ok(layout) => {
                     if app_state.latest_preview_request_key.get_untracked() != preview_request_key {
                         return;
                     }
 
+                    let loaded_preview_layout = app_state.loaded_preview_layout.get_untracked();
+                    let layout_unchanged = loaded_preview_layout
+                        .as_ref()
+                        .is_some_and(|loaded| loaded.layout == layout.layout && loaded.config == layout.config);
+
+                    let apply_started = now_ms();
                     app_state.apply_loaded_preview_layout(layout.clone());
-                    app_state.session.update(|state| state.apply_layout_source(layout.layout, Some(&layout.config)));
+                    if !layout_unchanged {
+                        let mut scene_cache = app_state.preview_scene_cache.get_untracked();
+                        app_state
+                            .session
+                            .update(|state| {
+                                state.apply_layout_source(
+                                    layout.layout,
+                                    Some(&layout.config),
+                                    Some(&mut scene_cache),
+                                )
+                            });
+                        app_state.preview_scene_cache.set(scene_cache);
+                    }
+                    log_timing(
+                        "preview-renderer.apply-layout",
+                        apply_started,
+                        format!(
+                            "layout={} visible_windows={} unchanged={}",
+                            preview_request.active_layout.as_str(),
+                            preview_request
+                                .runtime_state
+                                .windows
+                                .iter()
+                                .filter(|window| {
+                                    window.workspace_name
+                                        == preview_request.runtime_state.active_workspace_name
+                                })
+                                .count(),
+                            layout_unchanged
+                        ),
+                    );
+                    log_timing(
+                        "preview-renderer.total",
+                        async_started,
+                        format!("layout={}", preview_request.active_layout.as_str()),
+                    );
                 }
                 Err(error) => {
                     if app_state.latest_preview_request_key.get_untracked() != preview_request_key {
@@ -155,6 +211,11 @@ fn install_preview_renderer(app_state: AppState) {
                     app_state
                         .session
                         .update(|state| state.apply_preview_failure("layout", error));
+                    log_timing(
+                        "preview-renderer.total",
+                        async_started,
+                        format!("layout={} error", preview_request.active_layout.as_str()),
+                    );
                 }
             }
         });
@@ -199,6 +260,7 @@ fn install_keyboard_listener(app_state: AppState) {
 
         let closure = Closure::<dyn FnMut(web_sys::KeyboardEvent)>::wrap(Box::new(
             move |event: web_sys::KeyboardEvent| {
+                let keydown_started = now_ms();
                 let is_preview_route = web_sys::window()
                     .and_then(|window| window.location().pathname().ok())
                     .map(|pathname| pathname == "/" || pathname == "/preview")
@@ -219,8 +281,21 @@ fn install_keyboard_listener(app_state: AppState) {
                 };
 
                 event.prevent_default();
-                app_state.session.update(|state| state.apply_command(command));
-                app_state.refresh_preview_from_loaded_state();
+                let command_label = format!("{:?}", command);
+                let render_action = app_state.mutate_session(|state| state.apply_command(command));
+                log_timing(
+                    "preview-input.apply-command",
+                    keydown_started,
+                    command_label.clone(),
+                );
+
+                let refresh_started = now_ms();
+                app_state.apply_preview_render_action(render_action);
+                log_timing(
+                    "preview-input.schedule-refresh",
+                    refresh_started,
+                    format!("{command_label} action={render_action:?}"),
+                );
             },
         ));
 

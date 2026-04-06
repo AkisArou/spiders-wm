@@ -1,10 +1,12 @@
 use std::collections::BTreeMap;
+use std::cell::RefCell;
 use std::fs;
 use std::path::PathBuf;
 
 use spiders_config::model::Config;
 use spiders_config::authoring_layout::SourceBundleAuthoringLayoutService;
 use spiders_config::runtime::build_source_bundle_authoring_layout_service;
+use spiders_core::runtime::layout_context::LayoutEvaluationDependencies;
 use spiders_core::LayoutId;
 use spiders_runtime_js_browser::JavaScriptBrowserRuntimeProvider;
 use spiders_wm_runtime::{PreviewSession, build_preview_layout_context};
@@ -40,6 +42,7 @@ impl PreviewRenderRequest {
 pub struct EvaluatedPreviewLayout {
     pub config: Config,
     pub layout: spiders_core::SourceLayoutNode,
+    pub dependencies: LayoutEvaluationDependencies,
 }
 
 pub async fn evaluate_layout_source(
@@ -48,28 +51,50 @@ pub async fn evaluate_layout_source(
     let config_entry_path = PathBuf::from(runtime_path(EditorFileId::Config));
     let root_dir = PathBuf::from(WORKSPACE_FS_ROOT);
     let sources = source_bundle_sources(&request.buffers);
-    let mut service = build_layout_service(&config_entry_path).map_err(|error| error.to_string())?;
-    let config = service
-        .load_config(&root_dir, &config_entry_path, &sources)
-        .await
-        .map_err(|error| error.to_string())?;
-    let state = build_preview_state_snapshot(request);
-    let workspace = state
-        .current_workspace()
-        .cloned()
-        .ok_or_else(|| "preview workspace is unavailable".to_string())?;
-    let evaluation = service
-        .evaluate_prepared_for_workspace(&root_dir, &sources, &config, &state, &workspace)
-        .await
-        .map_err(|error| error.to_string())?
-        .ok_or_else(|| "no selected layout for preview workspace".to_string())?;
-    Ok(EvaluatedPreviewLayout { config, layout: evaluation.layout })
+    let maybe_service = LAYOUT_SERVICE.with_borrow_mut(|slot| slot.take());
+    let mut service = match maybe_service {
+        Some(service) => service,
+        None => build_layout_service(&config_entry_path).map_err(|error| error.to_string())?,
+    };
+
+    let result = async {
+        let config = service
+            .load_config(&root_dir, &config_entry_path, &sources)
+            .await
+            .map_err(|error| error.to_string())?;
+        let state = build_preview_state_snapshot(request);
+        let workspace = state
+            .current_workspace()
+            .cloned()
+            .ok_or_else(|| "preview workspace is unavailable".to_string())?;
+        let evaluation = service
+            .evaluate_prepared_for_workspace(&root_dir, &sources, &config, &state, &workspace)
+            .await
+            .map_err(|error| error.to_string())?
+            .ok_or_else(|| "no selected layout for preview workspace".to_string())?;
+        Ok(EvaluatedPreviewLayout {
+            config,
+            layout: evaluation.layout,
+            dependencies: evaluation.dependencies,
+        })
+    }
+    .await;
+
+    LAYOUT_SERVICE.with_borrow_mut(|slot| {
+        *slot = Some(service);
+    });
+
+    result
 }
 
 fn build_layout_service(
     entry_path: &std::path::Path,
 ) -> Result<SourceBundleAuthoringLayoutService, spiders_config::model::LayoutConfigError> {
     build_source_bundle_authoring_layout_service(entry_path, &[&JavaScriptBrowserRuntimeProvider])
+}
+
+thread_local! {
+    static LAYOUT_SERVICE: RefCell<Option<SourceBundleAuthoringLayoutService>> = const { RefCell::new(None) };
 }
 
 fn build_preview_state_snapshot(request: &PreviewRenderRequest) -> spiders_core::snapshot::StateSnapshot {

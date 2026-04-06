@@ -3,7 +3,9 @@ use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 
-use spiders_core::runtime::layout_context::LayoutEvaluationContext;
+use spiders_core::runtime::layout_context::{
+    LayoutEvaluationContext, LayoutEvaluationDependencies,
+};
 use spiders_core::runtime::prepared_layout::PreparedLayout;
 use spiders_core::runtime::runtime_contract::PreparedLayoutRuntime;
 use spiders_core::runtime::runtime_error::{RuntimeError, RuntimeRefreshSummary};
@@ -12,6 +14,12 @@ use spiders_core::SourceLayoutNode;
 
 use crate::authoring_layout::{AuthoringLayoutService, SourceBundleAuthoringLayoutService};
 use crate::model::{Config, ConfigPaths, LayoutConfigError, RuntimeKind};
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct EvaluatedSourceLayout {
+    pub layout: SourceLayoutNode,
+    pub dependencies: LayoutEvaluationDependencies,
+}
 
 pub type SourceBundle = BTreeMap<PathBuf, String>;
 
@@ -73,7 +81,7 @@ pub trait SourceBundlePreparedLayoutRuntime: std::fmt::Debug {
         sources: &'a SourceBundle,
         artifact: &'a PreparedLayout,
         context: &'a LayoutEvaluationContext,
-    ) -> Pin<Box<dyn Future<Output = Result<SourceLayoutNode, LayoutConfigError>> + 'a>>;
+    ) -> Pin<Box<dyn Future<Output = Result<EvaluatedSourceLayout, LayoutConfigError>> + 'a>>;
 }
 
 pub trait SourceBundleRuntimeProvider: std::fmt::Debug {

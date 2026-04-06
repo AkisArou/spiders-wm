@@ -1,6 +1,8 @@
 use std::collections::BTreeMap;
 
-use spiders_core::runtime::layout_context::LayoutEvaluationContext;
+use spiders_core::runtime::layout_context::{
+    LayoutEvaluationContext, LayoutEvaluationDependencies,
+};
 use spiders_core::runtime::prepared_layout::PreparedLayout;
 use spiders_core::runtime::runtime_contract::PreparedLayoutRuntime;
 use spiders_core::runtime::runtime_error::RuntimeError;
@@ -35,6 +37,7 @@ pub struct PreparedLayoutEvaluation {
     pub artifact: PreparedLayout,
     pub context: LayoutEvaluationContext,
     pub layout: SourceLayoutNode,
+    pub dependencies: LayoutEvaluationDependencies,
 }
 
 impl AuthoringLayoutService {
@@ -176,7 +179,12 @@ impl AuthoringLayoutService {
 
         debug!(workspace_id = %workspace.id, workspace_name = %workspace.name, layout = %loaded.selected.name, "evaluated prepared layout");
 
-        Ok(Some(PreparedLayoutEvaluation { artifact: loaded, context, layout }))
+        Ok(Some(PreparedLayoutEvaluation {
+            artifact: loaded,
+            context,
+            layout,
+            dependencies: LayoutEvaluationDependencies::default(),
+        }))
     }
 
     pub fn cache(&self) -> &BTreeMap<String, PreparedLayout> {

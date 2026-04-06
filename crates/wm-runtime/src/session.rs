@@ -65,11 +65,87 @@ pub struct PreviewWindow {
     pub workspace_name: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PreviewRenderAction {
+    None,
+    RefreshFromLoadedLayout,
+    RefreshFromLoadedLayoutAndReevaluate,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PreviewCommandOutcome {
+    pub state: PreviewSession,
+    pub render_action: PreviewRenderAction,
+}
+
+fn render_action_for_transition(
+    previous: &PreviewSession,
+    next: &PreviewSession,
+) -> PreviewRenderAction {
+    if can_reuse_preview_layout_computation(previous, next) {
+        PreviewRenderAction::None
+    } else {
+        PreviewRenderAction::RefreshFromLoadedLayoutAndReevaluate
+    }
+}
+
+pub fn can_reuse_preview_layout_computation(
+    previous: &PreviewSession,
+    next: &PreviewSession,
+) -> bool {
+    if previous.active_layout != next.active_layout
+        || previous.active_workspace_name != next.active_workspace_name
+        || previous.workspace_names != next.workspace_names
+        || previous.layout_adjustments != next.layout_adjustments
+    {
+        return false;
+    }
+
+    let previous_windows = previous
+        .windows
+        .iter()
+        .filter(|window| {
+            window.workspace_name == previous.active_workspace_name && !window.floating
+        });
+    let next_windows = next
+        .windows
+        .iter()
+        .filter(|window| window.workspace_name == next.active_workspace_name && !window.floating);
+
+    previous_windows.zip(next_windows).all(|(left, right)| {
+        left.id == right.id
+            && left.app_id == right.app_id
+            && left.title == right.title
+            && left.class == right.class
+            && left.instance == right.instance
+            && left.role == right.role
+            && left.shell == right.shell
+            && left.window_type == right.window_type
+            && left.floating == right.floating
+            && left.fullscreen == right.fullscreen
+            && left.workspace_name == right.workspace_name
+    }) && previous
+        .windows
+        .iter()
+        .filter(|window| {
+            window.workspace_name == previous.active_workspace_name && !window.floating
+        })
+        .count()
+        == next
+            .windows
+            .iter()
+            .filter(|window| {
+                window.workspace_name == next.active_workspace_name && !window.floating
+            })
+            .count()
+}
+
 pub fn apply_preview_command(
     mut state: PreviewSession,
     command: WmCommand,
     snapshot_root: Option<&PreviewSnapshotNode>,
-) -> PreviewSession {
+) -> PreviewCommandOutcome {
+    let previous = state.clone();
     normalize_preview_state(&mut state);
 
     let mut model = preview_model_with_snapshot(&state, snapshot_root);
@@ -167,20 +243,25 @@ pub fn apply_preview_command(
     }
 
     sync_preview_state(&mut state, &model);
-    state
+    let render_action = render_action_for_transition(&previous, &state);
+    PreviewCommandOutcome { state, render_action }
 }
 
 pub fn select_preview_workspace(
     mut state: PreviewSession,
     workspace_name: &str,
     snapshot_root: Option<&PreviewSnapshotNode>,
-) -> PreviewSession {
+) -> PreviewCommandOutcome {
+    let previous = state.clone();
     normalize_preview_state(&mut state);
 
     if state.active_workspace_name == workspace_name
         || !state.workspace_names.iter().any(|name| name == workspace_name)
     {
-        return state;
+        return PreviewCommandOutcome {
+            state,
+            render_action: PreviewRenderAction::None,
+        };
     }
 
     let ordered_window_ids = ordered_window_ids(&state);
@@ -195,21 +276,28 @@ pub fn select_preview_workspace(
     }
 
     sync_preview_state(&mut state, &model);
-    state
+    PreviewCommandOutcome {
+        render_action: render_action_for_transition(&previous, &state),
+        state,
+    }
 }
 
 pub fn set_preview_focused_window(
     mut state: PreviewSession,
     focused_window_id: Option<WindowId>,
     snapshot_root: Option<&PreviewSnapshotNode>,
-) -> PreviewSession {
+) -> PreviewCommandOutcome {
+    let previous = state.clone();
     normalize_preview_state(&mut state);
 
     let mut model = preview_model_with_snapshot(&state, snapshot_root);
 
     if let Some(window_id) = focused_window_id.as_ref() {
         let Some(window) = state.windows.iter().find(|window| window.id == window_id.as_str()) else {
-            return state;
+            return PreviewCommandOutcome {
+                state,
+                render_action: PreviewRenderAction::None,
+            };
         };
 
         model.set_current_workspace(WorkspaceId::from(window.workspace_name.as_str()));
@@ -217,7 +305,10 @@ pub fn set_preview_focused_window(
 
     let _ = set_focused_window(&mut model, focused_window_id);
     sync_preview_state(&mut state, &model);
-    state
+    PreviewCommandOutcome {
+        render_action: render_action_for_transition(&previous, &state),
+        state,
+    }
 }
 
 fn normalize_preview_state(state: &mut PreviewSession) {

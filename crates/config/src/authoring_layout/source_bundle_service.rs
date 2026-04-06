@@ -1,18 +1,30 @@
 use std::collections::BTreeMap;
 
-use spiders_core::runtime::layout_context::LayoutEvaluationContext;
+use spiders_core::runtime::layout_context::{
+    LayoutEvaluationContext, LayoutEvaluationDependencies,
+};
 use spiders_core::runtime::prepared_layout::PreparedLayout;
 use spiders_core::snapshot::{StateSnapshot, WorkspaceSnapshot};
 use spiders_core::SourceLayoutNode;
 
 use crate::model::{Config, LayoutConfigError};
-use crate::runtime::{SourceBundle, SourceBundleConfigRuntime, SourceBundlePreparedLayoutRuntime};
+use crate::runtime::{
+    SourceBundle, SourceBundleConfigRuntime, SourceBundlePreparedLayoutRuntime,
+};
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct EvaluationCacheKey {
+    layout_name: String,
+    artifact_key: String,
+    context_key: String,
+}
 
 #[derive(Debug)]
 pub struct SourceBundleAuthoringLayoutService {
     config_runtime: Box<dyn SourceBundleConfigRuntime>,
     layout_runtime: Box<dyn SourceBundlePreparedLayoutRuntime>,
     cache: BTreeMap<String, PreparedLayout>,
+    evaluation_cache: BTreeMap<EvaluationCacheKey, PreparedSourceBundleLayoutEvaluation>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -20,6 +32,7 @@ pub struct PreparedSourceBundleLayoutEvaluation {
     pub artifact: PreparedLayout,
     pub context: LayoutEvaluationContext,
     pub layout: SourceLayoutNode,
+    pub dependencies: LayoutEvaluationDependencies,
 }
 
 impl SourceBundleAuthoringLayoutService {
@@ -27,7 +40,12 @@ impl SourceBundleAuthoringLayoutService {
         config_runtime: Box<dyn SourceBundleConfigRuntime>,
         layout_runtime: Box<dyn SourceBundlePreparedLayoutRuntime>,
     ) -> Self {
-        Self { config_runtime, layout_runtime, cache: BTreeMap::new() }
+        Self {
+            config_runtime,
+            layout_runtime,
+            cache: BTreeMap::new(),
+            evaluation_cache: BTreeMap::new(),
+        }
     }
 
     pub async fn load_config(
@@ -73,8 +91,34 @@ impl SourceBundleAuthoringLayoutService {
         };
 
         let context = self.layout_runtime.build_context(state, workspace, Some(&loaded));
-        let layout = self.layout_runtime.evaluate_layout(root_dir, sources, &loaded, &context).await?;
+        let cache_key = EvaluationCacheKey {
+            layout_name: loaded.selected.name.clone(),
+            artifact_key: serde_json::to_string(&loaded)
+                .map_err(|error| LayoutConfigError::EvaluateAuthoredConfig {
+                    path: root_dir.join(&loaded.selected.module),
+                    message: error.to_string(),
+                })?,
+            context_key: serde_json::to_string(&context)
+                .map_err(|error| LayoutConfigError::EvaluateAuthoredConfig {
+                    path: root_dir.join(&loaded.selected.module),
+                    message: error.to_string(),
+                })?,
+        };
 
-        Ok(Some(PreparedSourceBundleLayoutEvaluation { artifact: loaded, context, layout }))
+        if let Some(cached) = self.evaluation_cache.get(&cache_key) {
+            return Ok(Some(cached.clone()));
+        }
+
+        let evaluated = self.layout_runtime.evaluate_layout(root_dir, sources, &loaded, &context).await?;
+
+        let result = PreparedSourceBundleLayoutEvaluation {
+            artifact: loaded,
+            context,
+            layout: evaluated.layout,
+            dependencies: evaluated.dependencies,
+        };
+        self.evaluation_cache.insert(cache_key, result.clone());
+
+        Ok(Some(result))
     }
 }

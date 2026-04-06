@@ -21,6 +21,21 @@ pub struct LayoutEvaluationContext {
     pub space: LayoutSpace,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LayoutEvaluationDependencies {
+    pub uses_monitor_size: bool,
+    pub uses_monitor_scale: bool,
+    pub uses_window_count: bool,
+    pub uses_window_order: bool,
+    pub uses_window_focus: bool,
+    pub uses_visible_window_ids: bool,
+    pub uses_workspace_name: bool,
+    pub uses_workspace_names: bool,
+    pub uses_selected_layout_name: bool,
+    pub uses_layout_adjustments: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LayoutMonitorContext {
     pub name: String,

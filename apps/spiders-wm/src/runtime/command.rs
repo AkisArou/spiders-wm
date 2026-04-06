@@ -4,7 +4,7 @@ use smithay::utils::{SERIAL_COUNTER, Serial};
 use spiders_core::effect::{
     FocusTarget, WindowToggle, WmHostEffect, WorkspaceAssignment, WorkspaceTarget,
 };
-use spiders_wm_runtime::{WmHost, dispatch_wm_command};
+use spiders_wm_runtime::{PreviewRenderAction, WmHost, dispatch_wm_command};
 
 use crate::state::SpidersWm;
 
@@ -20,7 +20,7 @@ impl SpidersWm {
 }
 
 impl WmHost for SpidersWm {
-    fn on_effect(&mut self, effect: WmHostEffect) {
+    fn on_effect(&mut self, effect: WmHostEffect) -> PreviewRenderAction {
         match effect {
             WmHostEffect::SpawnCommand { command } => SpidersWm::spawn_command(self, &command),
             WmHostEffect::RequestQuit => self.loop_signal.stop(),
@@ -87,6 +87,8 @@ impl WmHost for SpidersWm {
                 self.schedule_relayout();
             }
         }
+
+        PreviewRenderAction::None
     }
 }
 

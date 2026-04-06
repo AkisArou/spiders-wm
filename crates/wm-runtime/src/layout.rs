@@ -1,18 +1,54 @@
 use std::collections::BTreeSet;
-
 use serde::{Deserialize, Serialize};
 use spiders_config::model::Config;
 use spiders_core::runtime::layout_context::LayoutWindowContext;
+use spiders_core::runtime::prepared_layout::{PreparedStylesheet, PreparedStylesheets};
 use spiders_core::snapshot::WindowSnapshot;
 use spiders_core::types::{ShellKind, WindowMode};
 use spiders_core::wm::WindowGeometry;
-use spiders_core::{OutputId, ResolvedLayoutNode, WindowId, WorkspaceId};
+use spiders_core::{LayoutSpace, OutputId, ResolvedLayoutNode, WindowId, WorkspaceId};
 use spiders_css::style::FlexDirectionValue;
-use spiders_scene::LayoutSnapshotNode;
+use spiders_scene::{LayoutSnapshotNode, SceneRequest, SceneResponse};
 use spiders_scene::ast::ValidatedLayoutTree;
-use spiders_scene::pipeline::{LayoutPipelineError, compile_stylesheet, compute_layout_from_sheet};
+use spiders_scene::pipeline::{LayoutPipelineError, SceneCache, compile_stylesheet, compute_layout_from_sheet};
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen::prelude::*;
 use crate::{PreviewDiagnostic, PreviewSnapshotClasses, PreviewSnapshotNode};
 use crate::PreviewWindow;
+
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen(inline_js = "export function spidersPerfNow() { return Date.now(); }")]
+extern "C" {
+    fn spidersPerfNow() -> f64;
+}
+
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen(inline_js = "export function spidersPerfLog(message) { console.log(message); }")]
+extern "C" {
+    fn spidersPerfLog(message: &str);
+}
+
+#[cfg(target_arch = "wasm32")]
+fn now_ms() -> f64 {
+    spidersPerfNow()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn now_ms() -> f64 {
+    0.0
+}
+
+#[cfg(target_arch = "wasm32")]
+fn perf_log(stage: &str, started_ms: f64, windows: usize) {
+    let elapsed_ms = now_ms() - started_ms;
+    spidersPerfLog(&format!(
+        "[perf] wm-runtime.{stage} {:.2}ms windows={windows}",
+        elapsed_ms
+    ));
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn perf_log(_stage: &str, _started_ms: f64, _windows: usize) {}
 
 pub const PREVIEW_OUTPUT_ID: &str = "preview-output";
 
@@ -35,31 +71,107 @@ pub fn compute_layout_preview_from_source_layout(
     width: f32,
     height: f32,
 ) -> PreviewLayoutComputation {
+    compute_layout_preview_from_source_layout_with_cache(
+        layout,
+        windows,
+        config,
+        workspace_name,
+        stylesheet_source,
+        width,
+        height,
+        None,
+    )
+}
+
+pub fn compute_layout_preview_from_source_layout_with_cache(
+    layout: &spiders_core::SourceLayoutNode,
+    windows: &[PreviewWindow],
+    config: Option<&Config>,
+    workspace_name: Option<&str>,
+    stylesheet_source: &str,
+    width: f32,
+    height: f32,
+    mut scene_cache: Option<&mut SceneCache>,
+) -> PreviewLayoutComputation {
+    let total_started = now_ms();
     let window_snapshots = windows.iter().cloned().map(window_snapshot).collect::<Vec<_>>();
+    let validate_started = now_ms();
 
     match ValidatedLayoutTree::new(layout.clone()) {
         Ok(validated) => match validated.resolve(&window_snapshots) {
             Ok(resolved) => {
+                perf_log("layout.validate_and_resolve", validate_started, windows.len());
+                let titlebar_started = now_ms();
                 let root = attach_titlebar_content(
                     resolved.root,
                     &window_snapshots,
                     config,
                     workspace_name,
                 );
+                perf_log("layout.attach_titlebar_content", titlebar_started, windows.len());
+                let claimed_started = now_ms();
                 let claimed_ids = collect_claimed_window_ids(&root);
-                match compile_stylesheet(stylesheet_source)
-                    .and_then(|sheet| compute_layout_from_sheet(&root, &sheet, width, height))
-                {
-                    Ok(laid_out) => PreviewLayoutComputation {
-                        snapshot_root: Some(snapshot_node(laid_out.snapshot())),
-                        diagnostics: Vec::new(),
-                        unclaimed_window_ids: unclaimed_window_ids(windows, &claimed_ids),
-                    },
-                    Err(error) => PreviewLayoutComputation {
-                        snapshot_root: None,
-                        diagnostics: vec![css_diagnostic(error)],
-                        unclaimed_window_ids: unclaimed_window_ids(windows, &claimed_ids),
-                    },
+                perf_log("layout.collect_claimed_window_ids", claimed_started, windows.len());
+                let style_started = now_ms();
+                let layout_result = if let Some(cache) = scene_cache.as_deref_mut() {
+                    let request = SceneRequest {
+                        workspace_id: workspace_name.map(WorkspaceId::from).unwrap_or_default(),
+                        output_id: Some(OutputId::from(PREVIEW_OUTPUT_ID)),
+                        layout_name: workspace_name.map(ToOwned::to_owned),
+                        root: root.clone(),
+                        stylesheets: PreparedStylesheets {
+                            global: None,
+                            layout: Some(PreparedStylesheet {
+                                path: workspace_name
+                                    .map(|name| format!("preview://{name}.css"))
+                                    .unwrap_or_else(|| "preview://layout.css".to_string()),
+                                source: stylesheet_source.to_string(),
+                            }),
+                        },
+                        space: LayoutSpace { width, height },
+                    };
+                    let precompile_started = now_ms();
+                    match cache.precompile_layout(
+                        request.layout_name.as_deref().unwrap_or("__default__"),
+                        stylesheet_source,
+                    ) {
+                        Ok(()) => {
+                            perf_log("layout.precompile_stylesheet", precompile_started, windows.len());
+                            let compute_started = now_ms();
+                            let response = cache.compute_layout_from_request(&request);
+                            perf_log("layout.compute_from_cached_sheet", compute_started, windows.len());
+                            response
+                        }
+                        Err(error) => Err(error),
+                    }
+                } else {
+                    compile_stylesheet(stylesheet_source)
+                        .and_then(|sheet| compute_layout_from_sheet(&root, &sheet, width, height))
+                        .map(|laid_out| SceneResponse { root: laid_out.snapshot() })
+                };
+
+                match layout_result {
+                    Ok(response) => {
+                        perf_log("layout.compile_and_compute", style_started, windows.len());
+                        let snapshot_started = now_ms();
+                        let result = PreviewLayoutComputation {
+                            snapshot_root: Some(snapshot_node(response.root)),
+                            diagnostics: Vec::new(),
+                            unclaimed_window_ids: unclaimed_window_ids(windows, &claimed_ids),
+                        };
+                        perf_log("layout.snapshot_build", snapshot_started, windows.len());
+                        perf_log("layout.total", total_started, windows.len());
+                        result
+                    }
+                    Err(error) => {
+                        perf_log("layout.compile_and_compute", style_started, windows.len());
+                        perf_log("layout.total", total_started, windows.len());
+                        PreviewLayoutComputation {
+                            snapshot_root: None,
+                            diagnostics: vec![css_diagnostic(error)],
+                            unclaimed_window_ids: unclaimed_window_ids(windows, &claimed_ids),
+                        }
+                    }
                 }
             }
             Err(error) => PreviewLayoutComputation {

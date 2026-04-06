@@ -4,11 +4,13 @@ use spiders_core::effect::{
 };
 use tracing::warn;
 
+use crate::session::PreviewRenderAction;
+
 pub trait WmHost {
-    fn on_effect(&mut self, effect: WmHostEffect);
+    fn on_effect(&mut self, effect: WmHostEffect) -> PreviewRenderAction;
 }
 
-pub fn dispatch_wm_command<H: WmHost>(host: &mut H, command: WmCommand) {
+pub fn dispatch_wm_command<H: WmHost>(host: &mut H, command: WmCommand) -> PreviewRenderAction {
     match command {
         WmCommand::Spawn { command } => host.on_effect(WmHostEffect::SpawnCommand { command }),
         WmCommand::Quit => host.on_effect(WmHostEffect::RequestQuit),
@@ -70,16 +72,20 @@ pub fn dispatch_wm_command<H: WmHost>(host: &mut H, command: WmCommand) {
             host.on_effect(WmHostEffect::SwapFocusedWindow { direction })
         }
         WmCommand::ResizeDirection { direction } => {
-            warn!(?direction, "resize wm command is intentionally stubbed for now")
+            warn!(?direction, "resize wm command is intentionally stubbed for now");
+            PreviewRenderAction::None
         }
         WmCommand::ResizeTiledDirection { direction } => {
-            warn!(?direction, "resize-tiled wm command is intentionally stubbed for now")
+            warn!(?direction, "resize-tiled wm command is intentionally stubbed for now");
+            PreviewRenderAction::None
         }
         WmCommand::MoveDirection { direction } => {
-            warn!(?direction, "move-direction wm command is intentionally stubbed for now")
+            warn!(?direction, "move-direction wm command is intentionally stubbed for now");
+            PreviewRenderAction::None
         }
         unsupported => {
             warn!(?unsupported, "ignoring unsupported wm command");
+            PreviewRenderAction::None
         }
     }
 }

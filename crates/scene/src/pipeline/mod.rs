@@ -2,6 +2,7 @@ use crate::CompiledKeyframesRule;
 use crate::css::{CssParseError, CssValueError, StyledLayoutTree, parse_stylesheet};
 pub use crate::layout_calc::{LaidOutNode, LaidOutTree};
 use crate::scene::{SceneRequest, SceneResponse};
+use serde::Serialize;
 use spiders_core::ResolvedLayoutNode;
 use std::collections::HashMap;
 use tracing::debug;
@@ -15,6 +16,7 @@ struct CachedStylesheet {
 #[derive(Debug, Default, Clone)]
 pub struct SceneCache {
     stylesheets: HashMap<String, CachedStylesheet>,
+    scenes: HashMap<String, SceneResponse>,
 }
 
 impl SceneCache {
@@ -25,9 +27,11 @@ impl SceneCache {
     pub fn clear(&mut self) {
         debug!(
             cached_stylesheets = self.stylesheets.len(),
+            cached_scenes = self.scenes.len(),
             "clearing scene cache"
         );
         self.stylesheets.clear();
+        self.scenes.clear();
     }
 
     pub fn precompile_layout(
@@ -47,10 +51,7 @@ impl SceneCache {
                 let sheet = compile_stylesheet(stylesheet_source)?;
                 self.stylesheets.insert(
                     layout_name,
-                    CachedStylesheet {
-                        source: stylesheet_source.to_owned(),
-                        sheet,
-                    },
+                    CachedStylesheet { source: stylesheet_source.to_owned(), sheet },
                 );
                 Ok(())
             }
@@ -61,6 +62,17 @@ impl SceneCache {
         &mut self,
         request: &SceneRequest,
     ) -> Result<SceneResponse, LayoutPipelineError> {
+        let scene_key = scene_request_key(request);
+        if let Some(scene_key) = scene_key.as_ref()
+            && let Some(cached) = self.scenes.get(scene_key)
+        {
+            debug!(
+                layout = request.layout_name.as_deref().unwrap_or("__default__"),
+                "scene cache hit; request unchanged"
+            );
+            return Ok(cached.clone());
+        }
+
         let layout_name = request.layout_name.as_deref().unwrap_or("__default__");
         debug!(
             layout = layout_name,
@@ -77,7 +89,11 @@ impl SceneCache {
             .map(|cached| &cached.sheet)
             .expect("scene cache entry must exist after successful precompile");
 
-        compute_layout_from_request_with_sheet(request, sheet)
+        let response = compute_layout_from_request_with_sheet(request, sheet)?;
+        if let Some(scene_key) = scene_key {
+            self.scenes.insert(scene_key, response.clone());
+        }
+        Ok(response)
     }
 
     pub fn keyframes_for_layout(&self, layout_name: &str) -> Vec<CompiledKeyframesRule> {
@@ -86,6 +102,26 @@ impl SceneCache {
             .map(|cached| cached.sheet.keyframes.clone())
             .unwrap_or_default()
     }
+}
+
+#[derive(Serialize)]
+struct SceneRequestKey<'a> {
+    layout_name: Option<&'a str>,
+    root: &'a ResolvedLayoutNode,
+    stylesheets: &'a spiders_core::runtime::prepared_layout::PreparedStylesheets,
+    width: f32,
+    height: f32,
+}
+
+fn scene_request_key(request: &SceneRequest) -> Option<String> {
+    serde_json::to_string(&SceneRequestKey {
+        layout_name: request.layout_name.as_deref(),
+        root: &request.root,
+        stylesheets: &request.stylesheets,
+        width: request.space.width,
+        height: request.space.height,
+    })
+    .ok()
 }
 
 #[derive(Debug, thiserror::Error, PartialEq)]
@@ -154,25 +190,17 @@ pub fn compute_layout_from_request(
         request.space.height,
     )?;
 
-    Ok(SceneResponse {
-        root: laid_out.snapshot(),
-    })
+    Ok(SceneResponse { root: laid_out.snapshot() })
 }
 
 pub fn compute_layout_from_request_with_sheet(
     request: &SceneRequest,
     sheet: &crate::css::CompiledStyleSheet,
 ) -> Result<SceneResponse, LayoutPipelineError> {
-    let laid_out = compute_layout_from_sheet(
-        &request.root,
-        sheet,
-        request.space.width,
-        request.space.height,
-    )?;
+    let laid_out =
+        compute_layout_from_sheet(&request.root, sheet, request.space.width, request.space.height)?;
 
-    Ok(SceneResponse {
-        root: laid_out.snapshot(),
-    })
+    Ok(SceneResponse { root: laid_out.snapshot() })
 }
 
 pub fn build_styled_layout_tree_from_sheet(
@@ -193,10 +221,7 @@ mod tests {
 
     fn sample_tree() -> ResolvedLayoutNode {
         ResolvedLayoutNode::Workspace {
-            meta: LayoutNodeMeta {
-                class: vec!["root".into()],
-                ..LayoutNodeMeta::default()
-            },
+            meta: LayoutNodeMeta { class: vec!["root".into()], ..LayoutNodeMeta::default() },
             children: vec![ResolvedLayoutNode::Window {
                 meta: LayoutNodeMeta {
                     id: Some("main".into()),
@@ -218,10 +243,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(styled.root.computed.display, Some(Display::Flex));
-        assert_eq!(
-            styled.root.computed.flex_direction,
-            Some(FlexDirectionValue::Row)
-        );
+        assert_eq!(styled.root.computed.flex_direction, Some(FlexDirectionValue::Row));
         assert_eq!(styled.root.children.len(), 1);
         assert_eq!(
             styled.root.children[0].computed.width,
@@ -248,17 +270,11 @@ mod tests {
             meta: LayoutNodeMeta::default(),
             children: vec![
                 ResolvedLayoutNode::Window {
-                    meta: LayoutNodeMeta {
-                        id: Some("left".into()),
-                        ..LayoutNodeMeta::default()
-                    },
+                    meta: LayoutNodeMeta { id: Some("left".into()), ..LayoutNodeMeta::default() },
                     window_id: Some(WindowId::from("w1")),
                 },
                 ResolvedLayoutNode::Window {
-                    meta: LayoutNodeMeta {
-                        id: Some("right".into()),
-                        ..LayoutNodeMeta::default()
-                    },
+                    meta: LayoutNodeMeta { id: Some("right".into()), ..LayoutNodeMeta::default() },
                     window_id: Some(WindowId::from("w2")),
                 },
             ],
@@ -286,23 +302,14 @@ mod tests {
         let tree = ResolvedLayoutNode::Workspace {
             meta: LayoutNodeMeta::default(),
             children: vec![ResolvedLayoutNode::Group {
-                meta: LayoutNodeMeta {
-                    id: Some("stack".into()),
-                    ..LayoutNodeMeta::default()
-                },
+                meta: LayoutNodeMeta { id: Some("stack".into()), ..LayoutNodeMeta::default() },
                 children: vec![
                     ResolvedLayoutNode::Window {
-                        meta: LayoutNodeMeta {
-                            id: Some("a".into()),
-                            ..LayoutNodeMeta::default()
-                        },
+                        meta: LayoutNodeMeta { id: Some("a".into()), ..LayoutNodeMeta::default() },
                         window_id: Some(WindowId::from("w1")),
                     },
                     ResolvedLayoutNode::Window {
-                        meta: LayoutNodeMeta {
-                            id: Some("b".into()),
-                            ..LayoutNodeMeta::default()
-                        },
+                        meta: LayoutNodeMeta { id: Some("b".into()), ..LayoutNodeMeta::default() },
                         window_id: Some(WindowId::from("w2")),
                     },
                 ],
@@ -342,16 +349,8 @@ mod tests {
         assert_eq!(
             snapshot,
             LayoutSnapshotNode::Workspace {
-                meta: LayoutNodeMeta {
-                    class: vec!["root".into()],
-                    ..LayoutNodeMeta::default()
-                },
-                rect: LayoutRect {
-                    x: 0.0,
-                    y: 0.0,
-                    width: 400.0,
-                    height: 300.0,
-                },
+                meta: LayoutNodeMeta { class: vec!["root".into()], ..LayoutNodeMeta::default() },
+                rect: LayoutRect { x: 0.0, y: 0.0, width: 400.0, height: 300.0 },
                 styles: Some(SceneNodeStyle {
                     layout: crate::css::ComputedStyle {
                         display: Some(Display::Flex),
@@ -367,12 +366,7 @@ mod tests {
                         class: vec!["stack".into()],
                         ..LayoutNodeMeta::default()
                     },
-                    rect: LayoutRect {
-                        x: 0.0,
-                        y: 0.0,
-                        width: 200.0,
-                        height: 300.0,
-                    },
+                    rect: LayoutRect { x: 0.0, y: 0.0, width: 200.0, height: 300.0 },
                     styles: Some(SceneNodeStyle {
                         layout: crate::css::ComputedStyle {
                             width: Some(SizeValue::LengthPercentage(LengthPercentage::Px(200.0))),
@@ -418,12 +412,7 @@ mod tests {
                         class: vec!["root".into()],
                         ..LayoutNodeMeta::default()
                     },
-                    rect: LayoutRect {
-                        x: 0.0,
-                        y: 0.0,
-                        width: 320.0,
-                        height: 200.0,
-                    },
+                    rect: LayoutRect { x: 0.0, y: 0.0, width: 320.0, height: 200.0 },
                     styles: Some(SceneNodeStyle {
                         layout: crate::css::ComputedStyle {
                             display: Some(Display::Flex),
@@ -439,12 +428,7 @@ mod tests {
                             class: vec!["stack".into()],
                             ..LayoutNodeMeta::default()
                         },
-                        rect: LayoutRect {
-                            x: 0.0,
-                            y: 0.0,
-                            width: 100.0,
-                            height: 200.0,
-                        },
+                        rect: LayoutRect { x: 0.0, y: 0.0, width: 100.0, height: 200.0 },
                         styles: Some(SceneNodeStyle {
                             layout: crate::css::ComputedStyle {
                                 width: Some(SizeValue::LengthPercentage(LengthPercentage::Px(
@@ -466,10 +450,7 @@ mod tests {
         let tree = ResolvedLayoutNode::Workspace {
             meta: LayoutNodeMeta::default(),
             children: vec![ResolvedLayoutNode::Group {
-                meta: LayoutNodeMeta {
-                    id: Some("frame".into()),
-                    ..LayoutNodeMeta::default()
-                },
+                meta: LayoutNodeMeta { id: Some("frame".into()), ..LayoutNodeMeta::default() },
                 children: vec![ResolvedLayoutNode::Window {
                     meta: LayoutNodeMeta {
                         id: Some("master".into()),
@@ -510,17 +491,12 @@ mod tests {
             root: sample_tree(),
             stylesheets: spiders_core::runtime::prepared_layout::PreparedStylesheets {
                 global: None,
-                layout: Some(
-                    spiders_core::runtime::prepared_layout::PreparedStylesheet {
-                        path: "layouts/master-stack/index.css".into(),
-                        source: stylesheet.into(),
-                    },
-                ),
+                layout: Some(spiders_core::runtime::prepared_layout::PreparedStylesheet {
+                    path: "layouts/master-stack/index.css".into(),
+                    source: stylesheet.into(),
+                }),
             },
-            space: LayoutSpace {
-                width: 320.0,
-                height: 200.0,
-            },
+            space: LayoutSpace { width: 320.0, height: 200.0 },
         };
 
         let response_a = compute_layout_from_request(&request).unwrap();

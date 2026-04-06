@@ -17,7 +17,7 @@ use spiders_titlebar_core::{
 use spiders_titlebar_core::{TitlebarRule, decode_titlebar_rules};
 use thiserror::Error;
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct TitlebarFontConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub regular_path: Option<String>,
@@ -25,7 +25,7 @@ pub struct TitlebarFontConfig {
     pub bold_path: Option<String>,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct ConfigOptions {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mod_key: Option<String>,
@@ -37,7 +37,7 @@ pub struct ConfigOptions {
     pub titlebar_font: Option<TitlebarFontConfig>,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct InputConfig {
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -70,7 +70,7 @@ pub struct InputConfig {
     pub dwt: Option<bool>,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LayoutDefinition {
     pub name: String,
@@ -82,7 +82,7 @@ pub struct LayoutDefinition {
     pub runtime_cache_payload: Option<serde_json::Value>,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct LayoutSelectionConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default: Option<String>,
@@ -92,7 +92,7 @@ pub struct LayoutSelectionConfig {
     pub per_monitor: BTreeMap<String, String>,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct WindowRule {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub app_id: Option<String>,
@@ -108,13 +108,13 @@ pub struct WindowRule {
     pub monitor: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Binding {
     pub trigger: String,
     pub command: WmCommand,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Config {
     #[serde(default)]
     pub workspaces: Vec<String>,

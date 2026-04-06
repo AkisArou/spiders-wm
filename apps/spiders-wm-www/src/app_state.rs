@@ -6,7 +6,9 @@ use spiders_config::model::Config;
 use spiders_config::runtime::load_config_from_source_bundle;
 use spiders_core::command::WmCommand;
 use spiders_core::LayoutId;
+use spiders_scene::pipeline::SceneCache;
 use spiders_runtime_js_browser::JavaScriptBrowserRuntimeProvider;
+use wasm_bindgen::{JsCast, closure::Closure};
 
 use crate::bindings::{ParsedBindingEntry, ParsedBindingsState};
 use crate::editor_files::{
@@ -14,6 +16,7 @@ use crate::editor_files::{
 };
 use crate::layout_runtime::{EvaluatedPreviewLayout, source_bundle_sources};
 use crate::session::PreviewSessionState;
+use spiders_wm_runtime::PreviewRenderAction;
 use crate::workspace::initial_open_directories;
 
 #[derive(Clone, Copy)]
@@ -25,6 +28,9 @@ pub struct AppState {
     pub directory_open_state: RwSignal<BTreeMap<String, bool>>,
     pub latest_preview_request_key: RwSignal<String>,
     pub latest_config_request_key: RwSignal<String>,
+    pub preview_refresh_scheduled: RwSignal<bool>,
+    pub preview_eval_request: RwSignal<u64>,
+    pub preview_scene_cache: RwSignal<SceneCache>,
     pub loaded_config: RwSignal<Option<Config>>,
     pub loaded_preview_layout: RwSignal<Option<EvaluatedPreviewLayout>>,
     pub loaded_bindings: RwSignal<ParsedBindingsState>,
@@ -47,6 +53,9 @@ impl AppState {
             directory_open_state: RwSignal::new(initial_open_directories()),
             latest_preview_request_key: RwSignal::new(String::new()),
             latest_config_request_key: RwSignal::new(String::new()),
+            preview_refresh_scheduled: RwSignal::new(false),
+            preview_eval_request: RwSignal::new(1),
+            preview_scene_cache: RwSignal::new(SceneCache::new()),
             loaded_config: RwSignal::new(None),
             loaded_preview_layout: RwSignal::new(None),
             loaded_bindings: RwSignal::new(default_bindings_state()),
@@ -66,18 +75,21 @@ impl AppState {
         let next_environment = build_preview_environment(&buffers, Some(&config));
         self.loaded_bindings.set(bindings_state_from_config(&config));
         self.loaded_config.set(Some(config));
+        self.preview_scene_cache.update(|cache| cache.clear());
         self.session.update(|state| {
             state.sync_inputs(
                 next_environment.workspace_names,
                 next_environment.stylesheets_by_layout,
             )
         });
+        self.request_preview_reevaluation();
     }
 
     pub fn apply_config_error(&self) {
         self.loaded_config.set(None);
         self.loaded_preview_layout.set(None);
         self.loaded_bindings.set(default_bindings_state());
+        self.preview_scene_cache.update(|cache| cache.clear());
         let buffers = self.editor_buffers.get_untracked();
         let next_environment = build_preview_environment(&buffers, None);
         self.session.update(|state| {
@@ -86,16 +98,62 @@ impl AppState {
                 next_environment.stylesheets_by_layout,
             )
         });
+        self.request_preview_reevaluation();
     }
 
     pub fn update_buffer(&self, file_id: EditorFileId, next_value: String) {
         self.editor_buffers.update(|buffers| {
             buffers.insert(file_id, next_value);
         });
+        self.request_preview_reevaluation();
     }
 
     pub fn apply_loaded_preview_layout(&self, layout: EvaluatedPreviewLayout) {
         self.loaded_preview_layout.set(Some(layout));
+    }
+
+    pub fn apply_preview_render_action(&self, action: PreviewRenderAction) {
+        match action {
+            PreviewRenderAction::None => {}
+            PreviewRenderAction::RefreshFromLoadedLayout => self.refresh_preview_from_loaded_state(),
+            PreviewRenderAction::RefreshFromLoadedLayoutAndReevaluate => {
+                self.refresh_preview_from_loaded_state();
+                if self.should_reevaluate_loaded_preview_layout() {
+                    self.request_preview_reevaluation();
+                }
+            }
+        }
+    }
+
+    fn should_reevaluate_loaded_preview_layout(&self) -> bool {
+        self.loaded_preview_layout
+            .get_untracked()
+            .map(|layout| {
+                let dependencies = layout.dependencies;
+                dependencies.uses_window_count
+                    || dependencies.uses_window_order
+                    || dependencies.uses_window_focus
+                    || dependencies.uses_visible_window_ids
+                    || dependencies.uses_workspace_name
+                    || dependencies.uses_workspace_names
+                    || dependencies.uses_selected_layout_name
+                    || dependencies.uses_layout_adjustments
+            })
+            .unwrap_or(true)
+    }
+
+    pub fn request_preview_reevaluation(&self) {
+        self.preview_eval_request.update(|value| *value += 1);
+    }
+
+    pub fn mutate_session(
+        &self,
+        mutate: impl FnOnce(&mut PreviewSessionState) -> PreviewRenderAction,
+    ) -> PreviewRenderAction {
+        let mut state = self.session.get_untracked();
+        let action = mutate(&mut state);
+        self.session.set(state);
+        action
     }
 
     pub fn apply_preview_failure_state(&self) {
@@ -103,12 +161,47 @@ impl AppState {
     }
 
     pub fn refresh_preview_from_loaded_state(&self) {
+        if self.preview_refresh_scheduled.get_untracked() {
+            return;
+        }
+
+        self.preview_refresh_scheduled.set(true);
+
+        let schedule = *self;
+        let Some(window) = web_sys::window() else {
+            schedule.run_preview_refresh();
+            return;
+        };
+
+        let callback = Closure::once(move |_timestamp: f64| {
+            schedule.run_preview_refresh();
+        });
+
+        if window
+            .request_animation_frame(callback.as_ref().unchecked_ref())
+            .is_ok()
+        {
+            callback.forget();
+        } else {
+            self.preview_refresh_scheduled.set(false);
+            self.run_preview_refresh();
+        }
+    }
+
+    fn run_preview_refresh(&self) {
+        self.preview_refresh_scheduled.set(false);
         let loaded_preview_layout = self.loaded_preview_layout.get_untracked();
+        let mut scene_cache = self.preview_scene_cache.get_untracked();
         self.session.update(|state| {
             if let Some(layout) = loaded_preview_layout.as_ref() {
-                state.apply_layout_source(layout.layout.clone(), Some(&layout.config));
+                state.apply_layout_source(
+                    layout.layout.clone(),
+                    Some(&layout.config),
+                    Some(&mut scene_cache),
+                );
             }
         });
+        self.preview_scene_cache.set(scene_cache);
     }
 
     pub fn select_editor_file(&self, file_id: EditorFileId) {

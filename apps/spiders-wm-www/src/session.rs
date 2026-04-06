@@ -1,5 +1,3 @@
-use std::collections::{BTreeMap, BTreeSet};
-
 use spiders_config::model::Config;
 use spiders_core::command::{LayoutCycleDirection, WmCommand};
 use spiders_core::effect::{
@@ -10,16 +8,21 @@ use spiders_core::snapshot::WindowSnapshot;
 use spiders_core::wm::WindowGeometry;
 use spiders_core::{LayoutId, WindowId};
 use spiders_scene::ComputedStyle;
+use spiders_scene::pipeline::SceneCache;
 pub use spiders_wm_runtime::{PreviewDiagnostic, PreviewSnapshotNode};
 use spiders_wm_runtime::{
-    PreviewLayoutComputation, PreviewSession as RuntimePreviewSession, PreviewWindow, WmHost,
-    apply_preview_command as apply_runtime_preview_command, collect_snapshot_geometries,
-    compute_layout_preview_from_source_layout as compute_runtime_layout_preview,
+    PreviewLayoutComputation, PreviewRenderAction, PreviewSession as RuntimePreviewSession,
+    PreviewWindow, WmHost, apply_preview_command as apply_runtime_preview_command,
+    collect_snapshot_geometries,
+    compute_layout_preview_from_source_layout_with_cache as compute_runtime_layout_preview,
     dispatch_wm_command as dispatch_runtime_wm_command, display_command_label,
     empty_window_geometry, preview_window_snapshot,
     select_preview_workspace as select_runtime_preview_workspace,
     set_preview_focused_window as set_runtime_preview_focused_window,
 };
+use std::collections::{BTreeMap, BTreeSet};
+
+use crate::perf::{log_timing, now_ms};
 
 const CANVAS_WIDTH: i32 = 3440;
 const CANVAS_HEIGHT: i32 = 1440;
@@ -100,11 +103,14 @@ impl PreviewSessionState {
             stylesheets_by_layout,
         };
 
-        state.apply_runtime_state(set_runtime_preview_focused_window(
-            state.runtime_state.clone(),
-            Some(WindowId::from("win-1")),
-            None,
-        ));
+        state.apply_runtime_state(
+            set_runtime_preview_focused_window(
+                state.runtime_state.clone(),
+                Some(WindowId::from("win-1")),
+                None,
+            )
+            .state,
+        );
         state
     }
 
@@ -137,15 +143,16 @@ impl PreviewSessionState {
         }
     }
 
-    pub fn switch_layout(&mut self, active_layout: LayoutId) {
+    pub fn switch_layout(&mut self, active_layout: LayoutId) -> PreviewRenderAction {
         let active_layout = normalize_layout_id(active_layout);
         if self.runtime_state.active_layout == active_layout {
-            return;
+            return PreviewRenderAction::None;
         }
 
         self.runtime_state.active_layout = active_layout;
         self.last_action = format!("click layout -> {}", self.runtime_state.active_layout.as_str());
         self.push_log(self.last_action.clone());
+        PreviewRenderAction::RefreshFromLoadedLayout
     }
 
     pub fn active_layout(&self) -> &LayoutId {
@@ -252,9 +259,10 @@ impl PreviewSessionState {
             .unwrap_or((None, None))
     }
 
-    pub fn apply_command(&mut self, command: WmCommand) {
+    pub fn apply_command(&mut self, command: WmCommand) -> PreviewRenderAction {
+        let started = now_ms();
         let label = display_command_label(&command);
-        match command {
+        let render_action = match command {
             WmCommand::CycleLayout { direction } => {
                 self.runtime_state.active_layout = match direction
                     .unwrap_or(LayoutCycleDirection::Next)
@@ -267,6 +275,7 @@ impl PreviewSessionState {
                 self.last_action =
                     format!("{} -> {}", label, self.runtime_state.active_layout.as_str());
                 self.push_log(self.last_action.clone());
+                PreviewRenderAction::RefreshFromLoadedLayout
             }
             WmCommand::SetLayout { name } => {
                 if PREVIEW_LAYOUT_IDS.contains(&name.as_str()) {
@@ -275,11 +284,14 @@ impl PreviewSessionState {
                     self.last_action =
                         format!("set layout -> {}", self.runtime_state.active_layout.as_str());
                     self.push_log(self.last_action.clone());
+                    PreviewRenderAction::RefreshFromLoadedLayout
+                } else {
+                    PreviewRenderAction::None
                 }
             }
             command => {
                 self.last_action = label;
-                dispatch_runtime_wm_command(self, command);
+                let render_action = dispatch_runtime_wm_command(self, command);
                 if self.last_action == "quit" {
                     self.push_log("quit ignored in preview".to_string());
                 } else {
@@ -293,13 +305,25 @@ impl PreviewSessionState {
                         self.runtime_state.active_workspace_name,
                     ));
                 }
+                render_action
             }
-        }
+        };
+        log_timing(
+            "preview-session.apply-command",
+            started,
+            format!(
+                "action={} windows={} active_workspace={}",
+                self.last_action,
+                self.runtime_state.windows.len(),
+                self.runtime_state.active_workspace_name
+            ),
+        );
+        render_action
     }
 
-    pub fn select_workspace(&mut self, workspace_name: String) {
+    pub fn select_workspace(&mut self, workspace_name: String) -> PreviewRenderAction {
         if !self.runtime_state.workspace_names.contains(&workspace_name) {
-            return;
+            return PreviewRenderAction::None;
         }
 
         let next_state = select_runtime_preview_workspace(
@@ -307,11 +331,11 @@ impl PreviewSessionState {
             &workspace_name,
             self.snapshot_root.as_ref(),
         );
-        if next_state == self.runtime_state {
-            return;
+        if next_state.state == self.runtime_state {
+            return PreviewRenderAction::None;
         }
 
-        self.apply_runtime_state(next_state);
+        self.apply_runtime_state(next_state.state);
         self.last_action =
             format!("view workspace -> {}", self.runtime_state.active_workspace_name);
         let target = self
@@ -323,11 +347,12 @@ impl PreviewSessionState {
             "workspace {} -> focus {target}",
             self.runtime_state.active_workspace_name
         ));
+        next_state.render_action
     }
 
-    pub fn set_focus(&mut self, window_id: WindowId) {
+    pub fn set_focus(&mut self, window_id: WindowId) -> PreviewRenderAction {
         if self.focused_window_id().as_ref() == Some(&window_id) {
-            return;
+            return PreviewRenderAction::None;
         }
 
         let from = self
@@ -341,16 +366,19 @@ impl PreviewSessionState {
             Some(window_id),
             self.snapshot_root.as_ref(),
         );
-        self.apply_runtime_state(next_state);
+        self.apply_runtime_state(next_state.state);
         self.last_action = format!("click focus -> {to}");
         self.push_log(format!("Selected {to} from {from}"));
+        next_state.render_action
     }
 
     pub fn apply_layout_source(
         &mut self,
         layout: spiders_core::SourceLayoutNode,
         config: Option<&Config>,
+        scene_cache: Option<&mut SceneCache>,
     ) {
+        let started = now_ms();
         let layout_windows = self
             .runtime_state
             .windows
@@ -373,9 +401,19 @@ impl PreviewSessionState {
                 .unwrap_or(""),
             CANVAS_WIDTH as f32,
             CANVAS_HEIGHT as f32,
+            scene_cache,
         );
 
         self.apply_preview_computation(result);
+        log_timing(
+            "preview-session.apply-layout-source",
+            started,
+            format!(
+                "layout={} visible_windows={}",
+                self.runtime_state.active_layout.as_str(),
+                layout_windows.len()
+            ),
+        );
     }
 
     pub fn apply_preview_failure(&mut self, source: &'static str, message: String) {
@@ -399,6 +437,7 @@ impl PreviewSessionState {
     }
 
     fn apply_preview_computation(&mut self, computation: PreviewLayoutComputation) {
+        let started = now_ms();
         let unclaimed_ids = computation
             .unclaimed_window_ids
             .into_iter()
@@ -409,9 +448,15 @@ impl PreviewSessionState {
         self.diagnostics = computation.diagnostics;
         self.unclaimed_window_ids = unclaimed_ids;
         self.sync_window_geometries_from_snapshot();
+        log_timing(
+            "preview-session.apply-preview-computation",
+            started,
+            format!("diagnostics={}", self.diagnostics.len()),
+        );
     }
 
     fn sync_window_geometries_from_snapshot(&mut self) {
+        let started = now_ms();
         let mut geometries = BTreeMap::new();
         if let Some(snapshot_root) = self.snapshot_root.as_ref() {
             collect_snapshot_geometries(snapshot_root, &mut geometries);
@@ -428,6 +473,11 @@ impl PreviewSessionState {
                 geometries.get(&window_id).copied().unwrap_or_else(empty_window_geometry),
             );
         }
+        log_timing(
+            "preview-session.sync-window-geometries",
+            started,
+            format!("tracked_windows={}", self.window_geometries.len()),
+        );
     }
 
     fn apply_runtime_state(&mut self, next_state: RuntimePreviewSession) {
@@ -447,13 +497,20 @@ impl PreviewSessionState {
             .collect();
     }
 
-    fn apply_host_runtime_command(&mut self, command: WmCommand) {
-        let next_state = apply_runtime_preview_command(
+    fn apply_host_runtime_command(&mut self, command: WmCommand) -> PreviewRenderAction {
+        let started = now_ms();
+        let outcome = apply_runtime_preview_command(
             self.runtime_state.clone(),
             command,
             self.snapshot_root.as_ref(),
         );
-        self.apply_runtime_state(next_state);
+        self.apply_runtime_state(outcome.state);
+        log_timing(
+            "preview-session.apply-host-runtime-command",
+            started,
+            format!("windows={}", self.runtime_state.windows.len()),
+        );
+        outcome.render_action
     }
 
     fn push_log(&mut self, entry: String) {
@@ -467,10 +524,10 @@ impl PreviewSessionState {
 }
 
 impl WmHost for PreviewSessionState {
-    fn on_effect(&mut self, effect: WmHostEffect) {
+    fn on_effect(&mut self, effect: WmHostEffect) -> PreviewRenderAction {
         match effect {
             WmHostEffect::SpawnCommand { command } => {
-                self.apply_host_runtime_command(WmCommand::Spawn { command });
+                self.apply_host_runtime_command(WmCommand::Spawn { command })
             }
             WmHostEffect::RequestQuit => self.apply_host_runtime_command(WmCommand::Quit),
             WmHostEffect::ActivateWorkspace { target } => match target {
@@ -480,26 +537,25 @@ impl WmHost for PreviewSessionState {
                         &name,
                         self.snapshot_root.as_ref(),
                     );
-                    self.apply_runtime_state(next_state);
+                    self.apply_runtime_state(next_state.state);
+                    next_state.render_action
                 }
                 WorkspaceTarget::Next => {
-                    self.apply_host_runtime_command(WmCommand::SelectNextWorkspace);
+                    self.apply_host_runtime_command(WmCommand::SelectNextWorkspace)
                 }
                 WorkspaceTarget::Previous => {
-                    self.apply_host_runtime_command(WmCommand::SelectPreviousWorkspace);
+                    self.apply_host_runtime_command(WmCommand::SelectPreviousWorkspace)
                 }
             },
             WmHostEffect::AssignFocusedWindowToWorkspace { assignment } => match assignment {
                 WorkspaceAssignment::Move(workspace) => {
                     self.apply_host_runtime_command(WmCommand::AssignFocusedWindowToWorkspace {
                         workspace,
-                    });
+                    })
                 }
-                WorkspaceAssignment::Toggle(workspace) => {
-                    self.apply_host_runtime_command(
-                        WmCommand::ToggleAssignFocusedWindowToWorkspace { workspace },
-                    );
-                }
+                WorkspaceAssignment::Toggle(workspace) => self.apply_host_runtime_command(
+                    WmCommand::ToggleAssignFocusedWindowToWorkspace { workspace },
+                ),
             },
             WmHostEffect::SpawnTerminal => {
                 self.apply_host_runtime_command(WmCommand::SpawnTerminal)
@@ -518,11 +574,12 @@ impl WmHost for PreviewSessionState {
                         Some(window_id),
                         self.snapshot_root.as_ref(),
                     );
-                    self.apply_runtime_state(next_state);
+                    self.apply_runtime_state(next_state.state);
+                    next_state.render_action
                 }
             },
             WmHostEffect::CloseFocusedWindow => {
-                self.apply_host_runtime_command(WmCommand::CloseFocusedWindow);
+                self.apply_host_runtime_command(WmCommand::CloseFocusedWindow)
             }
             WmHostEffect::ReloadConfig => self.apply_host_runtime_command(WmCommand::ReloadConfig),
             WmHostEffect::ToggleFocusedWindow { toggle } => match toggle {
@@ -534,12 +591,15 @@ impl WmHost for PreviewSessionState {
                 }
             },
             WmHostEffect::SwapFocusedWindow { direction } => {
-                self.apply_host_runtime_command(WmCommand::SwapDirection { direction });
+                self.apply_host_runtime_command(WmCommand::SwapDirection { direction })
             }
             WmHostEffect::SetLayout { name } => {
                 if PREVIEW_LAYOUT_IDS.contains(&name.as_str()) {
                     let layout = LayoutId::from(name.as_str());
                     self.runtime_state.active_layout = layout;
+                    PreviewRenderAction::RefreshFromLoadedLayout
+                } else {
+                    PreviewRenderAction::None
                 }
             }
             WmHostEffect::CycleLayout { direction } => {
@@ -551,6 +611,7 @@ impl WmHost for PreviewSessionState {
                         previous_layout_id(&self.runtime_state.active_layout)
                     }
                 };
+                PreviewRenderAction::RefreshFromLoadedLayout
             }
         }
     }

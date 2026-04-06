@@ -9,13 +9,12 @@ use js_sys::{Array, Function, Promise, Reflect};
 use serde_json::Value;
 use spiders_config::model::{Config, LayoutConfigError, RuntimeKind};
 use spiders_config::runtime::{
-    SourceBundle, SourceBundleConfigRuntime, SourceBundlePreparedLayoutRuntime,
+    EvaluatedSourceLayout, SourceBundle, SourceBundleConfigRuntime, SourceBundlePreparedLayoutRuntime,
     SourceBundleRuntimeBundle, SourceBundleRuntimeProvider,
 };
-use spiders_core::runtime::layout_context::LayoutEvaluationContext;
+use spiders_core::runtime::layout_context::{LayoutEvaluationContext, LayoutEvaluationDependencies};
 use spiders_core::runtime::prepared_layout::{PreparedLayout, PreparedStylesheet, PreparedStylesheets};
 use spiders_core::snapshot::{StateSnapshot, WorkspaceSnapshot};
-use spiders_core::SourceLayoutNode;
 use spiders_runtime_js_core::{
     JavaScriptModule, JavaScriptModuleGraph, compile_source_bundle_to_module_graph, decode_js_layout_value,
     decode_runtime_graph_payload, encode_runtime_graph_payload,
@@ -31,18 +30,143 @@ use crate::config_decode::{decode_config_value, validate_layout_selection};
 export async function importModule(url) {
   return await import(url);
 }
+
+export function createTrackedLayoutContext(context) {
+  const dependencies = {
+    usesMonitorSize: false,
+    usesMonitorScale: false,
+    usesWindowCount: false,
+    usesWindowOrder: false,
+    usesWindowFocus: false,
+    usesVisibleWindowIds: false,
+    usesWorkspaceName: false,
+    usesWorkspaceNames: false,
+    usesSelectedLayoutName: false,
+    usesLayoutAdjustments: false,
+  };
+
+  const trackedWindows = context.windows.map((window) => new Proxy(window, {
+    get(target, prop, receiver) {
+      if (prop === "focused") {
+        dependencies.usesWindowFocus = true;
+      } else if (typeof prop === "string" && prop !== "id") {
+        dependencies.usesWindowOrder = true;
+      }
+      return Reflect.get(target, prop, receiver);
+    },
+  }));
+
+  const windowsProxy = new Proxy(trackedWindows, {
+    get(target, prop, receiver) {
+      if (prop === "length") {
+        dependencies.usesWindowCount = true;
+        return Reflect.get(target, prop, receiver);
+      }
+
+      if (typeof prop === "string") {
+        const index = Number(prop);
+        if (!Number.isNaN(index)) {
+          dependencies.usesWindowOrder = true;
+        }
+      }
+
+      return Reflect.get(target, prop, receiver);
+    },
+  });
+
+  const trackedWorkspace = new Proxy(context.workspace, {
+    get(target, prop, receiver) {
+      if (prop === "windowCount") {
+        dependencies.usesWindowCount = true;
+      } else if (prop === "name") {
+        dependencies.usesWorkspaceName = true;
+      } else if (prop === "workspaces") {
+        dependencies.usesWorkspaceNames = true;
+      }
+      return Reflect.get(target, prop, receiver);
+    },
+  });
+
+  const trackedMonitor = new Proxy(context.monitor, {
+    get(target, prop, receiver) {
+      if (prop === "width" || prop === "height") {
+        dependencies.usesMonitorSize = true;
+      } else if (prop === "scale") {
+        dependencies.usesMonitorScale = true;
+      }
+      return Reflect.get(target, prop, receiver);
+    },
+  });
+
+  const trackedState = context.state
+    ? new Proxy(context.state, {
+        get(target, prop, receiver) {
+          if (prop === "focusedWindowId") {
+            dependencies.usesWindowFocus = true;
+          } else if (prop === "visibleWindowIds") {
+            dependencies.usesVisibleWindowIds = true;
+          } else if (prop === "selectedLayoutName") {
+            dependencies.usesSelectedLayoutName = true;
+          } else if (prop === "layoutAdjustments") {
+            dependencies.usesLayoutAdjustments = true;
+          } else if (prop === "workspaceNames") {
+            dependencies.usesWorkspaceNames = true;
+          }
+          return Reflect.get(target, prop, receiver);
+        },
+      })
+    : undefined;
+
+  return {
+    context: new Proxy(context, {
+      get(target, prop, receiver) {
+        if (prop === "windows") {
+          return windowsProxy;
+        }
+        if (prop === "workspace") {
+          return trackedWorkspace;
+        }
+        if (prop === "monitor") {
+          return trackedMonitor;
+        }
+        if (prop === "state") {
+          return trackedState;
+        }
+        return Reflect.get(target, prop, receiver);
+      },
+    }),
+    dependencies,
+  };
+}
+
+export function buildTrackedLayoutResult(layout, dependencies) {
+  return { layout, dependencies };
+}
 "#)]
 extern "C" {
     #[wasm_bindgen(catch, js_name = importModule)]
     fn import_module(url: &str) -> Result<Promise, JsValue>;
+
+    #[wasm_bindgen(js_name = createTrackedLayoutContext)]
+    fn create_tracked_layout_context(context: JsValue) -> JsValue;
+
+    #[wasm_bindgen(js_name = buildTrackedLayoutResult)]
+    fn build_tracked_layout_result(layout: JsValue, dependencies: JsValue) -> JsValue;
 }
 
-pub async fn evaluate_layout_module_graph(
+async fn evaluate_layout_module_graph(
     module_graph: &JavaScriptModuleGraph,
     context: &LayoutEvaluationContext,
-) -> Result<JsValue, String> {
-    let context_value = serde_wasm_bindgen::to_value(context).map_err(|error| error.to_string())?;
-    evaluate_module_export_function(module_graph, "default", context_value).await
+) -> Result<LayoutEvaluationResult, String> {
+    let raw_context = serde_wasm_bindgen::to_value(context).map_err(|error| error.to_string())?;
+    let tracked = create_tracked_layout_context(raw_context);
+    let tracked_context = Reflect::get(&tracked, &JsValue::from_str("context"))
+        .map_err(js_error_to_string)?;
+    let dependencies = Reflect::get(&tracked, &JsValue::from_str("dependencies"))
+        .map_err(js_error_to_string)?;
+    let layout = evaluate_module_export_function(module_graph, "default", tracked_context).await?;
+    let result = build_tracked_layout_result(layout, dependencies);
+    serde_wasm_bindgen::from_value(result).map_err(|error| error.to_string())
 }
 
 pub async fn load_config_from_source_bundle(
@@ -504,7 +628,7 @@ impl SourceBundlePreparedLayoutRuntime for JavaScriptBrowserPreparedLayoutRuntim
         _sources: &'a SourceBundle,
         artifact: &'a PreparedLayout,
         context: &'a LayoutEvaluationContext,
-    ) -> Pin<Box<dyn Future<Output = Result<SourceLayoutNode, LayoutConfigError>> + 'a>> {
+    ) -> Pin<Box<dyn Future<Output = Result<EvaluatedSourceLayout, LayoutConfigError>> + 'a>> {
         Box::pin(async move {
             let runtime_graph = decode_runtime_graph_payload(&artifact.runtime_payload).map_err(|error| {
                 LayoutConfigError::DecodeAuthoredConfig {
@@ -518,16 +642,12 @@ impl SourceBundlePreparedLayoutRuntime for JavaScriptBrowserPreparedLayoutRuntim
                     path: PathBuf::from(&artifact.selected.module),
                     message,
                 })?;
-            let json: Value =
-                serde_wasm_bindgen::from_value(value).map_err(|error| LayoutConfigError::DecodeAuthoredConfig {
-                    path: PathBuf::from(&artifact.selected.module),
-                    message: error.to_string(),
-                })?;
-
-            decode_js_layout_value(&json).map_err(|message| LayoutConfigError::DecodeAuthoredConfig {
+            let layout = decode_js_layout_value(&value.layout).map_err(|message| LayoutConfigError::DecodeAuthoredConfig {
                 path: PathBuf::from(&artifact.selected.module),
                 message,
-            })
+            })?;
+
+            Ok(EvaluatedSourceLayout { layout, dependencies: value.dependencies })
         })
     }
 }
@@ -546,4 +666,11 @@ fn load_stylesheet_asset(
     };
     let source = sources.get(&resolved).cloned().unwrap_or_default();
     Some(PreparedStylesheet { path: path.to_string(), source })
+}
+#[derive(Debug, Clone, PartialEq, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct LayoutEvaluationResult {
+    layout: Value,
+    #[serde(default)]
+    dependencies: LayoutEvaluationDependencies,
 }

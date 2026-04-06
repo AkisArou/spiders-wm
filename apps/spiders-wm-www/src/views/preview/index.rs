@@ -585,11 +585,10 @@ pub fn PreviewView() -> impl IntoView {
                                                     }
                                                 }
                                                 on:click=move |_| {
-                                                    app_state
-                                                        .session
-                                                        .update(|state| {
-                                                            state.select_workspace(target_workspace.clone())
-                                                        });
+                                                    let action = app_state.mutate_session(|state| {
+                                                        state.select_workspace(target_workspace.clone())
+                                                    });
+                                                    app_state.apply_preview_render_action(action);
                                                 }
                                             >
                                                 {workspace_name}
@@ -613,11 +612,10 @@ pub fn PreviewView() -> impl IntoView {
                                     if preview_layout_ids()
                                         .any(|candidate| candidate.as_str() == layout_name)
                                     {
-                                        app_state
-                                            .session
-                                            .update(|state| {
-                                                state.switch_layout(layout_name.as_str().into())
-                                            });
+                                        let action = app_state.mutate_session(|state| {
+                                            state.switch_layout(layout_name.as_str().into())
+                                        });
+                                        app_state.apply_preview_render_action(action);
                                     }
                                 })
                             />
@@ -725,11 +723,11 @@ pub fn PreviewView() -> impl IntoView {
                                                     let fallback_window_id = window.id.clone();
                                                     let titlebar_focus_target = focus_target.clone();
                                                     let titlebar_action = Callback::new(move |command: WmCommand| {
-                                                        app_state.session.update(|state| {
-                                                            state.set_focus(titlebar_focus_target.clone());
-                                                            state.apply_command(command);
+                                                        let action = app_state.mutate_session(|state| {
+                                                            let _ = state.set_focus(titlebar_focus_target.clone());
+                                                            state.apply_command(command)
                                                         });
-                                                        app_state.refresh_preview_from_loaded_state();
+                                                        app_state.apply_preview_render_action(action);
                                                     });
                                                     let body_style_value = body_style(layout_style.as_ref());
                                                     let resolved_titlebar_height = titlebar_height_px(
@@ -766,10 +764,10 @@ pub fn PreviewView() -> impl IntoView {
                                                                 )
                                                             }
                                                             on:click=move |_| {
-                                                                app_state
-                                                                    .session
-                                                                    .update(|state| state.set_focus(pane_focus_target.clone()));
-                                                                app_state.refresh_preview_from_loaded_state();
+                                                                let action = app_state.mutate_session(|state| {
+                                                                    state.set_focus(pane_focus_target.clone())
+                                                                });
+                                                                app_state.apply_preview_render_action(action);
                                                             }
                                                         >
                                                             <Show

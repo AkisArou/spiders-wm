@@ -4138,6 +4138,7 @@ dependencies = [
  "precomputed-hash",
  "selectors",
  "serde",
+ "serde_json",
  "spiders-core",
  "spiders-css",
  "stylo",
