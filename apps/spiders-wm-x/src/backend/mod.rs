@@ -805,28 +805,52 @@ impl RuntimeState {
                 if let Some(desktop_index) =
                     desktop_index_for_workspace(&snapshot, snapshot_window.workspace_id.as_ref())
                 {
-                    change_root_property32(
+                    if let Err(error) = change_root_property32(
                         connection,
                         *x_window_id,
                         atoms.net_wm_desktop,
                         AtomEnum::CARDINAL.into(),
                         &[desktop_index],
-                    )?;
+                    ) {
+                        if is_bad_window_reply_error(&error) {
+                            warn!(window = *x_window_id, ?error, "skipping X11 EWMH desktop property update for invalid window");
+                            continue;
+                        }
+                        return Err(error);
+                    }
                 } else {
-                    delete_property(connection, *x_window_id, atoms.net_wm_desktop)?;
+                    if let Err(error) = delete_property(connection, *x_window_id, atoms.net_wm_desktop) {
+                        if is_bad_window_reply_error(&error) {
+                            warn!(window = *x_window_id, ?error, "skipping X11 EWMH desktop property delete for invalid window");
+                            continue;
+                        }
+                        return Err(error);
+                    }
                 }
 
                 let window_state_atoms = ewmh_window_state_atoms(atoms, snapshot_window);
                 if window_state_atoms.is_empty() {
-                    delete_property(connection, *x_window_id, atoms.net_wm_state)?;
+                    if let Err(error) = delete_property(connection, *x_window_id, atoms.net_wm_state) {
+                        if is_bad_window_reply_error(&error) {
+                            warn!(window = *x_window_id, ?error, "skipping X11 EWMH state delete for invalid window");
+                            continue;
+                        }
+                        return Err(error);
+                    }
                 } else {
-                    change_root_property32(
+                    if let Err(error) = change_root_property32(
                         connection,
                         *x_window_id,
                         atoms.net_wm_state,
                         AtomEnum::ATOM.into(),
                         &window_state_atoms,
-                    )?;
+                    ) {
+                        if is_bad_window_reply_error(&error) {
+                            warn!(window = *x_window_id, ?error, "skipping X11 EWMH state update for invalid window");
+                            continue;
+                        }
+                        return Err(error);
+                    }
                 }
             }
         }
@@ -899,6 +923,18 @@ fn change_root_property32(
         .check()
         .context("failed to publish X11 root property")?;
     Ok(())
+}
+
+fn is_bad_window_reply_error(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<x11rb::errors::ReplyError>()
+        .is_some_and(|reply_error| {
+            matches!(
+                reply_error,
+                x11rb::errors::ReplyError::X11Error(x11_error)
+                    if x11_error.error_kind == x11rb::protocol::ErrorKind::Window
+            )
+        })
 }
 
 fn delete_property(connection: &XCBConnection, window: Window, property: Atom) -> Result<()> {
@@ -1213,7 +1249,17 @@ impl ManageEventHandler for BackendManageHandler<'_> {
         connection: &XCBConnection,
         event: &x11rb::protocol::xproto::FocusInEvent,
     ) -> Result<()> {
-        self.state.focus_window(self.state.window_id_for_x_window(event.event));
+        if event.mode != x11rb::protocol::xproto::NotifyMode::NORMAL {
+            info!(event = event.event, mode = ?event.mode, detail = ?event.detail, "wm-x ignoring transient focus-in for X11 grab transition");
+            return Ok(());
+        }
+
+        let focused_window_id = self.state.window_id_for_x_window(event.event);
+        if focused_window_id.is_none() {
+            info!(event = event.event, mode = ?event.mode, detail = ?event.detail, "wm-x ignoring focus-in for unmanaged X11 window");
+            return Ok(());
+        }
+        self.state.focus_window(focused_window_id);
         self.state.publish_ewmh_state(connection, self.atoms)?;
         Ok(())
     }
@@ -1484,10 +1530,17 @@ impl BackendManageHandler<'_> {
                 aux = aux.stack_mode(StackMode::ABOVE);
             }
 
-            connection
+            if let Err(error) = connection
                 .configure_window(window, &aux)?
                 .check()
-                .context("failed to apply shared layout geometry to X11 window")?;
+                .context("failed to apply shared layout geometry to X11 window")
+            {
+                if is_bad_window_reply_error(&error) {
+                    warn!(window, ?error, "skipping shared X11 layout geometry update for invalid window");
+                    continue;
+                }
+                return Err(error);
+            }
         }
 
         if !geometries.is_empty() {

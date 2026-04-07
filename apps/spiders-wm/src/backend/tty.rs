@@ -45,10 +45,19 @@ use crate::backend::output::TtyOutputState;
 use crate::backend::output::{drm_physical_properties, register_existing_output, remove_output_from_runtime};
 use crate::backend::session::{BackendSession, TtySessionHandle, TtySessionState};
 use crate::backend::{BackendState, TtyBackendState};
+#[cfg(feature = "tty-preview")]
+use crate::frame_sync::SnapshotRenderElement;
 use crate::state::SpidersWm;
 
 #[cfg(feature = "tty-preview")]
 type TtyGpuManager = GpuManager<GbmGlesBackend<GlesRenderer, smithay::backend::drm::DrmDeviceFd>>;
+
+#[cfg(feature = "tty-preview")]
+smithay::backend::renderer::element::render_elements! {
+    pub(crate) TtySceneRenderElement<=GlesRenderer>;
+    Space=smithay::desktop::space::SpaceRenderElements<GlesRenderer, smithay::backend::renderer::element::surface::WaylandSurfaceRenderElement<GlesRenderer>>,
+    Snapshot=SnapshotRenderElement,
+}
 
 pub(crate) fn init_tty(
     #[cfg(feature = "libseat")] event_loop: &mut EventLoop<'static, SpidersWm>,
@@ -173,7 +182,9 @@ fn init_tty_preview_drm_state(
         device_records.push(device_record);
     }
 
-    for (index, output_record) in all_outputs.iter().enumerate() {
+    assign_tty_output_locations(&mut all_outputs, &[]);
+
+    for output_record in &all_outputs {
         register_existing_output(
             state,
             output_record.output_id.clone(),
@@ -181,7 +192,7 @@ fn init_tty_preview_drm_state(
             &output_record.output,
             output_record.mode,
             smithay::utils::Transform::Normal,
-            ((index as i32) * output_record.mode.size.w, 0).into(),
+            output_record.location,
         );
     }
 
@@ -302,6 +313,7 @@ fn collect_connector_outputs(
         outputs.push(TtyOutputState {
             output,
             output_id: format!("drm:{}:{}", seat_name, connector_name),
+            location: (0, 0).into(),
             connector_name,
             drm_node: Some(record.node),
             connector: *connector,
@@ -334,6 +346,26 @@ fn select_connector_mode(
 }
 
 #[cfg(feature = "tty-preview")]
+#[allow(dead_code)]
+fn assign_tty_output_locations(outputs: &mut [TtyOutputState], previous_outputs: &[TtyOutputState]) {
+    let mut next_x = previous_outputs
+        .iter()
+        .map(|output| output.location.x + output.mode.size.w)
+        .max()
+        .unwrap_or(0);
+
+    for output in outputs {
+        if let Some(previous) = previous_outputs.iter().find(|candidate| candidate.output_id == output.output_id) {
+            output.location = previous.location;
+            continue;
+        }
+
+        output.location = (next_x, 0).into();
+        next_x += output.mode.size.w;
+    }
+}
+
+#[cfg(feature = "tty-preview")]
 fn register_drm_notifier(
     event_loop: &mut EventLoop<'static, SpidersWm>,
     node: DrmNode,
@@ -361,6 +393,7 @@ impl SpidersWm {
             }
             DrmEvent::Error(error) => {
                 info!(node = ?node, ?error, "tty preview drm device error");
+                self.handle_tty_drm_node_changed(node);
             }
         }
     }
@@ -401,6 +434,7 @@ impl SpidersWm {
                 };
                 next_outputs.append(&mut outputs);
             }
+            assign_tty_output_locations(&mut next_outputs, &previous_outputs);
 
             let stale = previous_outputs
                 .iter()
@@ -412,8 +446,7 @@ impl SpidersWm {
 
             let updates = next_outputs
                 .iter()
-                .enumerate()
-                .filter_map(|(index, output)| {
+                .filter_map(|output| {
                     let changed = previous_outputs
                         .iter()
                         .find(|previous| previous.output_id == output.output_id)
@@ -424,7 +457,7 @@ impl SpidersWm {
                         output.connector_name.clone(),
                         output.output.clone(),
                         output.mode,
-                        ((index as i32) * output.mode.size.w, 0).into(),
+                        output.location,
                     ))
                 })
                 .collect::<Vec<_>>();
@@ -454,6 +487,86 @@ impl SpidersWm {
             let _ = initialize_drm_surfaces(&seat_name, backend);
         }
         let _ = initialize_tty_renderer_state(self);
+        self.schedule_tty_redraw();
+    }
+
+    fn handle_tty_drm_node_changed(&mut self, node: DrmNode) {
+        let (stale_outputs, updates, seat_name) = {
+            let Some(BackendState::Tty(backend)) = self.backend.as_mut() else {
+                return;
+            };
+            let seat_name = match &backend.session {
+                BackendSession::Tty(session) => session.seat_name.clone(),
+                _ => return,
+            };
+
+            let previous_outputs = std::mem::take(&mut backend.outputs);
+            reset_tty_device_scanout_state(backend, node);
+
+            let mut next_outputs = Vec::new();
+            for device in &backend.drm.devices {
+                let Ok(mut outputs) = collect_connector_outputs(&seat_name, device) else {
+                    continue;
+                };
+                next_outputs.append(&mut outputs);
+            }
+            assign_tty_output_locations(&mut next_outputs, &previous_outputs);
+
+            let stale = previous_outputs
+                .iter()
+                .filter(|previous| {
+                    previous.drm_node == Some(node)
+                        && !next_outputs.iter().any(|next| next.output_id == previous.output_id)
+                })
+                .map(|output| (output.output.clone(), output.output_id.clone()))
+                .collect::<Vec<_>>();
+
+            let updates = next_outputs
+                .iter()
+                .filter_map(|output| {
+                    if output.drm_node != Some(node) {
+                        return None;
+                    }
+                    let changed = previous_outputs
+                        .iter()
+                        .find(|previous| previous.output_id == output.output_id)
+                        .map(|previous| !previous.same_render_state(output))
+                        .unwrap_or(true);
+                    changed.then_some((
+                        output.output_id.clone(),
+                        output.connector_name.clone(),
+                        output.output.clone(),
+                        output.mode,
+                        output.location,
+                    ))
+                })
+                .collect::<Vec<_>>();
+
+            backend.outputs = next_outputs;
+            (stale, updates, seat_name)
+        };
+
+        for (output, output_id) in stale_outputs {
+            self.space.unmap_output(&output);
+            remove_output_from_runtime(self, output_id);
+        }
+
+        for (output_id, output_name, output, mode, location) in updates {
+            register_existing_output(
+                self,
+                output_id,
+                output_name,
+                &output,
+                mode,
+                smithay::utils::Transform::Normal,
+                location,
+            );
+        }
+
+        if let Some(BackendState::Tty(backend)) = self.backend.as_mut() {
+            let _ = initialize_tty_device_surfaces(&seat_name, backend, node);
+        }
+        let _ = initialize_tty_renderer_state_for_node(self, node);
         self.schedule_tty_redraw();
     }
 
@@ -501,39 +614,54 @@ impl SpidersWm {
     }
 
     fn try_tty_blank_frame(&mut self) {
-        let output = match self.backend.as_ref() {
+        self.notify_blocker_cleared();
+        self.prune_completed_closing_overlays();
+
+        let targets = match self.backend.as_ref() {
             Some(BackendState::Tty(backend)) => {
                 let active = matches!(&backend.session, BackendSession::Tty(session) if session.active);
-                active.then(|| backend.outputs.first().map(|output| output.output.clone())).flatten()
+                active.then(|| {
+                    backend
+                        .outputs
+                        .iter()
+                        .filter_map(|output| {
+                            output
+                                .drm_node
+                                .map(|node| (output.output.clone(), node, output.connector))
+                        })
+                        .collect::<Vec<_>>()
+                })
             }
             _ => None,
         };
-        let Some(output) = output else {
+        let Some(targets) = targets else {
             return;
         };
 
-        let elements = self.tty_collect_space_elements(&output);
+        let mut presented_outputs = Vec::new();
 
-        let mut queued_frame = false;
+        for (output, node, connector) in targets {
+            let elements = self.tty_collect_scene_elements(&output, node);
 
-        let Some(BackendState::Tty(backend)) = self.backend.as_mut() else {
-            return;
-        };
-        let Some(primary_device) = backend.drm.devices.first_mut() else {
-            return;
-        };
-        let Some(render_node) = primary_device.render.render_node else {
-            return;
-        };
-        let Some(gpu_manager) = primary_device.render.gpu_manager.as_mut() else {
-            return;
-        };
+            let Some(BackendState::Tty(backend)) = self.backend.as_mut() else {
+                return;
+            };
+            let Some(device) = backend.drm.devices.iter_mut().find(|device| device.node == node) else {
+                continue;
+            };
+            let Some(render_node) = device.render.render_node else {
+                continue;
+            };
+            let Some(gpu_manager) = device.render.gpu_manager.as_mut() else {
+                continue;
+            };
 
-        let Ok(mut renderer) = gpu_manager.single_renderer(&render_node) else {
-            return;
-        };
-
-        for surface in &mut primary_device.surfaces {
+            let Ok(mut renderer) = gpu_manager.single_renderer(&render_node) else {
+                continue;
+            };
+            let Some(surface) = device.surfaces.iter_mut().find(|surface| surface.connector == connector) else {
+                continue;
+            };
             let Some(compositor) = surface.compositor.as_mut() else {
                 continue;
             };
@@ -550,18 +678,17 @@ impl SpidersWm {
                     }
                     match compositor.queue_frame(()) {
                         Ok(()) => {
-                            queued_frame = true;
+                            presented_outputs.push(output.clone());
                             info!(
-                                node = ?primary_device.node,
+                                node = ?device.node,
                                 connector = ?surface.connector,
                                 crtc = ?surface.crtc,
                                 "tty preview queued scene frame"
                             );
-                            break;
                         }
                         Err(error) => {
                             info!(
-                                node = ?primary_device.node,
+                                node = ?device.node,
                                 connector = ?surface.connector,
                                 crtc = ?surface.crtc,
                                 ?error,
@@ -572,7 +699,7 @@ impl SpidersWm {
                 }
                 Err(error) => {
                     info!(
-                        node = ?primary_device.node,
+                        node = ?device.node,
                         connector = ?surface.connector,
                         crtc = ?surface.crtc,
                         ?error,
@@ -582,18 +709,22 @@ impl SpidersWm {
             }
         }
 
-        if queued_frame {
-            self.send_frames_for_windows(&output);
+        if !presented_outputs.is_empty() {
+            self.frame_sync.mark_closing_overlays_presented();
+            for output in &presented_outputs {
+                self.send_frames_for_windows(output);
+            }
+            self.space.refresh();
+            self.popups.cleanup();
+            let _ = self.display_handle.flush_clients();
         }
     }
 
-    fn tty_collect_space_elements(
+    fn tty_collect_scene_elements(
         &mut self,
         output: &smithay::output::Output,
-    ) -> Vec<smithay::desktop::space::SpaceRenderElements<
-        GlesRenderer,
-        smithay::backend::renderer::element::surface::WaylandSurfaceRenderElement<GlesRenderer>,
-    >> {
+        node: DrmNode,
+    ) -> Vec<TtySceneRenderElement> {
         let mut backend = match self.backend.take() {
             Some(BackendState::Tty(backend)) => backend,
             Some(other) => {
@@ -603,7 +734,7 @@ impl SpidersWm {
             None => return Vec::new(),
         };
 
-        let Some(primary_device) = backend.drm.devices.first_mut() else {
+        let Some(primary_device) = backend.drm.devices.iter_mut().find(|device| device.node == node) else {
             self.backend = Some(BackendState::Tty(backend));
             return Vec::new();
         };
@@ -620,14 +751,21 @@ impl SpidersWm {
             return Vec::new();
         };
 
-        self.notify_blocker_cleared();
-        let elements = smithay::desktop::space::space_render_elements::<_, smithay::desktop::Window, _>(
+        let scale = output.current_scale().fractional_scale().into();
+        let mut elements = smithay::desktop::space::space_render_elements::<_, smithay::desktop::Window, _>(
             renderer.as_mut(),
             [&self.space],
             output,
             1.0,
         )
-        .unwrap_or_default();
+        .unwrap_or_default()
+        .into_iter()
+        .map(TtySceneRenderElement::Space)
+        .collect::<Vec<_>>();
+
+        let overlay_elements = self.frame_sync.render_elements(renderer.as_mut(), scale, 1.0);
+        elements.extend(overlay_elements.into_iter().map(TtySceneRenderElement::Snapshot));
+
         self.backend = Some(BackendState::Tty(backend));
         elements
     }
@@ -696,11 +834,92 @@ fn initialize_drm_surfaces(
 }
 
 #[cfg(feature = "tty-preview")]
+fn initialize_tty_device_surfaces(
+    seat_name: &str,
+    backend: &mut TtyBackendState,
+    node: DrmNode,
+) -> Result<(), Box<dyn std::error::Error>> {
+    for device in &mut backend.drm.devices {
+        if device.node != node {
+            continue;
+        }
+        for output in &backend.outputs {
+            if output.drm_node != Some(node) {
+                continue;
+            }
+            if device.surfaces.iter().any(|surface| surface.connector == output.connector) {
+                continue;
+            }
+
+            let Some(crtc) = select_crtc_for_connector(&device.device, output.connector)? else {
+                continue;
+            };
+
+            match device.device.create_surface(crtc, output.drm_mode, &[output.connector]) {
+                Ok(surface) => {
+                    device.surfaces.push(crate::backend::drm::DrmSurfaceRecord {
+                        connector: output.connector,
+                        crtc,
+                        surface: Some(surface),
+                        compositor: None,
+                    });
+                }
+                Err(error) => {
+                    info!(
+                        seat = seat_name,
+                        node = ?device.node,
+                        connector = ?output.connector,
+                        connector_name = output.connector_name,
+                        ?crtc,
+                        %error,
+                        "tty preview failed to recreate drm surface candidate"
+                    );
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(feature = "tty-preview")]
+fn reset_tty_device_scanout_state(backend: &mut TtyBackendState, node: DrmNode) {
+    for device in &mut backend.drm.devices {
+        if device.node != node {
+            continue;
+        }
+        for surface in &mut device.surfaces {
+            surface.compositor = None;
+            let _ = surface.surface.take();
+        }
+        device.surfaces.clear();
+    }
+}
+
+#[cfg(feature = "tty-preview")]
 fn initialize_tty_renderer_state(state: &mut SpidersWm) -> Result<(), Box<dyn std::error::Error>> {
+    let nodes = {
+        let Some(BackendState::Tty(backend)) = state.backend.as_ref() else {
+            return Ok(());
+        };
+        backend.drm.devices.iter().map(|device| device.node).collect::<Vec<_>>()
+    };
+
+    for node in nodes {
+        initialize_tty_renderer_state_for_node(state, node)?;
+    }
+
+    Ok(())
+}
+
+#[cfg(feature = "tty-preview")]
+fn initialize_tty_renderer_state_for_node(
+    state: &mut SpidersWm,
+    node: DrmNode,
+) -> Result<(), Box<dyn std::error::Error>> {
     let Some(BackendState::Tty(backend)) = state.backend.as_mut() else {
         return Ok(());
     };
-    let Some(primary_device) = backend.drm.devices.first_mut() else {
+    let Some(primary_device) = backend.drm.devices.iter_mut().find(|device| device.node == node) else {
         return Ok(());
     };
     let Some(render_node) = primary_device.render.render_node else {
@@ -778,7 +997,6 @@ fn initialize_tty_renderer_state(state: &mut SpidersWm) -> Result<(), Box<dyn st
                     "tty preview created drm compositor candidate"
                 );
                 surface.compositor = Some(compositor);
-                break;
             }
             Err(error) => {
                 info!(

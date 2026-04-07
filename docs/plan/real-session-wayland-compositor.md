@@ -81,6 +81,15 @@ Backend-specific concerns should be isolated behind backend modules for:
 
 The existing WM/runtime/scene/compositor logic should remain backend-agnostic wherever possible.
 
+We should also avoid long-term spread of fine-grained feature gating across unrelated compositor code.
+
+The intended cleanup direction is:
+
+- keep optional tty-only code isolated inside backend-specific modules
+- keep `apps/spiders-wm` focused on platform/compositor concerns only
+- keep shared layout/runtime/scene logic in lower crates
+- avoid repeated `#[cfg(feature = "tty-preview")]` style noise in generic compositor paths when the code can instead live behind backend module boundaries
+
 ## Reference Baseline
 
 `~/projects/niri` is a useful reference for the scope of a real compositor.

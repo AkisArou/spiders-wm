@@ -19,6 +19,8 @@ pub struct TtyOutputState {
     pub output: Output,
     #[cfg(feature = "tty-preview")]
     pub output_id: String,
+    #[cfg(feature = "tty-preview")]
+    pub location: Point<i32, Logical>,
     pub connector_name: String,
     #[cfg(feature = "tty-preview")]
     pub drm_node: Option<DrmNode>,
@@ -39,6 +41,7 @@ impl TtyOutputState {
             && self.connector_name == other.connector_name
             && self.drm_node == other.drm_node
             && self.mode == other.mode
+            && self.location == other.location
             && self.physical.size == other.physical.size
             && self.physical.subpixel == other.physical.subpixel
             && self.physical.make == other.physical.make

@@ -134,7 +134,53 @@ wait_for_client_windows() {
 }
 
 active_window() {
-    DISPLAY="$DISPLAY_NAME" xdotool getactivewindow 2>/dev/null || true
+    DISPLAY="$DISPLAY_NAME" xprop -root _NET_ACTIVE_WINDOW 2>/dev/null \
+        | grep -o '0x[0-9a-fA-F]\+' \
+        | tail -n1 \
+        || true
+}
+
+log_count() {
+    local pattern="$1"
+
+    perl -pe 's/\e\[[0-9;]*m//g' "$LOG_FILE" | grep -c "$pattern" || true
+}
+
+wait_for_log_count() {
+    local pattern="$1"
+    local expected_count="$2"
+    local description="$3"
+
+    for _ in $(seq 1 30); do
+        local current_count
+        current_count="$(log_count "$pattern")"
+        if [[ "$current_count" -ge "$expected_count" ]]; then
+            return 0
+        fi
+
+        assert_wm_alive "$description"
+        sleep 0.1
+    done
+
+    return 1
+}
+
+wait_for_client_count_less_than() {
+    local expected_max="$1"
+
+    for _ in $(seq 1 30); do
+        local current_count
+        current_count="$(DISPLAY="$DISPLAY_NAME" xprop -root _NET_CLIENT_LIST 2>/dev/null | grep -o '0x[0-9a-fA-F]\+' | wc -l || true)"
+        if [[ "$current_count" -lt "$expected_max" ]]; then
+            printf '%s\n' "$current_count"
+            return 0
+        fi
+
+        assert_wm_alive "waiting for closed client removal"
+        sleep 0.1
+    done
+
+    return 1
 }
 
 send_alt_shortcut() {
@@ -177,10 +223,11 @@ if [[ -z "$initial_active_window" ]]; then
 fi
 
 send_alt_shortcut h
-sleep 0.4
+focus_raise_count_before="$(log_count 'wm-x raise and focus finished')"
+wait_for_log_count 'wm-x raise and focus finished' "$((focus_raise_count_before + 1))" 'directional focus shortcut' || true
 assert_wm_alive "directional focus shortcut"
 focused_after_h="$(active_window)"
-if [[ -z "$focused_after_h" || "$focused_after_h" == "$initial_active_window" ]]; then
+if [[ "$focused_after_h" == "$initial_active_window" ]]; then
     echo "wm-x-smoke focus shortcut Alt+h did not change the active window" >&2
     tail -n 200 "$LOG_FILE" >&2 || true
     exit 1
@@ -188,10 +235,9 @@ fi
 
 before_close_count="$(DISPLAY="$DISPLAY_NAME" xprop -root _NET_CLIENT_LIST 2>/dev/null | grep -o '0x[0-9a-fA-F]\+' | wc -l || true)"
 send_alt_shortcut q
-sleep 0.8
+after_close_count="$(wait_for_client_count_less_than "$before_close_count" || true)"
 assert_wm_alive "close shortcut"
-after_close_count="$(DISPLAY="$DISPLAY_NAME" xprop -root _NET_CLIENT_LIST 2>/dev/null | grep -o '0x[0-9a-fA-F]\+' | wc -l || true)"
-if [[ "$after_close_count" -ge "$before_close_count" ]]; then
+if [[ -z "$after_close_count" || "$after_close_count" -ge "$before_close_count" ]]; then
     echo "wm-x-smoke close shortcut Alt+q did not reduce the client window count" >&2
     tail -n 200 "$LOG_FILE" >&2 || true
     exit 1

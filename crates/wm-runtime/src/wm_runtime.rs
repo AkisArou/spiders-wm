@@ -295,7 +295,8 @@ impl<'a> WmRuntime<'a> {
             self.model.focus_tree.as_ref(),
         );
         info!(?direction, ?focused_window_id, "wm-runtime focus direction selection result");
-        let focused_window_id = sync_focused_window(self.model, seat_id, focused_window_id);
+        let selection = request_focus_window(self.model, focused_window_id);
+        let focused_window_id = sync_focused_window(self.model, seat_id, selection.focused_window_id);
         self.push_focus_change();
         FocusSelection { focused_window_id }
     }
