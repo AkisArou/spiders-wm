@@ -18,6 +18,8 @@ spiders-titlebar-native = { path = "../../crates/titlebar/native" }
 spiders-wm-runtime = { path = "../../crates/wm-runtime" }
 thiserror = { workspace = true }
 tracing = { workspace = true }
+serde.workspace = true
+serde_json.workspace = true
 tracing-subscriber = { workspace = true, features = [
   "env-filter",
   "fmt",
@@ -30,4 +32,3 @@ default-features = false
 features = ["backend_drm", "backend_winit", "desktop", "wayland_frontend"]
 
 [dev-dependencies]
-serde_json.workspace = true

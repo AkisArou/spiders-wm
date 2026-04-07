@@ -1,7 +1,9 @@
 mod compositor;
+mod virtual_keyboard;
 mod xdg_shell;
 
 pub(crate) use compositor::ClientState;
+pub(crate) use virtual_keyboard::VirtualKeyboardManagerState;
 
 use smithay::backend::allocator::dmabuf::Dmabuf;
 use smithay::backend::renderer::ImportDma;
@@ -70,9 +72,7 @@ impl WaylandDndGrabHandler for SpidersWm {
         match type_ {
             GrabType::Pointer => {
                 let pointer = seat.get_pointer().expect("pointer missing");
-                let start_data = pointer
-                    .grab_start_data()
-                    .expect("pointer grab data missing");
+                let start_data = pointer.grab_start_data().expect("pointer grab data missing");
                 let grab = DnDGrab::new_pointer(&self.display_handle, start_data, source, seat);
                 pointer.set_grab(self, grab, serial, Focus::Keep);
             }

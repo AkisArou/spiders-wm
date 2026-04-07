@@ -7,8 +7,8 @@ use spiders_core::query::{QueryRequest, QueryResponse};
 use tracing::{debug, warn};
 
 use crate::{
-    IpcRequest, IpcResponse, IpcSession, IpcSessionHandleResult, IpcTransportError, recv_request,
-    send_response,
+    DebugRequest, DebugResponse, IpcRequest, IpcResponse, IpcSession, IpcSessionHandleResult,
+    IpcTransportError, recv_request, send_response,
 };
 
 pub type IpcClientId = u64;
@@ -23,6 +23,7 @@ pub struct IpcServerState {
 pub enum IpcServerHandleResult {
     Query { client_id: IpcClientId, request_id: Option<String>, query: QueryRequest },
     Command { client_id: IpcClientId, request_id: Option<String>, command: WmCommand },
+    Debug { client_id: IpcClientId, request_id: Option<String>, request: DebugRequest },
     Response { client_id: IpcClientId, response: IpcResponse },
 }
 
@@ -82,6 +83,7 @@ impl IpcServerState {
         let request_type = match &request.message {
             crate::protocol::IpcClientMessage::Query(_) => "query",
             crate::protocol::IpcClientMessage::Command(_) => "command",
+            crate::protocol::IpcClientMessage::Debug(_) => "debug",
             crate::protocol::IpcClientMessage::Subscribe { .. } => "subscribe",
             crate::protocol::IpcClientMessage::Unsubscribe { .. } => "unsubscribe",
         };
@@ -100,6 +102,9 @@ impl IpcServerState {
             }
             IpcSessionHandleResult::Command { request_id, command } => {
                 IpcServerHandleResult::Command { client_id, request_id, command }
+            }
+            IpcSessionHandleResult::Debug { request_id, request } => {
+                IpcServerHandleResult::Debug { client_id, request_id, request }
             }
             IpcSessionHandleResult::Response(response) => {
                 IpcServerHandleResult::Response { client_id, response }
@@ -127,6 +132,21 @@ impl IpcServerState {
         self.sessions
             .get(&client_id)
             .map(|session| session.command_accepted(request_id))
+            .ok_or(UnknownClientError { client_id })
+    }
+
+    pub fn debug_response(
+        &self,
+        client_id: IpcClientId,
+        request_id: Option<String>,
+        response: DebugResponse,
+    ) -> Result<IpcResponse, UnknownClientError> {
+        self.sessions
+            .get(&client_id)
+            .map(|_| crate::IpcEnvelope {
+                request_id,
+                message: crate::IpcServerMessage::debug(response),
+            })
             .ok_or(UnknownClientError { client_id })
     }
 

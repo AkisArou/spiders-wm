@@ -20,7 +20,9 @@ use smithay::wayland::selection::data_device::DataDeviceState;
 use smithay::wayland::shell::xdg::XdgShellState;
 use smithay::wayland::shm::ShmState;
 
+use crate::debug::DebugState;
 use crate::frame_sync::{FrameSyncState, WindowFrameSyncState};
+use crate::handlers::VirtualKeyboardManagerState;
 use crate::scene::adapter::SceneLayoutState;
 use spiders_core::WindowId;
 use spiders_core::wm::WmModel;
@@ -44,6 +46,7 @@ pub struct SpidersWm {
     pub dmabuf_global: Option<DmabufGlobal>,
     pub seat_state: SeatState<Self>,
     pub data_device_state: DataDeviceState,
+    pub virtual_keyboard_manager_state: VirtualKeyboardManagerState,
     pub seat: Seat<Self>,
     pub backend: Option<WinitGraphicsBackend<GlesRenderer>>,
 
@@ -58,6 +61,7 @@ pub struct SpidersWm {
     pub(crate) ipc_server: IpcServerState,
     pub(crate) ipc_clients: BTreeMap<IpcClientId, UnixStream>,
     pub(crate) ipc_socket_path: Option<PathBuf>,
+    pub(crate) debug: DebugState,
     pub(crate) scene: SceneLayoutState,
     pub(crate) model: WmModel,
     pub(crate) next_window_id: u64,

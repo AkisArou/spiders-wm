@@ -15,6 +15,29 @@ pub enum IpcSubscriptionTopic {
     Config,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum DebugDumpKind {
+    WmState,
+    DebugProfile,
+    SceneSnapshot,
+    FrameSync,
+    TitlebarOverlays,
+    Seats,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", content = "payload", rename_all = "kebab-case")]
+pub enum DebugRequest {
+    Dump { kind: DebugDumpKind },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", content = "payload", rename_all = "kebab-case")]
+pub enum DebugResponse {
+    DumpWritten { kind: DebugDumpKind, path: Option<String> },
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct IpcEnvelope<T> {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -38,6 +61,7 @@ impl<T> IpcEnvelope<T> {
 pub enum IpcClientMessage {
     Query(QueryRequest),
     Command(WmCommand),
+    Debug(DebugRequest),
     Subscribe {
         #[serde(default)]
         topics: Vec<IpcSubscriptionTopic>,
@@ -52,6 +76,7 @@ pub enum IpcClientMessage {
 #[serde(tag = "type", content = "payload", rename_all = "kebab-case")]
 pub enum IpcServerMessage {
     Query(QueryResponse),
+    Debug(DebugResponse),
     Event {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         topics: Vec<IpcSubscriptionTopic>,
@@ -89,6 +114,10 @@ impl IpcClientMessage {
 }
 
 impl IpcServerMessage {
+    pub fn debug(response: DebugResponse) -> Self {
+        Self::Debug(response)
+    }
+
     pub fn event(event: WmEvent) -> Self {
         Self::Event { topics: infer_topics(&event), event }
     }

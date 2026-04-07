@@ -9,8 +9,9 @@ pub use codec::{
     encode_response_line,
 };
 pub use protocol::{
-    IpcClientMessage, IpcEnvelope, IpcRequest, IpcResponse, IpcServerMessage, IpcSubscriptionTopic,
-    infer_topics, normalize_topics, subscription_matches_event, subscription_matches_topics,
+    DebugDumpKind, DebugRequest, DebugResponse, IpcClientMessage, IpcEnvelope, IpcRequest,
+    IpcResponse, IpcServerMessage, IpcSubscriptionTopic, infer_topics, normalize_topics,
+    subscription_matches_event, subscription_matches_topics,
 };
 pub use server::{
     IpcClientId, IpcServeError, IpcServerHandleResult, IpcServerState, UnknownClientError,

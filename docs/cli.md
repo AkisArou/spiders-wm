@@ -1,6 +1,6 @@
 # CLI
 
-The main entry point is `spiders-cli`. It provides CLI tooling for config validation, building, and IPC queries.
+The main entry point is `spiders-cli`. It provides CLI tooling for config validation, building, IPC queries, and compositor debug dumps.
 
 Run commands with:
 
@@ -126,6 +126,34 @@ cargo run -p spiders-cli -- ipc-monitor --topic all
 cargo run -p spiders-cli -- ipc-monitor --topic workspaces --topic layout
 ```
 
+### `ipc-debug`
+
+Requests an on-demand debug dump from a running `spiders-wm` instance.
+
+Options:
+
+- `--socket <path>`
+- `--dump <name>`
+
+Supported dump names:
+
+- `wm-state`
+- `debug-profile`
+- `scene-snapshot`
+- `frame-sync`
+- `titlebar-overlays`
+- `seats`
+
+Examples:
+
+```bash
+cargo run -p spiders-cli -- ipc-debug --dump wm-state
+cargo run -p spiders-cli -- ipc-debug --dump scene-snapshot --json
+cargo run -p spiders-cli -- ipc-debug --socket "$SPIDERS_WM_IPC_SOCKET" --dump debug-profile
+```
+
+When `SPIDERS_WM_DEBUG_OUTPUT_DIR` is configured and debug output is enabled in the compositor, the response includes the written file path.
+
 ## Environment
 
 Useful environment variables:
@@ -138,6 +166,8 @@ Useful environment variables:
 
 **Runtime:**
 - `SPIDERS_WM_IPC_SOCKET` - socket path for IPC communication
+- `SPIDERS_WM_DEBUG_PROFILE` - compositor debug profile: `minimal`, `protocol`, `render`, or `full`
+- `SPIDERS_WM_DEBUG_OUTPUT_DIR` - directory for compositor debug dumps
 
 **Logging:**
 - `SPIDERS_LOG` - tracing filter (e.g., `warn,spiders_wm=debug`)
@@ -146,3 +176,61 @@ Useful environment variables:
 **Development:**
 - `SPIDERS_WM_WINIT_DEBUG_SNAPSHOT_PATH` - save window tree snapshots
 - `SPIDERS_WM_WINIT_EXIT_AFTER_STARTUP` - exit compositor after init
+
+## Nested Wayland Debugging
+
+For protocol and lifecycle debugging, run `spiders-wm` nested with a debug profile and then launch clients against that nested compositor.
+
+Start the compositor:
+
+```bash
+SPIDERS_WM_DEBUG_PROFILE=protocol \
+SPIDERS_WM_DEBUG_OUTPUT_DIR="$PWD/.spiders-wm-debug" \
+SPIDERS_LOG=debug \
+just dev
+```
+
+For the fully-instrumented setup, use:
+
+```bash
+just dev-debug
+```
+
+For the existing open/close smoke sequence with full debug artifacts enabled, use:
+
+```bash
+just wm-debug-smoke
+```
+
+`apps/spiders-wm` logs the nested `WAYLAND_DISPLAY` and `SPIDERS_WM_IPC_SOCKET` values during startup. Use those for clients and IPC tools.
+
+Run a client with Wayland protocol tracing enabled:
+
+```bash
+WAYLAND_DISPLAY=<nested-display> \
+WAYLAND_DEBUG=1 \
+foot
+```
+
+Capture compositor-side dumps while reproducing the issue:
+
+```bash
+SPIDERS_WM_IPC_SOCKET=<nested-ipc-socket> \
+cargo run -p spiders-cli -- ipc-debug --dump wm-state --json
+
+SPIDERS_WM_IPC_SOCKET=<nested-ipc-socket> \
+cargo run -p spiders-cli -- ipc-debug --dump scene-snapshot --json
+
+SPIDERS_WM_IPC_SOCKET=<nested-ipc-socket> \
+cargo run -p spiders-cli -- ipc-debug --dump frame-sync --json
+```
+
+Recommended repro loop:
+
+1. Start nested `spiders-wm` with `SPIDERS_WM_DEBUG_PROFILE=protocol` or `full`.
+2. Launch the target client with `WAYLAND_DISPLAY=<nested-display>` and `WAYLAND_DEBUG=1`.
+3. Reproduce the bug.
+4. Capture `wm-state`, `scene-snapshot`, `frame-sync`, or `titlebar-overlays` dumps over IPC.
+5. Correlate the client-side `WAYLAND_DEBUG` log with compositor logs and dump timestamps.
+
+With `SPIDERS_WM_DEBUG_PROFILE=protocol`, the compositor now emits structured lifecycle logs around focus requests, backend focus application, initial configure sends, popup configure sends, and root commits. With `render` or `full`, it also emits map/unmap/commit render lifecycle logs.

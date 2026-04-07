@@ -9,8 +9,9 @@ use spiders_core::command::WmCommand;
 use spiders_core::event::WmEvent;
 use spiders_core::query::{QueryRequest, QueryResponse, query_response_for_model};
 use spiders_ipc::{
-    IpcClientId, IpcCodecError, IpcRequest, IpcResponse, IpcServerHandleResult, IpcServerState,
-    IpcTransportError, UnknownClientError, bind_listener, recv_request, send_response,
+    DebugRequest, IpcClientId, IpcCodecError, IpcRequest, IpcResponse, IpcServerHandleResult,
+    IpcServerState, IpcTransportError, UnknownClientError, bind_listener, recv_request,
+    send_response,
 };
 use tracing::{debug, warn};
 
@@ -47,6 +48,25 @@ impl SpidersWm {
                 debug!(client_id, request_id = ?request_id, command = ?command, "wm handling IPC command");
                 self.execute_wm_command(command);
                 self.ipc_server.command_accepted(client_id, request_id)
+            }
+            IpcServerHandleResult::Debug { client_id, request_id, request } => {
+                debug!(client_id, request_id = ?request_id, request = ?request, "wm handling IPC debug request");
+                let response = match request {
+                    DebugRequest::Dump { kind } => self.handle_debug_dump(kind),
+                }
+                .map_err(std::io::Error::other)
+                .and_then(|response| {
+                    self.ipc_server
+                        .debug_response(client_id, request_id.clone(), response)
+                        .map_err(std::io::Error::other)
+                });
+
+                match response {
+                    Ok(response) => Ok(response),
+                    Err(error) => {
+                        self.ipc_server.error_response(client_id, request_id, error.to_string())
+                    }
+                }
             }
             IpcServerHandleResult::Response { response, .. } => Ok(response),
         }
@@ -266,16 +286,18 @@ fn stream_io_error(error: IpcTransportError) -> std::io::Error {
     }
 }
 
-pub(crate) fn resolve_ipc_request<QueryHandler, CommandHandler>(
+pub(crate) fn resolve_ipc_request<QueryHandler, CommandHandler, DebugHandler>(
     server: &mut IpcServerState,
     client_id: IpcClientId,
     request: IpcRequest,
     mut query_handler: QueryHandler,
     mut command_handler: CommandHandler,
+    mut debug_handler: DebugHandler,
 ) -> Result<IpcResponse, UnknownClientError>
 where
     QueryHandler: FnMut(QueryRequest) -> QueryResponse,
     CommandHandler: FnMut(WmCommand),
+    DebugHandler: FnMut(DebugRequest) -> spiders_ipc::DebugResponse,
 {
     match server.handle_request(client_id, request)? {
         IpcServerHandleResult::Query { client_id, request_id, query } => {
@@ -284,6 +306,9 @@ where
         IpcServerHandleResult::Command { client_id, request_id, command } => {
             command_handler(command);
             server.command_accepted(client_id, request_id)
+        }
+        IpcServerHandleResult::Debug { client_id, request_id, request } => {
+            server.debug_response(client_id, request_id, debug_handler(request))
         }
         IpcServerHandleResult::Response { response, .. } => Ok(response),
     }
@@ -302,6 +327,7 @@ mod tests {
     use spiders_core::wm::WmModel;
     use spiders_core::{OutputId as SharedOutputId, WindowId, WorkspaceId as SharedWorkspaceId};
     use spiders_core::{OutputId, WorkspaceId};
+    use spiders_ipc::DebugResponse;
     use spiders_ipc::{IpcClientMessage, IpcEnvelope, IpcServerMessage, IpcSubscriptionTopic};
     use spiders_ipc::{bind_listener, connect, recv_response, send_request};
 
@@ -391,6 +417,7 @@ mod tests {
                 .with_request_id("req-query"),
             |_| QueryResponse::WorkspaceNames(vec!["1".into(), "2".into()]),
             |command| commands.push(command),
+            |_| unreachable!("query request should not invoke debug handler"),
         )
         .unwrap();
 
@@ -412,6 +439,7 @@ mod tests {
                 .with_request_id("req-command"),
             |_| unreachable!("command request should not invoke query handler"),
             |command| commands.push(command),
+            |_| unreachable!("command request should not invoke debug handler"),
         )
         .unwrap();
 
@@ -434,6 +462,7 @@ mod tests {
             .with_request_id("req-subscribe"),
             |_| unreachable!("subscribe response should be produced by session"),
             |_| unreachable!("subscribe response should not invoke command handler"),
+            |_| unreachable!("subscribe response should not invoke debug handler"),
         )
         .unwrap();
 
@@ -552,8 +581,17 @@ mod tests {
         CommandHandler: FnMut(WmCommand),
     {
         let request = recv_request(stream)?;
-        let response =
-            resolve_ipc_request(server, client_id, request, query_handler, command_handler)?;
+        let response = resolve_ipc_request(
+            server,
+            client_id,
+            request,
+            query_handler,
+            command_handler,
+            |_| DebugResponse::DumpWritten {
+                kind: spiders_ipc::DebugDumpKind::WmState,
+                path: None,
+            },
+        )?;
         send_response(stream, &response)?;
         Ok(response)
     }

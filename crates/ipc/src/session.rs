@@ -4,8 +4,8 @@ use spiders_core::query::{QueryRequest, QueryResponse};
 use tracing::debug;
 
 use crate::protocol::{
-    IpcClientMessage, IpcEnvelope, IpcRequest, IpcResponse, IpcServerMessage, IpcSubscriptionTopic,
-    normalize_topics, subscription_matches_event,
+    DebugRequest, IpcClientMessage, IpcEnvelope, IpcRequest, IpcResponse, IpcServerMessage,
+    IpcSubscriptionTopic, normalize_topics, subscription_matches_event,
 };
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -17,6 +17,7 @@ pub struct IpcSession {
 pub enum IpcSessionHandleResult {
     Query { request_id: Option<String>, query: QueryRequest },
     Command { request_id: Option<String>, command: WmCommand },
+    Debug { request_id: Option<String>, request: DebugRequest },
     Response(IpcResponse),
 }
 
@@ -30,12 +31,15 @@ impl IpcSession {
     }
 
     pub fn handle_request(&mut self, request: IpcRequest) -> IpcSessionHandleResult {
-        match request.message {
-            IpcClientMessage::Query(query) => {
-                IpcSessionHandleResult::Query { request_id: request.request_id, query }
-            }
+        let IpcEnvelope { request_id, message } = request;
+
+        match message {
+            IpcClientMessage::Query(query) => IpcSessionHandleResult::Query { request_id, query },
             IpcClientMessage::Command(command) => {
-                IpcSessionHandleResult::Command { request_id: request.request_id, command }
+                IpcSessionHandleResult::Command { request_id, command }
+            }
+            IpcClientMessage::Debug(request) => {
+                IpcSessionHandleResult::Debug { request_id, request }
             }
             IpcClientMessage::Subscribe { topics } => {
                 self.subscription_topics =
@@ -43,7 +47,7 @@ impl IpcSession {
                 debug!(topics = ?self.subscription_topics, "ipc subscription topics updated");
 
                 IpcSessionHandleResult::Response(IpcEnvelope {
-                    request_id: request.request_id,
+                    request_id,
                     message: IpcServerMessage::subscribed(self.subscription_topics.iter().copied()),
                 })
             }
@@ -52,7 +56,7 @@ impl IpcSession {
                 debug!(topics = ?self.subscription_topics, "ipc subscription topics updated after unsubscribe");
 
                 IpcSessionHandleResult::Response(IpcEnvelope {
-                    request_id: request.request_id,
+                    request_id,
                     message: IpcServerMessage::unsubscribed(
                         self.subscription_topics.iter().copied(),
                     ),

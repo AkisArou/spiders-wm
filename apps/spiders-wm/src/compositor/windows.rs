@@ -172,6 +172,7 @@ impl SpidersWm {
         let Some((window_id, window, unmap)) = window_update else {
             return;
         };
+        let debug_window_id = window_id.to_string();
         self.titlebar_overlays.remove(&window_id);
         let snapshot = unmap.snapshot;
         let location = self
@@ -192,6 +193,9 @@ impl SpidersWm {
             focus_update = ?focus_update,
             "wm close start"
         );
+        self.debug_render_event("window-unmap", Some(&debug_window_id), || {
+            format!("closing={closing} location={location:?} has_snapshot={} focus_update={focus_update:?}", snapshot.is_some())
+        });
 
         self.unmap_window_element(&window);
 
@@ -273,6 +277,10 @@ impl SpidersWm {
             focus_update = ?focus_update,
             "wm finalized window destroy"
         );
+        let debug_window_id = window_id.to_string();
+        self.debug_render_event("window-destroy", Some(&debug_window_id), || {
+            format!("was_mapped={} focus_update={focus_update:?}", record.mapped)
+        });
 
         self.log_managed_window_state("after window destroy");
 
@@ -339,6 +347,13 @@ impl SpidersWm {
             }
 
             let ready_layout = record.frame_sync.take_ready_layout();
+            let render_debug_details = format!(
+                "mapped={} first_map={} ready_layout={ready_layout:?} pending_configures={} has_close_snapshot={}",
+                record.mapped,
+                first_map,
+                record.frame_sync.has_pending_configures(),
+                record.frame_sync.has_close_snapshot(),
+            );
 
             debug!(
                 window = %record.id.0,
@@ -353,13 +368,27 @@ impl SpidersWm {
                 record.window.clone(),
                 first_map,
                 ready_layout,
+                render_debug_details,
             ))
         } else {
             None
         };
 
-        if let Some((window_id, window, first_map, ready_layout)) = window_update {
+        if let Some((window_id, window, first_map, ready_layout, render_debug_details)) = window_update {
+            let debug_window_id = window_id.to_string();
+            self.debug_render_event("window-commit", Some(&debug_window_id), || {
+                render_debug_details
+            });
             window.on_commit();
+
+            if first_map {
+                let events = {
+                    let mut runtime = self.runtime();
+                    let _ = runtime.sync_window_mapped(window_id.clone(), true);
+                    runtime.take_events()
+                };
+                self.broadcast_runtime_events(events);
+            }
 
             let layout = ready_layout.or_else(|| {
                 first_map
@@ -379,12 +408,6 @@ impl SpidersWm {
 
             if first_map {
                 info!(window = %window_id.0, "wm first map commit");
-                let events = {
-                    let mut runtime = self.runtime();
-                    let _ = runtime.sync_window_mapped(window_id, true);
-                    runtime.take_events()
-                };
-                self.broadcast_runtime_events(events);
                 self.schedule_relayout();
                 self.set_focus_with_new_serial(Some(surface.clone()));
             }

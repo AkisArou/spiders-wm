@@ -29,8 +29,10 @@ use smithay::wayland::shm::ShmState;
 use smithay::wayland::socket::ListeningSocketSource;
 use tracing::warn;
 
+use crate::debug::{DebugConfig, DebugState};
 use crate::frame_sync::FrameSyncState;
 use crate::handlers::ClientState;
+use crate::handlers::VirtualKeyboardManagerState;
 use crate::runtime::{NoopHost, WmRuntime};
 use crate::scene::adapter::SceneLayoutState;
 use crate::state::SpidersWm;
@@ -48,6 +50,8 @@ pub(crate) fn build_state(
     let _output_manager_state =
         OutputManagerState::new_with_xdg_output::<SpidersWm>(&display_handle);
     let data_device_state = DataDeviceState::new::<SpidersWm>(&display_handle);
+    let virtual_keyboard_manager_state =
+        VirtualKeyboardManagerState::new(&display_handle, |_client| true);
     let popups = PopupManager::default();
     let (blocker_cleared_tx, blocker_cleared_rx) = mpsc::channel();
     let mut seat_state = SeatState::new();
@@ -65,6 +69,7 @@ pub(crate) fn build_state(
     }
     let (config_paths, config) = load_wm_config(None);
     let ipc_socket_path = crate::ipc::init_ipc_listener(event_loop);
+    let debug = DebugState::new(DebugConfig::from_env());
 
     SpidersWm {
         start_time,
@@ -83,6 +88,7 @@ pub(crate) fn build_state(
         dmabuf_global: None::<DmabufGlobal>,
         seat_state,
         data_device_state,
+        virtual_keyboard_manager_state,
         seat,
         backend: None::<WinitGraphicsBackend<GlesRenderer>>,
         focused_surface: None,
@@ -95,6 +101,7 @@ pub(crate) fn build_state(
         ipc_server: spiders_ipc::IpcServerState::new(),
         ipc_clients: std::collections::BTreeMap::new(),
         ipc_socket_path,
+        debug,
         scene: SceneLayoutState::new(config_paths.clone()),
         model,
         next_window_id: 1,

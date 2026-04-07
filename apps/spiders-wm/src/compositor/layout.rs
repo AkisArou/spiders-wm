@@ -110,48 +110,103 @@ impl SpidersWm {
             }
         }
 
-        let relayout_targets =
-            if let Some(fullscreen_window_id) = fullscreen_window_id.as_ref() {
-                let focus_root = flat_workspace_root([fullscreen_window_id.clone()]);
+        let relayout_targets = if let Some(fullscreen_window_id) = fullscreen_window_id.as_ref() {
+            let focus_root = flat_workspace_root([fullscreen_window_id.clone()]);
+            self.model.set_focus_tree(Some(&focus_root));
+            self.titlebar_layout.snapshot_root = None;
+            visible_window_ids
+                .iter()
+                .filter(|window_id| *window_id == fullscreen_window_id)
+                .cloned()
+                .map(|window_id| crate::scene::adapter::LayoutTarget {
+                    window_id,
+                    location: output_geometry.loc,
+                    size: output_geometry.size,
+                    fullscreen: true,
+                })
+                .collect::<Vec<_>>()
+        } else {
+            let floating_window_ids = visible_window_ids
+                .iter()
+                .filter(|window_id| self.window_is_floating(window_id))
+                .cloned()
+                .collect::<Vec<_>>();
+            let mut targets = if tiled_window_ids.is_empty() {
+                let focus_root = flat_workspace_root(floating_window_ids.iter().cloned());
                 self.model.set_focus_tree(Some(&focus_root));
                 self.titlebar_layout.snapshot_root = None;
-                visible_window_ids
-                    .iter()
-                    .filter(|window_id| *window_id == fullscreen_window_id)
-                    .cloned()
-                    .map(|window_id| crate::scene::adapter::LayoutTarget {
-                        window_id,
-                        location: output_geometry.loc,
-                        size: output_geometry.size,
-                        fullscreen: true,
-                    })
-                    .collect::<Vec<_>>()
+                Vec::new()
             } else {
-                let floating_window_ids = visible_window_ids
-                    .iter()
-                    .filter(|window_id| self.window_is_floating(window_id))
-                    .cloned()
-                    .collect::<Vec<_>>();
-                let mut targets = if tiled_window_ids.is_empty() {
-                    let focus_root = flat_workspace_root(floating_window_ids.iter().cloned());
-                    self.model.set_focus_tree(Some(&focus_root));
-                    self.titlebar_layout.snapshot_root = None;
-                    Vec::new()
-                } else {
-                    let snapshot = self.scene.compute_layout_snapshot(
-                        &self.config,
-                        &mut self.model,
-                        &tiled_window_ids,
-                    )?;
-                    let targets = crate::scene::adapter::scene_targets_from_snapshot(&snapshot);
-                    self.titlebar_layout.snapshot_root = Some(snapshot);
-                    targets
-                };
-                targets.extend(floating_window_ids.iter().filter_map(|window_id| {
-                    self.floating_layout_target(window_id, output_geometry)
-                }));
-                targets
+                match self.scene.compute_layout_snapshot(
+                    &self.config,
+                    &mut self.model,
+                    &tiled_window_ids,
+                ) {
+                    Some(snapshot) => {
+                        let scene_targets =
+                            crate::scene::adapter::scene_targets_from_snapshot(&snapshot);
+                        if scene_targets.len() == tiled_window_ids.len() {
+                            self.titlebar_layout.snapshot_root = Some(snapshot);
+                            scene_targets
+                        } else {
+                            debug!(
+                                expected = tiled_window_ids.len(),
+                                actual = scene_targets.len(),
+                                "wm falling back to native tiled slot planning because scene targets were incomplete"
+                            );
+                            self.titlebar_layout.snapshot_root = None;
+                            tiled_window_ids
+                                .iter()
+                                .enumerate()
+                                .filter_map(|(index, window_id)| {
+                                    let slot = plan_tiled_slot(
+                                        output_geometry,
+                                        tiled_window_ids.len(),
+                                        index,
+                                    )?;
+                                    Some(crate::scene::adapter::LayoutTarget {
+                                        window_id: window_id.clone(),
+                                        location: slot.location,
+                                        size: slot.size,
+                                        fullscreen: false,
+                                    })
+                                })
+                                .collect::<Vec<_>>()
+                        }
+                    }
+                    None => {
+                        debug!(
+                            window_count = tiled_window_ids.len(),
+                            "wm falling back to native tiled slot planning because scene snapshot was unavailable"
+                        );
+                        self.titlebar_layout.snapshot_root = None;
+                        tiled_window_ids
+                            .iter()
+                            .enumerate()
+                            .filter_map(|(index, window_id)| {
+                                let slot = plan_tiled_slot(
+                                    output_geometry,
+                                    tiled_window_ids.len(),
+                                    index,
+                                )?;
+                                Some(crate::scene::adapter::LayoutTarget {
+                                    window_id: window_id.clone(),
+                                    location: slot.location,
+                                    size: slot.size,
+                                    fullscreen: false,
+                                })
+                            })
+                            .collect::<Vec<_>>()
+                    }
+                }
             };
+            targets.extend(
+                floating_window_ids.iter().filter_map(|window_id| {
+                    self.floating_layout_target(window_id, output_geometry)
+                }),
+            );
+            targets
+        };
         let mut relayout_transaction: Option<SyncHandle> = None;
 
         for target in relayout_targets {

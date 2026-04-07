@@ -2,20 +2,21 @@ use std::process::Command;
 use std::{io::Write, os::unix::net::UnixListener};
 use tempfile::TempDir;
 
-use spiders_ipc::{IpcEnvelope, IpcServerMessage, IpcSubscriptionTopic, encode_response_line};
-use spiders_core::api::{CompositorEvent, QueryResponse};
+use spiders_core::event::WmEvent;
+use spiders_core::query::QueryResponse;
+use spiders_ipc::{
+    DebugDumpKind, DebugResponse, IpcEnvelope, IpcServerMessage, IpcSubscriptionTopic,
+    encode_response_line,
+};
 
 fn cli_bin() -> String {
     env!("CARGO_BIN_EXE_spiders-cli").to_string()
 }
 
 fn runtime_fixture_paths() -> (std::path::PathBuf, std::path::PathBuf) {
-    let fixture_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../spiders-config/tests/fixtures");
-    (
-        fixture_root.join("runtime"),
-        fixture_root.join("project/config.ts"),
-    )
+    let fixture_root =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../config/tests/fixtures");
+    (fixture_root.join("runtime"), fixture_root.join("project/config.ts"))
 }
 
 fn write_prepared_config() -> (TempDir, std::path::PathBuf) {
@@ -134,11 +135,7 @@ fn cli_build_config_writes_prepared_config_with_module_graphs() {
         "#,
     )
     .unwrap();
-    std::fs::write(
-        root.path().join("layouts/master-stack/index.css"),
-        "workspace {}",
-    )
-    .unwrap();
+    std::fs::write(root.path().join("layouts/master-stack/index.css"), "workspace {}").unwrap();
 
     let authored_config = root.path().join("config.ts");
     let runtime_root = TempDir::new().unwrap();
@@ -252,6 +249,100 @@ fn cli_ipc_command_reports_socket_response_in_json_mode() {
 }
 
 #[test]
+fn cli_ipc_debug_reports_dump_response_in_json_mode() {
+    let socket_path = unique_socket_path("cli-ipc-debug");
+    let listener = UnixListener::bind(&socket_path).unwrap();
+
+    let handle = std::thread::spawn({
+        let socket_path = socket_path.clone();
+        move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = String::new();
+            let mut reader = std::io::BufReader::new(stream.try_clone().unwrap());
+            use std::io::BufRead;
+            reader.read_line(&mut request).unwrap();
+            let line = encode_response_line(&IpcEnvelope::new(IpcServerMessage::Debug(
+                DebugResponse::DumpWritten {
+                    kind: DebugDumpKind::SceneSnapshot,
+                    path: Some("/tmp/scene-snapshot.json".into()),
+                },
+            )))
+            .unwrap();
+            stream.write_all(line.as_bytes()).unwrap();
+            socket_path
+        }
+    });
+
+    let output = Command::new(cli_bin())
+        .arg("ipc-debug")
+        .arg("--json")
+        .arg("--socket")
+        .arg(&socket_path)
+        .arg("--dump")
+        .arg("scene-snapshot")
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    assert_eq!(json["status"], "ok");
+    assert_eq!(json["dump_kind"], "scene-snapshot");
+    assert_eq!(json["path"], "/tmp/scene-snapshot.json");
+
+    let path = handle.join().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn cli_ipc_debug_supports_frame_sync_dump_kind() {
+    let socket_path = unique_socket_path("cli-ipc-debug-frame-sync");
+    let listener = UnixListener::bind(&socket_path).unwrap();
+
+    let handle = std::thread::spawn({
+        let socket_path = socket_path.clone();
+        move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = String::new();
+            let mut reader = std::io::BufReader::new(stream.try_clone().unwrap());
+            use std::io::BufRead;
+            reader.read_line(&mut request).unwrap();
+            let line = encode_response_line(&IpcEnvelope::new(IpcServerMessage::Debug(
+                DebugResponse::DumpWritten {
+                    kind: DebugDumpKind::FrameSync,
+                    path: Some("/tmp/frame-sync.json".into()),
+                },
+            )))
+            .unwrap();
+            stream.write_all(line.as_bytes()).unwrap();
+            socket_path
+        }
+    });
+
+    let output = Command::new(cli_bin())
+        .arg("ipc-debug")
+        .arg("--json")
+        .arg("--socket")
+        .arg(&socket_path)
+        .arg("--dump")
+        .arg("frame-sync")
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    assert_eq!(json["status"], "ok");
+    assert_eq!(json["dump_kind"], "frame-sync");
+    assert_eq!(json["path"], "/tmp/frame-sync.json");
+
+    let path = handle.join().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
 fn cli_ipc_query_uses_default_socket_env_when_flag_is_omitted() {
     let socket_path = unique_socket_path("cli-ipc-query-env");
     let listener = UnixListener::bind(&socket_path).unwrap();
@@ -314,10 +405,7 @@ fn cli_ipc_monitor_reports_streamed_events_in_json_mode() {
                 }))
                 .unwrap();
             let event = encode_response_line(&IpcEnvelope::new(IpcServerMessage::event(
-                CompositorEvent::LayoutChange {
-                    workspace_id: None,
-                    layout: None,
-                },
+                WmEvent::LayoutChange { workspace_id: None, layout: None },
             )))
             .unwrap();
             stream.write_all(subscribed.as_bytes()).unwrap();
@@ -350,9 +438,7 @@ fn cli_ipc_monitor_reports_streamed_events_in_json_mode() {
 }
 
 fn unique_socket_path(label: &str) -> std::path::PathBuf {
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
+    let nanos =
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
     std::env::temp_dir().join(format!("spiders-cli-test-{label}-{nanos}.sock"))
 }

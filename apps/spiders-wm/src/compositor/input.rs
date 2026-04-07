@@ -1,5 +1,5 @@
 use smithay::backend::input::{
-    AbsolutePositionEvent, Event, InputBackend, InputEvent, KeyState, KeyboardKeyEvent,
+    AbsolutePositionEvent, Event, InputBackend, InputEvent, KeyState, KeyboardKeyEvent, Keycode,
     PointerAxisEvent, PointerButtonEvent,
 };
 use smithay::backend::input::{Axis, AxisSource, ButtonState};
@@ -20,43 +20,7 @@ impl SpidersWm {
             InputEvent::Keyboard { event, .. } => {
                 let serial = SERIAL_COUNTER.next_serial();
                 let time = Event::time_msec(&event);
-                let state = event.state();
-                let keycode = event.key_code();
-                let keyboard = self.seat.get_keyboard().expect("keyboard missing");
-                let bindings = self.config.bindings.clone();
-
-                let command = keyboard
-                    .input(self, keycode, state, serial, time, |_, modifiers, handle| {
-                        let keysym = handle.modified_sym();
-                        debug!(
-                            ?state,
-                            ?modifiers,
-                            ?keycode,
-                            raw_keysym = keysym.raw(),
-                            "keyboard event"
-                        );
-
-                        if state == KeyState::Pressed {
-                            binding_command(&bindings, *modifiers, keysym)
-                                .or_else(|| {
-                                    if bindings.is_empty() {
-                                        bootstrap_shortcut_command(*modifiers, keysym)
-                                    } else {
-                                        None
-                                    }
-                                })
-                                .map(Some)
-                                .map(FilterResult::Intercept)
-                                .unwrap_or(FilterResult::Forward)
-                        } else {
-                            FilterResult::Forward
-                        }
-                    })
-                    .unwrap_or(None);
-
-                if let Some(command) = command {
-                    self.execute_wm_command_with_serial(command, serial);
-                }
+                self.handle_keyboard_key(event.key_code(), event.state(), serial, time);
             }
             InputEvent::PointerMotion { .. } => {}
             InputEvent::PointerMotionAbsolute { event, .. } => {
@@ -96,6 +60,10 @@ impl SpidersWm {
                         && let Some((window_id, command)) =
                             self.titlebar_action_at(pointer.current_location())
                     {
+                        let debug_window_id = window_id.to_string();
+                        self.debug_protocol_event("titlebar-action", Some(&debug_window_id), || {
+                            format!("command={command:?} location={:?}", pointer.current_location())
+                        });
                         if let Some(surface) = self.surface_for_window_id(window_id.clone()) {
                             self.set_focus(Some(surface), serial);
                         }
@@ -121,9 +89,21 @@ impl SpidersWm {
                             .expect("window missing toplevel")
                             .wl_surface()
                             .clone();
+                        let debug_window_id = self
+                            .window_id_for_surface(&surface)
+                            .as_ref()
+                            .map(ToString::to_string);
+                        self.debug_protocol_event(
+                            "pointer-focus-request",
+                            debug_window_id.as_deref(),
+                            || format!("location={:?}", pointer.current_location()),
+                        );
                         self.raise_window_element(&window);
                         self.set_focus(Some(surface), serial);
                     } else {
+                        self.debug_protocol_event("pointer-focus-clear", None, || {
+                            format!("location={:?}", pointer.current_location())
+                        });
                         self.set_focus(Option::<WlSurface>::None, serial);
                     }
                 }
@@ -169,6 +149,50 @@ impl SpidersWm {
                 pointer.frame(self);
             }
             _ => {}
+        }
+    }
+
+    pub(crate) fn handle_keyboard_key(
+        &mut self,
+        keycode: Keycode,
+        state: KeyState,
+        serial: smithay::utils::Serial,
+        time: u32,
+    ) {
+        let keyboard = self.seat.get_keyboard().expect("keyboard missing");
+        let bindings = self.config.bindings.clone();
+
+        let command = keyboard
+            .input(self, keycode, state, serial, time, |_, modifiers, handle| {
+                let keysym = handle.modified_sym();
+                debug!(
+                    ?state,
+                    ?modifiers,
+                    ?keycode,
+                    raw_keysym = keysym.raw(),
+                    "keyboard event"
+                );
+
+                if state == KeyState::Pressed {
+                    binding_command(&bindings, *modifiers, keysym)
+                        .or_else(|| {
+                            if bindings.is_empty() {
+                                bootstrap_shortcut_command(*modifiers, keysym)
+                            } else {
+                                None
+                            }
+                        })
+                        .map(Some)
+                        .map(FilterResult::Intercept)
+                        .unwrap_or(FilterResult::Forward)
+                } else {
+                    FilterResult::Forward
+                }
+            })
+            .unwrap_or(None);
+
+        if let Some(command) = command {
+            self.execute_wm_command_with_serial(command, serial);
         }
     }
 }

@@ -15,7 +15,23 @@ dev:
     RUST_LOG=debug \
     cargo run -p spiders-wm
 
+dev-debug:
+    mkdir -p "$PWD/.spiders-wm-debug"
+    SPIDERS_WM_AUTHORED_CONFIG="$PWD/test_config/config.ts" \
+    SPIDERS_WM_CACHE_DIR="$PWD/test_config/.spiders-wm-build" \
+    SPIDERS_WM_DEBUG_PROFILE=full \
+    SPIDERS_WM_DEBUG_OUTPUT_DIR="$PWD/.spiders-wm-debug" \
+    SPIDERS_LOG=debug \
+    cargo run -p spiders-wm
+
 wm-smoke:
+    ./scripts/wm-smoke.sh
+
+wm-debug-smoke:
+    mkdir -p "$PWD/.spiders-wm-debug"
+    SPIDERS_WM_DEBUG_PROFILE=full \
+    SPIDERS_WM_DEBUG_OUTPUT_DIR="$PWD/.spiders-wm-debug" \
+    SPIDERS_LOG=debug \
     ./scripts/wm-smoke.sh
 
 wm-live-smoke:

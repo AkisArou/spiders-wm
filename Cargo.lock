@@ -4190,6 +4190,7 @@ name = "spiders-wm"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "serde",
  "serde_json",
  "smithay",
  "spiders-config",

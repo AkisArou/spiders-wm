@@ -3,8 +3,8 @@ mod report;
 
 use bootstrap::CliBootstrap;
 use report::{
-    BuildConfigReport, DiscoveryReport, ErrorReport, IpcCommandReport, IpcMonitorReport,
-    IpcQueryReport, IpcSmokeReport, OutputMode, SuccessCheckReport, emit,
+    BuildConfigReport, DiscoveryReport, ErrorReport, IpcCommandReport, IpcDebugReport,
+    IpcMonitorReport, IpcQueryReport, IpcSmokeReport, OutputMode, SuccessCheckReport, emit,
 };
 use spiders_config::model::config_discovery_options_from_env;
 use tracing::info;
@@ -33,6 +33,7 @@ fn main() -> std::process::ExitCode {
     let ipc_smoke = args.iter().any(|arg| arg == "ipc-smoke");
     let ipc_query = args.iter().any(|arg| arg == "ipc-query");
     let ipc_command = args.iter().any(|arg| arg == "ipc-command");
+    let ipc_debug = args.iter().any(|arg| arg == "ipc-debug");
     let ipc_monitor = args.iter().any(|arg| arg == "ipc-monitor");
     let output_mode =
         if args.iter().any(|arg| arg == "--json") { OutputMode::Json } else { OutputMode::Text };
@@ -40,6 +41,7 @@ fn main() -> std::process::ExitCode {
         arg_value(&args, "--socket").map(std::path::PathBuf::from).or_else(default_ipc_socket_path);
     let query_name = arg_value(&args, "--query");
     let command_name = arg_value(&args, "--command");
+    let dump_name = arg_value(&args, "--dump");
     let topic_names = arg_values(&args, "--topic");
 
     let cli = CliContext::new();
@@ -50,6 +52,8 @@ fn main() -> std::process::ExitCode {
         "ipc-query"
     } else if ipc_command {
         "ipc-command"
+    } else if ipc_debug {
+        "ipc-debug"
     } else if ipc_monitor {
         "ipc-monitor"
     } else if build_config {
@@ -71,6 +75,8 @@ fn main() -> std::process::ExitCode {
         ipc_query_command(output_mode, socket_path, query_name)
     } else if ipc_command {
         ipc_command_command(output_mode, socket_path, command_name)
+    } else if ipc_debug {
+        ipc_debug_command(output_mode, socket_path, dump_name)
     } else if ipc_monitor {
         ipc_monitor_command(output_mode, socket_path, topic_names)
     } else if build_config {
@@ -178,6 +184,42 @@ fn ipc_command_command(
                     message: Some(error),
                 },
                 || "ipc command error".into(),
+            );
+            std::process::ExitCode::from(1)
+        }
+    }
+}
+
+fn ipc_debug_command(
+    output_mode: OutputMode,
+    socket_path: Option<std::path::PathBuf>,
+    dump_name: Option<&str>,
+) -> std::process::ExitCode {
+    match run_ipc_debug(socket_path, dump_name.unwrap_or("wm-state")) {
+        Ok(report) => {
+            emit(output_mode, &report, || {
+                let path = report.path.as_deref().unwrap_or("<debug output disabled>");
+                format!(
+                    "ipc debug ok (socket: {}, dump: {}, request: {}, path: {})",
+                    report.socket_path,
+                    debug_dump_label(&report.dump_kind),
+                    report.request_id,
+                    path
+                )
+            });
+            std::process::ExitCode::SUCCESS
+        }
+        Err(error) => {
+            emit(
+                output_mode,
+                &ErrorReport {
+                    status: "error",
+                    phase: "ipc-debug",
+                    prepared_config: None,
+                    errors: None,
+                    message: Some(error),
+                },
+                || "ipc debug error".into(),
             );
             std::process::ExitCode::from(1)
         }
@@ -539,8 +581,8 @@ fn synthetic_bootstrap_state() -> spiders_core::snapshot::StateSnapshot {
 fn run_ipc_smoke() -> Result<IpcSmokeReport, String> {
     use spiders_core::event::WmEvent;
     use spiders_ipc::{
-        IpcClientMessage, IpcEnvelope, IpcServerHandleResult, IpcServerState, IpcSubscriptionTopic,
-        decode_request_line, encode_request_line, encode_response_line,
+        DebugResponse, IpcClientMessage, IpcEnvelope, IpcServerHandleResult, IpcServerState,
+        IpcSubscriptionTopic, decode_request_line, encode_request_line, encode_response_line,
     };
 
     let mut server = IpcServerState::new();
@@ -563,6 +605,18 @@ fn run_ipc_smoke() -> Result<IpcSmokeReport, String> {
         IpcServerHandleResult::Command { request_id, .. } => {
             server.command_accepted(client_id, request_id).map_err(|error| error.to_string())?
         }
+        IpcServerHandleResult::Debug { request_id, request, .. } => server
+            .debug_response(
+                client_id,
+                request_id,
+                match request {
+                    spiders_ipc::DebugRequest::Dump { kind } => DebugResponse::DumpWritten {
+                        kind,
+                        path: Some("synthetic-debug.json".into()),
+                    },
+                },
+            )
+            .map_err(|error| error.to_string())?,
     };
 
     let response_line = encode_response_line(&response).map_err(|error| error.to_string())?;
@@ -584,6 +638,7 @@ fn run_ipc_smoke() -> Result<IpcSmokeReport, String> {
         response_kind: match response.message {
             spiders_ipc::IpcServerMessage::Subscribed { .. } => "subscribed",
             spiders_ipc::IpcServerMessage::Query(_) => "query",
+            spiders_ipc::IpcServerMessage::Debug(_) => "debug",
             spiders_ipc::IpcServerMessage::CommandAccepted => "command-accepted",
             spiders_ipc::IpcServerMessage::Event { .. } => "event",
             spiders_ipc::IpcServerMessage::Unsubscribed { .. } => "unsubscribed",
@@ -645,6 +700,39 @@ fn run_ipc_command(
             response_kind: "command-accepted",
         }),
         message => Err(format!("unexpected IPC command response: {message:?}")),
+    }
+}
+
+fn run_ipc_debug(
+    socket_path: Option<std::path::PathBuf>,
+    dump_name: &str,
+) -> Result<IpcDebugReport, String> {
+    use spiders_ipc::{
+        DebugRequest, IpcClientMessage, IpcEnvelope, IpcServerMessage, connect, recv_response,
+        send_request,
+    };
+
+    let socket_path = socket_path.ok_or_else(|| "missing IPC socket path".to_string())?;
+    let dump_kind = parse_debug_dump_kind(dump_name)?;
+    let request_id = "cli-debug-1".to_string();
+    let request = IpcEnvelope::new(IpcClientMessage::Debug(DebugRequest::Dump { kind: dump_kind }))
+        .with_request_id(&request_id);
+    let mut stream = connect(&socket_path).map_err(|error| error.to_string())?;
+
+    send_request(&mut stream, &request).map_err(|error| error.to_string())?;
+
+    match recv_response(&stream).map_err(|error| error.to_string())?.message {
+        IpcServerMessage::Debug(spiders_ipc::DebugResponse::DumpWritten { kind, path }) => {
+            Ok(IpcDebugReport {
+                status: "ok",
+                socket_path: socket_path.display().to_string(),
+                request_id,
+                dump_kind: kind,
+                path,
+            })
+        }
+        IpcServerMessage::Error { message } => Err(message),
+        message => Err(format!("unexpected IPC debug response: {message:?}")),
     }
 }
 
@@ -773,6 +861,18 @@ fn parse_command_request(name: &str) -> Result<spiders_core::command::WmCommand,
     }
 }
 
+fn parse_debug_dump_kind(name: &str) -> Result<spiders_ipc::DebugDumpKind, String> {
+    match name {
+        "wm-state" => Ok(spiders_ipc::DebugDumpKind::WmState),
+        "debug-profile" => Ok(spiders_ipc::DebugDumpKind::DebugProfile),
+        "scene-snapshot" => Ok(spiders_ipc::DebugDumpKind::SceneSnapshot),
+        "frame-sync" => Ok(spiders_ipc::DebugDumpKind::FrameSync),
+        "titlebar-overlays" => Ok(spiders_ipc::DebugDumpKind::TitlebarOverlays),
+        "seats" => Ok(spiders_ipc::DebugDumpKind::Seats),
+        _ => Err(format!("unsupported IPC debug dump '{name}'")),
+    }
+}
+
 fn parse_subscription_topics(
     names: &[&str],
 ) -> Result<Vec<spiders_ipc::IpcSubscriptionTopic>, String> {
@@ -859,6 +959,17 @@ fn topic_label(topic: &spiders_ipc::IpcSubscriptionTopic) -> &'static str {
     }
 }
 
+fn debug_dump_label(kind: &spiders_ipc::DebugDumpKind) -> &'static str {
+    match kind {
+        spiders_ipc::DebugDumpKind::WmState => "wm-state",
+        spiders_ipc::DebugDumpKind::DebugProfile => "debug-profile",
+        spiders_ipc::DebugDumpKind::SceneSnapshot => "scene-snapshot",
+        spiders_ipc::DebugDumpKind::FrameSync => "frame-sync",
+        spiders_ipc::DebugDumpKind::TitlebarOverlays => "titlebar-overlays",
+        spiders_ipc::DebugDumpKind::Seats => "seats",
+    }
+}
+
 fn fallback_query_response(
     query: spiders_core::query::QueryRequest,
 ) -> spiders_core::query::QueryResponse {
@@ -891,7 +1002,7 @@ mod tests {
     use std::os::unix::net::UnixListener;
 
     use spiders_core::event::WmEvent;
-    use spiders_core::query::QueryResponse;
+    use spiders_core::query::{QueryRequest, QueryResponse};
     use spiders_ipc::{IpcEnvelope, IpcServerMessage, encode_response_line};
 
     #[test]
@@ -931,7 +1042,7 @@ mod tests {
 
         let report = run_ipc_query(Some(socket_path.clone()), "workspace-names").unwrap();
 
-        assert_eq!(report.query, spiders_core::api::QueryRequest::WorkspaceNames);
+        assert_eq!(report.query, QueryRequest::WorkspaceNames);
         assert_eq!(report.response, QueryResponse::WorkspaceNames(vec!["1".into(), "2".into()]));
 
         let path = handle.join().unwrap();
@@ -996,7 +1107,7 @@ mod tests {
                     }))
                     .unwrap();
                 let event = encode_response_line(&IpcEnvelope::new(IpcServerMessage::event(
-                    CompositorEvent::FocusChange {
+                    WmEvent::FocusChange {
                         focused_window_id: synthetic_bootstrap_state().focused_window_id,
                         current_output_id: synthetic_bootstrap_state().current_output_id,
                         current_workspace_id: synthetic_bootstrap_state().current_workspace_id,

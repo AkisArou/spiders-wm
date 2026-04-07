@@ -104,6 +104,7 @@ pub fn handle_commit(state: &mut SpidersWm, surface: &WlSurface) {
                 }
                 info!(window = %record.id.0, planned_size = ?planned_size, "wm sending initial configure");
                 let serial = toplevel.send_configure();
+                let window_id = record.id.to_string();
                 if let Some((location, size)) = planned_layout {
                     record.frame_sync.track_pending_layout(
                         serial,
@@ -111,6 +112,19 @@ pub fn handle_commit(state: &mut SpidersWm, surface: &WlSurface) {
                         size,
                         initial_transaction.expect("initial transaction missing"),
                     );
+                }
+                let tracked_layout = planned_layout.map(|(location, size)| {
+                    format!("serial={serial:?} location={location:?} size={size:?}")
+                });
+                let configure_details = format!(
+                    "planned_size={planned_size:?} planned_layout={planned_layout:?} initial_configure_sent={initial_configure_sent}"
+                );
+                state.debug_protocol_event("send-initial-configure", Some(&window_id), || {
+                    configure_details
+                });
+                if let Some(details) = tracked_layout {
+                    state
+                        .debug_protocol_event("track-pending-layout", Some(&window_id), || details);
                 }
             }
         }
@@ -121,6 +135,9 @@ pub fn handle_commit(state: &mut SpidersWm, surface: &WlSurface) {
         match popup {
             PopupKind::Xdg(ref xdg) => {
                 if !xdg.is_initial_configure_sent() {
+                    state.debug_protocol_event("send-popup-configure", None, || {
+                        format!("surface={:?}", surface.id())
+                    });
                     let _: Result<_, PopupConfigureError> = xdg.send_configure();
                 }
             }

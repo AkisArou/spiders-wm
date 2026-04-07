@@ -1,9 +1,10 @@
 import type { SpiderWMConfig } from "@spiders-wm/sdk/config";
 // import { events, query, wm } from "@spiders-wm/sdk/api";
 
-import { bindings } from "./config/bindings";
-import { inputs } from "./config/inputs";
-import { layouts } from "./config/layouts";
+import { bindings } from "./config/bindings.ts";
+import { inputs } from "./config/inputs.ts";
+import { layouts } from "./config/layouts.ts";
+import { defaultTitlebar } from "./config/titlebar.tsx";
 
 // events.on("config-reloaded", () => {});
 // events.once("window-created", ({ window }) => {
@@ -14,19 +15,15 @@ import { layouts } from "./config/layouts";
 
 export default {
   workspaces: ["1", "2", "3", "4", "5", "6", "7", "8", "9"],
+  titlebars: [defaultTitlebar],
 
   options: {
     sloppyfocus: true,
-    // titlebar_font: {
-    //   regular_path: "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-    //   bold_path: "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-    // },
+    attach: "after",
   },
 
   inputs,
   layouts,
-
   rules: [],
-
   bindings,
 } satisfies SpiderWMConfig;

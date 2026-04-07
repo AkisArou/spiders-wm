@@ -170,7 +170,7 @@ impl SpidersWm {
             .iter()
             .enumerate()
             .filter_map(|(index, record)| {
-                self.model.window_is_layout_eligible(&record.id).then_some(index)
+                (record.mapped && self.model.window_is_layout_eligible(&record.id)).then_some(index)
             })
             .collect()
     }

@@ -3,6 +3,7 @@ use spiders_core::command::WmCommand;
 use spiders_core::event::WmEvent;
 use spiders_core::query::{QueryRequest, QueryResponse};
 use spiders_core::runtime::runtime_error::RuntimeRefreshSummary;
+use spiders_ipc::DebugDumpKind;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum OutputMode {
@@ -75,6 +76,15 @@ pub struct IpcCommandReport {
     pub request_id: String,
     pub command: WmCommand,
     pub response_kind: &'static str,
+}
+
+#[derive(Debug, Serialize, PartialEq)]
+pub struct IpcDebugReport {
+    pub status: &'static str,
+    pub socket_path: String,
+    pub request_id: String,
+    pub dump_kind: DebugDumpKind,
+    pub path: Option<String>,
 }
 
 #[derive(Debug, Serialize, PartialEq)]

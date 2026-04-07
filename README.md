@@ -28,6 +28,7 @@ The rewrite targets:
 - `docs/jsx.md` - JSX layout elements, props, matching, and examples
 - `docs/ipc.md` - IPC transport, queries, actions, and events
 - `docs/cli.md` - CLI commands and examples
+- `docs/plan/wayland-debugging-platform.md` - debugging platform direction and phases
 
 ## Development
 
@@ -37,6 +38,8 @@ The rewrite targets:
 2. Validate config with `cargo run -p spiders-cli -- check-config`.
 3. Launch river with test config: `just dev` (or `SPIDERS_LOG=debug just dev` for verbose logging).
 4. Use IPC tooling with `cargo run -p spiders-cli -- ipc-query --query state`.
+5. Use debug dumps with `SPIDERS_WM_DEBUG_PROFILE=minimal cargo run -p spiders-cli -- ipc-debug --dump wm-state`.
+6. For nested Wayland protocol debugging, start `just dev`, then launch clients with `WAYLAND_DISPLAY=<nested-display> WAYLAND_DEBUG=1 ...` and capture dumps over `SPIDERS_WM_IPC_SOCKET`.
 
 ### Testing
 

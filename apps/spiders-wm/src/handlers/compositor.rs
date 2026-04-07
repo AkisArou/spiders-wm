@@ -32,10 +32,7 @@ impl CompositorHandler for SpidersWm {
     }
 
     fn client_compositor_state<'a>(&self, client: &'a Client) -> &'a CompositorClientState {
-        &client
-            .get_data::<ClientState>()
-            .expect("missing client state")
-            .compositor_state
+        &client.get_data::<ClientState>().expect("missing client state").compositor_state
     }
 
     fn commit(&mut self, surface: &WlSurface) {
@@ -51,6 +48,11 @@ impl CompositorHandler for SpidersWm {
                 .unwrap_or(false);
             let window_id = self.window_id_for_surface(&root);
             let known_mapped = self.is_known_window_mapped(&root);
+            let debug_window_id = window_id.as_ref().map(ToString::to_string);
+
+            self.debug_protocol_event("root-commit", debug_window_id.as_deref(), || {
+                format!("has_buffer={is_mapped} known_mapped={known_mapped}")
+            });
 
             debug!(
                 window = ?window_id,
