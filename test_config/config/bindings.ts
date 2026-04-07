@@ -1,5 +1,5 @@
 import * as commands from "@spiders-wm/sdk/commands";
-import type { BindingsConfig } from "@spiders-wm/sdk/config";
+import { platformMatch, type BindingsConfig } from "@spiders-wm/sdk/config";
 
 export const bindings: BindingsConfig = {
   mod: "alt",
@@ -7,7 +7,11 @@ export const bindings: BindingsConfig = {
     {
       bind: ["mod", "Return"],
       command: commands.spawn(
-        "NO_TMUX_AUTO_ATTACH=true /home/akisarou/dotfiles/foot/launch",
+        platformMatch({
+          xorg: () => "/home/akisarou/dotfiles/alacritty/launch",
+          default: () =>
+            "NO_TMUX_AUTO_ATTACH=true /home/akisarou/dotfiles/foot/launch",
+        }),
       ),
     },
     {

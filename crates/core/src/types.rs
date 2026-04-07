@@ -23,6 +23,24 @@ pub enum OutputTransform {
     Flipped270,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum SpiderPlatform {
+    Wayland,
+    Xorg,
+    Web,
+}
+
+impl SpiderPlatform {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Wayland => "wayland",
+            Self::Xorg => "xorg",
+            Self::Web => "web",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LayoutRef {
     pub name: String,

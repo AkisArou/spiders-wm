@@ -1,5 +1,6 @@
 mod actions;
 mod app;
+mod backend;
 mod compositor;
 mod debug;
 mod frame_sync;
@@ -10,6 +11,7 @@ mod scene;
 mod state;
 
 use smithay::reexports::{calloop::EventLoop, wayland_server::Display};
+use backend::BackendKind;
 use state::SpidersWm;
 use tracing::info;
 
@@ -18,13 +20,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut event_loop: EventLoop<'static, SpidersWm> = EventLoop::try_new()?;
     let display: Display<SpidersWm> = Display::new()?;
+    let backend = BackendKind::from_env_or_args().map_err(std::io::Error::other)?;
 
-    let mut state = app::bootstrap::build_state(&mut event_loop, display);
-    app::bootstrap::init_winit(&mut event_loop, &mut state)?;
+    let mut state = app::bootstrap::build_state(&mut event_loop, display, backend);
+    match backend {
+        BackendKind::Winit => crate::backend::winit::init_winit(&mut event_loop, &mut state)?,
+        BackendKind::Tty => crate::backend::tty::init_tty(&mut event_loop, &mut state)?,
+    }
     if state.debug.profile().enabled() {
         state.dump_debug_state();
     }
-    info!(wayland_display = %state.socket_name.to_string_lossy(), ipc_socket = ?state.ipc_socket_path, "wm initialized sockets");
+    info!(?backend, wayland_display = %state.socket_name.to_string_lossy(), ipc_socket = ?state.ipc_socket_path, "wm initialized sockets");
     info!(debug_profile = ?state.debug.profile(), debug_output_dir = ?state.debug.output_dir(), "wm debug platform initialized");
 
     // Child processes should connect to the nested compositor socket.

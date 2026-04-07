@@ -1,9 +1,11 @@
 use spiders_core::command::WmCommand;
+use spiders_core::command::FocusDirection;
 use spiders_core::event::WmEvent;
 use spiders_core::focus::{
-    FocusSelection, FocusUpdate, remove_window, request_focus_next_window,
+    FocusSelection, FocusTree, FocusTreeWindowGeometry, FocusUpdate, remove_window, request_focus_next_window,
     request_focus_previous_window, request_focus_window, unmap_window,
 };
+use spiders_core::navigation::{NavigationDirection, WindowGeometryCandidate, select_directional_focus_candidate};
 use spiders_core::query::{
     QueryRequest, QueryResponse, output_snapshot, query_response_for_model, window_snapshot,
     workspace_snapshot,
@@ -16,6 +18,7 @@ use spiders_core::workspace::{
     request_select_next_workspace, request_select_previous_workspace, request_select_workspace,
 };
 use spiders_core::{LayoutRect, OutputId, SeatId, WindowId, WorkspaceId};
+use tracing::info;
 
 use crate::host::{WmHost, dispatch_wm_command};
 use spiders_config::model::Config;
@@ -51,6 +54,9 @@ impl<'a> WmRuntime<'a> {
             }
             WmSignal::OutputSynced { output_id, name, logical_width, logical_height } => {
                 self.sync_output(output_id, name, logical_width, logical_height);
+            }
+            WmSignal::OutputRemoved { output_id } => {
+                self.remove_output(output_id);
             }
             WmSignal::HoveredWindowChanged { seat_id, hovered_window_id } => {
                 self.sync_hovered_window(seat_id, hovered_window_id);
@@ -218,6 +224,13 @@ impl<'a> WmRuntime<'a> {
         output_id
     }
 
+    pub fn remove_output(&mut self, output_id: impl Into<OutputId>) -> OutputId {
+        let output_id = output_id.into();
+        self.model.remove_output(&output_id);
+        self.push_output_change(&output_id);
+        output_id
+    }
+
     pub fn place_new_window(&mut self, window_id: WindowId) -> WindowId {
         let window_id = place_new_window(self.model, window_id);
         self.push_window_created(&window_id);
@@ -256,6 +269,33 @@ impl<'a> WmRuntime<'a> {
         let selection = request_focus_previous_window(self.model, window_order);
         let focused_window_id =
             sync_focused_window(self.model, seat_id, selection.focused_window_id);
+        self.push_focus_change();
+        FocusSelection { focused_window_id }
+    }
+
+    pub fn request_focus_direction_window_selection(
+        &mut self,
+        seat_id: impl Into<SeatId>,
+        direction: FocusDirection,
+        geometries: impl IntoIterator<Item = (WindowId, spiders_core::wm::WindowGeometry)>,
+    ) -> FocusSelection {
+        let candidates = directional_focus_candidates(self.model, geometries);
+        info!(
+            ?direction,
+            candidate_count = candidates.len(),
+            current_focus = ?self.model.focused_window_id(),
+            focus_tree_present = self.model.focus_tree.is_some(),
+            "wm-runtime focus direction selection start"
+        );
+        let focused_window_id = select_directional_focus_candidate(
+            &candidates,
+            self.model.focused_window_id().cloned(),
+            navigation_direction(direction),
+            &self.model.last_focused_window_id_by_scope,
+            self.model.focus_tree.as_ref(),
+        );
+        info!(?direction, ?focused_window_id, "wm-runtime focus direction selection result");
+        let focused_window_id = sync_focused_window(self.model, seat_id, focused_window_id);
         self.push_focus_change();
         FocusSelection { focused_window_id }
     }
@@ -507,6 +547,39 @@ fn layout_rect(geometry: spiders_core::wm::WindowGeometry) -> LayoutRect {
         y: geometry.y as f32,
         width: geometry.width as f32,
         height: geometry.height as f32,
+    }
+}
+
+fn directional_focus_candidates(
+    model: &WmModel,
+    geometries: impl IntoIterator<Item = (WindowId, spiders_core::wm::WindowGeometry)>,
+) -> Vec<WindowGeometryCandidate> {
+    let fallback_focus_tree_entries = geometries
+        .into_iter()
+        .map(|(window_id, geometry)| FocusTreeWindowGeometry { window_id, geometry })
+        .collect::<Vec<_>>();
+    let fallback_focus_tree = FocusTree::from_window_geometries(&fallback_focus_tree_entries);
+    let focus_tree = model.focus_tree.as_ref().unwrap_or(&fallback_focus_tree);
+
+    fallback_focus_tree_entries
+        .into_iter()
+        .map(|entry| WindowGeometryCandidate {
+            scope_path: focus_tree
+                .scope_path(&entry.window_id)
+                .map(|scope_path| scope_path.to_vec())
+                .unwrap_or_else(|| vec![FocusTree::workspace_scope()]),
+            window_id: entry.window_id,
+            geometry: entry.geometry,
+        })
+        .collect()
+}
+
+fn navigation_direction(direction: FocusDirection) -> NavigationDirection {
+    match direction {
+        FocusDirection::Left => NavigationDirection::Left,
+        FocusDirection::Right => NavigationDirection::Right,
+        FocusDirection::Up => NavigationDirection::Up,
+        FocusDirection::Down => NavigationDirection::Down,
     }
 }
 

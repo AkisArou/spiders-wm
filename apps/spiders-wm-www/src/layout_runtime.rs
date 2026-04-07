@@ -8,6 +8,7 @@ use spiders_config::model::Config;
 use spiders_config::runtime::build_source_bundle_authoring_layout_service;
 use spiders_core::LayoutId;
 use spiders_core::runtime::layout_context::LayoutEvaluationDependencies;
+use spiders_core::types::SpiderPlatform;
 use spiders_runtime_js_browser::JavaScriptBrowserRuntimeProvider;
 use spiders_wm_runtime::{PreviewSession, build_preview_layout_context};
 
@@ -90,7 +91,8 @@ pub async fn evaluate_layout_source(
 fn build_layout_service(
     entry_path: &std::path::Path,
 ) -> Result<SourceBundleAuthoringLayoutService, spiders_config::model::LayoutConfigError> {
-    build_source_bundle_authoring_layout_service(entry_path, &[&JavaScriptBrowserRuntimeProvider])
+    let js_provider = JavaScriptBrowserRuntimeProvider::new(SpiderPlatform::Web);
+    build_source_bundle_authoring_layout_service(entry_path, &[&js_provider])
 }
 
 thread_local! {

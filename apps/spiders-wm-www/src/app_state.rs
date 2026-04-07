@@ -6,6 +6,7 @@ use spiders_config::model::Config;
 use spiders_config::runtime::load_config_from_source_bundle;
 use spiders_core::LayoutId;
 use spiders_core::command::WmCommand;
+use spiders_core::types::SpiderPlatform;
 use spiders_runtime_js_browser::JavaScriptBrowserRuntimeProvider;
 use spiders_scene::pipeline::SceneCache;
 use wasm_bindgen::{JsCast, closure::Closure};
@@ -340,11 +341,12 @@ pub async fn load_config_from_buffers(
     let root_dir = PathBuf::from(crate::editor_files::WORKSPACE_FS_ROOT);
     let entry_path = PathBuf::from(runtime_path(EditorFileId::Config));
     let sources = source_bundle_sources(buffers);
+    let js_provider = JavaScriptBrowserRuntimeProvider::new(SpiderPlatform::Web);
     load_config_from_source_bundle(
         &root_dir,
         &entry_path,
         &sources,
-        &[&JavaScriptBrowserRuntimeProvider],
+        &[&js_provider],
     )
     .await
     .map_err(|error| error.to_string())

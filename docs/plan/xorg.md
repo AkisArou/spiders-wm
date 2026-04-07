@@ -14,7 +14,9 @@ The intent is to define the final architecture we want, then execute that archit
 
 `spiders-wm-x` should be a real X11 window manager that:
 
-- uses `xcb` as the X11 protocol layer
+- uses `x11rb` as the X11 protocol layer
+- uses `xkbcommon` for keyboard/keymap handling instead of backend-local key translation
+- uses `calloop` for the X11 backend event loop once the backend needs timers, IPC, signals, and other non-X event sources
 - reuses shared WM behavior from `spiders-core`, `spiders-config`, and `spiders-wm-runtime`
 - manages real X11 windows across workspaces and outputs
 - applies the same authored config model used elsewhere in the repo
@@ -195,7 +197,7 @@ This is the architecture we should aim at throughout implementation.
 - atom intern/cache
 - extension negotiation
 - root window ownership and event registration
-- event dispatch loop
+- event dispatch loop built around `calloop`
 
 ### Model Registry
 
@@ -208,6 +210,7 @@ This is the architecture we should aim at throughout implementation.
 - translate X11 lifecycle events into shared runtime signals
 - consume shared runtime events/commands and schedule host actions
 - maintain coherence between shared `WmModel` and X11 reality
+- use `xkbcommon`-backed key resolution for shared bindings rather than hand-rolled keysym logic
 
 ### Host Effects
 

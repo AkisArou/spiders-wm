@@ -15,23 +15,34 @@ dev:
     RUST_LOG=debug \
     cargo run -p spiders-wm
 
-dev-x:
-    SPIDERS_WM_AUTHORED_CONFIG="$PWD/test_config/config.ts" \
-    SPIDERS_WM_CACHE_DIR="$PWD/test_config/.spiders-wm-build" \
-    RUST_LOG=debug \
-    cargo run -p spiders-wm-x -- --dump-state
+x-dev:
+    Xephyr :1 -screen 1440x900 -resizeable -name spiders-wm-x -title "spiders-wm-x test display" -ac -br -reset
 
-dev-x-observe:
-    SPIDERS_WM_AUTHORED_CONFIG="$PWD/test_config/config.ts" \
-    SPIDERS_WM_CACHE_DIR="$PWD/test_config/.spiders-wm-build" \
-    RUST_LOG=debug \
-    cargo run -p spiders-wm-x -- --observe --event-limit 10 --idle-timeout-ms 1000
-
-dev-x-manage:
+x-run:
+    DISPLAY=:1 \
+    WAYLAND_DISPLAY= \
+    SWAYSOCK= \
+    XDG_SESSION_TYPE=x11 \
     SPIDERS_WM_AUTHORED_CONFIG="$PWD/test_config/config.ts" \
     SPIDERS_WM_CACHE_DIR="$PWD/test_config/.spiders-wm-build" \
     RUST_LOG=debug \
     cargo run -p spiders-wm-x -- --manage
+
+x-session:
+    sh -c 'Xephyr :1 -screen 1440x900 -resizeable -name spiders-wm-x -title "spiders-wm-x test display" -ac -br -reset & sleep 1 && DISPLAY=:1 WAYLAND_DISPLAY= SWAYSOCK= XDG_SESSION_TYPE=x11 SPIDERS_WM_AUTHORED_CONFIG="$PWD/test_config/config.ts" SPIDERS_WM_CACHE_DIR="$PWD/test_config/.spiders-wm-build" RUST_LOG=debug cargo run -p spiders-wm-x -- --manage'
+
+x-clients:
+    DISPLAY=:1 xterm & \
+    DISPLAY=:1 xclock & \
+    DISPLAY=:1 xeyes & \
+    wait
+
+x-dump-state:
+    DISPLAY=:1 \
+    SPIDERS_WM_AUTHORED_CONFIG="$PWD/test_config/config.ts" \
+    SPIDERS_WM_CACHE_DIR="$PWD/test_config/.spiders-wm-build" \
+    RUST_LOG=debug \
+    cargo run -p spiders-wm-x -- --dump-state
 
 dev-debug:
     mkdir -p "$PWD/.spiders-wm-debug"
@@ -44,6 +55,9 @@ dev-debug:
 
 wm-smoke:
     ./scripts/wm-smoke.sh
+
+wm-x-smoke:
+    ./scripts/wm-x-smoke.sh
 
 wm-debug-smoke:
     mkdir -p "$PWD/.spiders-wm-debug"

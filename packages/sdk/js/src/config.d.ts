@@ -1,5 +1,33 @@
 import type { CommandDescriptor } from "./commands";
 
+export type SpiderPlatform = "wayland" | "xorg" | "web";
+export const platform: SpiderPlatform;
+
+type PlatformMatcher<R> = () => R;
+type PlatformMatcherMap<R> = {
+  wayland?: PlatformMatcher<R>;
+  xorg?: PlatformMatcher<R>;
+  web?: PlatformMatcher<R>;
+  default?: PlatformMatcher<R>;
+};
+type RequireAtLeastOne<T, Keys extends keyof T = keyof T> = Keys extends keyof T
+  ? Required<Pick<T, Keys>> & Partial<Omit<T, Keys>>
+  : never;
+
+export type PlatformMatch<R> = RequireAtLeastOne<PlatformMatcherMap<R>>;
+
+export function platformMatch<R>(branches: {
+  wayland: PlatformMatcher<R>;
+  xorg: PlatformMatcher<R>;
+  web: PlatformMatcher<R>;
+}): R;
+export function platformMatch<R>(
+  branches: Partial<Record<SpiderPlatform, PlatformMatcher<R>>> & {
+    default: PlatformMatcher<R>;
+  }
+): R;
+export function platformMatch<R>(branches: PlatformMatch<R>): R;
+
 export type AttachDirection = "after" | "before";
 export type Direction = "left" | "right" | "up" | "down";
 /** Modifier names accepted by spiders-wm and mapped to wlroots modifier bits. */

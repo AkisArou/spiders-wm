@@ -7,8 +7,6 @@ use std::sync::mpsc::{Receiver, Sender};
 use spiders_config::model::{Config, ConfigPaths};
 use spiders_ipc::{IpcClientId, IpcServerState};
 
-use smithay::backend::renderer::gles::GlesRenderer;
-use smithay::backend::winit::WinitGraphicsBackend;
 use smithay::desktop::{PopupManager, Space, Window};
 use smithay::input::{Seat, SeatState};
 use smithay::reexports::calloop::{LoopHandle, LoopSignal};
@@ -21,6 +19,7 @@ use smithay::wayland::shell::xdg::XdgShellState;
 use smithay::wayland::shell::xdg::decoration::XdgDecorationState;
 use smithay::wayland::shm::ShmState;
 
+use crate::backend::BackendState;
 use crate::debug::DebugState;
 use crate::frame_sync::{FrameSyncState, WindowFrameSyncState};
 use crate::handlers::VirtualKeyboardManagerState;
@@ -50,7 +49,7 @@ pub struct SpidersWm {
     pub data_device_state: DataDeviceState,
     pub _virtual_keyboard_manager_state: VirtualKeyboardManagerState,
     pub seat: Seat<Self>,
-    pub backend: Option<WinitGraphicsBackend<GlesRenderer>>,
+    pub backend: Option<BackendState>,
 
     pub focused_surface: Option<WlSurface>,
     pub(crate) config_paths: Option<ConfigPaths>,

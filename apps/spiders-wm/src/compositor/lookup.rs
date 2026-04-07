@@ -8,6 +8,14 @@ use spiders_core::wm::WindowGeometry;
 use spiders_core::{WindowId, WorkspaceId};
 
 impl SpidersWm {
+    pub fn primary_output(&self) -> Option<&Output> {
+        self.space.outputs().next()
+    }
+
+    pub fn primary_output_cloned(&self) -> Option<Output> {
+        self.primary_output().cloned()
+    }
+
     pub fn managed_window_count(&self) -> usize {
         self.managed_windows.len()
     }
@@ -64,7 +72,7 @@ impl SpidersWm {
     }
 
     pub fn current_output_cloned(&self) -> Option<Output> {
-        self.space.outputs().next().cloned()
+        self.primary_output_cloned()
     }
 
     pub fn current_workspace_id(&self) -> Option<&WorkspaceId> {
@@ -92,7 +100,7 @@ impl SpidersWm {
     }
 
     pub fn current_output_geometry(&self) -> Option<Rectangle<i32, Logical>> {
-        let output = self.space.outputs().next()?;
+        let output = self.primary_output()?;
         self.space.output_geometry(output)
     }
 

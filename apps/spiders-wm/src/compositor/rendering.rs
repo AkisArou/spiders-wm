@@ -3,6 +3,7 @@ use smithay::output::Output;
 use smithay::utils::Rectangle;
 use smithay::wayland::compositor::CompositorHandler;
 
+use crate::backend::BackendState;
 use crate::frame_sync::SnapshotRenderElement;
 use crate::state::SpidersWm;
 
@@ -41,7 +42,14 @@ impl SpidersWm {
         self.notify_blocker_cleared();
         self.prune_completed_closing_overlays();
 
-        let mut backend = self.backend.take().expect("winit backend missing during redraw");
+        let mut backend = match self.backend.take() {
+            Some(BackendState::Winit(backend)) => backend,
+            Some(backend) => {
+                self.backend = Some(backend);
+                return;
+            }
+            None => return,
+        };
         let size = backend.window_size();
         let damage = Rectangle::from_size(size);
 
@@ -74,6 +82,6 @@ impl SpidersWm {
         self.popups.cleanup();
         let _ = self.display_handle.flush_clients();
         backend.window().request_redraw();
-        self.backend = Some(backend);
+        self.backend = Some(BackendState::Winit(backend));
     }
 }

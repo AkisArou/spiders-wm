@@ -21,6 +21,7 @@ use smithay::wayland::selection::data_device::DataDeviceHandler;
 use smithay::wayland::selection::data_device::{WaylandDndGrabHandler, set_data_device_focus};
 use smithay::{delegate_data_device, delegate_dmabuf, delegate_output, delegate_seat, delegate_xdg_decoration};
 
+use crate::backend::BackendState;
 use crate::state::SpidersWm;
 
 impl SeatHandler for SpidersWm {
@@ -93,7 +94,7 @@ impl DmabufHandler for SpidersWm {
         dmabuf: Dmabuf,
         notifier: ImportNotifier,
     ) {
-        let Some(backend) = self.backend.as_mut() else {
+        let Some(BackendState::Winit(backend)) = self.backend.as_mut() else {
             notifier.failed();
             return;
         };

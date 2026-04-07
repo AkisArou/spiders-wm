@@ -6,6 +6,7 @@ use rquickjs::{
     loader::{Loader, Resolver},
 };
 
+use spiders_core::types::SpiderPlatform;
 use spiders_runtime_js_core::JavaScriptModuleGraph;
 
 #[derive(Debug, thiserror::Error)]
@@ -23,7 +24,16 @@ pub fn evaluate_entry_export_to_json(
     module_name: &str,
     export_name: &str,
 ) -> Result<Option<serde_json::Value>, ModuleGraphRuntimeError> {
-    with_entry_namespace(graph, |ctx, namespace| {
+    evaluate_entry_export_to_json_with_platform(graph, module_name, export_name, None)
+}
+
+pub fn evaluate_entry_export_to_json_with_platform(
+    graph: &JavaScriptModuleGraph,
+    module_name: &str,
+    export_name: &str,
+    platform: Option<SpiderPlatform>,
+) -> Result<Option<serde_json::Value>, ModuleGraphRuntimeError> {
+    with_entry_namespace(graph, platform, |ctx, namespace| {
         let value = namespace_export(ctx.clone(), &namespace, module_name, export_name)?;
         js_value_to_json(ctx, value)
             .map_err(|message| ModuleGraphRuntimeError::JavaScript { message })
@@ -36,7 +46,17 @@ pub fn call_entry_export_with_json_arg(
     export_name: &str,
     arg: &serde_json::Value,
 ) -> Result<Option<serde_json::Value>, ModuleGraphRuntimeError> {
-    with_entry_namespace(graph, |ctx, namespace| {
+    call_entry_export_with_json_arg_with_platform(graph, module_name, export_name, arg, None)
+}
+
+pub fn call_entry_export_with_json_arg_with_platform(
+    graph: &JavaScriptModuleGraph,
+    module_name: &str,
+    export_name: &str,
+    arg: &serde_json::Value,
+    platform: Option<SpiderPlatform>,
+) -> Result<Option<serde_json::Value>, ModuleGraphRuntimeError> {
+    with_entry_namespace(graph, platform, |ctx, namespace| {
         let function = namespace_function(ctx.clone(), &namespace, module_name, export_name)?;
         let arg_source =
             format!("JSON.parse({})", serde_json::to_string(&arg.to_string()).unwrap());
@@ -53,6 +73,7 @@ pub fn call_entry_export_with_json_arg(
 
 fn with_entry_namespace<T, F>(
     graph: &JavaScriptModuleGraph,
+    platform: Option<SpiderPlatform>,
     f: F,
 ) -> Result<T, ModuleGraphRuntimeError>
 where
@@ -65,6 +86,12 @@ where
         .map_err(|error| ModuleGraphRuntimeError::JavaScript { message: error.to_string() })?;
 
     context.with(|ctx| {
+        if let Some(platform) = platform {
+            ctx.globals().set("__SPIDERS_WM_PLATFORM", platform.as_str()).map_err(|error| {
+                ModuleGraphRuntimeError::JavaScript { message: format_js_error(ctx.clone(), error) }
+            })?;
+        }
+
         let namespace = Module::import(&ctx, graph.entry.as_str())
             .map_err(|error| ModuleGraphRuntimeError::JavaScript {
                 message: format_js_error(ctx.clone(), error),

@@ -5,9 +5,10 @@ use std::path::{Path, PathBuf};
 use oxc::span::SourceType;
 use serde_json::Value;
 use spiders_core::command::{FocusDirection, WmCommand};
+use spiders_core::types::SpiderPlatform;
 use tracing::debug;
 
-use crate::module_graph_runtime::evaluate_entry_export_to_json;
+use crate::module_graph_runtime::evaluate_entry_export_to_json_with_platform;
 use spiders_config::model::{
     Binding, Config, ConfigOptions, InputConfig, LayoutConfigError, LayoutDefinition,
     LayoutSelectionConfig, WindowRule,
@@ -22,15 +23,31 @@ use spiders_runtime_js_core::{
 
 pub fn load_authored_config(path: impl AsRef<Path>) -> Result<Config, LayoutConfigError> {
     debug!(path = %path.as_ref().display(), "loading authored project config");
-    load_project_config(path.as_ref())
+    load_authored_config_for_platform(path, SpiderPlatform::Wayland)
+}
+
+pub fn load_authored_config_for_platform(
+    path: impl AsRef<Path>,
+    platform: SpiderPlatform,
+) -> Result<Config, LayoutConfigError> {
+    debug!(path = %path.as_ref().display(), platform = platform.as_str(), "loading authored project config");
+    load_project_config(path.as_ref(), platform)
 }
 
 pub fn load_prepared_config(path: impl AsRef<Path>) -> Result<Config, LayoutConfigError> {
     debug!(path = %path.as_ref().display(), "loading prepared project config");
-    load_project_config(path.as_ref())
+    load_prepared_config_for_platform(path, SpiderPlatform::Wayland)
 }
 
-fn load_project_config(path: &Path) -> Result<Config, LayoutConfigError> {
+pub fn load_prepared_config_for_platform(
+    path: impl AsRef<Path>,
+    platform: SpiderPlatform,
+) -> Result<Config, LayoutConfigError> {
+    debug!(path = %path.as_ref().display(), platform = platform.as_str(), "loading prepared project config");
+    load_project_config(path.as_ref(), platform)
+}
+
+fn load_project_config(path: &Path, platform: SpiderPlatform) -> Result<Config, LayoutConfigError> {
     let project =
         discover_project_apps(path).map_err(|error| LayoutConfigError::CompileAuthoredConfig {
             path: path.to_path_buf(),
@@ -55,7 +72,7 @@ fn load_project_config(path: &Path) -> Result<Config, LayoutConfigError> {
             message: error.to_string(),
         })?;
 
-    let config_value = evaluate_compiled_config(path, &config_runtime_graph)?;
+    let config_value = evaluate_compiled_config(path, &config_runtime_graph, platform)?;
     let mut config = decode_config_value(path, &config_value)?;
 
     config.global_stylesheet_path =
@@ -170,8 +187,9 @@ fn write_runtime_cache(
 fn evaluate_compiled_config(
     path: &Path,
     graph: &JavaScriptModuleGraph,
+    platform: SpiderPlatform,
 ) -> Result<Value, LayoutConfigError> {
-    evaluate_entry_export_to_json(graph, &graph.entry, "default")
+    evaluate_entry_export_to_json_with_platform(graph, &graph.entry, "default", Some(platform))
         .map_err(|error| LayoutConfigError::EvaluateAuthoredConfig {
             path: path.to_path_buf(),
             message: error.to_string(),
@@ -1124,6 +1142,8 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
 
+    use spiders_runtime_js_core::decode_runtime_graph_payload;
+
     use super::*;
 
     fn unique_root(name: &str) -> PathBuf {
@@ -1343,5 +1363,93 @@ mod tests {
         let config = load_prepared_config(&runtime_entry).unwrap();
         assert_eq!(config.bindings.len(), 1);
         assert_eq!(config.bindings[0].command, WmCommand::Spawn { command: "foot".into() });
+    }
+
+    #[test]
+    fn load_authored_config_matches_platform_specific_branches() {
+        let root = unique_root("platform-match");
+        fs::create_dir_all(root.join("layouts/master-stack")).unwrap();
+        fs::write(
+            root.join("config.ts"),
+            r#"
+                import type { SpiderWMConfig } from "@spiders-wm/sdk/config";
+                import { platformMatch } from "@spiders-wm/sdk/config";
+                import * as commands from "@spiders-wm/sdk/commands";
+
+                export default {
+                  bindings: {
+                    entries: [{
+                      bind: ["Return"],
+                      command: platformMatch({
+                        xorg: () => commands.spawn("xterm"),
+                        default: () => commands.spawn("foot"),
+                      }),
+                    }],
+                  },
+                  layouts: { default: "master-stack" },
+                } satisfies SpiderWMConfig;
+            "#,
+        )
+        .unwrap();
+        fs::write(
+            root.join("layouts/master-stack/index.ts"),
+            "export default function layout() { return { type: 'workspace', children: [] }; }",
+        )
+        .unwrap();
+
+        let wayland =
+            load_authored_config_for_platform(root.join("config.ts"), SpiderPlatform::Wayland)
+                .unwrap();
+        let xorg = load_authored_config_for_platform(root.join("config.ts"), SpiderPlatform::Xorg)
+            .unwrap();
+
+        assert_eq!(
+            wayland.bindings[0].command,
+            WmCommand::Spawn { command: "foot".into() }
+        );
+        assert_eq!(
+            xorg.bindings[0].command,
+            WmCommand::Spawn { command: "xterm".into() }
+        );
+    }
+
+    #[test]
+    fn load_authored_config_accepts_partial_platform_match_without_default() {
+        let root = unique_root("partial-platform-match");
+        fs::create_dir_all(root.join("layouts/master-stack")).unwrap();
+        fs::write(
+            root.join("config.ts"),
+            r#"
+                import type { SpiderWMConfig } from "@spiders-wm/sdk/config";
+                import { platformMatch } from "@spiders-wm/sdk/config";
+                import * as commands from "@spiders-wm/sdk/commands";
+
+                export default {
+                  bindings: {
+                    entries: [{
+                      bind: ["Return"],
+                      command: platformMatch({
+                        xorg: () => commands.spawn("xterm"),
+                      }),
+                    }],
+                  },
+                  layouts: { default: "master-stack" },
+                } satisfies SpiderWMConfig;
+            "#,
+        )
+        .unwrap();
+        fs::write(
+            root.join("layouts/master-stack/index.ts"),
+            "export default function layout() { return { type: 'workspace', children: [] }; }",
+        )
+        .unwrap();
+
+        let config = load_authored_config_for_platform(root.join("config.ts"), SpiderPlatform::Xorg)
+            .unwrap();
+
+        assert_eq!(
+            config.bindings[0].command,
+            WmCommand::Spawn { command: "xterm".into() }
+        );
     }
 }

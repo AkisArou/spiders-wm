@@ -5,25 +5,18 @@ use std::time::Duration;
 use spiders_config::model::{Config, ConfigPaths, config_discovery_options_from_env};
 use spiders_config::runtime::build_authoring_layout_service;
 use spiders_core::signal::WmSignal;
+use spiders_core::types::SpiderPlatform;
 use spiders_runtime_js_native::JavaScriptNativeRuntimeProvider;
 
-use smithay::backend::egl::EGLDevice;
-use smithay::backend::renderer::damage::OutputDamageTracker;
-use smithay::backend::renderer::gles::GlesRenderer;
-use smithay::backend::renderer::{ImportDma, ImportMemWl};
-use smithay::backend::winit::{self, WinitEvent, WinitGraphicsBackend};
 use smithay::desktop::{PopupManager, Space};
 use smithay::input::{Seat, SeatState};
-use smithay::output::{Mode, Output, PhysicalProperties, Subpixel};
 use smithay::reexports::calloop::{
     EventLoop, Interest, LoopHandle, Mode as CalloopMode, PostAction,
     generic::Generic,
     timer::{TimeoutAction, Timer},
 };
 use smithay::reexports::wayland_server::Display;
-use smithay::utils::{Physical, Size, Transform};
 use smithay::wayland::compositor::CompositorState;
-use smithay::wayland::dmabuf::DmabufFeedbackBuilder;
 use smithay::wayland::dmabuf::{DmabufGlobal, DmabufState};
 use smithay::wayland::output::OutputManagerState;
 use smithay::wayland::selection::data_device::DataDeviceState;
@@ -33,6 +26,10 @@ use smithay::wayland::shm::ShmState;
 use smithay::wayland::socket::ListeningSocketSource;
 use tracing::warn;
 
+use crate::backend::BackendKind;
+use crate::backend::session::{
+    BackendSession, NestedSessionState, TtySessionHandle, TtySessionState,
+};
 use crate::debug::{DebugConfig, DebugState};
 use crate::frame_sync::FrameSyncState;
 use crate::handlers::ClientState;
@@ -44,6 +41,7 @@ use crate::state::SpidersWm;
 pub(crate) fn build_state(
     event_loop: &mut EventLoop<'static, SpidersWm>,
     display: Display<SpidersWm>,
+    backend_kind: BackendKind,
 ) -> SpidersWm {
     let start_time = std::time::Instant::now();
     let display_handle = display.handle();
@@ -60,7 +58,9 @@ pub(crate) fn build_state(
     let popups = PopupManager::default();
     let (blocker_cleared_tx, blocker_cleared_rx) = mpsc::channel();
     let mut seat_state = SeatState::new();
-    let mut seat: Seat<SpidersWm> = seat_state.new_wl_seat(&display_handle, "winit");
+    let backend_session = build_backend_session(backend_kind);
+    let mut seat: Seat<SpidersWm> =
+        seat_state.new_wl_seat(&display_handle, backend_session.seat_name());
     seat.add_keyboard(Default::default(), 200, 25).expect("failed to create keyboard");
     seat.add_pointer();
 
@@ -70,7 +70,10 @@ pub(crate) fn build_state(
         let mut runtime = WmRuntime::new(&mut model);
         let mut host = NoopHost;
         runtime.ensure_default_workspace("1");
-        let _ = runtime.handle_signal(&mut host, WmSignal::EnsureSeat { seat_id: "winit".into() });
+        let _ = runtime.handle_signal(
+            &mut host,
+            WmSignal::EnsureSeat { seat_id: backend_session.seat_name().into() },
+        );
     }
     let (config_paths, config) = load_wm_config(None);
     let ipc_socket_path = crate::ipc::init_ipc_listener(event_loop);
@@ -96,7 +99,7 @@ pub(crate) fn build_state(
         data_device_state,
         _virtual_keyboard_manager_state: virtual_keyboard_manager_state,
         seat,
-        backend: None::<WinitGraphicsBackend<GlesRenderer>>,
+        backend: None,
         focused_surface: None,
         config_paths: config_paths.clone(),
         config,
@@ -113,6 +116,19 @@ pub(crate) fn build_state(
         relayout_queued: false,
         relayout_generation: 0,
         relayout_cause: Default::default(),
+    }
+}
+
+fn build_backend_session(backend_kind: BackendKind) -> BackendSession {
+    match backend_kind {
+        BackendKind::Winit => {
+            BackendSession::Nested(NestedSessionState { seat_name: "winit".into(), active: true })
+        }
+        BackendKind::Tty => BackendSession::Tty(TtySessionState {
+            seat_name: "seat0".into(),
+            active: false,
+            handle: TtySessionHandle::Placeholder,
+        }),
     }
 }
 
@@ -169,7 +185,7 @@ pub(crate) fn load_wm_config(existing_paths: Option<ConfigPaths>) -> (Option<Con
         },
     };
 
-    let js_provider = JavaScriptNativeRuntimeProvider;
+    let js_provider = JavaScriptNativeRuntimeProvider::new(SpiderPlatform::Wayland);
     let service = match build_authoring_layout_service(&paths, &[&js_provider]) {
         Ok(service) => service,
         Err(error) => {
@@ -193,157 +209,6 @@ pub(crate) fn load_wm_config(existing_paths: Option<ConfigPaths>) -> (Option<Con
             (Some(paths), Config::default())
         }
     }
-}
-
-pub(crate) fn init_winit(
-    event_loop: &mut EventLoop<'static, SpidersWm>,
-    state: &mut SpidersWm,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let (mut backend, winit) = winit::init::<GlesRenderer>()?;
-
-    state.shm_state.update_formats(backend.renderer().shm_formats());
-
-    let render_node = EGLDevice::device_for_display(backend.renderer().egl_context().display())
-        .and_then(|device| device.try_get_render_node());
-
-    let dmabuf_default_feedback = match render_node {
-        Ok(Some(node)) => {
-            let dmabuf_formats = backend.renderer().dmabuf_formats();
-            DmabufFeedbackBuilder::new(node.dev_id(), dmabuf_formats)
-                .build()
-                .map(Some)
-                .map_err(|err| err.to_string())
-        }
-        Ok(None) => {
-            warn!("failed to query render node, dmabuf will use v3");
-            Ok(None)
-        }
-        Err(err) => {
-            warn!(?err, "failed to query EGL render node, dmabuf will use v3");
-            Ok(None)
-        }
-    }
-    .expect("failed to build dmabuf feedback");
-
-    state.dmabuf_global = if let Some(default_feedback) = dmabuf_default_feedback.as_ref() {
-        Some(state.dmabuf_state.create_global_with_default_feedback::<SpidersWm>(
-            &state.display_handle,
-            default_feedback,
-        ))
-    } else {
-        let dmabuf_formats = backend.renderer().dmabuf_formats();
-        if dmabuf_formats.iter().next().is_some() {
-            Some(
-                state
-                    .dmabuf_state
-                    .create_global::<SpidersWm>(&state.display_handle, dmabuf_formats),
-            )
-        } else {
-            None
-        }
-    };
-
-    state.backend = Some(backend);
-
-    let reported_size =
-        state.backend.as_ref().expect("winit backend missing during init").window_size();
-    let mode = Mode {
-        size: sanitize_winit_output_size(reported_size).unwrap_or_else(|| {
-            warn!(
-                reported_width = reported_size.w,
-                reported_height = reported_size.h,
-                fallback_width = DEFAULT_WINIT_OUTPUT_WIDTH,
-                fallback_height = DEFAULT_WINIT_OUTPUT_HEIGHT,
-                "wm ignoring tiny startup winit output size"
-            );
-            default_winit_output_size()
-        }),
-        refresh: 60_000,
-    };
-
-    let output = Output::new(
-        "winit".to_string(),
-        PhysicalProperties {
-            size: (0, 0).into(),
-            subpixel: Subpixel::Unknown,
-            make: "Smithay".into(),
-            model: "Winit".into(),
-            serial_number: "Unknown".into(),
-        },
-    );
-    let _global = output.create_global::<SpidersWm>(&state.display_handle);
-    output.change_current_state(Some(mode), Some(Transform::Flipped180), None, Some((0, 0).into()));
-    output.set_preferred(mode);
-    state.space.map_output(&output, (0, 0));
-    let config = state.config.clone();
-    let startup_events = {
-        let mut runtime = state.runtime();
-        let mut events = runtime.handle_signal(
-            &mut NoopHost,
-            WmSignal::OutputSynced {
-                output_id: "winit".into(),
-                name: "winit".to_string(),
-                logical_width: mode.size.w as u32,
-                logical_height: mode.size.h as u32,
-            },
-        );
-        runtime.sync_layout_selection_defaults(&config);
-        events.extend(runtime.take_events());
-        events
-    };
-    state.broadcast_runtime_events(startup_events);
-
-    let mut damage_tracker = OutputDamageTracker::from_output(&output);
-
-    event_loop.handle().insert_source(winit, move |event, _, state| match event {
-        WinitEvent::Resized { size, .. } => {
-            let Some(size) = sanitize_winit_output_size(size) else {
-                warn!(
-                    reported_width = size.w,
-                    reported_height = size.h,
-                    "wm ignoring tiny winit resize event"
-                );
-                return;
-            };
-            output.change_current_state(Some(Mode { size, refresh: 60_000 }), None, None, None);
-            let config = state.config.clone();
-            let events = {
-                let mut runtime = state.runtime();
-                let mut events = runtime.handle_signal(
-                    &mut NoopHost,
-                    WmSignal::OutputSynced {
-                        output_id: "winit".into(),
-                        name: "winit".to_string(),
-                        logical_width: size.w as u32,
-                        logical_height: size.h as u32,
-                    },
-                );
-                runtime.sync_layout_selection_defaults(&config);
-                events.extend(runtime.take_events());
-                events
-            };
-            state.broadcast_runtime_events(events);
-            state.schedule_relayout();
-        }
-        WinitEvent::Input(event) => state.process_input_event(event),
-        WinitEvent::Redraw => state.render_output_frame(&output, &mut damage_tracker),
-        WinitEvent::CloseRequested => state.loop_signal.stop(),
-        _ => {}
-    })?;
-
-    Ok(())
-}
-
-const DEFAULT_WINIT_OUTPUT_WIDTH: i32 = 1280;
-const DEFAULT_WINIT_OUTPUT_HEIGHT: i32 = 800;
-const MIN_VALID_WINIT_OUTPUT_EDGE: i32 = 64;
-
-fn default_winit_output_size() -> Size<i32, Physical> {
-    Size::from((DEFAULT_WINIT_OUTPUT_WIDTH, DEFAULT_WINIT_OUTPUT_HEIGHT))
-}
-
-fn sanitize_winit_output_size(size: Size<i32, Physical>) -> Option<Size<i32, Physical>> {
-    (size.w >= MIN_VALID_WINIT_OUTPUT_EDGE && size.h >= MIN_VALID_WINIT_OUTPUT_EDGE).then_some(size)
 }
 
 fn init_wayland_listener(

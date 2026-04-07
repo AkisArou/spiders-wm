@@ -55,7 +55,9 @@ tracing-subscriber = { version = "0.3", features = [
   "fmt",
   "ansi",
 ] }
-xcb = "1.7"
+calloop = "0.14.4"
+x11rb = "0.13.2"
+xkbcommon = "0.9.0"
 wasm-bindgen = "0.2.117"
 wasm-bindgen-futures = "0.4"
 web-sys = "0.3"

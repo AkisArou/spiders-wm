@@ -14,6 +14,9 @@ pub enum WmSignal {
         logical_width: u32,
         logical_height: u32,
     },
+    OutputRemoved {
+        output_id: OutputId,
+    },
     HoveredWindowChanged {
         seat_id: SeatId,
         hovered_window_id: Option<WindowId>,

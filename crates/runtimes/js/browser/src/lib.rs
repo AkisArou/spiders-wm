@@ -19,6 +19,7 @@ use spiders_core::runtime::prepared_layout::{
     PreparedLayout, PreparedStylesheet, PreparedStylesheets,
 };
 use spiders_core::snapshot::{StateSnapshot, WorkspaceSnapshot};
+use spiders_core::types::SpiderPlatform;
 use spiders_runtime_js_core::{
     JavaScriptModule, JavaScriptModuleGraph, compile_source_bundle_to_module_graph,
     decode_js_layout_value, decode_runtime_graph_payload, encode_runtime_graph_payload,
@@ -161,6 +162,7 @@ extern "C" {
 async fn evaluate_layout_module_graph(
     module_graph: &JavaScriptModuleGraph,
     context: &LayoutEvaluationContext,
+    platform: SpiderPlatform,
 ) -> Result<LayoutEvaluationResult, String> {
     let raw_context = serde_wasm_bindgen::to_value(context).map_err(|error| error.to_string())?;
     let tracked = create_tracked_layout_context(raw_context);
@@ -168,7 +170,8 @@ async fn evaluate_layout_module_graph(
         Reflect::get(&tracked, &JsValue::from_str("context")).map_err(js_error_to_string)?;
     let dependencies =
         Reflect::get(&tracked, &JsValue::from_str("dependencies")).map_err(js_error_to_string)?;
-    let layout = evaluate_module_export_function(module_graph, "default", tracked_context).await?;
+    let layout =
+        evaluate_module_export_function(module_graph, "default", tracked_context, platform).await?;
     let result = build_tracked_layout_result(layout, dependencies);
     serde_wasm_bindgen::from_value(result).map_err(|error| error.to_string())
 }
@@ -177,10 +180,11 @@ pub async fn load_config_from_source_bundle(
     root_dir: &Path,
     entry_path: &Path,
     sources: &BTreeMap<PathBuf, String>,
+    platform: SpiderPlatform,
 ) -> Result<Config, String> {
     let graph = compile_source_bundle_to_module_graph(root_dir, entry_path, sources)
         .map_err(|error| error.to_string())?;
-    let value = evaluate_module_export_value(&graph, "default").await?;
+    let value = evaluate_module_export_value(&graph, "default", platform).await?;
     let config_value: Value =
         serde_wasm_bindgen::from_value(value).map_err(|error| error.to_string())?;
     let mut config =
@@ -210,7 +214,9 @@ fn js_error_to_string(error: JsValue) -> String {
 async fn evaluate_module_export_value(
     module_graph: &JavaScriptModuleGraph,
     export_name: &str,
+    platform: SpiderPlatform,
 ) -> Result<JsValue, String> {
+    set_platform_global(platform)?;
     let module_urls = build_module_urls(module_graph)?;
     let entry_url = module_urls
         .get(&module_graph.entry)
@@ -225,12 +231,23 @@ async fn evaluate_module_export_function(
     module_graph: &JavaScriptModuleGraph,
     export_name: &str,
     arg: JsValue,
+    platform: SpiderPlatform,
 ) -> Result<JsValue, String> {
-    let export = evaluate_module_export_value(module_graph, export_name).await?;
+    let export = evaluate_module_export_value(module_graph, export_name, platform).await?;
     let function = export.dyn_into::<Function>().map_err(|_| {
         format!("Module {} does not export callable {}", module_graph.entry, export_name)
     })?;
     function.call1(&JsValue::UNDEFINED, &arg).map_err(js_error_to_string)
+}
+
+fn set_platform_global(platform: SpiderPlatform) -> Result<(), String> {
+    Reflect::set(
+        &js_sys::global(),
+        &JsValue::from_str("__SPIDERS_WM_PLATFORM"),
+        &JsValue::from_str(platform.as_str()),
+    )
+    .map(|_| ())
+    .map_err(js_error_to_string)
 }
 
 fn build_module_urls(
@@ -555,14 +572,32 @@ fn discover_layout_entry(
     })
 }
 
-#[derive(Debug, Default, Clone, Copy)]
-pub struct JavaScriptBrowserRuntimeProvider;
+#[derive(Debug, Clone, Copy)]
+pub struct JavaScriptBrowserRuntimeProvider {
+    platform: SpiderPlatform,
+}
 
-#[derive(Debug, Default)]
-pub struct JavaScriptBrowserConfigRuntime;
+impl JavaScriptBrowserRuntimeProvider {
+    pub const fn new(platform: SpiderPlatform) -> Self {
+        Self { platform }
+    }
+}
 
-#[derive(Debug, Default)]
-pub struct JavaScriptBrowserPreparedLayoutRuntime;
+impl Default for JavaScriptBrowserRuntimeProvider {
+    fn default() -> Self {
+        Self::new(SpiderPlatform::Web)
+    }
+}
+
+#[derive(Debug)]
+pub struct JavaScriptBrowserConfigRuntime {
+    platform: SpiderPlatform,
+}
+
+#[derive(Debug)]
+pub struct JavaScriptBrowserPreparedLayoutRuntime {
+    platform: SpiderPlatform,
+}
 
 impl SourceBundleRuntimeProvider for JavaScriptBrowserRuntimeProvider {
     fn kind(&self) -> RuntimeKind {
@@ -573,8 +608,12 @@ impl SourceBundleRuntimeProvider for JavaScriptBrowserRuntimeProvider {
         &self,
     ) -> Result<SourceBundleRuntimeBundle, LayoutConfigError> {
         Ok(SourceBundleRuntimeBundle {
-            config_runtime: Box::new(JavaScriptBrowserConfigRuntime),
-            layout_runtime: Box::new(JavaScriptBrowserPreparedLayoutRuntime),
+            config_runtime: Box::new(JavaScriptBrowserConfigRuntime {
+                platform: self.platform,
+            }),
+            layout_runtime: Box::new(JavaScriptBrowserPreparedLayoutRuntime {
+                platform: self.platform,
+            }),
         })
     }
 }
@@ -587,12 +626,12 @@ impl SourceBundleConfigRuntime for JavaScriptBrowserConfigRuntime {
         sources: &'a SourceBundle,
     ) -> Pin<Box<dyn Future<Output = Result<Config, LayoutConfigError>> + 'a>> {
         Box::pin(async move {
-            load_config_from_source_bundle(root_dir, entry_path, sources).await.map_err(|message| {
-                LayoutConfigError::EvaluateAuthoredConfig {
+            load_config_from_source_bundle(root_dir, entry_path, sources, self.platform)
+                .await
+                .map_err(|message| LayoutConfigError::EvaluateAuthoredConfig {
                     path: entry_path.to_path_buf(),
                     message,
-                }
-            })
+                })
         })
     }
 }
@@ -670,8 +709,9 @@ impl SourceBundlePreparedLayoutRuntime for JavaScriptBrowserPreparedLayoutRuntim
                         message: error.to_string(),
                     }
                 })?;
-            let value =
-                evaluate_layout_module_graph(&runtime_graph, context).await.map_err(|message| {
+            let value = evaluate_layout_module_graph(&runtime_graph, context, self.platform)
+                .await
+                .map_err(|message| {
                     LayoutConfigError::EvaluateAuthoredConfig {
                         path: PathBuf::from(&artifact.selected.module),
                         message,

@@ -5,6 +5,19 @@ edition.workspace = true
 license.workspace = true
 publish.workspace = true
 
+[features]
+default = []
+libseat = ["smithay/backend_session_libseat"]
+tty-preview = [
+  "libseat",
+  "dep:input",
+  "smithay/backend_egl",
+  "smithay/backend_udev",
+  "smithay/backend_libinput",
+  "smithay/backend_gbm",
+  "smithay/renderer_multi",
+]
+
 [dependencies]
 anyhow.workspace = true
 spiders-config = { path = "../../crates/config" }
@@ -18,6 +31,9 @@ thiserror = { workspace = true }
 tracing = { workspace = true }
 serde.workspace = true
 serde_json.workspace = true
+input = { version = "0.9.1", optional = true, default-features = false, features = ["udev"] }
+rustix = { version = "1.0.7", features = ["fs"] }
+drm-fourcc = "2.2.0"
 tracing-subscriber = { workspace = true, features = [
   "env-filter",
   "fmt",
@@ -27,6 +43,6 @@ tracing-subscriber = { workspace = true, features = [
 [dependencies.smithay]
 path = "../../../smithay"
 default-features = false
-features = ["backend_drm", "backend_winit", "desktop", "wayland_frontend"]
+features = ["backend_drm", "backend_session", "backend_winit", "desktop", "wayland_frontend"]
 
 [dev-dependencies]

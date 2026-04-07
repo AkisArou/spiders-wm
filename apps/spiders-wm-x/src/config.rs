@@ -1,5 +1,6 @@
 use spiders_config::model::{Config, ConfigPaths, config_discovery_options_from_env};
 use spiders_config::runtime::build_authoring_layout_service;
+use spiders_core::types::SpiderPlatform;
 use spiders_runtime_js_native::JavaScriptNativeRuntimeProvider;
 use tracing::warn;
 
@@ -12,7 +13,7 @@ pub(crate) fn load_config() -> (Option<ConfigPaths>, Config) {
         }
     };
 
-    let js_provider = JavaScriptNativeRuntimeProvider;
+    let js_provider = JavaScriptNativeRuntimeProvider::new(SpiderPlatform::Xorg);
     let service = match build_authoring_layout_service(&paths, &[&js_provider]) {
         Ok(service) => service,
         Err(error) => {
@@ -46,7 +47,7 @@ pub(crate) fn configured_workspace_names(config: &Config) -> Vec<String> {
 pub(crate) fn build_layout_service(
     paths: &ConfigPaths,
 ) -> Option<spiders_config::authoring_layout::AuthoringLayoutService> {
-    let js_provider = JavaScriptNativeRuntimeProvider;
+    let js_provider = JavaScriptNativeRuntimeProvider::new(SpiderPlatform::Xorg);
 
     match build_authoring_layout_service(paths, &[&js_provider]) {
         Ok(service) => Some(service),

@@ -3,6 +3,7 @@ use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use tracing::{debug, info};
 
 use crate::actions::focus::FocusUpdate;
+use crate::backend::BackendState;
 use crate::frame_sync;
 use crate::state::{ManagedWindow, SpidersWm};
 use spiders_core::window_id;
@@ -246,10 +247,11 @@ impl SpidersWm {
 
         let scale = output.current_scale().fractional_scale().into();
         let snapshot = match self.backend.as_mut() {
-            Some(backend) => {
+            Some(BackendState::Winit(backend)) => {
                 frame_sync::capture_close_snapshot(backend.renderer(), surface, scale, 1.0)
             }
             None => None,
+            Some(BackendState::Tty(_)) => None,
         };
 
         if let Some(snapshot) = snapshot

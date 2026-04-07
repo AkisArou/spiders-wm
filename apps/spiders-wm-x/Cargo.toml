@@ -9,7 +9,9 @@ publish.workspace = true
 anyhow.workspace = true
 serde_json.workspace = true
 tracing.workspace = true
-xcb = { workspace = true, features = ["randr"] }
+calloop.workspace = true
+x11rb = { workspace = true, features = ["allow-unsafe-code", "randr"] }
+xkbcommon = { workspace = true, features = ["x11"] }
 spiders-config = { path = "../../crates/config" }
 spiders-core = { path = "../../crates/core" }
 spiders-logging = { path = "../../crates/logging" }

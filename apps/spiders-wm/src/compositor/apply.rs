@@ -4,6 +4,7 @@ use smithay::utils::{Logical, Point, SERIAL_COUNTER, Serial};
 use tracing::debug;
 
 use crate::actions::focus::FocusUpdate;
+use crate::backend::BackendState;
 use crate::state::SpidersWm;
 use spiders_core::WindowId;
 
@@ -44,7 +45,7 @@ impl SpidersWm {
             elapsed_ms = started_at.elapsed().as_secs_f64() * 1000.0,
             "wm applied modeled focus"
         );
-        if let Some(backend) = self.backend.as_ref() {
+        if let Some(BackendState::Winit(backend)) = self.backend.as_ref() {
             backend.window().request_redraw();
         }
     }

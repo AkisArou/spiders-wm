@@ -5,10 +5,11 @@ use spiders_core::runtime::layout_context::LayoutEvaluationContext;
 use spiders_core::runtime::prepared_layout::{PreparedLayout, SelectedLayout};
 use spiders_core::runtime::runtime_contract::{LayoutModuleContract, PreparedLayoutRuntime};
 use spiders_core::runtime::runtime_error::RuntimeError;
+use spiders_core::types::SpiderPlatform;
 use spiders_scene::ast::LayoutValidationError;
 use tracing::{debug, warn};
 
-use crate::module_graph_runtime::call_entry_export_with_json_arg;
+use crate::module_graph_runtime::call_entry_export_with_json_arg_with_platform;
 use spiders_runtime_js_core::loader::{InlineLayoutSourceLoader, JsLayoutSourceLoader};
 use spiders_runtime_js_core::{
     JavaScriptModule, JavaScriptModuleGraph, decode_js_layout_value, decode_runtime_graph_payload,
@@ -41,11 +42,16 @@ pub struct StubPreparedLayoutRuntime;
 pub struct QuickJsPreparedLayoutRuntime<L = InlineLayoutSourceLoader> {
     contract: LayoutModuleContract,
     loader: L,
+    platform: SpiderPlatform,
 }
 
 impl Default for QuickJsPreparedLayoutRuntime<InlineLayoutSourceLoader> {
     fn default() -> Self {
-        Self { contract: LayoutModuleContract::default(), loader: InlineLayoutSourceLoader }
+        Self {
+            contract: LayoutModuleContract::default(),
+            loader: InlineLayoutSourceLoader,
+            platform: SpiderPlatform::Wayland,
+        }
     }
 }
 
@@ -57,7 +63,11 @@ impl QuickJsPreparedLayoutRuntime<InlineLayoutSourceLoader> {
 
 impl<L> QuickJsPreparedLayoutRuntime<L> {
     pub fn with_loader(loader: L) -> Self {
-        Self { contract: LayoutModuleContract::default(), loader }
+        Self::with_loader_for_platform(loader, SpiderPlatform::Wayland)
+    }
+
+    pub fn with_loader_for_platform(loader: L, platform: SpiderPlatform) -> Self {
+        Self { contract: LayoutModuleContract::default(), loader, platform }
     }
 
     pub fn evaluate_module_source(
@@ -90,11 +100,12 @@ impl<L> QuickJsPreparedLayoutRuntime<L> {
             PreparedLayoutRuntimeError::JavaScript { message: error.to_string() }
         })?;
 
-        let json = call_entry_export_with_json_arg(
+        let json = call_entry_export_with_json_arg_with_platform(
             graph,
             &selected_layout.module,
             &self.contract.export_name,
             &context_value,
+            Some(self.platform),
         )
         .map_err(|error| match error {
             crate::module_graph_runtime::ModuleGraphRuntimeError::JavaScript { message } => {
@@ -230,7 +241,7 @@ impl<L: JsLayoutSourceLoader> PreparedLayoutRuntime for QuickJsPreparedLayoutRun
 impl<L: JsLayoutSourceLoader> AuthoringConfigRuntime for QuickJsPreparedLayoutRuntime<L> {
     fn load_authored_config(&self, path: &std::path::Path) -> Result<Config, RuntimeError> {
         debug!(path = %path.display(), "loading authored config");
-        let result = crate::authored::load_authored_config(path);
+        let result = crate::authored::load_authored_config_for_platform(path, self.platform);
         if let Err(error) = &result {
             warn!(path = %path.display(), %error, "failed loading authored config");
         }
@@ -239,7 +250,7 @@ impl<L: JsLayoutSourceLoader> AuthoringConfigRuntime for QuickJsPreparedLayoutRu
 
     fn load_prepared_config(&self, path: &std::path::Path) -> Result<Config, RuntimeError> {
         debug!(path = %path.display(), "loading prepared config");
-        let result = crate::authored::load_prepared_config(path);
+        let result = crate::authored::load_prepared_config_for_platform(path, self.platform);
         if let Err(error) = &result {
             warn!(path = %path.display(), %error, "failed loading prepared config");
         }
@@ -314,13 +325,14 @@ mod tests {
     use spiders_config::model::{Config, LayoutDefinition};
     use spiders_core::snapshot::{OutputSnapshot, StateSnapshot, WorkspaceSnapshot};
     use spiders_core::types::{LayoutRef, OutputTransform};
-    use spiders_core::{OutputId, WorkspaceId};
+    use spiders_core::{OutputId, SlotTake, WorkspaceId};
+    use spiders_runtime_js_core::{
+        JavaScriptModule, JavaScriptModuleGraph, decode_runtime_graph_payload,
+    };
 
     use super::*;
     use crate::authored::{load_prepared_config, rebuild_prepared_config};
-    use crate::module_graph::{JavaScriptModule, JavaScriptModuleGraph};
     use crate::module_graph_runtime::call_entry_export_with_json_arg;
-    use crate::payload::decode_runtime_graph_payload;
 
     fn workspace() -> WorkspaceSnapshot {
         WorkspaceSnapshot {
@@ -471,7 +483,7 @@ mod tests {
                     },
                     JavaScriptModule {
                         specifier: "@spiders-wm/sdk/jsx-runtime".into(),
-                        source: include_str!("../../../../packages/spiders-wm-sdk/src/jsx-runtime.js")
+                        source: include_str!("../../../../../packages/sdk/js/src/jsx-runtime.js")
                             .into(),
                         resolved_imports: BTreeMap::new(),
                     },

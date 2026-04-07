@@ -43,7 +43,7 @@ pub(crate) struct SceneLayoutState {
 
 impl SceneLayoutState {
     pub(crate) fn new(config_paths: Option<ConfigPaths>) -> Self {
-        let js_provider = JavaScriptNativeRuntimeProvider;
+        let js_provider = JavaScriptNativeRuntimeProvider::default();
         let layout_service = config_paths
             .as_ref()
             .and_then(|paths| build_authoring_layout_service(paths, &[&js_provider]).ok());
@@ -53,7 +53,7 @@ impl SceneLayoutState {
 
     pub(crate) fn set_config_paths(&mut self, config_paths: Option<ConfigPaths>) {
         self.config_paths = config_paths;
-        let js_provider = JavaScriptNativeRuntimeProvider;
+        let js_provider = JavaScriptNativeRuntimeProvider::default();
         self.layout_service = self
             .config_paths
             .as_ref()

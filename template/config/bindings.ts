@@ -1,11 +1,17 @@
 import * as commands from "@spiders-wm/sdk/commands";
+import { platformMatch } from "@spiders-wm/sdk/config";
 import type { BindingsConfig } from "@spiders-wm/sdk/config";
+
+const launcherCommand = platformMatch({
+  xorg: () => "rofi -show drun",
+  default: () => "rofi -show drun",
+});
 
 export const bindings = {
   mod: "alt",
   entries: [
     { bind: ["mod", "Return"], command: commands.spawn("foot") },
-    { bind: ["mod", "d"], command: commands.spawn("rofi -show drun") },
+    { bind: ["mod", "d"], command: commands.spawn(launcherCommand) },
     { bind: ["mod", "h"], command: commands.focus_dir("left") },
     { bind: ["mod", "j"], command: commands.focus_dir("down") },
     { bind: ["mod", "k"], command: commands.focus_dir("up") },

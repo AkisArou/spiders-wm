@@ -218,6 +218,28 @@ impl WmModel {
             });
     }
 
+    pub fn remove_output(&mut self, output_id: &OutputId) {
+        self.outputs.remove(output_id);
+
+        if self.current_output_id.as_ref() == Some(output_id) {
+            self.current_output_id = self.outputs.keys().next().cloned();
+        }
+
+        for workspace in self.workspaces.values_mut() {
+            if workspace.output_id.as_ref() == Some(output_id) {
+                workspace.output_id = None;
+                workspace.visible = false;
+                workspace.focused = false;
+            }
+        }
+
+        for window in self.windows.values_mut() {
+            if window.output_id.as_ref() == Some(output_id) {
+                window.output_id = None;
+            }
+        }
+    }
+
     pub fn attach_workspace_to_output(&mut self, workspace_id: WorkspaceId, output_id: OutputId) {
         if let Some(workspace) = self.workspaces.get_mut(&workspace_id) {
             workspace.output_id = Some(output_id);
