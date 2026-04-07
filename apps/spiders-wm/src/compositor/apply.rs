@@ -1,6 +1,7 @@
 use smithay::desktop::Window;
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::utils::{Logical, Point, SERIAL_COUNTER, Serial};
+use tracing::debug;
 
 use crate::actions::focus::FocusUpdate;
 use crate::state::SpidersWm;
@@ -29,22 +30,23 @@ impl SpidersWm {
         focused_window_id: Option<WindowId>,
         serial: Serial,
     ) {
+        let started_at = std::time::Instant::now();
         let focus_summary = focused_window_id.as_ref().map(ToString::to_string);
         self.debug_protocol_event("apply-modeled-focus", focus_summary.as_deref(), || {
             format!("serial={serial:?}")
         });
         let focused_surface =
-            focused_window_id.and_then(|window_id| self.surface_for_window_id(window_id));
+            focused_window_id.clone().and_then(|window_id| self.surface_for_window_id(window_id));
         self.apply_backend_focus(focused_surface.clone(), serial);
         self.apply_window_activation(focused_surface.as_ref());
-        self.refresh_titlebar_snapshot_and_overlays();
+        debug!(
+            focused_window = ?focused_window_id,
+            elapsed_ms = started_at.elapsed().as_secs_f64() * 1000.0,
+            "wm applied modeled focus"
+        );
         if let Some(backend) = self.backend.as_ref() {
             backend.window().request_redraw();
         }
-    }
-
-    pub(crate) fn set_focus_with_new_serial(&mut self, surface: Option<WlSurface>) {
-        self.set_focus(surface, SERIAL_COUNTER.next_serial());
     }
 
     pub fn set_focus(&mut self, surface: Option<WlSurface>, serial: Serial) {

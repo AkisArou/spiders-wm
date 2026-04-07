@@ -1,74 +1,6 @@
-use std::io::{Seek, Write};
-use std::os::fd::AsFd;
-
 use super::*;
-use crate::backend::plan::TitlebarPlan;
-use spiders_fonts_native::{CachedNativeFontResolver, FontDbNativeFontResolver};
-use spiders_titlebar_native::render_titlebar_pixels;
-use wayland_client::protocol::wl_shm;
 
 impl RiverBackendState {
-    fn write_titlebar_buffer(
-        &self,
-        width: i32,
-        entry: &TitlebarPlan,
-    ) -> Option<crate::runtime::registry::TitlebarBufferRecord> {
-        let shm = self.shm.as_ref()?;
-        let stride = width.checked_mul(4)?;
-        let size = stride.checked_mul(entry.height)?;
-        let mut file = tempfile::tempfile().ok()?;
-        file.set_len(size as u64).ok()?;
-
-        let resolver = CachedNativeFontResolver::new(FontDbNativeFontResolver::default());
-        let pixels = render_titlebar_pixels(
-            width,
-            entry,
-            self.config.options.titlebar_font.as_ref(),
-            &resolver,
-        )?;
-
-        for pixel in pixels {
-            file.write_all(&pixel.to_le_bytes()).ok()?;
-        }
-        file.rewind().ok()?;
-
-        let pool = shm.create_pool(file.as_fd(), size, self.queue_handle(), ());
-        let buffer = pool.create_buffer(
-            0,
-            width,
-            entry.height,
-            stride,
-            wl_shm::Format::Argb8888,
-            self.queue_handle(),
-            (),
-        );
-
-        Some(crate::runtime::registry::TitlebarBufferRecord {
-            buffer,
-            pool,
-            file,
-            width,
-            height: entry.height,
-            background: entry.background,
-            border_bottom_width: entry.border_bottom_width,
-            border_bottom_color: entry.border_bottom_color,
-            title: entry.title.clone(),
-            text_color: entry.text_color,
-            text_align: entry.text_align,
-            font_family: Some(entry.font.families.clone()),
-            font_size: entry.font.size_px,
-            font_weight: entry.font.weight,
-            letter_spacing: entry.letter_spacing,
-            box_shadow: entry.box_shadow.clone(),
-            padding_top: entry.padding_top,
-            padding_right: entry.padding_right,
-            padding_bottom: entry.padding_bottom,
-            padding_left: entry.padding_left,
-            corner_radius_top_left: entry.corner_radius_top_left,
-            corner_radius_top_right: entry.corner_radius_top_right,
-        })
-    }
-
     pub(super) fn apply_manage_window_plan(&mut self, plan: &[ManageWindowPlan]) {
         for entry in plan {
             let Some(object_id) = self.window_object_id(&entry.window_id) else {
@@ -80,8 +12,7 @@ impl RiverBackendState {
 
             window.proxy.propose_dimensions(entry.width, entry.height);
             window.proxy.set_tiled(entry.tiled_edges);
-            self.runtime_state
-                .set_window_size(&entry.window_id, entry.width, entry.height);
+            self.runtime_state.set_window_size(&entry.window_id, entry.width, entry.height);
         }
     }
 
@@ -162,11 +93,9 @@ impl RiverBackendState {
 
             match entry.decoration_mode {
                 DecorationMode::ClientSide => window.proxy.use_csd(),
-                DecorationMode::CompositorTitlebar => window.proxy.use_ssd(),
                 DecorationMode::NoTitlebar => {
-                    // Best effort "no titlebar": for SSD-capable clients ask the client not to
-                    // draw decorations, and do not create compositor titlebar surfaces. If the
-                    // client only supports CSD, river cannot suppress its client-drawn chrome.
+                    // Best effort "no titlebar": SSD-capable clients can be asked not to draw
+                    // decorations, while CSD-only clients still control their own chrome.
                     if window.supports_ssd {
                         window.proxy.use_ssd();
                     } else {
@@ -174,81 +103,6 @@ impl RiverBackendState {
                     }
                 }
             }
-        }
-    }
-
-    pub(super) fn apply_titlebar_plan(&mut self, plan: &[TitlebarPlan]) {
-        // River decoration surfaces are currently render-only here. The protocol gives us
-        // decoration placement/commit hooks, but no dedicated decoration-surface button
-        // events, so shared titlebar buttons should not be treated as natively clickable.
-        let planned = plan
-            .iter()
-            .filter_map(|entry| {
-                self.window_object_id(&entry.window_id)
-                    .map(|id| (id, entry))
-            })
-            .collect::<Vec<_>>();
-
-        for (object_id, entry) in planned {
-            let width = self
-                .runtime_state
-                .windows
-                .get(&entry.window_id)
-                .map(|window| window.width)
-                .unwrap_or(0)
-                .max(1);
-            let Some(needs_buffer) = self.registry.titlebars.get(&object_id).map(|titlebar| {
-                titlebar.buffer.as_ref().is_none_or(|buffer| {
-                    buffer.width != width
-                        || buffer.height != entry.height
-                        || buffer.background != entry.background
-                        || buffer.border_bottom_width != entry.border_bottom_width
-                        || buffer.border_bottom_color != entry.border_bottom_color
-                        || buffer.title != entry.title
-                        || buffer.text_color != entry.text_color
-                        || buffer.text_align != entry.text_align
-                        || buffer.font_family != Some(entry.font.families.clone())
-                        || buffer.font_size != entry.font.size_px
-                        || buffer.font_weight != entry.font.weight
-                        || buffer.letter_spacing != entry.letter_spacing
-                        || buffer.box_shadow != entry.box_shadow
-                        || buffer.padding_top != entry.padding_top
-                        || buffer.padding_right != entry.padding_right
-                        || buffer.padding_bottom != entry.padding_bottom
-                        || buffer.padding_left != entry.padding_left
-                        || buffer.corner_radius_top_left != entry.corner_radius_top_left
-                        || buffer.corner_radius_top_right != entry.corner_radius_top_right
-                })
-            }) else {
-                continue;
-            };
-
-            if needs_buffer {
-                let next_buffer = self.write_titlebar_buffer(width, entry);
-                let Some(titlebar) = self.registry.titlebars.get_mut(&object_id) else {
-                    continue;
-                };
-                if let Some(old) = titlebar.buffer.take() {
-                    old.buffer.destroy();
-                    old.pool.destroy();
-                }
-                titlebar.buffer = next_buffer;
-            }
-
-            let Some(titlebar) = self.registry.titlebars.get_mut(&object_id) else {
-                continue;
-            };
-            let Some(buffer) = titlebar.buffer.as_ref() else {
-                continue;
-            };
-
-            titlebar
-                .decoration
-                .set_offset(entry.offset_x, -entry.height + entry.offset_y);
-            titlebar.decoration.sync_next_commit();
-            titlebar.surface.attach(Some(&buffer.buffer), 0, 0);
-            titlebar.surface.damage_buffer(0, 0, width, entry.height);
-            titlebar.surface.commit();
         }
     }
 
@@ -285,8 +139,7 @@ impl RiverBackendState {
                 }
             }
 
-            self.runtime_state
-                .set_window_mode(&entry.window_id, entry.mode.clone());
+            self.runtime_state.set_window_mode(&entry.window_id, entry.mode.clone());
             self.runtime_state.set_window_geometry(
                 &entry.window_id,
                 entry.x,
@@ -320,8 +173,7 @@ impl RiverBackendState {
                     return;
                 };
                 seat.proxy.clear_focus();
-                self.runtime_state
-                    .set_seat_focused_window(&seat.state_name, None);
+                self.runtime_state.set_seat_focused_window(&seat.state_name, None);
                 self.runtime_state.focused_window_id = None;
             }
         }
@@ -336,13 +188,11 @@ impl RiverBackendState {
         seat_id: &ObjectId,
         plan: &MoveFocusedWindowToWorkspacePlan,
     ) {
-        self.runtime_state
-            .set_window_workspace(&plan.window_id, &plan.workspace_id);
+        self.runtime_state.set_window_workspace(&plan.window_id, &plan.workspace_id);
         self.runtime_state.focused_window_id = None;
 
         if let Some(seat) = self.registry.seats.get(seat_id) {
-            self.runtime_state
-                .set_seat_focused_window(&seat.state_name, None);
+            self.runtime_state.set_seat_focused_window(&seat.state_name, None);
         }
 
         self.apply_focus_plan(seat_id, &plan.focus);
@@ -353,10 +203,7 @@ impl RiverBackendState {
         seat_id: &ObjectId,
         plan: &MoveWindowInWorkspacePlan,
     ) {
-        if self
-            .runtime_state
-            .swap_windows_in_stack(&plan.window_id, &plan.target_window_id)
-        {
+        if self.runtime_state.swap_windows_in_stack(&plan.window_id, &plan.target_window_id) {
             self.apply_focus_plan(seat_id, &plan.focus);
         }
     }
@@ -370,9 +217,7 @@ impl RiverBackendState {
                 continue;
             };
 
-            window
-                .proxy
-                .propose_dimensions(entry.width.max(1), entry.height.max(1));
+            window.proxy.propose_dimensions(entry.width.max(1), entry.height.max(1));
         }
     }
 
@@ -405,12 +250,7 @@ impl RiverBackendState {
 
 impl SeatRecord {
     pub(super) fn new(proxy: river_seat_v1::RiverSeatV1, state_name: String) -> Self {
-        Self {
-            proxy,
-            state_name,
-            xkb_bindings: HashMap::new(),
-            pointer_bindings: HashMap::new(),
-        }
+        Self { proxy, state_name, xkb_bindings: HashMap::new(), pointer_bindings: HashMap::new() }
     }
 
     pub(super) fn pointer_move(
@@ -467,15 +307,9 @@ impl SeatRecord {
     ) -> Option<ResizeWindowPlan> {
         if let Some(seat_state) = state.seats.get(&self.state_name)
             && let SeatPointerOpState::Resize {
-                window_id,
-                start_width,
-                start_height,
-                edges,
-                ..
+                window_id, start_width, start_height, edges, ..
             } = &seat_state.pointer_op
-            && let Some(window) = windows
-                .values()
-                .find(|window| &window.state_id == window_id)
+            && let Some(window) = windows.values().find(|window| &window.state_id == window_id)
         {
             let mut width = *start_width;
             let mut height = *start_height;
@@ -559,11 +393,7 @@ fn workspace_assign_prefix(config: &Config, mod_key: &str) -> String {
             continue;
         };
 
-        if last
-            .parse::<u8>()
-            .ok()
-            .is_some_and(|workspace| (1..=9).contains(&workspace))
-        {
+        if last.parse::<u8>().ok().is_some_and(|workspace| (1..=9).contains(&workspace)) {
             return tokens[..tokens.len() - 1].join("+");
         }
     }
@@ -577,33 +407,22 @@ fn milestone_bindings_with_mod_key(config: &Config, mod_key: &str) -> Vec<Bindin
     let mut bindings = vec![
         Binding {
             trigger: format!("{mod_key}+Enter"),
-            command: WmCommand::Spawn {
-                command: "foot".into(),
-            },
+            command: WmCommand::Spawn { command: "foot".into() },
         },
-        Binding {
-            trigger: format!("{mod_key}+q"),
-            command: WmCommand::CloseFocusedWindow,
-        },
+        Binding { trigger: format!("{mod_key}+q"), command: WmCommand::CloseFocusedWindow },
         Binding {
             trigger: format!("{mod_key}+h"),
-            command: WmCommand::FocusDirection {
-                direction: FocusDirection::Left,
-            },
+            command: WmCommand::FocusDirection { direction: FocusDirection::Left },
         },
         Binding {
             trigger: format!("{mod_key}+l"),
-            command: WmCommand::FocusDirection {
-                direction: FocusDirection::Right,
-            },
+            command: WmCommand::FocusDirection { direction: FocusDirection::Right },
         },
     ];
 
     bindings.extend((1..=9).map(|workspace| Binding {
         trigger: format!("{mod_key}+{workspace}"),
-        command: WmCommand::ActivateWorkspace {
-            workspace_id: workspace.to_string().into(),
-        },
+        command: WmCommand::ActivateWorkspace { workspace_id: workspace.to_string().into() },
     }));
 
     bindings.extend((1..=9).map(|workspace| Binding {
@@ -614,27 +433,19 @@ fn milestone_bindings_with_mod_key(config: &Config, mod_key: &str) -> Vec<Bindin
     bindings.extend([
         Binding {
             trigger: format!("{mod_key}+Shift+h"),
-            command: WmCommand::MoveDirection {
-                direction: FocusDirection::Left,
-            },
+            command: WmCommand::MoveDirection { direction: FocusDirection::Left },
         },
         Binding {
             trigger: format!("{mod_key}+Shift+j"),
-            command: WmCommand::MoveDirection {
-                direction: FocusDirection::Down,
-            },
+            command: WmCommand::MoveDirection { direction: FocusDirection::Down },
         },
         Binding {
             trigger: format!("{mod_key}+Shift+k"),
-            command: WmCommand::MoveDirection {
-                direction: FocusDirection::Up,
-            },
+            command: WmCommand::MoveDirection { direction: FocusDirection::Up },
         },
         Binding {
             trigger: format!("{mod_key}+Shift+l"),
-            command: WmCommand::MoveDirection {
-                direction: FocusDirection::Right,
-            },
+            command: WmCommand::MoveDirection { direction: FocusDirection::Right },
         },
     ]);
 

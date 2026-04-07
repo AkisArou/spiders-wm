@@ -11,7 +11,6 @@ serde.workspace = true
 serde_json.workspace = true
 spiders-scene = { path = "../scene" }
 spiders-core = { path = "../core" }
-spiders-titlebar-core = { path = "../titlebar/core" }
 thiserror.workspace = true
 tracing.workspace = true
 

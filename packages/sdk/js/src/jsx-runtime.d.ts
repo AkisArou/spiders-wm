@@ -5,17 +5,6 @@ import type {
   WindowProps,
   WorkspaceProps,
 } from "./layout";
-import type {
-  TitlebarBadgeProps,
-  TitlebarButtonProps,
-  TitlebarGroupProps,
-  TitlebarIconProps,
-  TitlebarProps,
-  TitlebarRenderable,
-  TitlebarTextProps,
-  TitlebarWindowTitleProps,
-  TitlebarWorkspaceNameProps,
-} from "./titlebar";
 
 type Component<Props = Record<string, unknown>> = (props: Props) => unknown;
 type JSXChild = LayoutRenderable | string | number | boolean | null | undefined;
@@ -52,14 +41,6 @@ declare global {
       group: JSXPropsWithChildren<GroupProps>;
       slot: JSXPropsWithChildren<SlotProps>;
       window: JSXPropsWithChildren<WindowProps>;
-      titlebar: JSXPropsWithChildren<TitlebarProps>;
-      "titlebar.group": JSXPropsWithChildren<TitlebarGroupProps>;
-      "titlebar.windowTitle": JSXPropsWithChildren<TitlebarWindowTitleProps>;
-      "titlebar.workspaceName": JSXPropsWithChildren<TitlebarWorkspaceNameProps>;
-      "titlebar.text": JSXPropsWithChildren<TitlebarTextProps>;
-      "titlebar.badge": JSXPropsWithChildren<TitlebarBadgeProps>;
-      "titlebar.button": JSXPropsWithChildren<TitlebarButtonProps>;
-      "titlebar.icon": JSXPropsWithChildren<TitlebarIconProps>;
     }
 
     type LibraryManagedAttributes<C, P> = JSXPropsWithChildren<P>;

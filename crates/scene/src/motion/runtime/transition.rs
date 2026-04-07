@@ -49,9 +49,7 @@ impl<M: MotionModifier> TransitionModifierApplierHandle for TransitionModifierAp
 
 impl<M: MotionModifier> TransitionModifierApplier<M> {
     pub(crate) fn applies_to_style(&self, style: Option<&ComputedStyle>) -> bool {
-        style
-            .and_then(|style| self.extract_transition_spec(style))
-            .is_some()
+        style.and_then(|style| self.extract_transition_spec(style)).is_some()
     }
 
     pub(crate) fn apply_modifier(
@@ -176,9 +174,7 @@ impl<M: MotionModifier> TransitionModifierApplier<M> {
         context: M::Context,
         now: Instant,
     ) -> (M::Output, bool) {
-        let elapsed = now
-            .saturating_duration_since(transition.started_at)
-            .as_secs_f32();
+        let elapsed = now.saturating_duration_since(transition.started_at).as_secs_f32();
         if elapsed < transition.spec.delay_secs {
             return (M::output_from_value(&transition.from_value, context), true);
         }
@@ -192,9 +188,6 @@ impl<M: MotionModifier> TransitionModifierApplier<M> {
         let eased = sample_easing(&transition.spec.easing, progress);
         let from = M::output_from_value(&transition.from_value, context);
         let to = M::output_from_value(&transition.to_value, context);
-        (
-            M::interpolate_output(from, to, eased, context),
-            progress < 1.0,
-        )
+        (M::interpolate_output(from, to, eased, context), progress < 1.0)
     }
 }

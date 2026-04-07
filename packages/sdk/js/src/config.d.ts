@@ -1,5 +1,4 @@
 import type { CommandDescriptor } from "./commands";
-import type { TitlebarRenderable } from "./titlebar";
 
 export type AttachDirection = "after" | "before";
 export type Direction = "left" | "right" | "up" | "down";
@@ -223,10 +222,6 @@ export interface OptionsConfig {
   sloppyfocus?: boolean;
   snapshot_fadeout_ms?: number;
   attach?: AttachDirection;
-  titlebar_font?: {
-    regular_path?: string;
-    bold_path?: string;
-  };
 }
 
 export interface LayoutsConfig {
@@ -241,7 +236,6 @@ export interface SpiderWMConfig {
   layouts?: LayoutsConfig;
   inputs?: InputsConfig;
   rules?: RulesConfig;
-  titlebars?: TitlebarRenderable[];
   bindings?: BindingsConfig;
   autostart?: string[];
   autostart_once?: string[];

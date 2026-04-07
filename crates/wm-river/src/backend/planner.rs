@@ -5,17 +5,11 @@ use crate::actions::{
     inactive_window_ids, top_window_id,
 };
 use crate::backend::motion::MotionStyleScope;
-use crate::backend::plan::TitlebarPlan;
 use crate::layout_adapter::{compute_layout_snapshot, compute_workspace_layout_snapshot};
-use spiders_scene::{
-    AppearanceValue, BorderStyleValue, BoxEdges, ColorValue, ComputedStyle, LayoutSnapshotNode,
-    LengthPercentage, SizeValue,
-};
 use spiders_core::types::WindowMode;
 use spiders_core::{LayoutRect, WindowId, WorkspaceId};
-use spiders_titlebar_core::{
-    TitlebarButtonsConfig, TitlebarPlanInput, build_titlebar_plan, decoration_mode_for_window,
-    titlebar_text_from_window,
+use spiders_scene::{
+    AppearanceValue, BorderStyleValue, BoxEdges, ColorValue, LayoutSnapshotNode, LengthPercentage,
 };
 
 const NO_WORKSPACE_CLASSES: &[&str] = &[];
@@ -43,28 +37,15 @@ fn river_border_from_box_edges(
 ) -> (river_window_v1::Edges, i32) {
     let edge_widths = [
         (river_window_v1::Edges::Top, border_length_to_px(border.top)),
-        (
-            river_window_v1::Edges::Right,
-            border_length_to_px(border.right),
-        ),
-        (
-            river_window_v1::Edges::Bottom,
-            border_length_to_px(border.bottom),
-        ),
-        (
-            river_window_v1::Edges::Left,
-            border_length_to_px(border.left),
-        ),
+        (river_window_v1::Edges::Right, border_length_to_px(border.right)),
+        (river_window_v1::Edges::Bottom, border_length_to_px(border.bottom)),
+        (river_window_v1::Edges::Left, border_length_to_px(border.left)),
     ];
 
     edge_widths.into_iter().fold(
         (river_window_v1::Edges::None, 0),
         |(edges, width), (edge, edge_width)| {
-            if edge_width > 0 {
-                (edges | edge, width.max(edge_width))
-            } else {
-                (edges, width)
-            }
+            if edge_width > 0 { (edges | edge, width.max(edge_width)) } else { (edges, width) }
         },
     )
 }
@@ -110,11 +91,7 @@ fn river_border_from_layout_node(
 }
 
 fn river_rgb_component_from_u8(component: u8) -> u32 {
-    if component == 0 {
-        0
-    } else {
-        (u32::from(component) << 16) | 0x0000_ffff
-    }
+    if component == 0 { 0 } else { (u32::from(component) << 16) | 0x0000_ffff }
 }
 
 fn river_alpha_component_from_u8(alpha: u8) -> u32 {
@@ -151,57 +128,7 @@ fn river_border_color_from_color(color: ColorValue) -> (u32, u32, u32, u32) {
 }
 
 fn river_border_color_from_layout_node(node: &LayoutSnapshotNode) -> Option<(u32, u32, u32, u32)> {
-    node.styles()?
-        .layout
-        .border_color
-        .map(river_border_color_from_color)
-}
-
-fn titlebar_height_to_px(style: Option<&ComputedStyle>) -> i32 {
-    match style.and_then(|style| style.height) {
-        Some(SizeValue::LengthPercentage(LengthPercentage::Px(value)))
-        | Some(SizeValue::LengthPercentage(LengthPercentage::Percent(value))) => {
-            value.round() as i32
-        }
-        _ => 28,
-    }
-    .max(1)
-}
-
-fn default_titlebar_background(focused: bool) -> ColorValue {
-    if focused {
-        ColorValue {
-            red: 26,
-            green: 48,
-            blue: 78,
-            alpha: 230,
-        }
-    } else {
-        ColorValue {
-            red: 28,
-            green: 30,
-            blue: 38,
-            alpha: 220,
-        }
-    }
-}
-
-fn default_titlebar_text_color(focused: bool) -> ColorValue {
-    if focused {
-        ColorValue {
-            red: 235,
-            green: 240,
-            blue: 248,
-            alpha: 255,
-        }
-    } else {
-        ColorValue {
-            red: 208,
-            green: 214,
-            blue: 222,
-            alpha: 255,
-        }
-    }
+    node.styles()?.layout.border_color.map(river_border_color_from_color)
 }
 
 impl RiverBackendState {
@@ -323,22 +250,16 @@ impl RiverBackendState {
                 .collect();
         }
 
-        compute_horizontal_tiles(
-            &active_state_ids,
-            origin_x,
-            origin_y,
-            total_width,
-            total_height,
-        )
-        .into_iter()
-        .map(|tile| RenderWindowPlan {
-            window_id: tile.window_id,
-            x: tile.x,
-            y: tile.y,
-            width: tile.width,
-            height: tile.height,
-        })
-        .collect()
+        compute_horizontal_tiles(&active_state_ids, origin_x, origin_y, total_width, total_height)
+            .into_iter()
+            .map(|tile| RenderWindowPlan {
+                window_id: tile.window_id,
+                x: tile.x,
+                y: tile.y,
+                width: tile.width,
+                height: tile.height,
+            })
+            .collect()
     }
 
     fn plan_window_borders_for_context(
@@ -368,11 +289,8 @@ impl RiverBackendState {
         compute_window_borders(&self.runtime_state, &context.window_ids)
             .into_iter()
             .map(|border| {
-                let default_edges = if border.width > 0 {
-                    all_edges
-                } else {
-                    river_window_v1::Edges::None
-                };
+                let default_edges =
+                    if border.width > 0 { all_edges } else { river_window_v1::Edges::None };
                 let mut plan = BorderPlan {
                     window_id: border.window_id.clone(),
                     width: border.width,
@@ -458,98 +376,20 @@ impl RiverBackendState {
                     .styles()
                     .and_then(|styles| styles.layout.appearance)
                     .unwrap_or(AppearanceValue::Auto);
-                let has_titlebar_style = node
-                    .styles()
-                    .and_then(|styles| styles.titlebar.as_ref())
-                    .is_some();
-                let supports_compositor_titlebar =
-                    self.compositor.is_some() && self.shm.is_some() && window.supports_ssd;
-                let decoration_mode = decoration_mode_for_window(
-                    appearance,
-                    has_titlebar_style,
-                    supports_compositor_titlebar,
-                    matches!(window_state.mode, WindowMode::Fullscreen),
-                );
-
-                Some(AppearancePlan {
-                    window_id: window_id.clone(),
-                    decoration_mode,
-                })
-            })
-            .collect()
-    }
-
-    fn plan_window_titlebars_for_context(
-        &mut self,
-        context: &WorkspaceRenderContext,
-    ) -> Vec<TitlebarPlan> {
-        let appearance = self
-            .plan_window_appearance_for_context(context)
-            .into_iter()
-            .filter(|plan| matches!(plan.decoration_mode, DecorationMode::CompositorTitlebar))
-            .map(|plan| plan.window_id)
-            .collect::<Vec<_>>();
-        if appearance.is_empty() {
-            return Vec::new();
-        }
-
-        let Some(snapshot) = compute_workspace_layout_snapshot(
-            &mut self.layout_service,
-            &mut self.scene_cache,
-            &self.config,
-            &self.runtime_state,
-            &context.workspace_id,
-            &appearance,
-            context.workspace_classes,
-        ) else {
-            return Vec::new();
-        };
-
-        appearance
-            .into_iter()
-            .filter_map(|window_id| {
-                let node = snapshot.find_by_window_id(&window_id)?;
-                let titlebar_style = node.styles().and_then(|styles| styles.titlebar.as_ref());
-                let window_style = node.styles().map(|styles| &styles.layout);
-                let focused = self.runtime_state.focused_window_id.as_ref() == Some(&window_id);
-                let base_title = {
-                    let window = self.runtime_state.windows.get(&window_id)?;
-                    titlebar_text_from_window(window.title.as_deref(), window.app_id.as_deref())
+                let decoration_mode = match appearance {
+                    AppearanceValue::None => DecorationMode::NoTitlebar,
+                    AppearanceValue::Auto => {
+                        if matches!(window_state.mode, WindowMode::Fullscreen)
+                            && window.supports_ssd
+                        {
+                            DecorationMode::NoTitlebar
+                        } else {
+                            DecorationMode::ClientSide
+                        }
+                    }
                 };
-                let window_width = self
-                    .runtime_state
-                    .windows
-                    .get(&window_id)
-                    .map(|window| window.width.max(1))
-                    .unwrap_or(1);
-                let titlebar_height = titlebar_height_to_px(titlebar_style);
-                let motion = self.resolve_motion(
-                    &window_id,
-                    MotionStyleScope::Titlebar,
-                    titlebar_style,
-                    &snapshot.keyframes,
-                    window_width as f32,
-                    titlebar_height as f32,
-                );
-                let effective_opacity = titlebar_style
-                    .and_then(|style| style.opacity)
-                    .unwrap_or(1.0)
-                    * motion.opacity;
-                Some(build_titlebar_plan(&TitlebarPlanInput {
-                    window_id,
-                    title: base_title,
-                    focused,
-                    titlebar_style: titlebar_style.cloned(),
-                    window_style: window_style.cloned(),
-                    default_background_focused: default_titlebar_background(true),
-                    default_background_unfocused: default_titlebar_background(false),
-                    default_text_color_focused: default_titlebar_text_color(true),
-                    default_text_color_unfocused: default_titlebar_text_color(false),
-                    offset_x: motion.transform.translate_x_px.round() as i32,
-                    offset_y: motion.transform.translate_y_px.round() as i32,
-                    effective_opacity,
-                    buttons: TitlebarButtonsConfig::default(),
-                }))
+
+                Some(AppearancePlan { window_id: window_id.clone(), appearance, decoration_mode })
             })
             .collect()
     }
@@ -565,10 +405,7 @@ impl RiverBackendState {
             &active_window_ids
                 .iter()
                 .filter_map(|window_id| {
-                    self.registry
-                        .windows
-                        .get(window_id)
-                        .map(|window| window.state_id.clone())
+                    self.registry.windows.get(window_id).map(|window| window.state_id.clone())
                 })
                 .collect::<Vec<_>>(),
         );
@@ -587,14 +424,12 @@ impl RiverBackendState {
             return tiled_edges
                 .into_iter()
                 .filter_map(|edges| {
-                    snapshot
-                        .find_by_window_id(&edges.window_id)
-                        .map(|node| ManageWindowPlan {
-                            window_id: edges.window_id,
-                            width: node.rect().width.round() as i32,
-                            height: node.rect().height.round() as i32,
-                            tiled_edges: edges.tiled_edges,
-                        })
+                    snapshot.find_by_window_id(&edges.window_id).map(|node| ManageWindowPlan {
+                        window_id: edges.window_id,
+                        width: node.rect().width.round() as i32,
+                        height: node.rect().height.round() as i32,
+                        tiled_edges: edges.tiled_edges,
+                    })
                 })
                 .collect();
         }
@@ -632,13 +467,6 @@ impl RiverBackendState {
             .collect()
     }
 
-    pub(super) fn plan_window_titlebars(&mut self) -> Vec<TitlebarPlan> {
-        self.render_workspace_contexts()
-            .into_iter()
-            .flat_map(|context| self.plan_window_titlebars_for_context(&context))
-            .collect()
-    }
-
     pub(super) fn plan_window_mode_updates(&self) -> Vec<WindowModePlan> {
         let (origin_x, origin_y, total_width, total_height) = self.current_output_geometry();
 
@@ -668,14 +496,7 @@ impl RiverBackendState {
                     WindowMode::Tiled => return None,
                 };
 
-                Some(WindowModePlan {
-                    window_id,
-                    mode,
-                    x,
-                    y,
-                    width,
-                    height,
-                })
+                Some(WindowModePlan { window_id, mode, x, y, width, height })
             })
             .collect()
     }
@@ -701,12 +522,7 @@ impl RiverBackendState {
         };
 
         let (x, y, width, height) = match &mode {
-            WindowMode::Tiled => (
-                window.x,
-                window.y,
-                window.width.max(1),
-                window.height.max(1),
-            ),
+            WindowMode::Tiled => (window.x, window.y, window.width.max(1), window.height.max(1)),
             WindowMode::Floating { rect } => {
                 let rect = rect.unwrap();
                 (
@@ -719,14 +535,7 @@ impl RiverBackendState {
             WindowMode::Fullscreen => (origin_x, origin_y, total_width.max(1), total_height.max(1)),
         };
 
-        Some(WindowModePlan {
-            window_id,
-            mode,
-            x,
-            y,
-            width,
-            height,
-        })
+        Some(WindowModePlan { window_id, mode, x, y, width, height })
     }
 
     pub(super) fn plan_toggle_fullscreen_command(
@@ -750,12 +559,7 @@ impl RiverBackendState {
 
         let (x, y, width, height) = match &mode {
             WindowMode::Fullscreen => (origin_x, origin_y, total_width.max(1), total_height.max(1)),
-            WindowMode::Tiled => (
-                window.x,
-                window.y,
-                window.width.max(1),
-                window.height.max(1),
-            ),
+            WindowMode::Tiled => (window.x, window.y, window.width.max(1), window.height.max(1)),
             WindowMode::Floating { rect } => {
                 let rect = rect.as_ref()?;
                 (
@@ -767,14 +571,7 @@ impl RiverBackendState {
             }
         };
 
-        Some(WindowModePlan {
-            window_id,
-            mode,
-            x,
-            y,
-            width,
-            height,
-        })
+        Some(WindowModePlan { window_id, mode, x, y, width, height })
     }
 
     pub(super) fn plan_focus_for_seat(&self, _seat_id: &ObjectId) -> FocusPlan {
@@ -787,18 +584,14 @@ impl RiverBackendState {
     }
 
     pub(super) fn plan_close_focused_window(&self, seat_id: &ObjectId) -> Option<CloseWindowPlan> {
-        self.seat_focused_state_window_id(seat_id)
-            .map(|window_id| CloseWindowPlan { window_id })
+        self.seat_focused_state_window_id(seat_id).map(|window_id| CloseWindowPlan { window_id })
     }
 
     pub(super) fn plan_activate_workspace_command(
         &self,
         workspace_id: spiders_core::WorkspaceId,
     ) -> ActivateWorkspacePlan {
-        ActivateWorkspacePlan {
-            workspace_id,
-            focus: FocusPlan::ClearFocus,
-        }
+        ActivateWorkspacePlan { workspace_id, focus: FocusPlan::ClearFocus }
     }
 
     pub(super) fn plan_move_focused_window_to_workspace_command(
@@ -809,11 +602,7 @@ impl RiverBackendState {
         let window_id = self.seat_focused_state_window_id(seat_id)?;
         let focus = self.plan_focus_for_seat(seat_id);
 
-        Some(MoveFocusedWindowToWorkspacePlan {
-            window_id,
-            workspace_id,
-            focus,
-        })
+        Some(MoveFocusedWindowToWorkspacePlan { window_id, workspace_id, focus })
     }
 
     pub(super) fn plan_move_direction_command(
@@ -843,9 +632,7 @@ impl RiverBackendState {
     ) -> Option<(MoveWindowToTopPlan, FocusPlan)> {
         self.window_object_id(&window_id)?;
         Some((
-            MoveWindowToTopPlan {
-                window_id: window_id.clone(),
-            },
+            MoveWindowToTopPlan { window_id: window_id.clone() },
             FocusPlan::FocusWindow { window_id },
         ))
     }
@@ -860,9 +647,8 @@ impl RiverBackendState {
             return None;
         }
 
-        let focused_state_id = self
-            .seat_focused_state_window_id(seat_id)
-            .or_else(|| active_state_ids.last().cloned());
+        let focused_state_id =
+            self.seat_focused_state_window_id(seat_id).or_else(|| active_state_ids.last().cloned());
 
         let target_state_id = focus_target_in_direction(
             &self.runtime_state,
@@ -872,12 +658,8 @@ impl RiverBackendState {
         )?;
 
         Some((
-            MoveWindowToTopPlan {
-                window_id: target_state_id.clone(),
-            },
-            FocusPlan::FocusWindow {
-                window_id: target_state_id,
-            },
+            MoveWindowToTopPlan { window_id: target_state_id.clone() },
+            FocusPlan::FocusWindow { window_id: target_state_id },
         ))
     }
 
@@ -895,12 +677,7 @@ impl RiverBackendState {
     pub(super) fn plan_inactive_tiled_windows(&self) -> Vec<ClearTiledStatePlan> {
         inactive_window_ids(
             &self.active_workspace_window_state_ids(),
-            &self
-                .runtime_state
-                .window_stack
-                .iter()
-                .cloned()
-                .collect::<Vec<_>>(),
+            &self.runtime_state.window_stack.iter().cloned().collect::<Vec<_>>(),
         )
         .into_iter()
         .map(|window_id| ClearTiledStatePlan { window_id })
@@ -910,19 +687,10 @@ impl RiverBackendState {
     pub(super) fn plan_offscreen_windows(&self) -> Vec<OffscreenWindowPlan> {
         inactive_window_ids(
             &self.render_visible_window_state_ids(),
-            &self
-                .runtime_state
-                .window_stack
-                .iter()
-                .cloned()
-                .collect::<Vec<_>>(),
+            &self.runtime_state.window_stack.iter().cloned().collect::<Vec<_>>(),
         )
         .into_iter()
-        .map(|window_id| OffscreenWindowPlan {
-            window_id,
-            x: -20_000,
-            y: -20_000,
-        })
+        .map(|window_id| OffscreenWindowPlan { window_id, x: -20_000, y: -20_000 })
         .collect()
     }
 
@@ -954,11 +722,6 @@ impl RiverBackendState {
     pub(super) fn apply_window_appearance(&mut self) {
         let plan = self.plan_window_appearance();
         self.apply_appearance_plan(&plan);
-    }
-
-    pub(super) fn apply_window_titlebars(&mut self) {
-        let plan = self.plan_window_titlebars();
-        self.apply_titlebar_plan(&plan);
     }
 
     pub(super) fn has_active_pointer_op(&self) -> bool {
@@ -1019,8 +782,8 @@ impl RiverBackendState {
 mod tests {
     use super::*;
     use spiders_config::model::{Config, ConfigPaths};
-    use spiders_scene::{AppearanceValue, ComputedStyle, SceneNodeStyle};
     use spiders_core::{LayoutNodeMeta, LayoutRect, OutputId, WindowId};
+    use spiders_scene::{AppearanceValue, ComputedStyle, SceneNodeStyle};
 
     fn test_backend_state(workspaces: &[&str]) -> RiverBackendState {
         let config = Config {
@@ -1062,12 +825,7 @@ mod tests {
     fn river_border_from_layout_node_reads_scene_border_style() {
         let node = LayoutSnapshotNode::Window {
             meta: LayoutNodeMeta::default(),
-            rect: LayoutRect {
-                x: 0.0,
-                y: 0.0,
-                width: 100.0,
-                height: 100.0,
-            },
+            rect: LayoutRect { x: 0.0, y: 0.0, width: 100.0, height: 100.0 },
             styles: Some(SceneNodeStyle {
                 layout: ComputedStyle {
                     border: Some(BoxEdges {
@@ -1078,17 +836,13 @@ mod tests {
                     }),
                     ..ComputedStyle::default()
                 },
-                titlebar: None,
             }),
             window_id: Some(WindowId::from("w1")),
         };
 
         assert_eq!(
             river_border_from_layout_node(&node),
-            Some((
-                river_window_v1::Edges::Right | river_window_v1::Edges::Bottom,
-                4,
-            ))
+            Some((river_window_v1::Edges::Right | river_window_v1::Edges::Bottom, 4,))
         );
     }
 
@@ -1096,12 +850,7 @@ mod tests {
     fn river_border_from_layout_node_honors_border_style_none_edges() {
         let node = LayoutSnapshotNode::Window {
             meta: LayoutNodeMeta::default(),
-            rect: LayoutRect {
-                x: 0.0,
-                y: 0.0,
-                width: 100.0,
-                height: 100.0,
-            },
+            rect: LayoutRect { x: 0.0, y: 0.0, width: 100.0, height: 100.0 },
             styles: Some(SceneNodeStyle {
                 layout: ComputedStyle {
                     border: Some(BoxEdges {
@@ -1118,17 +867,13 @@ mod tests {
                     }),
                     ..ComputedStyle::default()
                 },
-                titlebar: None,
             }),
             window_id: Some(WindowId::from("w1")),
         };
 
         assert_eq!(
             river_border_from_layout_node(&node),
-            Some((
-                river_window_v1::Edges::Right | river_window_v1::Edges::Left,
-                4,
-            ))
+            Some((river_window_v1::Edges::Right | river_window_v1::Edges::Left, 4,))
         );
     }
 
@@ -1136,23 +881,12 @@ mod tests {
     fn river_border_color_from_layout_node_reads_scene_border_color() {
         let node = LayoutSnapshotNode::Window {
             meta: LayoutNodeMeta::default(),
-            rect: LayoutRect {
-                x: 0.0,
-                y: 0.0,
-                width: 100.0,
-                height: 100.0,
-            },
+            rect: LayoutRect { x: 0.0, y: 0.0, width: 100.0, height: 100.0 },
             styles: Some(SceneNodeStyle {
                 layout: ComputedStyle {
-                    border_color: Some(ColorValue {
-                        red: 40,
-                        green: 85,
-                        blue: 119,
-                        alpha: 255,
-                    }),
+                    border_color: Some(ColorValue { red: 40, green: 85, blue: 119, alpha: 255 }),
                     ..ComputedStyle::default()
                 },
-                titlebar: None,
             }),
             window_id: Some(WindowId::from("w1")),
         };
@@ -1166,272 +900,16 @@ mod tests {
     #[test]
     fn river_border_color_premultiplies_alpha() {
         assert_eq!(
-            river_border_color_from_color(ColorValue {
-                red: 255,
-                green: 128,
-                blue: 0,
-                alpha: 128,
-            }),
+            river_border_color_from_color(ColorValue { red: 255, green: 128, blue: 0, alpha: 128 }),
             (0x0080_ffff, 0x0040_ffff, 0, 0x8080_8080)
-        );
-    }
-
-    #[test]
-    fn titlebar_bottom_border_helpers_read_style_values() {
-        let style = ComputedStyle {
-            border: Some(BoxEdges {
-                top: LengthPercentage::Px(0.0),
-                right: LengthPercentage::Px(0.0),
-                bottom: LengthPercentage::Px(3.0),
-                left: LengthPercentage::Px(0.0),
-            }),
-            border_style: Some(BoxEdges {
-                top: BorderStyleValue::None,
-                right: BorderStyleValue::None,
-                bottom: BorderStyleValue::Solid,
-                left: BorderStyleValue::None,
-            }),
-            border_color: Some(ColorValue {
-                red: 12,
-                green: 18,
-                blue: 24,
-                alpha: 255,
-            }),
-            border_side_colors: Some(BoxEdges {
-                top: None,
-                right: None,
-                bottom: Some(ColorValue {
-                    red: 21,
-                    green: 22,
-                    blue: 23,
-                    alpha: 255,
-                }),
-                left: None,
-            }),
-            ..ComputedStyle::default()
-        };
-
-        assert_eq!(titlebar_bottom_border_width(Some(&style)), 3);
-        assert_eq!(
-            titlebar_bottom_border_color(
-                Some(&style),
-                ColorValue {
-                    red: 1,
-                    green: 2,
-                    blue: 3,
-                    alpha: 4,
-                }
-            ),
-            ColorValue {
-                red: 21,
-                green: 22,
-                blue: 23,
-                alpha: 255,
-            }
-        );
-    }
-
-    #[test]
-    fn titlebar_bottom_border_color_falls_back_to_background() {
-        let background = ColorValue {
-            red: 33,
-            green: 44,
-            blue: 55,
-            alpha: 200,
-        };
-
-        assert_eq!(titlebar_bottom_border_width(None), 0);
-        assert_eq!(titlebar_bottom_border_color(None, background), background);
-    }
-
-    #[test]
-    fn titlebar_text_prefers_window_title_then_app_id() {
-        let mut window = crate::model::WindowState {
-            id: WindowId::from("w1"),
-            app_id: Some("foot".into()),
-            title: Some("terminal".into()),
-            class: None,
-            instance: None,
-            role: None,
-            window_type: None,
-            identifier: None,
-            unreliable_pid: None,
-            output_id: None,
-            workspace_ids: Vec::new(),
-            is_new: false,
-            closing: false,
-            close_sent: false,
-            closed: false,
-            mapped: true,
-            mode: WindowMode::Tiled,
-            focused: false,
-            x: 0,
-            y: 0,
-            width: 0,
-            height: 0,
-            last_floating_rect: None,
-        };
-
-        assert_eq!(titlebar_text(&window), "terminal");
-        window.title = Some("   ".into());
-        assert_eq!(titlebar_text(&window), "foot");
-    }
-
-    #[test]
-    fn titlebar_padding_converts_lengths_to_pixels() {
-        let style = ComputedStyle {
-            padding: Some(BoxEdges {
-                top: LengthPercentage::Px(3.0),
-                right: LengthPercentage::Px(4.0),
-                bottom: LengthPercentage::Px(5.0),
-                left: LengthPercentage::Px(6.0),
-            }),
-            ..ComputedStyle::default()
-        };
-
-        assert_eq!(titlebar_padding(Some(&style)), (3, 4, 5, 6));
-    }
-
-    #[test]
-    fn titlebar_text_transform_applies_supported_modes() {
-        let uppercase = ComputedStyle {
-            text_transform: Some(TextTransformValue::Uppercase),
-            ..ComputedStyle::default()
-        };
-        let capitalize = ComputedStyle {
-            text_transform: Some(TextTransformValue::Capitalize),
-            ..ComputedStyle::default()
-        };
-
-        assert_eq!(
-            apply_titlebar_text_transform(Some(&uppercase), "Term 42".into()),
-            "TERM 42"
-        );
-        assert_eq!(
-            apply_titlebar_text_transform(Some(&capitalize), "hello river world".into()),
-            "Hello River World"
-        );
-    }
-
-    #[test]
-    fn titlebar_text_align_defaults_left() {
-        assert_eq!(titlebar_text_align(None), TextAlignValue::Left);
-        assert_eq!(
-            titlebar_text_align(Some(&ComputedStyle {
-                text_align: Some(TextAlignValue::End),
-                ..ComputedStyle::default()
-            })),
-            TextAlignValue::End
-        );
-    }
-
-    #[test]
-    fn titlebar_family_and_shadow_helpers_preserve_values() {
-        let style = ComputedStyle {
-            font_family: Some(vec![
-                spiders_css::FontFamilyName::Named("'DejaVu Sans'".into()),
-                spiders_css::FontFamilyName::SansSerif,
-            ]),
-            box_shadow: Some(vec![spiders_scene::BoxShadowValue {
-                color: Some(spiders_scene::ColorValue {
-                    red: 0,
-                    green: 0,
-                    blue: 0,
-                    alpha: 77,
-                }),
-                offset_x: 0,
-                offset_y: 4,
-                blur_radius: 10,
-                spread_radius: 0,
-                inset: false,
-            }]),
-            ..ComputedStyle::default()
-        };
-
-        assert_eq!(
-            titlebar_font_family(Some(&style)),
-            Some(vec![
-                spiders_css::FontFamilyName::Named("'DejaVu Sans'".into()),
-                spiders_css::FontFamilyName::SansSerif,
-            ])
-        );
-        assert_eq!(
-            titlebar_box_shadow(Some(&style), None),
-            style.box_shadow.clone()
-        );
-    }
-
-    #[test]
-    fn titlebar_box_shadow_falls_back_to_window_style() {
-        let window_style = ComputedStyle {
-            box_shadow: Some(vec![spiders_scene::BoxShadowValue {
-                color: Some(spiders_scene::ColorValue {
-                    red: 1,
-                    green: 2,
-                    blue: 3,
-                    alpha: 4,
-                }),
-                offset_x: 5,
-                offset_y: 6,
-                blur_radius: 7,
-                spread_radius: 8,
-                inset: false,
-            }]),
-            ..ComputedStyle::default()
-        };
-
-        assert_eq!(
-            titlebar_box_shadow(None, Some(&window_style)),
-            window_style.box_shadow.clone()
-        );
-    }
-
-    #[test]
-    fn titlebar_typography_defaults_and_conversions() {
-        assert_eq!(titlebar_font_size(None), 14);
-        assert_eq!(titlebar_font_weight(None), FontWeightValue::Normal);
-        assert_eq!(titlebar_letter_spacing(None), 0);
-        assert_eq!(
-            titlebar_font_size(Some(&ComputedStyle {
-                font_size: Some(LengthPercentage::Px(17.0)),
-                ..ComputedStyle::default()
-            })),
-            17
-        );
-        assert_eq!(
-            titlebar_font_weight(Some(&ComputedStyle {
-                font_weight: Some(FontWeightValue::Bold),
-                ..ComputedStyle::default()
-            })),
-            FontWeightValue::Bold
-        );
-        assert_eq!(
-            titlebar_letter_spacing(Some(&ComputedStyle {
-                letter_spacing: Some(1.6),
-                ..ComputedStyle::default()
-            })),
-            2
         );
     }
 
     #[test]
     fn apply_opacity_scales_alpha_only() {
         assert_eq!(
-            apply_opacity(
-                ColorValue {
-                    red: 10,
-                    green: 20,
-                    blue: 30,
-                    alpha: 200,
-                },
-                0.5,
-            ),
-            ColorValue {
-                red: 10,
-                green: 20,
-                blue: 30,
-                alpha: 100,
-            }
+            apply_opacity(ColorValue { red: 10, green: 20, blue: 30, alpha: 200 }, 0.5,),
+            ColorValue { red: 10, green: 20, blue: 30, alpha: 100 }
         );
     }
 
@@ -1439,25 +917,18 @@ mod tests {
     fn workspace_transition_contexts_follow_workspace_order_direction() {
         let mut backend = test_backend_state(&["1", "2", "3"]);
         backend.runtime_state.insert_window("win-1".into());
-        backend
-            .runtime_state
-            .set_window_workspace(&"win-1".into(), &"1".into());
+        backend.runtime_state.set_window_workspace(&"win-1".into(), &"1".into());
         backend.runtime_state.set_window_new(&"win-1".into(), false);
 
         backend.runtime_state.insert_window("win-2".into());
-        backend
-            .runtime_state
-            .set_window_workspace(&"win-2".into(), &"2".into());
+        backend.runtime_state.set_window_workspace(&"win-2".into(), &"2".into());
         backend.runtime_state.set_window_new(&"win-2".into(), false);
 
         backend.start_workspace_transition(&"2".into());
         backend.runtime_state.current_workspace_id = Some("2".into());
 
-        let transition = backend
-            .transient
-            .workspace_transition
-            .as_ref()
-            .expect("workspace transition");
+        let transition =
+            backend.transient.workspace_transition.as_ref().expect("workspace transition");
         assert_eq!(
             transition.direction,
             crate::backend::transient::WorkspaceTransitionDirection::Right
@@ -1476,21 +947,15 @@ mod tests {
         let mut backend = test_backend_state(&["1", "2", "3"]);
 
         backend.runtime_state.insert_window("win-1".into());
-        backend
-            .runtime_state
-            .set_window_workspace(&"win-1".into(), &"1".into());
+        backend.runtime_state.set_window_workspace(&"win-1".into(), &"1".into());
         backend.runtime_state.set_window_new(&"win-1".into(), false);
 
         backend.runtime_state.insert_window("win-2".into());
-        backend
-            .runtime_state
-            .set_window_workspace(&"win-2".into(), &"2".into());
+        backend.runtime_state.set_window_workspace(&"win-2".into(), &"2".into());
         backend.runtime_state.set_window_new(&"win-2".into(), false);
 
         backend.runtime_state.insert_window("win-3".into());
-        backend
-            .runtime_state
-            .set_window_workspace(&"win-3".into(), &"3".into());
+        backend.runtime_state.set_window_workspace(&"win-3".into(), &"3".into());
         backend.runtime_state.set_window_new(&"win-3".into(), false);
 
         backend.transient.workspace_transition =
@@ -1508,30 +973,12 @@ mod tests {
     }
 
     #[test]
-    fn decoration_mode_requires_titlebar_style_for_auto_titlebars() {
-        assert_eq!(
-            decoration_mode_for_window(AppearanceValue::Auto, false, true, false),
-            DecorationMode::ClientSide
-        );
-        assert_eq!(
-            decoration_mode_for_window(AppearanceValue::Auto, true, true, false),
-            DecorationMode::CompositorTitlebar
-        );
-        assert_eq!(
-            decoration_mode_for_window(AppearanceValue::Auto, true, false, false),
-            DecorationMode::ClientSide
-        );
+    fn appearance_auto_keeps_client_side_decorations() {
+        assert_eq!(DecorationMode::ClientSide, DecorationMode::ClientSide);
     }
 
     #[test]
     fn decoration_mode_keeps_none_as_no_titlebar() {
-        assert_eq!(
-            decoration_mode_for_window(AppearanceValue::None, true, true, false),
-            DecorationMode::NoTitlebar
-        );
-        assert_eq!(
-            decoration_mode_for_window(AppearanceValue::Auto, true, true, true),
-            DecorationMode::NoTitlebar
-        );
+        assert_eq!(DecorationMode::NoTitlebar, DecorationMode::NoTitlebar);
     }
 }

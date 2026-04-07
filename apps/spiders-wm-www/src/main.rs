@@ -57,10 +57,7 @@ fn AppShell() -> impl IntoView {
 
         clsx!(
             "inline-flex items-center border border-b-0 px-3 py-1.5 text-sm transition duration-150",
-            (
-                is_active,
-                "border-terminal-border-strong bg-terminal-bg text-terminal-fg-strong"
-            ),
+            (is_active, "border-terminal-border-strong bg-terminal-bg text-terminal-fg-strong"),
             (
                 !is_active,
                 "border-terminal-border bg-terminal-bg-bar text-terminal-dim opacity-70 hover:text-terminal-fg hover:opacity-100"
@@ -136,9 +133,7 @@ fn install_preview_renderer(app_state: AppState) {
             return;
         }
 
-        app_state
-            .latest_preview_request_key
-            .set(preview_request_key.clone());
+        app_state.latest_preview_request_key.set(preview_request_key.clone());
 
         log_timing(
             "preview-renderer.request-key",
@@ -159,23 +154,21 @@ fn install_preview_renderer(app_state: AppState) {
                     }
 
                     let loaded_preview_layout = app_state.loaded_preview_layout.get_untracked();
-                    let layout_unchanged = loaded_preview_layout
-                        .as_ref()
-                        .is_some_and(|loaded| loaded.layout == layout.layout && loaded.config == layout.config);
+                    let layout_unchanged = loaded_preview_layout.as_ref().is_some_and(|loaded| {
+                        loaded.layout == layout.layout && loaded.config == layout.config
+                    });
 
                     let apply_started = now_ms();
                     app_state.apply_loaded_preview_layout(layout.clone());
                     if !layout_unchanged {
                         let mut scene_cache = app_state.preview_scene_cache.get_untracked();
-                        app_state
-                            .session
-                            .update(|state| {
-                                state.apply_layout_source(
-                                    layout.layout,
-                                    Some(&layout.config),
-                                    Some(&mut scene_cache),
-                                )
-                            });
+                        app_state.session.update(|state| {
+                            state.apply_layout_source(
+                                layout.layout,
+                                Some(&layout.config),
+                                Some(&mut scene_cache),
+                            )
+                        });
                         app_state.preview_scene_cache.set(scene_cache);
                     }
                     log_timing(
@@ -208,9 +201,7 @@ fn install_preview_renderer(app_state: AppState) {
                     }
 
                     app_state.apply_preview_failure_state();
-                    app_state
-                        .session
-                        .update(|state| state.apply_preview_failure("layout", error));
+                    app_state.session.update(|state| state.apply_preview_failure("layout", error));
                     log_timing(
                         "preview-renderer.total",
                         async_started,
@@ -283,11 +274,7 @@ fn install_keyboard_listener(app_state: AppState) {
                 event.prevent_default();
                 let command_label = format!("{:?}", command);
                 let render_action = app_state.mutate_session(|state| state.apply_command(command));
-                log_timing(
-                    "preview-input.apply-command",
-                    keydown_started,
-                    command_label.clone(),
-                );
+                log_timing("preview-input.apply-command", keydown_started, command_label.clone());
 
                 let refresh_started = now_ms();
                 app_state.apply_preview_render_action(render_action);
@@ -302,5 +289,5 @@ fn install_keyboard_listener(app_state: AppState) {
         let _ =
             window.add_event_listener_with_callback("keydown", closure.as_ref().unchecked_ref());
         closure.forget();
-        });
+    });
 }

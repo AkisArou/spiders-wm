@@ -323,7 +323,7 @@ fn authored_rules(source: &str, stylesheet: Option<&CompiledStyleSheet>) -> Vec<
             let selector_end = prelude_end - trailing_trimmed_len(&source[start..prelude_end]);
             let targets = stylesheet
                 .and_then(|stylesheet| stylesheet.rules.get(style_rule_index))
-                .map(|rule| infer_style_targets(&rule.selectors, rule.target_pseudo))
+                .map(|rule| infer_style_targets(&rule.selectors))
                 .unwrap_or_else(|| {
                     vec![StyleTarget::Workspace, StyleTarget::Group, StyleTarget::Window]
                 });
@@ -458,14 +458,8 @@ fn find_top_level_colon(source: &str, start: usize, end: usize) -> Option<usize>
 
 fn infer_style_targets(
     selectors: &selectors::parser::SelectorList<crate::LayoutSelectorImpl>,
-    target_pseudo: Option<crate::LayoutPseudoElement>,
 ) -> Vec<StyleTarget> {
     let mut targets = Vec::new();
-
-    if matches!(target_pseudo, Some(crate::LayoutPseudoElement::Titlebar)) {
-        push_unique(&mut targets, StyleTarget::WindowTitlebar);
-        return targets;
-    }
 
     if selector_matches(selectors, &synthetic_workspace_node()) {
         push_unique(&mut targets, StyleTarget::Workspace);
@@ -718,7 +712,6 @@ fn describe_targets(targets: &[StyleTarget]) -> String {
             StyleTarget::Workspace => "`workspace`",
             StyleTarget::Group => "`group`",
             StyleTarget::Window => "`window`",
-            StyleTarget::WindowTitlebar => "`window::titlebar`",
         };
         if !labels.contains(&label) {
             labels.push(label);
@@ -729,7 +722,6 @@ fn describe_targets(targets: &[StyleTarget]) -> String {
         [only] => (*only).to_string(),
         [a, b] => format!("{a} or {b}"),
         [a, b, c] => format!("{a}, {b}, or {c}"),
-        [a, b, c, d] => format!("{a}, {b}, {c}, or {d}"),
         _ => "the selected target".to_string(),
     }
 }
@@ -967,38 +959,26 @@ mod tests {
     }
 
     #[test]
-    fn reports_titlebar_only_property_on_window_rule() {
+    fn accepts_text_align_on_window_rule() {
         let analysis = analyze_stylesheet("window { text-align: center; }");
 
-        assert_eq!(analysis.diagnostics.len(), 1);
+        assert!(analysis.diagnostics.is_empty());
         assert_eq!(analysis.symbols.len(), 1);
-        assert_eq!(analysis.diagnostics[0].code, CssDiagnosticCode::InapplicableProperty);
-        assert_eq!(
-            analysis.diagnostics[0].message,
-            "property `text-align` does not apply to `window`"
-        );
-        assert_eq!(
-            analysis.diagnostics[0].range,
-            CssRange { start_line: 1, start_column: 10, end_line: 1, end_column: 20 }
-        );
     }
 
     #[test]
     fn reports_exact_property_range_for_multiline_rule() {
         let analysis = analyze_stylesheet("window {\n  text-align: center;\n}");
 
-        assert_eq!(analysis.diagnostics.len(), 1);
-        assert_eq!(
-            analysis.diagnostics[0].range,
-            CssRange { start_line: 2, start_column: 3, end_line: 2, end_column: 13 }
-        );
+        assert!(analysis.diagnostics.is_empty());
     }
 
     #[test]
-    fn allows_titlebar_only_property_on_titlebar_rule() {
+    fn rejects_titlebar_rule() {
         let analysis = analyze_stylesheet("window::titlebar { text-align: center; }");
 
-        assert!(analysis.diagnostics.is_empty());
+        assert_eq!(analysis.diagnostics.len(), 1);
+        assert_eq!(analysis.diagnostics[0].code, CssDiagnosticCode::UnsupportedSelector);
     }
 
     #[test]

@@ -2,8 +2,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
-use spiders_core::query::state_snapshot_for_model;
 use spiders_core::LayoutRect;
+use spiders_core::query::state_snapshot_for_model;
 use spiders_ipc::{DebugDumpKind, DebugResponse};
 use spiders_scene::LayoutSnapshotNode;
 use tracing::{debug, warn};
@@ -36,26 +36,6 @@ pub struct DebugManagedWindowFrameSync {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct DebugTitlebarOverlayDump {
-    pub overlay_count: usize,
-    pub overlays: Vec<DebugTitlebarOverlay>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct DebugTitlebarOverlay {
-    pub window_id: String,
-    pub rect: LayoutRect,
-    pub pixel_bytes: usize,
-    pub hit_regions: Vec<DebugTitlebarHitRegion>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct DebugTitlebarHitRegion {
-    pub rect: LayoutRect,
-    pub command: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
 pub struct DebugSeatsDump {
     pub focused_window_id: Option<String>,
     pub seats: Vec<DebugSeatState>,
@@ -80,11 +60,7 @@ pub enum DebugProfile {
 
 impl DebugProfile {
     pub fn from_env() -> Self {
-        match std::env::var("SPIDERS_WM_DEBUG_PROFILE")
-            .ok()
-            .as_deref()
-            .map(str::trim)
-        {
+        match std::env::var("SPIDERS_WM_DEBUG_PROFILE").ok().as_deref().map(str::trim) {
             Some("minimal") => Self::Minimal,
             Some("protocol") => Self::Protocol,
             Some("render") => Self::Render,
@@ -115,11 +91,7 @@ pub struct DebugConfig {
 impl DebugConfig {
     pub fn from_env() -> Self {
         let profile = DebugProfile::from_env();
-        let output_dir = if profile.enabled() {
-            Some(configured_debug_output_dir())
-        } else {
-            None
-        };
+        let output_dir = if profile.enabled() { Some(configured_debug_output_dir()) } else { None };
 
         Self { profile, output_dir }
     }
@@ -149,7 +121,11 @@ impl DebugState {
         self.config.output_dir.as_deref()
     }
 
-    pub fn dump_json<T: Serialize>(&self, file_name: &str, value: &T) -> Result<Option<PathBuf>, String> {
+    pub fn dump_json<T: Serialize>(
+        &self,
+        file_name: &str,
+        value: &T,
+    ) -> Result<Option<PathBuf>, String> {
         let Some(output_dir) = self.output_dir() else {
             return Ok(None);
         };
@@ -175,9 +151,7 @@ impl SpidersWm {
     pub fn dump_debug_state(&self) {
         let snapshot = state_snapshot_for_model(&self.model);
         let _ = self.debug.dump_json("wm-state.json", &snapshot);
-        let _ = self
-            .debug
-            .dump_text("debug-profile.txt", &format!("{:?}\n", self.debug.profile()));
+        let _ = self.debug.dump_text("debug-profile.txt", &format!("{:?}\n", self.debug.profile()));
     }
 
     pub fn handle_debug_dump(&self, kind: DebugDumpKind) -> Result<DebugResponse, String> {
@@ -198,7 +172,7 @@ impl SpidersWm {
                 Ok(DebugResponse::DumpWritten { kind, path })
             }
             DebugDumpKind::SceneSnapshot => {
-                let scene = self.titlebar_layout.snapshot_root.as_ref().map(debug_scene_node);
+                let scene = self.scene_snapshot_root.as_ref().map(debug_scene_node);
                 let path = self
                     .debug
                     .dump_json("scene-snapshot.json", &scene)?
@@ -210,14 +184,6 @@ impl SpidersWm {
                 let path = self
                     .debug
                     .dump_json("frame-sync.json", &frame_sync)?
-                    .map(|path| path.display().to_string());
-                Ok(DebugResponse::DumpWritten { kind, path })
-            }
-            DebugDumpKind::TitlebarOverlays => {
-                let overlays = debug_titlebar_overlay_dump(self);
-                let path = self
-                    .debug
-                    .dump_json("titlebar-overlays.json", &overlays)?
                     .map(|path| path.display().to_string());
                 Ok(DebugResponse::DumpWritten { kind, path })
             }
@@ -277,12 +243,7 @@ fn debug_scene_node(node: &LayoutSnapshotNode) -> DebugSceneNode {
             window_id: None,
             children: children.iter().map(debug_scene_node).collect(),
         },
-        LayoutSnapshotNode::Content {
-            meta,
-            rect,
-            children,
-            ..
-        } => DebugSceneNode {
+        LayoutSnapshotNode::Content { meta, rect, children, .. } => DebugSceneNode {
             kind: "content",
             id: meta.id.clone(),
             name: meta.name.clone(),
@@ -290,13 +251,7 @@ fn debug_scene_node(node: &LayoutSnapshotNode) -> DebugSceneNode {
             window_id: None,
             children: children.iter().map(debug_scene_node).collect(),
         },
-        LayoutSnapshotNode::Window {
-            meta,
-            rect,
-            window_id,
-            children,
-            ..
-        } => DebugSceneNode {
+        LayoutSnapshotNode::Window { meta, rect, window_id, children, .. } => DebugSceneNode {
             kind: "window",
             id: meta.id.clone(),
             name: meta.name.clone(),
@@ -324,29 +279,6 @@ fn debug_frame_sync_dump(state: &SpidersWm) -> DebugFrameSyncDump {
     }
 }
 
-fn debug_titlebar_overlay_dump(state: &SpidersWm) -> DebugTitlebarOverlayDump {
-    DebugTitlebarOverlayDump {
-        overlay_count: state.titlebar_overlays.len(),
-        overlays: state
-            .titlebar_overlays
-            .iter()
-            .map(|(window_id, overlay)| DebugTitlebarOverlay {
-                window_id: window_id.to_string(),
-                rect: overlay.rect,
-                pixel_bytes: overlay.pixels.len(),
-                hit_regions: overlay
-                    .hit_regions
-                    .iter()
-                    .map(|region| DebugTitlebarHitRegion {
-                        rect: region.rect,
-                        command: format!("{:?}", region.command),
-                    })
-                    .collect(),
-            })
-            .collect(),
-    }
-}
-
 fn debug_seats_dump(state: &SpidersWm) -> DebugSeatsDump {
     DebugSeatsDump {
         focused_window_id: state.model.focused_window_id.as_ref().map(ToString::to_string),
@@ -369,8 +301,7 @@ fn configured_debug_output_dir() -> PathBuf {
         return PathBuf::from(path);
     }
 
-    let base = std::env::var_os("XDG_RUNTIME_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(std::env::temp_dir);
+    let base =
+        std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).unwrap_or_else(std::env::temp_dir);
     base.join(format!("spiders-wm-debug-{}", std::process::id()))
 }

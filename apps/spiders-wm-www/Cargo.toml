@@ -15,8 +15,6 @@ spiders-core = { path = "../../crates/core" }
 spiders-css = { path = "../../crates/css" }
 spiders-runtime-js-browser = { path = "../../crates/runtimes/js/browser" }
 spiders-runtime-js-core = { path = "../../crates/runtimes/js/core" }
-spiders-titlebar-core = { path = "../../crates/titlebar/core" }
-spiders-titlebar-web = { path = "../../crates/titlebar/web" }
 spiders-wm-runtime = { path = "../../crates/wm-runtime" }
 spiders-scene = { path = "../../crates/scene" }
 

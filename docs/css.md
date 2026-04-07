@@ -26,7 +26,7 @@ Unsupported selectors and properties fail clearly. They are not silently ignored
 2. `spiders-css` parses and compiles the stylesheet.
 3. `spiders-scene` and related runtime code match selectors against the resolved layout tree.
 4. Layout properties determine geometry.
-5. `spiders-wm` consumes compositor-backed presentation details such as borders, titlebars, and motion.
+5. `spiders-wm` consumes compositor-backed presentation details such as borders and motion.
 
 ## Selector Targets
 
@@ -71,10 +71,6 @@ Supported pseudo-classes:
 - `:enter-from-right`
 - `:exit-to-left`
 - `:exit-to-right`
-
-Supported pseudo-elements:
-
-- `window::titlebar`
 
 Notes:
 
@@ -192,37 +188,10 @@ Runtime notes:
 
 Notes:
 
-- `appearance` currently accepts `none`, `client-side`, and `server-side`
+- `appearance` currently accepts `auto` and `none`
+- `appearance` is a window decoration-policy hint
 - `opacity` currently affects compositor-managed presentation rather than arbitrary client content opacity
 - `transform` is typed and sampled, but runtime visual support is still partial
-
-### Titlebar
-
-Supported on `window::titlebar`:
-
-- `background`
-- `background-color`
-- `height`
-- `border-bottom-width`
-- `border-bottom-style`
-- `border-bottom-color`
-- `padding`
-- `color`
-- `opacity`
-- `text-align`
-- `text-transform`
-- `font-family`
-- `font-size`
-- `font-weight`
-- `letter-spacing`
-- `box-shadow`
-- `border-radius`
-
-Runtime notes:
-
-- compositor titlebars consume `window::titlebar` styles when supported
-- titlebar rendering is currently compositor-managed and still partly best-effort
-- `window` `box-shadow` and `border-radius` can still act as titlebar fallbacks when `window::titlebar` does not provide them
 
 ### Motion
 
@@ -296,11 +265,6 @@ workspace {
 
 window {
   border-width: 2px;
-}
-
-window::titlebar {
-  height: 28px;
-  text-align: center;
 }
 ```
 

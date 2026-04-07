@@ -1,5 +1,5 @@
-use spiders_core::command::FocusDirection;
 use spiders_core::WindowId;
+use spiders_core::command::FocusDirection;
 
 use crate::model::WmState;
 
@@ -8,12 +8,9 @@ pub fn active_workspace_window_ids(state: &WmState, window_stack: &[WindowId]) -
         .iter()
         .filter(|window_id| {
             state.windows.get(*window_id).is_some_and(|window| {
-                state
-                    .current_workspace_id
-                    .as_ref()
-                    .is_none_or(|workspace_id| {
-                        window.workspace_ids.iter().any(|id| id == workspace_id)
-                    })
+                state.current_workspace_id.as_ref().is_none_or(|workspace_id| {
+                    window.workspace_ids.iter().any(|id| id == workspace_id)
+                })
             })
         })
         .cloned()
@@ -45,11 +42,7 @@ pub fn focus_target_in_direction(
             }
         }
         FocusDirection::Right | FocusDirection::Down => {
-            if focused_index + 1 >= active_window_ids.len() {
-                0
-            } else {
-                focused_index + 1
-            }
+            if focused_index + 1 >= active_window_ids.len() { 0 } else { focused_index + 1 }
         }
     };
 

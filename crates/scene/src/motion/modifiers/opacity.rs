@@ -25,10 +25,7 @@ impl MotionModifier for OpacityMotion {
     }
 
     fn base_value(style: Option<&ComputedStyle>) -> Self::Value {
-        style
-            .and_then(|style| style.opacity)
-            .unwrap_or(1.0)
-            .clamp(0.0, 1.0)
+        style.and_then(|style| style.opacity).unwrap_or(1.0).clamp(0.0, 1.0)
     }
 
     fn keyframe_value(step: &CompiledKeyframeStep) -> Option<Self::Value> {

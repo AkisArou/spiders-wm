@@ -6,9 +6,11 @@ use crate::state::SpidersWm;
 impl SpidersWm {
     pub fn ensure_and_select_workspace(&mut self, name: impl Into<String>, serial: Serial) {
         let window_order = self.managed_window_ids();
+        let config = self.config.clone();
         let (selection, events) = {
             let mut runtime = self.runtime();
             let workspace_id = runtime.ensure_workspace(name.into());
+            runtime.sync_layout_selection_defaults(&config);
             let selection = runtime.request_select_workspace(workspace_id, window_order);
             (selection, runtime.take_events())
         };
@@ -55,9 +57,11 @@ impl SpidersWm {
 
     pub fn assign_focused_window_to_workspace(&mut self, workspace: u8, serial: Serial) {
         let window_order = self.managed_window_ids();
+        let config = self.config.clone();
         let (workspace_id, focused_window_id, events) = {
             let mut runtime = self.runtime();
             let workspace_id = runtime.ensure_workspace(workspace.to_string());
+            runtime.sync_layout_selection_defaults(&config);
             let focused_window_id = runtime
                 .assign_focused_window_to_workspace(workspace_id.clone(), window_order)
                 .focused_window_id;
@@ -72,9 +76,11 @@ impl SpidersWm {
 
     pub fn toggle_assign_focused_window_to_workspace(&mut self, workspace: u8, serial: Serial) {
         let window_order = self.managed_window_ids();
+        let config = self.config.clone();
         let (workspace_id, focused_window_id, events) = {
             let mut runtime = self.runtime();
             let workspace_id = runtime.ensure_workspace(workspace.to_string());
+            runtime.sync_layout_selection_defaults(&config);
             let focused_window_id = runtime
                 .toggle_assign_focused_window_to_workspace(workspace_id.clone(), window_order)
                 .focused_window_id;

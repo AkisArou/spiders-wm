@@ -358,7 +358,6 @@ mod tests {
                         height: Some(SizeValue::LengthPercentage(LengthPercentage::Px(300.0))),
                         ..crate::css::ComputedStyle::default()
                     },
-                    titlebar: None,
                 }),
                 children: vec![LayoutSnapshotNode::Window {
                     meta: LayoutNodeMeta {
@@ -372,7 +371,6 @@ mod tests {
                             width: Some(SizeValue::LengthPercentage(LengthPercentage::Px(200.0))),
                             ..crate::css::ComputedStyle::default()
                         },
-                        titlebar: None,
                     }),
                     window_id: Some(WindowId::from("win-1")),
                 }],
@@ -420,7 +418,6 @@ mod tests {
                             height: Some(SizeValue::LengthPercentage(LengthPercentage::Px(200.0))),
                             ..crate::css::ComputedStyle::default()
                         },
-                        titlebar: None,
                     }),
                     children: vec![LayoutSnapshotNode::Window {
                         meta: LayoutNodeMeta {
@@ -436,7 +433,6 @@ mod tests {
                                 ))),
                                 ..crate::css::ComputedStyle::default()
                             },
-                            titlebar: None,
                         }),
                         window_id: Some(WindowId::from("win-1")),
                     }],

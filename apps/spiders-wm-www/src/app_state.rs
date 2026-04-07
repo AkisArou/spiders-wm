@@ -4,10 +4,10 @@ use std::path::PathBuf;
 use leptos::prelude::*;
 use spiders_config::model::Config;
 use spiders_config::runtime::load_config_from_source_bundle;
-use spiders_core::command::WmCommand;
 use spiders_core::LayoutId;
-use spiders_scene::pipeline::SceneCache;
+use spiders_core::command::WmCommand;
 use spiders_runtime_js_browser::JavaScriptBrowserRuntimeProvider;
+use spiders_scene::pipeline::SceneCache;
 use wasm_bindgen::{JsCast, closure::Closure};
 
 use crate::bindings::{ParsedBindingEntry, ParsedBindingsState};
@@ -16,8 +16,8 @@ use crate::editor_files::{
 };
 use crate::layout_runtime::{EvaluatedPreviewLayout, source_bundle_sources};
 use crate::session::PreviewSessionState;
-use spiders_wm_runtime::PreviewRenderAction;
 use crate::workspace::initial_open_directories;
+use spiders_wm_runtime::PreviewRenderAction;
 
 #[derive(Clone, Copy)]
 pub struct AppState {
@@ -115,7 +115,9 @@ impl AppState {
     pub fn apply_preview_render_action(&self, action: PreviewRenderAction) {
         match action {
             PreviewRenderAction::None => {}
-            PreviewRenderAction::RefreshFromLoadedLayout => self.refresh_preview_from_loaded_state(),
+            PreviewRenderAction::RefreshFromLoadedLayout => {
+                self.refresh_preview_from_loaded_state()
+            }
             PreviewRenderAction::RefreshFromLoadedLayoutAndReevaluate => {
                 self.refresh_preview_from_loaded_state();
                 if self.should_reevaluate_loaded_preview_layout() {
@@ -177,10 +179,7 @@ impl AppState {
             schedule.run_preview_refresh();
         });
 
-        if window
-            .request_animation_frame(callback.as_ref().unchecked_ref())
-            .is_ok()
-        {
+        if window.request_animation_frame(callback.as_ref().unchecked_ref()).is_ok() {
             callback.forget();
         } else {
             self.preview_refresh_scheduled.set(false);
@@ -285,11 +284,7 @@ fn build_preview_environment(
 }
 
 fn default_bindings_state() -> ParsedBindingsState {
-    ParsedBindingsState {
-        source: String::new(),
-        mod_key: "super".to_string(),
-        entries: Vec::new(),
-    }
+    ParsedBindingsState { source: String::new(), mod_key: "super".to_string(), entries: Vec::new() }
 }
 
 fn bindings_state_from_config(config: &Config) -> ParsedBindingsState {

@@ -18,7 +18,6 @@ pub enum LayoutCalcError {
 pub struct LaidOutNode {
     pub node: ResolvedLayoutNode,
     pub computed: crate::css::ComputedStyle,
-    pub titlebar: Option<crate::css::ComputedStyle>,
     pub taffy_style: taffy::style::Style,
     pub geometry: LayoutRect,
     pub children: Vec<LaidOutNode>,
@@ -95,12 +94,8 @@ pub fn compute_layout_from_styled(
 }
 
 fn scene_style_from_node(node: &LaidOutNode) -> Option<SceneNodeStyle> {
-    let base_is_default = node.computed == crate::css::ComputedStyle::default();
-    if base_is_default && node.titlebar.is_none() {
-        None
-    } else {
-        Some(SceneNodeStyle { layout: node.computed.clone(), titlebar: node.titlebar.clone() })
-    }
+    (node.computed != crate::css::ComputedStyle::default())
+        .then(|| SceneNodeStyle { layout: node.computed.clone() })
 }
 
 fn root_node_with_space(node: &NodeComputedStyle, width: f32, height: f32) -> NodeComputedStyle {
@@ -149,7 +144,6 @@ fn collect_layout(
     Ok(LaidOutNode {
         node: node.node.clone(),
         computed: node.computed.clone(),
-        titlebar: node.titlebar.clone(),
         taffy_style: node.taffy_style.clone(),
         geometry,
         children,

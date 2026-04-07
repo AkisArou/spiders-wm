@@ -1,29 +1,14 @@
 use serde::{Deserialize, Serialize};
-use serde_json::Value as JsonValue;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use spiders_core::command::WmCommand;
-use spiders_core::runtime::layout_context::LayoutWindowContext;
 use spiders_core::runtime::prepared_layout::{PreparedLayout, SelectedLayout};
 use spiders_core::snapshot::{OutputSnapshot, StateSnapshot, WorkspaceSnapshot};
 use spiders_core::types::LayoutRef;
 use spiders_core::{LayoutSpace, ResolvedLayoutNode};
 use spiders_scene::SceneRequest;
-use spiders_titlebar_core::{
-    ResolvedTitlebarContext, resolve_titlebar_tree, select_titlebar_rule,
-    titlebar_tree_to_runtime_node,
-};
-use spiders_titlebar_core::{TitlebarRule, decode_titlebar_rules};
 use thiserror::Error;
-
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-pub struct TitlebarFontConfig {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub regular_path: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub bold_path: Option<String>,
-}
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct ConfigOptions {
@@ -33,8 +18,6 @@ pub struct ConfigOptions {
     pub sloppyfocus: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub attach: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub titlebar_font: Option<TitlebarFontConfig>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -130,8 +113,6 @@ pub struct Config {
     pub layout_selection: LayoutSelectionConfig,
     #[serde(default)]
     pub rules: Vec<WindowRule>,
-    #[serde(default)]
-    pub titlebars: Vec<serde_json::Value>,
     #[serde(default)]
     pub bindings: Vec<Binding>,
     #[serde(default)]
@@ -277,35 +258,6 @@ impl Config {
         self.layouts.iter().find(|layout| layout.name == name)
     }
 
-    pub fn decode_titlebar_rules(&self) -> Result<Vec<TitlebarRule>, serde_json::Error> {
-        decode_titlebar_rules(&JsonValue::Array(self.titlebars.clone()))
-    }
-
-    pub fn resolve_titlebar_runtime_node(
-        &self,
-        window: &LayoutWindowContext,
-        workspace_name: Option<&str>,
-        slot_name: Option<&str>,
-    ) -> Result<Option<ResolvedLayoutNode>, serde_json::Error> {
-        let rules = self.decode_titlebar_rules()?;
-        if rules.is_empty() {
-            return Ok(None);
-        }
-
-        let mut context = ResolvedTitlebarContext::from(window);
-        context.workspace = workspace_name.map(str::to_string);
-        context.slot = slot_name.map(str::to_string);
-
-        let Some(rule) = select_titlebar_rule(&rules, &context) else {
-            return Ok(None);
-        };
-        if rule.disabled {
-            return Ok(None);
-        }
-
-        Ok(Some(titlebar_tree_to_runtime_node(&resolve_titlebar_tree(rule, &context))))
-    }
-
     pub fn selected_layout<'a>(
         &'a self,
         workspace: &'a WorkspaceSnapshot,
@@ -373,8 +325,11 @@ impl Config {
         let Some(workspace) = state.current_workspace() else {
             return Ok(None);
         };
-        let output =
-            workspace.output_id.as_ref().and_then(|output_id| state.output_by_id(output_id));
+        let output = workspace
+            .output_id
+            .as_ref()
+            .and_then(|output_id| state.output_by_id(output_id))
+            .or_else(|| state.current_output());
 
         self.build_scene_request(workspace, output, root, artifact).map(Some)
     }
@@ -389,7 +344,6 @@ impl From<&LayoutDefinition> for LayoutRef {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use spiders_core::runtime::layout_context::LayoutWindowContext;
     use spiders_core::runtime::prepared_layout::{PreparedLayout, PreparedStylesheets};
     use spiders_core::snapshot::OutputSnapshot;
     use spiders_core::types::{LayoutRef, OutputTransform};
@@ -435,22 +389,6 @@ mod tests {
                 "modules": [],
             }),
             stylesheets: PreparedStylesheets::default(),
-        }
-    }
-
-    fn layout_window_context(app_id: &str, title: &str) -> LayoutWindowContext {
-        LayoutWindowContext {
-            id: spiders_core::WindowId::from("win-1"),
-            app_id: Some(app_id.into()),
-            title: Some(title.into()),
-            class: None,
-            instance: None,
-            role: None,
-            shell: Some("xdg-toplevel".into()),
-            window_type: None,
-            floating: false,
-            fullscreen: false,
-            focused: true,
         }
     }
 
@@ -563,6 +501,43 @@ mod tests {
     }
 
     #[test]
+    fn builds_scene_request_from_state_snapshot_using_current_output_fallback() {
+        let config = Config {
+            layouts: vec![LayoutDefinition {
+                name: "master-stack".into(),
+                directory: "layouts/master-stack".into(),
+                module: "layouts/master-stack.js".into(),
+                stylesheet_path: Some("layouts/master-stack/index.css".into()),
+                runtime_cache_payload: None,
+            }],
+            ..Config::default()
+        };
+        let state = StateSnapshot {
+            focused_window_id: None,
+            current_output_id: Some(OutputId::from("out-1")),
+            current_workspace_id: Some(WorkspaceId::from("ws-1")),
+            outputs: vec![output()],
+            workspaces: vec![WorkspaceSnapshot { output_id: None, ..workspace("master-stack") }],
+            windows: vec![],
+            visible_window_ids: vec![],
+            workspace_names: vec!["1".into()],
+        };
+
+        let request = config
+            .build_scene_request_from_state(
+                &state,
+                ResolvedLayoutNode::Workspace { meta: Default::default(), children: vec![] },
+                &artifact("master-stack", "layouts/master-stack.js"),
+            )
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(request.layout_name.as_deref(), Some("master-stack"));
+        assert_eq!(request.space.width, 1920.0);
+        assert_eq!(request.space.height, 1080.0);
+    }
+
+    #[test]
     fn missing_layout_definition_returns_error() {
         let config = Config::default();
         let error = config
@@ -640,74 +615,6 @@ mod tests {
         assert_eq!(error, LayoutConfigError::ParseConfig { path: config_path.clone() });
 
         let _ = fs::remove_file(config_path);
-    }
-
-    #[test]
-    fn resolve_titlebar_runtime_node_selects_and_resolves_matching_rule() {
-        let config = Config {
-            titlebars: vec![serde_json::json!({
-                "type": "titlebar",
-                "props": { "class": "default-titlebar" },
-                "children": [
-                    {
-                        "type": "titlebar.text",
-                        "props": { "class": "label" },
-                        "children": ["DEV"]
-                    }
-                ]
-            })],
-            ..Config::default()
-        };
-
-        let runtime = config
-            .resolve_titlebar_runtime_node(
-                &layout_window_context("firefox", "Mozilla Firefox"),
-                Some("code"),
-                Some("main"),
-            )
-            .expect("titlebar rules should decode")
-            .expect("a titlebar should be resolved");
-
-        match runtime {
-            ResolvedLayoutNode::Content { meta, children, .. } => {
-                assert_eq!(meta.name.as_deref(), Some("titlebar"));
-                assert_eq!(meta.class, vec!["default-titlebar"]);
-                assert_eq!(children.len(), 1);
-            }
-            other => panic!("expected content node, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn resolve_titlebar_runtime_node_returns_none_for_disabled_match() {
-        let config = Config {
-            titlebars: vec![
-                serde_json::json!({
-                    "type": "titlebar",
-                    "props": { "class": "default-titlebar" },
-                    "children": []
-                }),
-                serde_json::json!({
-                    "type": "titlebar",
-                    "props": {
-                        "when": { "appId": "foot" },
-                        "disabled": true
-                    },
-                    "children": []
-                }),
-            ],
-            ..Config::default()
-        };
-
-        let runtime = config
-            .resolve_titlebar_runtime_node(
-                &layout_window_context("foot", "Terminal"),
-                Some("code"),
-                None,
-            )
-            .expect("titlebar rules should decode");
-
-        assert!(runtime.is_none());
     }
 
     #[test]

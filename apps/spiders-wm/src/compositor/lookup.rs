@@ -36,7 +36,11 @@ impl SpidersWm {
     pub fn visible_managed_window_ids(&self) -> Vec<WindowId> {
         self.visible_managed_window_positions()
             .into_iter()
-            .filter_map(|index| self.managed_window_at(index).map(|record| record.id.clone()))
+            .filter_map(|index| {
+                self.managed_window_at(index).and_then(|record| {
+                    (!self.window_is_closing(&record.id)).then_some(record.id.clone())
+                })
+            })
             .collect()
     }
 

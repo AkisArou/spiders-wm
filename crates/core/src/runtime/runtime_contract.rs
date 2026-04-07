@@ -2,8 +2,8 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use crate::snapshot::{StateSnapshot, WorkspaceSnapshot};
 use crate::SourceLayoutNode;
+use crate::snapshot::{StateSnapshot, WorkspaceSnapshot};
 
 use super::layout_context::LayoutEvaluationContext;
 use super::prepared_layout::PreparedLayout;
@@ -16,9 +16,7 @@ pub struct LayoutModuleContract {
 
 impl Default for LayoutModuleContract {
     fn default() -> Self {
-        Self {
-            export_name: "default".into(),
-        }
+        Self { export_name: "default".into() }
     }
 }
 

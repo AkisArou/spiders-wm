@@ -1,12 +1,12 @@
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
-use spiders_core::command::WmCommand;
+use spiders_core::LayoutId;
 use spiders_core::command::FocusDirection;
+use spiders_core::command::WmCommand;
 use spiders_core::focus::{
-    FocusScopePath, FocusTree, FocusTreeWindowGeometry, remove_window,
-    request_focus_next_window, request_focus_previous_window, request_focus_window,
-    set_focused_window,
+    FocusScopePath, FocusTree, FocusTreeWindowGeometry, remove_window, request_focus_next_window,
+    request_focus_previous_window, request_focus_window, set_focused_window,
 };
 use spiders_core::navigation::{
     NavigationDirection, WindowGeometryCandidate, managed_window_swap_positions,
@@ -21,7 +21,6 @@ use spiders_core::workspace::{
     request_select_workspace,
 };
 use spiders_core::{OutputId, WindowId, WorkspaceId};
-use spiders_core::LayoutId;
 
 use crate::PreviewSnapshotNode;
 
@@ -101,12 +100,9 @@ pub fn can_reuse_preview_layout_computation(
         return false;
     }
 
-    let previous_windows = previous
-        .windows
-        .iter()
-        .filter(|window| {
-            window.workspace_name == previous.active_workspace_name && !window.floating
-        });
+    let previous_windows = previous.windows.iter().filter(|window| {
+        window.workspace_name == previous.active_workspace_name && !window.floating
+    });
     let next_windows = next
         .windows
         .iter()
@@ -159,7 +155,8 @@ pub fn apply_preview_command(
                 workspace_name_by_index(&state.workspace_names, workspace),
             );
         }
-        WmCommand::SelectWorkspace { workspace_id } | WmCommand::ActivateWorkspace { workspace_id } => {
+        WmCommand::SelectWorkspace { workspace_id }
+        | WmCommand::ActivateWorkspace { workspace_id } => {
             select_workspace_by_name(&state, &mut model, Some(workspace_id.as_str().to_string()));
         }
         WmCommand::SelectNextWorkspace => {
@@ -218,7 +215,8 @@ pub fn apply_preview_command(
         WmCommand::SpawnTerminal => {
             spawn_foot_window(&mut state, &mut model);
         }
-        WmCommand::ResizeDirection { direction } | WmCommand::ResizeTiledDirection { direction } => {
+        WmCommand::ResizeDirection { direction }
+        | WmCommand::ResizeTiledDirection { direction } => {
             resize_direction(&mut state, &model, snapshot_root, direction);
         }
         WmCommand::ReloadConfig
@@ -258,28 +256,20 @@ pub fn select_preview_workspace(
     if state.active_workspace_name == workspace_name
         || !state.workspace_names.iter().any(|name| name == workspace_name)
     {
-        return PreviewCommandOutcome {
-            state,
-            render_action: PreviewRenderAction::None,
-        };
+        return PreviewCommandOutcome { state, render_action: PreviewRenderAction::None };
     }
 
     let ordered_window_ids = ordered_window_ids(&state);
     let mut model = preview_model_with_snapshot(&state, snapshot_root);
 
-    if let Some(selection) = request_select_workspace(
-        &mut model,
-        WorkspaceId::from(workspace_name),
-        ordered_window_ids,
-    ) {
+    if let Some(selection) =
+        request_select_workspace(&mut model, WorkspaceId::from(workspace_name), ordered_window_ids)
+    {
         let _ = set_focused_window(&mut model, selection.focused_window_id);
     }
 
     sync_preview_state(&mut state, &model);
-    PreviewCommandOutcome {
-        render_action: render_action_for_transition(&previous, &state),
-        state,
-    }
+    PreviewCommandOutcome { render_action: render_action_for_transition(&previous, &state), state }
 }
 
 pub fn set_preview_focused_window(
@@ -293,11 +283,9 @@ pub fn set_preview_focused_window(
     let mut model = preview_model_with_snapshot(&state, snapshot_root);
 
     if let Some(window_id) = focused_window_id.as_ref() {
-        let Some(window) = state.windows.iter().find(|window| window.id == window_id.as_str()) else {
-            return PreviewCommandOutcome {
-                state,
-                render_action: PreviewRenderAction::None,
-            };
+        let Some(window) = state.windows.iter().find(|window| window.id == window_id.as_str())
+        else {
+            return PreviewCommandOutcome { state, render_action: PreviewRenderAction::None };
         };
 
         model.set_current_workspace(WorkspaceId::from(window.workspace_name.as_str()));
@@ -305,10 +293,7 @@ pub fn set_preview_focused_window(
 
     let _ = set_focused_window(&mut model, focused_window_id);
     sync_preview_state(&mut state, &model);
-    PreviewCommandOutcome {
-        render_action: render_action_for_transition(&previous, &state),
-        state,
-    }
+    PreviewCommandOutcome { render_action: render_action_for_transition(&previous, &state), state }
 }
 
 fn normalize_preview_state(state: &mut PreviewSession) {
@@ -325,11 +310,8 @@ fn normalize_preview_state(state: &mut PreviewSession) {
     }
 
     if !state.workspace_names.contains(&state.active_workspace_name) {
-        state.active_workspace_name = state
-            .workspace_names
-            .first()
-            .cloned()
-            .unwrap_or_else(|| "1:dev".to_string());
+        state.active_workspace_name =
+            state.workspace_names.first().cloned().unwrap_or_else(|| "1:dev".to_string());
     }
 }
 
@@ -339,10 +321,8 @@ fn cycle_preview_layout(
 ) -> LayoutId {
     const PREVIEW_LAYOUT_IDS: [&str; 2] = ["master-stack", "focus-repro"];
 
-    let index = PREVIEW_LAYOUT_IDS
-        .iter()
-        .position(|layout_id| *layout_id == current.as_str())
-        .unwrap_or(0);
+    let index =
+        PREVIEW_LAYOUT_IDS.iter().position(|layout_id| *layout_id == current.as_str()).unwrap_or(0);
 
     match direction {
         spiders_core::command::LayoutCycleDirection::Next => {
@@ -371,13 +351,15 @@ fn preview_model(state: &PreviewSession) -> WmModel {
         let window_id = WindowId::from(window.id.as_str());
         let workspace_id = WorkspaceId::from(window.workspace_name.as_str());
 
-        model.insert_window(
-            window_id.clone(),
-            Some(workspace_id),
-            Some(output_id.clone()),
-        );
+        model.insert_window(window_id.clone(), Some(workspace_id), Some(output_id.clone()));
         model.set_window_mapped(window_id.clone(), true);
-        model.set_window_identity(window_id.clone(), window.title.clone(), window.app_id.clone());
+        model.set_window_identity(
+            window_id.clone(),
+            window.title.clone(),
+            window.app_id.clone(),
+            window.class.clone(),
+            window.instance.clone(),
+        );
         model.set_window_floating(window_id.clone(), window.floating);
         model.set_window_fullscreen(window_id.clone(), window.fullscreen);
     }
@@ -414,11 +396,7 @@ fn preview_model_with_snapshot(
 }
 
 fn ordered_window_ids(state: &PreviewSession) -> Vec<WindowId> {
-    state
-        .windows
-        .iter()
-        .map(|window| WindowId::from(window.id.as_str()))
-        .collect()
+    state.windows.iter().map(|window| WindowId::from(window.id.as_str())).collect()
 }
 
 fn workspace_name_by_index(workspace_names: &[String], workspace_index: u8) -> Option<String> {
@@ -490,10 +468,7 @@ fn resize_direction(
         return;
     };
 
-    state
-        .layout_adjustments
-        .split_weights_by_node_id
-        .insert(target.node_id, weights);
+    state.layout_adjustments.split_weights_by_node_id.insert(target.node_id, weights);
 }
 
 fn swap_direction(
@@ -510,22 +485,16 @@ fn swap_direction(
     };
 
     let candidate_ids = directional_candidate_ids(state, snapshot_root);
-    let Some((first_index, second_index)) = managed_window_swap_positions(
-        &candidate_ids,
-        focused_window_id.clone(),
-        target_window_id,
-    ) else {
+    let Some((first_index, second_index)) =
+        managed_window_swap_positions(&candidate_ids, focused_window_id.clone(), target_window_id)
+    else {
         return;
     };
 
-    let first_global_index = state
-        .windows
-        .iter()
-        .position(|window| window.id == candidate_ids[first_index].as_str());
-    let second_global_index = state
-        .windows
-        .iter()
-        .position(|window| window.id == candidate_ids[second_index].as_str());
+    let first_global_index =
+        state.windows.iter().position(|window| window.id == candidate_ids[first_index].as_str());
+    let second_global_index =
+        state.windows.iter().position(|window| window.id == candidate_ids[second_index].as_str());
 
     let (Some(first_global_index), Some(second_global_index)) =
         (first_global_index, second_global_index)
@@ -626,7 +595,9 @@ fn snapshot_window_geometry_candidates(
 }
 
 fn collect_snapshot_window_ids(node: &PreviewSnapshotNode, out: &mut Vec<WindowId>) {
-    if node.node_type == "window" && let Some(window_id) = node.window_id.as_ref() {
+    if node.node_type == "window"
+        && let Some(window_id) = node.window_id.as_ref()
+    {
         out.push(window_id.clone());
     }
 
@@ -719,9 +690,7 @@ fn split_resize_target_for_node<'a>(
     } else {
         (0..node.children.len()).collect::<Vec<_>>()
     };
-    let focused_position = visual_order
-        .iter()
-        .position(|index| *index == focused_child_index)?;
+    let focused_position = visual_order.iter().position(|index| *index == focused_child_index)?;
     let preferred_step: isize = match direction {
         FocusDirection::Left | FocusDirection::Up => -1,
         FocusDirection::Right | FocusDirection::Down => 1,
@@ -786,7 +755,9 @@ fn inferred_split_weights(node: &PreviewSnapshotNode) -> Vec<u16> {
     for scale in MIN_SPLIT_WEIGHT..=MAX_SPLIT_WEIGHT {
         let weights = ratios
             .iter()
-            .map(|ratio| ((ratio * scale as f32).round() as u16).clamp(MIN_SPLIT_WEIGHT, MAX_SPLIT_WEIGHT))
+            .map(|ratio| {
+                ((ratio * scale as f32).round() as u16).clamp(MIN_SPLIT_WEIGHT, MAX_SPLIT_WEIGHT)
+            })
             .collect::<Vec<_>>();
         let weight_total = weights.iter().map(|weight| *weight as f32).sum::<f32>();
         let error = ratios
@@ -795,7 +766,9 @@ fn inferred_split_weights(node: &PreviewSnapshotNode) -> Vec<u16> {
             .map(|(ratio, weight)| (ratio - (*weight as f32 / weight_total)).abs())
             .sum::<f32>();
 
-        if error < best_error - 0.0001 || ((error - best_error).abs() <= 0.0001 && scale > best_scale) {
+        if error < best_error - 0.0001
+            || ((error - best_error).abs() <= 0.0001 && scale > best_scale)
+        {
             best_scale = scale;
             best_error = error;
             best_weights = weights;
@@ -824,11 +797,8 @@ fn toggle_focused_window_floating(model: &mut WmModel) {
         return;
     };
 
-    let next_floating = model
-        .windows
-        .get(&focused_window_id)
-        .map(|window| !window.floating)
-        .unwrap_or(false);
+    let next_floating =
+        model.windows.get(&focused_window_id).map(|window| !window.floating).unwrap_or(false);
     model.set_window_floating(focused_window_id, next_floating);
 }
 
@@ -839,9 +809,7 @@ fn close_focused_window(state: &mut PreviewSession, model: &mut WmModel) {
 
     let ordered_window_ids = ordered_window_ids(state);
     let _ = remove_window(model, focused_window_id.clone(), ordered_window_ids);
-    state
-        .windows
-        .retain(|window| window.id != focused_window_id.as_str());
+    state.windows.retain(|window| window.id != focused_window_id.as_str());
 }
 
 fn spawn_foot_window(state: &mut PreviewSession, model: &mut WmModel) {
@@ -873,6 +841,8 @@ fn spawn_foot_window(state: &mut PreviewSession, model: &mut WmModel) {
         WindowId::from(window_id.as_str()),
         Some(format!("Terminal {terminal_number}")),
         Some("foot".to_string()),
+        Some("foot".to_string()),
+        Some("foot".to_string()),
     );
     let _ = set_focused_window(model, Some(WindowId::from(window_id.as_str())));
 }
@@ -898,10 +868,7 @@ fn next_window_id_number(state: &PreviewSession) -> u32 {
         .windows
         .iter()
         .filter_map(|window| {
-            window
-                .id
-                .strip_prefix("win-")
-                .and_then(|suffix| suffix.parse::<u32>().ok())
+            window.id.strip_prefix("win-").and_then(|suffix| suffix.parse::<u32>().ok())
         })
         .max()
         .unwrap_or(0)
@@ -980,22 +947,22 @@ mod tests {
         }
     }
 
-    fn window_node(window_id: &str, x: f32, y: f32, width: f32, height: f32) -> PreviewSnapshotNode {
+    fn window_node(
+        window_id: &str,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+    ) -> PreviewSnapshotNode {
         PreviewSnapshotNode {
             node_type: "window".to_string(),
             id: None,
             class_name: None,
-            rect: Some(spiders_core::LayoutRect {
-                x,
-                y,
-                width,
-                height,
-            }),
+            rect: Some(spiders_core::LayoutRect { x, y, width, height }),
             window_id: Some(WindowId::from(window_id)),
             axis: None,
             reverse: false,
             layout_style: None,
-            titlebar_style: None,
             text: None,
             data: Default::default(),
             children: Vec::new(),
@@ -1007,17 +974,11 @@ mod tests {
             node_type: "workspace".to_string(),
             id: Some("frame".to_string()),
             class_name: None,
-            rect: Some(spiders_core::LayoutRect {
-                x: 0.0,
-                y: 0.0,
-                width: 3440.0,
-                height: 1440.0,
-            }),
+            rect: Some(spiders_core::LayoutRect { x: 0.0, y: 0.0, width: 3440.0, height: 1440.0 }),
             window_id: None,
             axis: Some("horizontal".to_string()),
             reverse: false,
             layout_style: None,
-            titlebar_style: None,
             text: None,
             data: Default::default(),
             children: vec![
@@ -1035,7 +996,6 @@ mod tests {
                     axis: Some("vertical".to_string()),
                     reverse: false,
                     layout_style: None,
-                    titlebar_style: None,
                     text: None,
                     data: Default::default(),
                     children: vec![
@@ -1057,7 +1017,6 @@ mod tests {
                     axis: Some("vertical".to_string()),
                     reverse: false,
                     layout_style: None,
-                    titlebar_style: None,
                     text: None,
                     data: Default::default(),
                     children: vec![
@@ -1096,17 +1055,11 @@ mod tests {
             node_type: "workspace".to_string(),
             id: Some("root".to_string()),
             class_name: None,
-            rect: Some(spiders_core::LayoutRect {
-                x: 0.0,
-                y: 0.0,
-                width: 3440.0,
-                height: 1440.0,
-            }),
+            rect: Some(spiders_core::LayoutRect { x: 0.0, y: 0.0, width: 3440.0, height: 1440.0 }),
             window_id: None,
             axis: Some("horizontal".to_string()),
             reverse: false,
             layout_style: None,
-            titlebar_style: None,
             text: None,
             data: Default::default(),
             children: vec![PreviewSnapshotNode {
@@ -1123,7 +1076,6 @@ mod tests {
                 axis: Some("horizontal".to_string()),
                 reverse: false,
                 layout_style: None,
-                titlebar_style: None,
                 text: None,
                 data: Default::default(),
                 children: vec![
@@ -1142,7 +1094,6 @@ mod tests {
                         axis: Some("vertical".to_string()),
                         reverse: false,
                         layout_style: None,
-                        titlebar_style: None,
                         text: None,
                         data: Default::default(),
                         children: vec![
@@ -1177,36 +1128,18 @@ mod tests {
             Some(&snapshot_root),
         );
         assert_eq!(focused_window_id(&state), "win-1");
-        assert_eq!(
-            state.remembered_focus_by_scope.get(side_scope),
-            Some(&WindowId::from("win-5"))
-        );
+        assert_eq!(state.remembered_focus_by_scope.get(side_scope), Some(&WindowId::from("win-5")));
 
-        let state = apply_preview_command(
-            state,
-            focus_command(FocusDirection::Down),
-            Some(&snapshot_root),
-        );
+        let state =
+            apply_preview_command(state, focus_command(FocusDirection::Down), Some(&snapshot_root));
         assert_eq!(focused_window_id(&state), "win-2");
-        assert_eq!(
-            state.remembered_focus_by_scope.get(side_scope),
-            Some(&WindowId::from("win-5"))
-        );
-        assert_eq!(
-            state.remembered_focus_by_scope.get(main_scope),
-            Some(&WindowId::from("win-2"))
-        );
+        assert_eq!(state.remembered_focus_by_scope.get(side_scope), Some(&WindowId::from("win-5")));
+        assert_eq!(state.remembered_focus_by_scope.get(main_scope), Some(&WindowId::from("win-2")));
 
-        let state = apply_preview_command(
-            state,
-            focus_command(FocusDirection::Down),
-            Some(&snapshot_root),
-        );
+        let state =
+            apply_preview_command(state, focus_command(FocusDirection::Down), Some(&snapshot_root));
         assert_eq!(focused_window_id(&state), "win-1");
-        assert_eq!(
-            state.remembered_focus_by_scope.get(side_scope),
-            Some(&WindowId::from("win-5"))
-        );
+        assert_eq!(state.remembered_focus_by_scope.get(side_scope), Some(&WindowId::from("win-5")));
 
         let state = apply_preview_command(
             state,
@@ -1214,10 +1147,7 @@ mod tests {
             Some(&snapshot_root),
         );
         assert_eq!(focused_window_id(&state), "win-5");
-        assert_eq!(
-            state.remembered_focus_by_scope.get(main_scope),
-            Some(&WindowId::from("win-1"))
-        );
+        assert_eq!(state.remembered_focus_by_scope.get(main_scope), Some(&WindowId::from("win-1")));
     }
 
     #[test]
@@ -1299,9 +1229,7 @@ mod tests {
     fn preview_set_layout_updates_runtime_layout_state() {
         let state = apply_preview_command(
             initial_preview_state(),
-            WmCommand::SetLayout {
-                name: "focus-repro".to_string(),
-            },
+            WmCommand::SetLayout { name: "focus-repro".to_string() },
             None,
         );
 

@@ -1,6 +1,6 @@
+use crate::WindowId;
 use crate::focus::FocusAxis;
 use crate::wm::WindowGeometry;
-use crate::WindowId;
 
 #[derive(Debug, Clone)]
 pub(crate) struct VisualEntry {
@@ -38,10 +38,7 @@ pub(crate) fn infer_visual_scope(entries: &[VisualEntry]) -> VisualScope {
     let horizontal_bands = cluster_visual_entries(entries, FocusAxis::Horizontal);
     let vertical_bands = cluster_visual_entries(entries, FocusAxis::Vertical);
 
-    let selected_axis = match (
-        split_score(&horizontal_bands),
-        split_score(&vertical_bands),
-    ) {
+    let selected_axis = match (split_score(&horizontal_bands), split_score(&vertical_bands)) {
         (Some(horizontal_score), Some(vertical_score)) => {
             if horizontal_score <= vertical_score {
                 Some((FocusAxis::Horizontal, horizontal_bands))
@@ -59,10 +56,7 @@ pub(crate) fn infer_visual_scope(entries: &[VisualEntry]) -> VisualScope {
         ordered_entries.sort_by_key(|entry| entry.original_index);
         return VisualScope {
             axis: None,
-            children: ordered_entries
-                .into_iter()
-                .map(VisualChild::Window)
-                .collect(),
+            children: ordered_entries.into_iter().map(VisualChild::Window).collect(),
         };
     };
 
@@ -87,17 +81,11 @@ fn split_score(bands: &[Vec<VisualEntry>]) -> Option<(usize, usize)> {
         return None;
     }
 
-    Some((
-        bands.iter().map(|band| band_fragmentation(band)).sum(),
-        bands.len(),
-    ))
+    Some((bands.iter().map(|band| band_fragmentation(band)).sum(), bands.len()))
 }
 
 fn band_fragmentation(band: &[VisualEntry]) -> usize {
-    let mut indices = band
-        .iter()
-        .map(|entry| entry.original_index)
-        .collect::<Vec<_>>();
+    let mut indices = band.iter().map(|entry| entry.original_index).collect::<Vec<_>>();
     indices.sort_unstable();
 
     let mut segments: usize = 0;
@@ -116,16 +104,8 @@ fn band_fragmentation(band: &[VisualEntry]) -> usize {
 fn cluster_visual_entries(entries: &[VisualEntry], axis: FocusAxis) -> Vec<Vec<VisualEntry>> {
     let mut ordered_entries = entries.to_vec();
     ordered_entries.sort_by_key(|entry| match axis {
-        FocusAxis::Horizontal => (
-            entry.geometry.x,
-            entry.geometry.y,
-            entry.original_index as i32,
-        ),
-        FocusAxis::Vertical => (
-            entry.geometry.y,
-            entry.geometry.x,
-            entry.original_index as i32,
-        ),
+        FocusAxis::Horizontal => (entry.geometry.x, entry.geometry.y, entry.original_index as i32),
+        FocusAxis::Vertical => (entry.geometry.y, entry.geometry.x, entry.original_index as i32),
     });
 
     let mut bands: Vec<Vec<VisualEntry>> = Vec::new();

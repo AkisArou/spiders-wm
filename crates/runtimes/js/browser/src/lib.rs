@@ -2,22 +2,26 @@ mod config_decode;
 
 use std::collections::BTreeMap;
 use std::future::Future;
-use std::pin::Pin;
 use std::path::{Path, PathBuf};
+use std::pin::Pin;
 
 use js_sys::{Array, Function, Promise, Reflect};
 use serde_json::Value;
 use spiders_config::model::{Config, LayoutConfigError, RuntimeKind};
 use spiders_config::runtime::{
-    EvaluatedSourceLayout, SourceBundle, SourceBundleConfigRuntime, SourceBundlePreparedLayoutRuntime,
-    SourceBundleRuntimeBundle, SourceBundleRuntimeProvider,
+    EvaluatedSourceLayout, SourceBundle, SourceBundleConfigRuntime,
+    SourceBundlePreparedLayoutRuntime, SourceBundleRuntimeBundle, SourceBundleRuntimeProvider,
 };
-use spiders_core::runtime::layout_context::{LayoutEvaluationContext, LayoutEvaluationDependencies};
-use spiders_core::runtime::prepared_layout::{PreparedLayout, PreparedStylesheet, PreparedStylesheets};
+use spiders_core::runtime::layout_context::{
+    LayoutEvaluationContext, LayoutEvaluationDependencies,
+};
+use spiders_core::runtime::prepared_layout::{
+    PreparedLayout, PreparedStylesheet, PreparedStylesheets,
+};
 use spiders_core::snapshot::{StateSnapshot, WorkspaceSnapshot};
 use spiders_runtime_js_core::{
-    JavaScriptModule, JavaScriptModuleGraph, compile_source_bundle_to_module_graph, decode_js_layout_value,
-    decode_runtime_graph_payload, encode_runtime_graph_payload,
+    JavaScriptModule, JavaScriptModuleGraph, compile_source_bundle_to_module_graph,
+    decode_js_layout_value, decode_runtime_graph_payload, encode_runtime_graph_payload,
 };
 use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
@@ -160,10 +164,10 @@ async fn evaluate_layout_module_graph(
 ) -> Result<LayoutEvaluationResult, String> {
     let raw_context = serde_wasm_bindgen::to_value(context).map_err(|error| error.to_string())?;
     let tracked = create_tracked_layout_context(raw_context);
-    let tracked_context = Reflect::get(&tracked, &JsValue::from_str("context"))
-        .map_err(js_error_to_string)?;
-    let dependencies = Reflect::get(&tracked, &JsValue::from_str("dependencies"))
-        .map_err(js_error_to_string)?;
+    let tracked_context =
+        Reflect::get(&tracked, &JsValue::from_str("context")).map_err(js_error_to_string)?;
+    let dependencies =
+        Reflect::get(&tracked, &JsValue::from_str("dependencies")).map_err(js_error_to_string)?;
     let layout = evaluate_module_export_function(module_graph, "default", tracked_context).await?;
     let result = build_tracked_layout_result(layout, dependencies);
     serde_wasm_bindgen::from_value(result).map_err(|error| error.to_string())
@@ -177,8 +181,10 @@ pub async fn load_config_from_source_bundle(
     let graph = compile_source_bundle_to_module_graph(root_dir, entry_path, sources)
         .map_err(|error| error.to_string())?;
     let value = evaluate_module_export_value(&graph, "default").await?;
-    let config_value: Value = serde_wasm_bindgen::from_value(value).map_err(|error| error.to_string())?;
-    let mut config = decode_config_value(entry_path, &config_value).map_err(|error| error.to_string())?;
+    let config_value: Value =
+        serde_wasm_bindgen::from_value(value).map_err(|error| error.to_string())?;
+    let mut config =
+        decode_config_value(entry_path, &config_value).map_err(|error| error.to_string())?;
     config.global_stylesheet_path = sources
         .contains_key(&root_dir.join("index.css"))
         .then(|| root_dir.join("index.css").to_string_lossy().into_owned());
@@ -193,7 +199,8 @@ pub fn compile_module_graph_from_source_bundle(
     entry_path: &Path,
     sources: &BTreeMap<PathBuf, String>,
 ) -> Result<JavaScriptModuleGraph, String> {
-    compile_source_bundle_to_module_graph(root_dir, entry_path, sources).map_err(|error| error.to_string())
+    compile_source_bundle_to_module_graph(root_dir, entry_path, sources)
+        .map_err(|error| error.to_string())
 }
 
 fn js_error_to_string(error: JsValue) -> String {
@@ -226,7 +233,9 @@ async fn evaluate_module_export_function(
     function.call1(&JsValue::UNDEFINED, &arg).map_err(js_error_to_string)
 }
 
-fn build_module_urls(module_graph: &JavaScriptModuleGraph) -> Result<BTreeMap<String, String>, String> {
+fn build_module_urls(
+    module_graph: &JavaScriptModuleGraph,
+) -> Result<BTreeMap<String, String>, String> {
     let module_map = module_graph
         .modules
         .iter()
@@ -237,7 +246,13 @@ fn build_module_urls(module_graph: &JavaScriptModuleGraph) -> Result<BTreeMap<St
     let mut object_urls = Vec::new();
     let mut visiting = Vec::new();
 
-    let _ = module_url_for(&module_graph.entry, &module_map, &mut cache, &mut object_urls, &mut visiting)?;
+    let _ = module_url_for(
+        &module_graph.entry,
+        &module_map,
+        &mut cache,
+        &mut object_urls,
+        &mut visiting,
+    )?;
     Ok(cache)
 }
 
@@ -258,7 +273,14 @@ fn module_url_for(
 
     let module = module_map.get(specifier).ok_or_else(|| format!("Missing module {specifier}"))?;
     visiting.push(specifier.to_string());
-    let rewritten = rewrite_source(&module.source, &module.resolved_imports, module_map, cache, object_urls, visiting)?;
+    let rewritten = rewrite_source(
+        &module.source,
+        &module.resolved_imports,
+        module_map,
+        cache,
+        object_urls,
+        visiting,
+    )?;
     let url = create_module_url(&rewritten)?;
     object_urls.push(url.clone());
     cache.insert(specifier.to_string(), url.clone());
@@ -288,7 +310,8 @@ fn rewrite_source(
                 cache,
                 object_urls,
                 visiting,
-            )? else {
+            )?
+            else {
                 output.push(bytes[cursor] as char);
                 cursor += 1;
                 continue;
@@ -365,7 +388,8 @@ fn rewrite_dynamic_or_bare_import(
     let bytes = source.as_bytes();
     if bytes.get(cursor) == Some(&b'(') {
         let after_open = consume_whitespace(source, cursor + 1);
-        let Some((next_cursor, specifier, quote)) = consume_string_literal(source, after_open) else {
+        let Some((next_cursor, specifier, quote)) = consume_string_literal(source, after_open)
+        else {
             return Ok(None);
         };
         let close_cursor = consume_whitespace(source, next_cursor);
@@ -481,7 +505,8 @@ fn discover_layout_definitions(
     layout_entries
         .into_iter()
         .map(|layout| {
-            let runtime_graph = compile_source_bundle_to_module_graph(root_dir, &layout.entry_path, sources)?;
+            let runtime_graph =
+                compile_source_bundle_to_module_graph(root_dir, &layout.entry_path, sources)?;
             Ok(spiders_config::model::LayoutDefinition {
                 name: layout.name,
                 directory: layout
@@ -585,21 +610,25 @@ impl SourceBundlePreparedLayoutRuntime for JavaScriptBrowserPreparedLayoutRuntim
                 return Ok(None);
             };
 
-            let runtime_graph = decode_runtime_graph_payload(
-                layout.runtime_cache_payload.as_ref().ok_or_else(|| {
-                    LayoutConfigError::DecodeAuthoredConfig {
+            let runtime_graph =
+                decode_runtime_graph_payload(layout.runtime_cache_payload.as_ref().ok_or_else(
+                    || LayoutConfigError::DecodeAuthoredConfig {
                         path: root_dir.join(&layout.module),
-                        message: format!("layout `{}` is missing runtime cache payload", layout.name),
-                    }
-                })?,
-            )
-            .map_err(|error| LayoutConfigError::DecodeAuthoredConfig {
-                path: root_dir.join(&layout.module),
-                message: error.to_string(),
-            })?;
+                        message: format!(
+                            "layout `{}` is missing runtime cache payload",
+                            layout.name
+                        ),
+                    },
+                )?)
+                .map_err(|error| LayoutConfigError::DecodeAuthoredConfig {
+                    path: root_dir.join(&layout.module),
+                    message: error.to_string(),
+                })?;
 
             Ok(Some(PreparedLayout {
-                selected: config.resolve_selected_layout(workspace)?.expect("selected layout exists"),
+                selected: config
+                    .resolve_selected_layout(workspace)?
+                    .expect("selected layout exists"),
                 runtime_payload: encode_runtime_graph_payload(&runtime_graph),
                 stylesheets: PreparedStylesheets {
                     global: load_stylesheet_asset(
@@ -607,7 +636,11 @@ impl SourceBundlePreparedLayoutRuntime for JavaScriptBrowserPreparedLayoutRuntim
                         root_dir,
                         sources,
                     ),
-                    layout: load_stylesheet_asset(layout.stylesheet_path.as_deref(), root_dir, sources),
+                    layout: load_stylesheet_asset(
+                        layout.stylesheet_path.as_deref(),
+                        root_dir,
+                        sources,
+                    ),
                 },
             }))
         })
@@ -630,21 +663,25 @@ impl SourceBundlePreparedLayoutRuntime for JavaScriptBrowserPreparedLayoutRuntim
         context: &'a LayoutEvaluationContext,
     ) -> Pin<Box<dyn Future<Output = Result<EvaluatedSourceLayout, LayoutConfigError>> + 'a>> {
         Box::pin(async move {
-            let runtime_graph = decode_runtime_graph_payload(&artifact.runtime_payload).map_err(|error| {
+            let runtime_graph =
+                decode_runtime_graph_payload(&artifact.runtime_payload).map_err(|error| {
+                    LayoutConfigError::DecodeAuthoredConfig {
+                        path: PathBuf::from(&artifact.selected.module),
+                        message: error.to_string(),
+                    }
+                })?;
+            let value =
+                evaluate_layout_module_graph(&runtime_graph, context).await.map_err(|message| {
+                    LayoutConfigError::EvaluateAuthoredConfig {
+                        path: PathBuf::from(&artifact.selected.module),
+                        message,
+                    }
+                })?;
+            let layout = decode_js_layout_value(&value.layout).map_err(|message| {
                 LayoutConfigError::DecodeAuthoredConfig {
                     path: PathBuf::from(&artifact.selected.module),
-                    message: error.to_string(),
-                }
-            })?;
-            let value = evaluate_layout_module_graph(&runtime_graph, context)
-                .await
-                .map_err(|message| LayoutConfigError::EvaluateAuthoredConfig {
-                    path: PathBuf::from(&artifact.selected.module),
                     message,
-                })?;
-            let layout = decode_js_layout_value(&value.layout).map_err(|message| LayoutConfigError::DecodeAuthoredConfig {
-                path: PathBuf::from(&artifact.selected.module),
-                message,
+                }
             })?;
 
             Ok(EvaluatedSourceLayout { layout, dependencies: value.dependencies })
@@ -659,11 +696,8 @@ fn load_stylesheet_asset(
 ) -> Option<PreparedStylesheet> {
     let path = path?;
     let source_path = PathBuf::from(path);
-    let resolved = if source_path.is_absolute() {
-        source_path
-    } else {
-        root_dir.join(&source_path)
-    };
+    let resolved =
+        if source_path.is_absolute() { source_path } else { root_dir.join(&source_path) };
     let source = sources.get(&resolved).cloned().unwrap_or_default();
     Some(PreparedStylesheet { path: path.to_string(), source })
 }

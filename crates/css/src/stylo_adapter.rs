@@ -22,7 +22,7 @@ use style::shared_lock::SharedRwLock;
 #[cfg(test)]
 use style::stylesheets::{AllowImportRules, Origin, Stylesheet};
 
-use crate::language::{is_supported_pseudo_class, is_supported_pseudo_element};
+use crate::language::is_supported_pseudo_class;
 use spiders_core::{ResolvedLayoutNode, RuntimeContentKind, RuntimeLayoutNodeType};
 
 #[derive(Debug, Clone)]
@@ -44,7 +44,6 @@ struct LayoutDomNode {
 pub struct LayoutElement<'a> {
     tree: &'a LayoutDomTree,
     index: usize,
-    pseudo: Option<LayoutPseudoElement>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -69,10 +68,8 @@ pub enum LayoutPseudoClass {
     ExitToRight,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum LayoutPseudoElement {
-    Titlebar,
-}
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub enum LayoutPseudoElementStub {}
 
 #[derive(Default)]
 pub struct LayoutSelectorParser;
@@ -119,18 +116,6 @@ impl ToCss for LayoutPseudoClass {
             Self::EnterFromRight => "enter-from-right",
             Self::ExitToLeft => "exit-to-left",
             Self::ExitToRight => "exit-to-right",
-        };
-        serialize_identifier(name, dest)
-    }
-}
-
-impl ToCss for LayoutPseudoElement {
-    fn to_css<W>(&self, dest: &mut W) -> fmt::Result
-    where
-        W: fmt::Write,
-    {
-        let name = match self {
-            Self::Titlebar => "titlebar",
         };
         serialize_identifier(name, dest)
     }
@@ -190,10 +175,6 @@ impl selectors::parser::NonTSPseudoClass for LayoutPseudoClass {
     }
 }
 
-impl selectors::parser::PseudoElement for LayoutPseudoElement {
-    type Impl = LayoutSelectorImpl;
-}
-
 impl SelectorImpl for LayoutSelectorImpl {
     type ExtraMatchingData<'a> = std::marker::PhantomData<&'a ()>;
     type AttrValue = LayoutAttrValue;
@@ -204,7 +185,20 @@ impl SelectorImpl for LayoutSelectorImpl {
     type BorrowedNamespaceUrl = LayoutAtom;
     type BorrowedLocalName = LayoutAtom;
     type NonTSPseudoClass = LayoutPseudoClass;
-    type PseudoElement = LayoutPseudoElement;
+    type PseudoElement = LayoutPseudoElementStub;
+}
+
+impl ToCss for LayoutPseudoElementStub {
+    fn to_css<W>(&self, _dest: &mut W) -> fmt::Result
+    where
+        W: fmt::Write,
+    {
+        match *self {}
+    }
+}
+
+impl selectors::parser::PseudoElement for LayoutPseudoElementStub {
+    type Impl = LayoutSelectorImpl;
 }
 
 impl<'i> SelectorParserTrait<'i> for LayoutSelectorParser {
@@ -236,24 +230,6 @@ impl<'i> SelectorParserTrait<'i> for LayoutSelectorParser {
             _ => unreachable!("supported pseudo-class must map to enum variant"),
         }
     }
-
-    fn parse_pseudo_element(
-        &self,
-        location: cssparser::SourceLocation,
-        name: cssparser::CowRcStr<'i>,
-    ) -> Result<LayoutPseudoElement, cssparser::ParseError<'i, SelectorParseErrorKind<'i>>> {
-        let name = name.as_ref().to_ascii_lowercase();
-        if !is_supported_pseudo_element(&name) {
-            return Err(location.new_custom_error(
-                SelectorParseErrorKind::UnsupportedPseudoClassOrElement(name.into()),
-            ));
-        }
-
-        match name.as_str() {
-            "titlebar" => Ok(LayoutPseudoElement::Titlebar),
-            _ => unreachable!("supported pseudo-element must map to enum variant"),
-        }
-    }
 }
 
 impl LayoutDomTree {
@@ -264,7 +240,7 @@ impl LayoutDomTree {
     }
 
     pub fn root_element(&self) -> LayoutElement<'_> {
-        LayoutElement { tree: self, index: self.root, pseudo: None }
+        LayoutElement { tree: self, index: self.root }
     }
 
     #[cfg(test)]
@@ -274,7 +250,7 @@ impl LayoutDomTree {
     ) -> Option<LayoutElement<'_>> {
         self.nodes.iter().enumerate().find_map(|(index, node)| match &node.node {
             ResolvedLayoutNode::Window { window_id: Some(id), .. } if id == window_id => {
-                Some(LayoutElement { tree: self, index, pseudo: None })
+                Some(LayoutElement { tree: self, index })
             }
             _ => None,
         })
@@ -352,7 +328,7 @@ impl<'a> Element for LayoutElement<'a> {
     }
 
     fn parent_element(&self) -> Option<Self> {
-        self.node().parent.map(|index| Self { tree: self.tree, index, pseudo: None })
+        self.node().parent.map(|index| Self { tree: self.tree, index })
     }
 
     fn parent_node_is_shadow_root(&self) -> bool {
@@ -362,19 +338,19 @@ impl<'a> Element for LayoutElement<'a> {
         None
     }
     fn is_pseudo_element(&self) -> bool {
-        self.pseudo.is_some()
+        false
     }
 
     fn prev_sibling_element(&self) -> Option<Self> {
-        self.node().prev_sibling.map(|index| Self { tree: self.tree, index, pseudo: None })
+        self.node().prev_sibling.map(|index| Self { tree: self.tree, index })
     }
 
     fn next_sibling_element(&self) -> Option<Self> {
-        self.node().next_sibling.map(|index| Self { tree: self.tree, index, pseudo: None })
+        self.node().next_sibling.map(|index| Self { tree: self.tree, index })
     }
 
     fn first_element_child(&self) -> Option<Self> {
-        self.node().first_child.map(|index| Self { tree: self.tree, index, pseudo: None })
+        self.node().first_child.map(|index| Self { tree: self.tree, index })
     }
 
     fn is_html_element_in_html_document(&self) -> bool {
@@ -434,14 +410,6 @@ impl<'a> Element for LayoutElement<'a> {
         self.node().node.meta().class.iter().any(|class| class == class_name)
     }
 
-    fn match_pseudo_element(
-        &self,
-        pe: &LayoutPseudoElement,
-        _context: &mut MatchingContext<LayoutSelectorImpl>,
-    ) -> bool {
-        self.pseudo.as_ref() == Some(pe)
-    }
-
     fn apply_selector_flags(&self, _flags: selectors::matching::ElementSelectorFlags) {}
     fn is_link(&self) -> bool {
         false
@@ -466,6 +434,14 @@ impl<'a> Element for LayoutElement<'a> {
             .class
             .iter()
             .any(|class| case_sensitivity.eq(class.as_bytes(), name.0.as_bytes()))
+    }
+
+    fn match_pseudo_element(
+        &self,
+        _pe: &LayoutPseudoElementStub,
+        _context: &mut MatchingContext<LayoutSelectorImpl>,
+    ) -> bool {
+        false
     }
 
     fn has_custom_state(&self, _name: &LayoutAtom) -> bool {

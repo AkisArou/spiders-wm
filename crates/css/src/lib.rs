@@ -17,11 +17,11 @@ pub use compiled::{
     CompiledKeyframeStep, CompiledKeyframesRule, CompiledStyleRule, CompiledStyleSheet,
 };
 pub use parsing::{CssParseError, parse_stylesheet};
-pub use query::{matching_rules, matching_rules_for_pseudo, selector_matches};
+pub use query::{matching_rules, selector_matches};
 pub use style::*;
 pub use stylo_adapter::{
-    LayoutDomTree, LayoutPseudoElement, LayoutSelectorImpl, LayoutSelectorParser,
-    StyloAdapterError, selector_matches_element,
+    LayoutDomTree, LayoutSelectorImpl, LayoutSelectorParser, StyloAdapterError,
+    selector_matches_element,
 };
 
 #[doc(hidden)]

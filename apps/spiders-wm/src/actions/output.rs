@@ -51,10 +51,7 @@ mod tests {
         assert_eq!(output_id, OutputId("winit".to_string()));
         assert_eq!(model.current_output_id, Some(OutputId("winit".to_string())));
         assert_eq!(
-            model
-                .outputs
-                .get(&output_id)
-                .and_then(|output| output.focused_workspace_id.clone()),
+            model.outputs.get(&output_id).and_then(|output| output.focused_workspace_id.clone()),
             Some(WorkspaceId("1".to_string()))
         );
         assert_eq!(
@@ -82,18 +79,9 @@ mod tests {
 
         assert_eq!(output_id, OutputId("winit".to_string()));
         assert_eq!(
-            model
-                .outputs
-                .get(&output_id)
-                .and_then(|output| output.focused_workspace_id.clone()),
+            model.outputs.get(&output_id).and_then(|output| output.focused_workspace_id.clone()),
             Some(WorkspaceId("2".to_string()))
         );
-        assert_eq!(
-            model
-                .outputs
-                .get(&output_id)
-                .map(|output| output.logical_width),
-            Some(1920)
-        );
+        assert_eq!(model.outputs.get(&output_id).map(|output| output.logical_width), Some(1920));
     }
 }

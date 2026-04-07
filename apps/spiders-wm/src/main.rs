@@ -44,8 +44,5 @@ fn init_logging() {
         .or_else(|_| tracing_subscriber::EnvFilter::try_from_env("SPIDERS_LOG"))
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
 
-    tracing_subscriber::fmt()
-        .with_env_filter(env_filter)
-        .with_target(true)
-        .init();
+    tracing_subscriber::fmt().with_env_filter(env_filter).with_target(true).init();
 }

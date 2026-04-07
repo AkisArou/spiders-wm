@@ -4,7 +4,7 @@ use std::path::Path;
 use serde_json::Value;
 use spiders_config::model::{
     Binding, Config, ConfigOptions, InputConfig, LayoutConfigError, LayoutDefinition,
-    LayoutSelectionConfig, TitlebarFontConfig, WindowRule,
+    LayoutSelectionConfig, WindowRule,
 };
 use spiders_core::command::{FocusDirection, WmCommand};
 
@@ -19,7 +19,6 @@ pub fn decode_config_value(path: &Path, value: &Value) -> Result<Config, LayoutC
         global_stylesheet_path: None,
         layout_selection: decode_layout_selection(root.get("layouts"), path)?,
         rules: decode_rules(root.get("rules"), path)?,
-        titlebars: decode_titlebars(root.get("titlebars"), path)?,
         bindings: decode_bindings(root.get("bindings"), path)?,
         autostart: decode_string_array(root.get("autostart"), path, "root.autostart")?,
         autostart_once: decode_string_array(
@@ -49,11 +48,7 @@ pub fn validate_layout_selection(
         });
     }
 
-    for layout in selection
-        .per_workspace
-        .iter()
-        .chain(selection.per_monitor.values())
-    {
+    for layout in selection.per_workspace.iter().chain(selection.per_monitor.values()) {
         if !is_known(layout) {
             return Err(LayoutConfigError::DecodeAuthoredConfig {
                 path: path.to_path_buf(),
@@ -84,34 +79,13 @@ fn decode_options(value: Option<&Value>, path: &Path) -> Result<ConfigOptions, L
             "root.options.sloppyfocus",
         )?,
         attach: decode_optional_string(object.get("attach"), path, "root.options.attach")?,
-        titlebar_font: decode_titlebar_font(object.get("titlebar_font"), path)?,
     })
 }
 
-fn decode_titlebar_font(
+fn decode_inputs(
     value: Option<&Value>,
     path: &Path,
-) -> Result<Option<TitlebarFontConfig>, LayoutConfigError> {
-    let Some(value) = value else {
-        return Ok(None);
-    };
-
-    let object = expect_object(path, value, "root.options.titlebar_font")?;
-    Ok(Some(TitlebarFontConfig {
-        regular_path: decode_optional_string(
-            object.get("regular_path"),
-            path,
-            "root.options.titlebar_font.regular_path",
-        )?,
-        bold_path: decode_optional_string(
-            object.get("bold_path"),
-            path,
-            "root.options.titlebar_font.bold_path",
-        )?,
-    }))
-}
-
-fn decode_inputs(value: Option<&Value>, path: &Path) -> Result<Vec<InputConfig>, LayoutConfigError> {
+) -> Result<Vec<InputConfig>, LayoutConfigError> {
     let Some(value) = value else {
         return Ok(Vec::new());
     };
@@ -123,17 +97,49 @@ fn decode_inputs(value: Option<&Value>, path: &Path) -> Result<Vec<InputConfig>,
             name: name.clone(),
             xkb_layout: decode_optional_string(config.get("xkb_layout"), path, "input.xkb_layout")?,
             xkb_model: decode_optional_string(config.get("xkb_model"), path, "input.xkb_model")?,
-            xkb_variant: decode_optional_string(config.get("xkb_variant"), path, "input.xkb_variant")?,
-            xkb_options: decode_optional_string(config.get("xkb_options"), path, "input.xkb_options")?,
+            xkb_variant: decode_optional_string(
+                config.get("xkb_variant"),
+                path,
+                "input.xkb_variant",
+            )?,
+            xkb_options: decode_optional_string(
+                config.get("xkb_options"),
+                path,
+                "input.xkb_options",
+            )?,
             repeat_rate: decode_optional_u32(config.get("repeat_rate"), path, "input.repeat_rate")?,
-            repeat_delay: decode_optional_u32(config.get("repeat_delay"), path, "input.repeat_delay")?,
-            natural_scroll: decode_optional_bool(config.get("natural_scroll"), path, "input.natural_scroll")?,
+            repeat_delay: decode_optional_u32(
+                config.get("repeat_delay"),
+                path,
+                "input.repeat_delay",
+            )?,
+            natural_scroll: decode_optional_bool(
+                config.get("natural_scroll"),
+                path,
+                "input.natural_scroll",
+            )?,
             tap: decode_optional_bool(config.get("tap"), path, "input.tap")?,
             drag_lock: decode_optional_bool(config.get("drag_lock"), path, "input.drag_lock")?,
-            accel_profile: decode_optional_string(config.get("accel_profile"), path, "input.accel_profile")?,
-            pointer_accel: decode_optional_f64(config.get("pointer_accel"), path, "input.pointer_accel")?,
-            left_handed: decode_optional_bool(config.get("left_handed"), path, "input.left_handed")?,
-            middle_emulation: decode_optional_bool(config.get("middle_emulation"), path, "input.middle_emulation")?,
+            accel_profile: decode_optional_string(
+                config.get("accel_profile"),
+                path,
+                "input.accel_profile",
+            )?,
+            pointer_accel: decode_optional_f64(
+                config.get("pointer_accel"),
+                path,
+                "input.pointer_accel",
+            )?,
+            left_handed: decode_optional_bool(
+                config.get("left_handed"),
+                path,
+                "input.left_handed",
+            )?,
+            middle_emulation: decode_optional_bool(
+                config.get("middle_emulation"),
+                path,
+                "input.middle_emulation",
+            )?,
             dwt: decode_optional_bool(config.get("dwt"), path, "input.dwt")?,
         });
     }
@@ -196,16 +202,6 @@ fn decode_rules(value: Option<&Value>, path: &Path) -> Result<Vec<WindowRule>, L
     Ok(rules)
 }
 
-fn decode_titlebars(
-    value: Option<&Value>,
-    path: &Path,
-) -> Result<Vec<Value>, LayoutConfigError> {
-    let Some(value) = value else {
-        return Ok(Vec::new());
-    };
-    Ok(expect_array(path, value, "root.titlebars")?.to_vec())
-}
-
 fn decode_bindings(value: Option<&Value>, path: &Path) -> Result<Vec<Binding>, LayoutConfigError> {
     let Some(value) = value else {
         return Ok(Vec::new());
@@ -220,11 +216,8 @@ fn decode_bindings(value: Option<&Value>, path: &Path) -> Result<Vec<Binding>, L
     let mut bindings = Vec::new();
     for (index, entry) in entries.iter().enumerate() {
         let object = expect_object(path, entry, &format!("root.bindings.entries[{index}]"))?;
-        let bind = expect_array(
-            path,
-            required(object, "bind", path, "binding.bind")?,
-            "binding.bind",
-        )?;
+        let bind =
+            expect_array(path, required(object, "bind", path, "binding.bind")?, "binding.bind")?;
         let trigger = bind
             .iter()
             .map(|token| {
@@ -256,23 +249,17 @@ fn decode_command_descriptor(
     let command = expect_string(path, required(object, "_command", path, field)?, field)?;
     let arg = object.get("_arg").unwrap_or(&Value::Null);
     match command {
-        "spawn" => Ok(WmCommand::Spawn {
-            command: expect_string(path, arg, field)?.to_owned(),
-        }),
+        "spawn" => Ok(WmCommand::Spawn { command: expect_string(path, arg, field)?.to_owned() }),
         "reload_config" => Ok(WmCommand::ReloadConfig),
-        "focus_next" => Ok(WmCommand::FocusDirection {
-            direction: FocusDirection::Right,
-        }),
-        "focus_prev" => Ok(WmCommand::FocusDirection {
-            direction: FocusDirection::Left,
-        }),
-        "set_layout" => Ok(WmCommand::SetLayout {
-            name: expect_string(path, arg, field)?.to_owned(),
-        }),
+        "focus_next" => Ok(WmCommand::FocusDirection { direction: FocusDirection::Right }),
+        "focus_prev" => Ok(WmCommand::FocusDirection { direction: FocusDirection::Left }),
+        "set_layout" => {
+            Ok(WmCommand::SetLayout { name: expect_string(path, arg, field)?.to_owned() })
+        }
         "cycle_layout" => Ok(WmCommand::CycleLayout { direction: None }),
-        "view_workspace" => Ok(WmCommand::ViewWorkspace {
-            workspace: decode_workspace_shortcut(path, arg, field)?,
-        }),
+        "view_workspace" => {
+            Ok(WmCommand::ViewWorkspace { workspace: decode_workspace_shortcut(path, arg, field)? })
+        }
         "toggle_view_workspace" => Ok(WmCommand::ToggleViewWorkspace {
             workspace: decode_workspace_shortcut(path, arg, field)?,
         }),
@@ -282,24 +269,24 @@ fn decode_command_descriptor(
         "send_mon_right" => Ok(WmCommand::SendMonitorRight),
         "toggle_floating" => Ok(WmCommand::ToggleFloating),
         "toggle_fullscreen" => Ok(WmCommand::ToggleFullscreen),
-        "focus_dir" => Ok(WmCommand::FocusDirection {
-            direction: decode_focus_direction(path, arg, field)?,
-        }),
-        "swap_dir" => Ok(WmCommand::SwapDirection {
-            direction: decode_focus_direction(path, arg, field)?,
-        }),
-        "resize_dir" => Ok(WmCommand::ResizeDirection {
-            direction: decode_focus_direction(path, arg, field)?,
-        }),
+        "focus_dir" => {
+            Ok(WmCommand::FocusDirection { direction: decode_focus_direction(path, arg, field)? })
+        }
+        "swap_dir" => {
+            Ok(WmCommand::SwapDirection { direction: decode_focus_direction(path, arg, field)? })
+        }
+        "resize_dir" => {
+            Ok(WmCommand::ResizeDirection { direction: decode_focus_direction(path, arg, field)? })
+        }
         "resize_tiled" => Ok(WmCommand::ResizeTiledDirection {
             direction: decode_focus_direction(path, arg, field)?,
         }),
-        "move" => Ok(WmCommand::MoveDirection {
-            direction: decode_focus_direction(path, arg, field)?,
-        }),
-        "resize" => Ok(WmCommand::ResizeDirection {
-            direction: decode_focus_direction(path, arg, field)?,
-        }),
+        "move" => {
+            Ok(WmCommand::MoveDirection { direction: decode_focus_direction(path, arg, field)? })
+        }
+        "resize" => {
+            Ok(WmCommand::ResizeDirection { direction: decode_focus_direction(path, arg, field)? })
+        }
         "assign_workspace" => Ok(WmCommand::AssignFocusedWindowToWorkspace {
             workspace: decode_workspace_shortcut(path, arg, field)?,
         }),
@@ -397,9 +384,7 @@ fn decode_optional_string(
     path: &Path,
     field: &str,
 ) -> Result<Option<String>, LayoutConfigError> {
-    value
-        .map(|value| expect_string(path, value, field).map(str::to_owned))
-        .transpose()
+    value.map(|value| expect_string(path, value, field).map(str::to_owned)).transpose()
 }
 
 fn decode_optional_stringish(
@@ -451,10 +436,7 @@ fn decode_string_array(
         return Ok(Vec::new());
     };
     let items = expect_array(path, value, field)?;
-    items
-        .iter()
-        .map(|value| expect_string(path, value, field).map(str::to_owned))
-        .collect()
+    items.iter().map(|value| expect_string(path, value, field).map(str::to_owned)).collect()
 }
 
 fn expect_object<'a>(
@@ -462,12 +444,10 @@ fn expect_object<'a>(
     value: &'a Value,
     field: &str,
 ) -> Result<&'a serde_json::Map<String, Value>, LayoutConfigError> {
-    value
-        .as_object()
-        .ok_or_else(|| LayoutConfigError::DecodeAuthoredConfig {
-            path: path.to_path_buf(),
-            message: format!("expected object at {field}"),
-        })
+    value.as_object().ok_or_else(|| LayoutConfigError::DecodeAuthoredConfig {
+        path: path.to_path_buf(),
+        message: format!("expected object at {field}"),
+    })
 }
 
 fn expect_array<'a>(
@@ -475,12 +455,10 @@ fn expect_array<'a>(
     value: &'a Value,
     field: &str,
 ) -> Result<&'a Vec<Value>, LayoutConfigError> {
-    value
-        .as_array()
-        .ok_or_else(|| LayoutConfigError::DecodeAuthoredConfig {
-            path: path.to_path_buf(),
-            message: format!("expected array at {field}"),
-        })
+    value.as_array().ok_or_else(|| LayoutConfigError::DecodeAuthoredConfig {
+        path: path.to_path_buf(),
+        message: format!("expected array at {field}"),
+    })
 }
 
 fn expect_string<'a>(
@@ -488,40 +466,33 @@ fn expect_string<'a>(
     value: &'a Value,
     field: &str,
 ) -> Result<&'a str, LayoutConfigError> {
-    value
-        .as_str()
-        .ok_or_else(|| LayoutConfigError::DecodeAuthoredConfig {
-            path: path.to_path_buf(),
-            message: format!("expected string at {field}"),
-        })
+    value.as_str().ok_or_else(|| LayoutConfigError::DecodeAuthoredConfig {
+        path: path.to_path_buf(),
+        message: format!("expected string at {field}"),
+    })
 }
 
 fn expect_bool(path: &Path, value: &Value, field: &str) -> Result<bool, LayoutConfigError> {
-    value
-        .as_bool()
-        .ok_or_else(|| LayoutConfigError::DecodeAuthoredConfig {
-            path: path.to_path_buf(),
-            message: format!("expected boolean at {field}"),
-        })
+    value.as_bool().ok_or_else(|| LayoutConfigError::DecodeAuthoredConfig {
+        path: path.to_path_buf(),
+        message: format!("expected boolean at {field}"),
+    })
 }
 
 fn expect_u32(path: &Path, value: &Value, field: &str) -> Result<u32, LayoutConfigError> {
-    value
-        .as_u64()
-        .and_then(|value| u32::try_from(value).ok())
-        .ok_or_else(|| LayoutConfigError::DecodeAuthoredConfig {
+    value.as_u64().and_then(|value| u32::try_from(value).ok()).ok_or_else(|| {
+        LayoutConfigError::DecodeAuthoredConfig {
             path: path.to_path_buf(),
             message: format!("expected unsigned integer at {field}"),
-        })
+        }
+    })
 }
 
 fn expect_f64(path: &Path, value: &Value, field: &str) -> Result<f64, LayoutConfigError> {
-    value
-        .as_f64()
-        .ok_or_else(|| LayoutConfigError::DecodeAuthoredConfig {
-            path: path.to_path_buf(),
-            message: format!("expected number at {field}"),
-        })
+    value.as_f64().ok_or_else(|| LayoutConfigError::DecodeAuthoredConfig {
+        path: path.to_path_buf(),
+        message: format!("expected number at {field}"),
+    })
 }
 
 fn required<'a>(
@@ -530,10 +501,8 @@ fn required<'a>(
     path: &Path,
     field: &str,
 ) -> Result<&'a Value, LayoutConfigError> {
-    object
-        .get(key)
-        .ok_or_else(|| LayoutConfigError::DecodeAuthoredConfig {
-            path: path.to_path_buf(),
-            message: format!("missing required field `{key}` at {field}"),
-        })
+    object.get(key).ok_or_else(|| LayoutConfigError::DecodeAuthoredConfig {
+        path: path.to_path_buf(),
+        message: format!("missing required field `{key}` at {field}"),
+    })
 }

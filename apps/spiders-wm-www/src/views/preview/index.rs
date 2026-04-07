@@ -1,12 +1,7 @@
 use leptos::prelude::*;
-use spiders_core::command::WmCommand;
 use spiders_core::snapshot::WindowSnapshot;
 use spiders_core::wm::WindowGeometry;
 use spiders_css::ColorValue;
-use spiders_titlebar_core::{
-    TitlebarButtonAction, titlebar_button_action_from_data, titlebar_icon_nodes_from_data,
-    titlebar_icon_paths, titlebar_icon_view_box,
-};
 use spiders_wm_runtime::PreviewSnapshotClasses;
 
 use crate::app_state::AppState;
@@ -114,22 +109,6 @@ fn body_style(layout_style: Option<&spiders_scene::ComputedStyle>) -> String {
     };
 
     format!("position: relative; width: 100%; {padding_css} {overflow_css}")
-}
-
-fn titlebar_height_px(
-    titlebar_node: Option<&PreviewSnapshotNode>,
-    titlebar_style: Option<&spiders_scene::ComputedStyle>,
-) -> i32 {
-    titlebar_node
-        .and_then(|node| node.rect.map(|rect| rect.height.round() as i32))
-        .filter(|height| *height > 0)
-        .or_else(|| {
-            titlebar_style
-                .and_then(|style| style.height)
-                .map(size_value_to_px)
-                .filter(|height| *height > 0)
-        })
-        .unwrap_or(0)
 }
 
 fn css_color(color: ColorValue) -> String {
@@ -241,296 +220,6 @@ fn snapshot_class_name(class_name: Option<&PreviewSnapshotClasses>) -> Option<St
             Some(class_names.join(" "))
         }
         _ => None,
-    }
-}
-
-fn content_style(node: &PreviewSnapshotNode, container_rect: spiders_core::LayoutRect) -> String {
-    let mut parts = Vec::new();
-    if let Some(rect) = node.rect {
-        if node.node_type == "titlebar" {
-            let left = if container_rect.width > 0.0 {
-                ((rect.x - container_rect.x) / container_rect.width) * 100.0
-            } else {
-                0.0
-            };
-            let top = if container_rect.height > 0.0 {
-                ((rect.y - container_rect.y) / container_rect.height) * 100.0
-            } else {
-                0.0
-            };
-            let width = if container_rect.width > 0.0 {
-                (rect.width / container_rect.width) * 100.0
-            } else {
-                0.0
-            };
-            let height = if container_rect.height > 0.0 {
-                (rect.height / container_rect.height) * 100.0
-            } else {
-                0.0
-            };
-
-            parts.push(format!(
-                "position: absolute; left: {left:.4}%; top: {top:.4}%; width: {width:.4}%; height: {height:.4}%;"
-            ));
-        } else if node.node_type == "titlebar-button" || node.node_type == "titlebar-icon" {
-            if rect.width > 0.0 {
-                parts.push(format!("width: {}px;", rect.width));
-            }
-            if rect.height > 0.0 {
-                parts.push(format!("height: {}px;", rect.height));
-            }
-        }
-    }
-
-    if let Some(style) = node.layout_style.as_ref() {
-        if let Some(background) = style.background {
-            parts.push(format!("background: {};", css_color(background)));
-        }
-        if let Some(color) = style.color {
-            parts.push(format!("color: {};", css_color(color)));
-        }
-        if let Some(opacity) = style.opacity {
-            parts.push(format!("opacity: {:.3};", opacity.clamp(0.0, 1.0)));
-        }
-        if let Some(padding) = style.padding {
-            parts.push(format!(
-                "padding: {}px {}px {}px {}px;",
-                border_length_to_px(padding.top),
-                border_length_to_px(padding.right),
-                border_length_to_px(padding.bottom),
-                border_length_to_px(padding.left)
-            ));
-        }
-        if let Some(gap) = style.gap {
-            parts.push(format!(
-                "column-gap: {}px; row-gap: {}px;",
-                border_length_to_px(gap.width),
-                border_length_to_px(gap.height)
-            ));
-        }
-        if let Some(display) = style.display {
-            let display_css = match display {
-                spiders_css::Display::Block => "block",
-                spiders_css::Display::Flex => "flex",
-                spiders_css::Display::Grid => "grid",
-                spiders_css::Display::None => "none",
-            };
-            parts.push(format!("display: {display_css};"));
-        }
-        if let Some(direction) = style.flex_direction {
-            let direction_css = match direction {
-                spiders_css::FlexDirectionValue::Row => "row",
-                spiders_css::FlexDirectionValue::Column => "column",
-                spiders_css::FlexDirectionValue::RowReverse => "row-reverse",
-                spiders_css::FlexDirectionValue::ColumnReverse => "column-reverse",
-            };
-            parts.push(format!("flex-direction: {direction_css};"));
-        }
-        if let Some(flex_grow) = style.flex_grow {
-            parts.push(format!("flex-grow: {flex_grow};"));
-        }
-        if let Some(flex_shrink) = style.flex_shrink {
-            parts.push(format!("flex-shrink: {flex_shrink};"));
-        }
-        if let Some(flex_basis) = style.flex_basis.and_then(css_size_value) {
-            parts.push(format!("flex-basis: {flex_basis};"));
-        }
-        if let Some(justify) = style.justify_content {
-            let justify_css = match justify {
-                spiders_css::ContentAlignmentValue::Start => "start",
-                spiders_css::ContentAlignmentValue::End => "end",
-                spiders_css::ContentAlignmentValue::FlexStart => "flex-start",
-                spiders_css::ContentAlignmentValue::FlexEnd => "flex-end",
-                spiders_css::ContentAlignmentValue::Center => "center",
-                spiders_css::ContentAlignmentValue::Stretch => "stretch",
-                spiders_css::ContentAlignmentValue::SpaceBetween => "space-between",
-                spiders_css::ContentAlignmentValue::SpaceEvenly => "space-evenly",
-                spiders_css::ContentAlignmentValue::SpaceAround => "space-around",
-            };
-            parts.push(format!("justify-content: {justify_css};"));
-        }
-        if let Some(align) = style.align_items {
-            let align_css = match align {
-                spiders_css::AlignmentValue::Start => "start",
-                spiders_css::AlignmentValue::End => "end",
-                spiders_css::AlignmentValue::FlexStart => "flex-start",
-                spiders_css::AlignmentValue::FlexEnd => "flex-end",
-                spiders_css::AlignmentValue::Center => "center",
-                spiders_css::AlignmentValue::Baseline => "baseline",
-                spiders_css::AlignmentValue::Stretch => "stretch",
-            };
-            parts.push(format!("align-items: {align_css};"));
-        }
-        if let Some(width) = style.width.and_then(css_size_value) {
-            parts.push(format!("width: {width};"));
-        }
-        if let Some(height) = style.height.and_then(css_size_value) {
-            parts.push(format!("height: {height};"));
-        }
-        if let Some(min_width) = style.min_width.and_then(css_size_value) {
-            parts.push(format!("min-width: {min_width};"));
-        }
-        if let Some(min_height) = style.min_height.and_then(css_size_value) {
-            parts.push(format!("min-height: {min_height};"));
-        }
-        if let Some(max_width) = style.max_width.and_then(css_size_value) {
-            parts.push(format!("max-width: {max_width};"));
-        }
-        if let Some(max_height) = style.max_height.and_then(css_size_value) {
-            parts.push(format!("max-height: {max_height};"));
-        }
-        if let Some(radius) = style.border_radius {
-            parts.push(format!(
-                "border-radius: {}px {}px {}px {}px;",
-                radius.top_left, radius.top_right, radius.bottom_right, radius.bottom_left
-            ));
-        }
-        if let Some(text_align) = style.text_align {
-            let text_align_css = match text_align {
-                spiders_css::TextAlignValue::Left => "left",
-                spiders_css::TextAlignValue::Right => "right",
-                spiders_css::TextAlignValue::Center => "center",
-                spiders_css::TextAlignValue::Start => "start",
-                spiders_css::TextAlignValue::End => "end",
-            };
-            parts.push(format!("text-align: {text_align_css};"));
-        }
-        if let Some(font_size) = style.font_size {
-            parts.push(format!("font-size: {}px;", border_length_to_px(font_size)));
-        }
-        if let Some(font_weight) = style.font_weight {
-            let font_weight_css = match font_weight {
-                spiders_css::FontWeightValue::Normal => "400",
-                spiders_css::FontWeightValue::Bold => "700",
-            };
-            parts.push(format!("font-weight: {font_weight_css};"));
-        }
-    }
-
-    parts.join(" ")
-}
-
-fn titlebar_snapshot_node<'a>(
-    node: &'a PreviewSnapshotNode,
-    window_id: &spiders_core::WindowId,
-) -> Option<&'a PreviewSnapshotNode> {
-    if node.window_id.as_ref() == Some(window_id) {
-        return node.children.iter().find(|child| child.node_type == "titlebar");
-    }
-
-    node.children.iter().find_map(|child| titlebar_snapshot_node(child, window_id))
-}
-
-fn titlebar_action_command(node: &PreviewSnapshotNode) -> Option<WmCommand> {
-    match titlebar_button_action_from_data(&node.data) {
-        Some(TitlebarButtonAction::Close) => Some(WmCommand::CloseFocusedWindow),
-        Some(TitlebarButtonAction::ToggleFullscreen) => Some(WmCommand::ToggleFullscreen),
-        Some(TitlebarButtonAction::ToggleFloating) => Some(WmCommand::ToggleFloating),
-        _ => None,
-    }
-}
-
-fn titlebar_icon_paths_for_node(node: &PreviewSnapshotNode) -> Vec<String> {
-    titlebar_icon_nodes_from_data(&node.data)
-        .map(|nodes| titlebar_icon_paths(&nodes))
-        .unwrap_or_default()
-}
-
-fn titlebar_icon_view_box_for_node(node: &PreviewSnapshotNode) -> String {
-    titlebar_icon_nodes_from_data(&node.data)
-        .and_then(|nodes| titlebar_icon_view_box(&nodes))
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| "0 0 16 16".to_string())
-}
-
-#[component]
-fn SnapshotIconNode(node: PreviewSnapshotNode) -> impl IntoView {
-    let paths = titlebar_icon_paths_for_node(&node);
-    let view_box = titlebar_icon_view_box_for_node(&node);
-
-    view! {
-        <svg viewBox=view_box width="100%" height="100%" fill="currentColor" aria-hidden="true">
-            {paths
-                .into_iter()
-                .map(|d| view! { <path d=d /> })
-                .collect_view()}
-        </svg>
-    }
-}
-
-#[component]
-fn SnapshotContentNode(
-    node: PreviewSnapshotNode,
-    container_rect: spiders_core::LayoutRect,
-    on_action: Callback<WmCommand>,
-) -> AnyView {
-    let text = node.text.clone().unwrap_or_default();
-    let children = node.children.clone();
-    let style = content_style(&node, container_rect);
-    let command = titlebar_action_command(&node);
-    let is_button = node.node_type == "titlebar-button" && command.is_some();
-    let next_container_rect = node.rect.unwrap_or(container_rect);
-    let class_name = snapshot_class_name(node.class_name.as_ref());
-
-    if !is_button {
-        let icon_paths = titlebar_icon_paths_for_node(&node);
-        if !icon_paths.is_empty() {
-            return view! {
-                <div class=class_name style=style>
-                    <SnapshotIconNode node=node />
-                </div>
-            }
-            .into_any();
-        }
-    }
-
-    if is_button {
-        let command = command.expect("checked above");
-        view! {
-            <button
-                type="button"
-                class=class_name
-                style=style
-                on:click=move |event| {
-                    event.stop_propagation();
-                    on_action.run(command.clone());
-                }
-            >
-                {(!text.is_empty()).then(|| view! { <span>{text.clone()}</span> })}
-                {children
-                    .into_iter()
-                    .map(|child| {
-                        view! {
-                            <SnapshotContentNode
-                                node=child
-                                container_rect=next_container_rect
-                                on_action=on_action
-                            />
-                        }
-                    })
-                    .collect_view()}
-            </button>
-        }
-        .into_any()
-    } else {
-        view! {
-            <div class=class_name style=style>
-                {(!text.is_empty()).then(|| view! { <span>{text.clone()}</span> })}
-                {children
-                    .into_iter()
-                    .map(|child| {
-                        view! {
-                            <SnapshotContentNode
-                                node=child
-                                container_rect=next_container_rect
-                                on_action=on_action
-                            />
-                        }
-                    })
-                    .collect_view()}
-            </div>
-        }
-        .into_any()
     }
 }
 
@@ -686,54 +375,16 @@ pub fn PreviewView() -> impl IntoView {
                                                 .map(|window| {
                                                     let style_window = window.clone();
                                                     let surface_window = window.clone();
-                                                    let focus_target = window.id.clone();
-                                                    let pane_focus_target = focus_target.clone();
+                                                    let pane_focus_target = window.id.clone();
                                                     let focused_id = window.id.clone();
                                                     let accent = window_accent(&window);
-                                                    let geometry = app_state
-                                                        .session
-                                                        .get()
-                                                        .window_geometry(&window.id);
-                                                    let dimensions = format!(
-                                                        "{}x{}",
-                                                        geometry.width,
-                                                        geometry.height,
-                                                    );
                                                     let is_foot = window.app_id.as_deref() == Some("foot");
                                                     let focused = Signal::derive(move || {
                                                         app_state.session.get().focused_window_id().as_ref()
                                                             == Some(&focused_id)
                                                     });
-                                                    let titlebar_node = app_state
-                                                        .session
-                                                        .get()
-                                                        .snapshot_root
-                                                        .as_ref()
-                                                        .and_then(|root| titlebar_snapshot_node(root, &window.id))
-                                                        .cloned();
-                                                    let (layout_style, titlebar_style) = app_state
-                                                        .session
-                                                        .get()
-                                                        .window_titlebar_styles(&window.id);
-                                                    let show_titlebar_node = titlebar_node.clone();
-                                                    let show_titlebar_style = titlebar_style.clone();
-                                                    let render_titlebar_node = titlebar_node.clone();
-                                                    let render_titlebar_style = titlebar_style.clone();
-                                                    let fallback_window_title = window_display_title(&window).to_string();
                                                     let fallback_window_id = window.id.clone();
-                                                    let titlebar_focus_target = focus_target.clone();
-                                                    let titlebar_action = Callback::new(move |command: WmCommand| {
-                                                        let action = app_state.mutate_session(|state| {
-                                                            let _ = state.set_focus(titlebar_focus_target.clone());
-                                                            state.apply_command(command)
-                                                        });
-                                                        app_state.apply_preview_render_action(action);
-                                                    });
-                                                    let body_style_value = body_style(layout_style.as_ref());
-                                                    let resolved_titlebar_height = titlebar_height_px(
-                                                        titlebar_node.as_ref(),
-                                                        titlebar_style.as_ref(),
-                                                    );
+                                                    let foot_focus_window_id = fallback_window_id.clone();
 
                                                     view! {
                                                         <div
@@ -750,8 +401,8 @@ pub fn PreviewView() -> impl IntoView {
                                                             style=move || {
                                                                 let snapshot = app_state.session.get();
                                                                 let layout_style = snapshot
-                                                                    .window_titlebar_styles(&style_window.id)
-                                                                    .0;
+                                                                    .snapshot_node_for_window(&style_window.id)
+                                                                    .and_then(|node| node.layout_style.clone());
                                                                 format!(
                                                                     "{} {}",
                                                                     pane_style(
@@ -770,87 +421,22 @@ pub fn PreviewView() -> impl IntoView {
                                                                 app_state.apply_preview_render_action(action);
                                                             }
                                                         >
-                                                            <Show
-                                                                when=move || show_titlebar_node.is_some() || show_titlebar_style.is_some()
-                                                                fallback=move || view! { <></> }
-                                                            >
-                                                                {render_titlebar_node
-                                                                    .clone()
-                                                                    .map(|node| {
-                                                                        let container_rect = spiders_core::LayoutRect {
-                                                                            x: geometry.x as f32,
-                                                                            y: geometry.y as f32,
-                                                                            width: geometry.width as f32,
-                                                                            height: geometry.height as f32,
-                                                                        };
-                                                                        view! {
-                                                                            <SnapshotContentNode
-                                                                                node=node
-                                                                                container_rect=container_rect
-                                                                                on_action=titlebar_action
-                                                                            />
-                                                                        }
-                                                                        .into_any()
-                                                                    })
-                                                                    .unwrap_or_else(|| {
-                                                                        let fallback_height = render_titlebar_style
-                                                                            .as_ref()
-                                                                            .and_then(|style| style.height)
-                                                                            .map(size_value_to_px)
-                                                                            .unwrap_or(28) as f32;
-                                                                        view! {
-                                                                            <div style=content_style(&PreviewSnapshotNode {
-                                                                                node_type: "titlebar".to_string(),
-                                                                                id: None,
-                                                                                class_name: None,
-                                                                                rect: Some(spiders_core::LayoutRect {
-                                                                                    x: 0.0,
-                                                                                    y: 0.0,
-                                                                                    width: geometry.width as f32,
-                                                                                    height: fallback_height,
-                                                                                }),
-                                                                                window_id: None,
-                                                                                axis: None,
-                                                                                reverse: false,
-                                                                                layout_style: render_titlebar_style.clone(),
-                                                                                titlebar_style: None,
-                                                                                text: None,
-                                                                                data: Default::default(),
-                                                                                children: Vec::new(),
-                                                                            }, spiders_core::LayoutRect {
-                                                                                x: 0.0,
-                                                                                y: 0.0,
-                                                                                width: geometry.width as f32,
-                                                                                height: geometry.height as f32,
-                                                                            })>
-                                                                                <span class="truncate min-w-0 flex-1">{fallback_window_title.clone()}</span>
-                                                                                <span class="text-terminal-dim shrink-0 text-xs">{dimensions.clone()}</span>
-                                                                            </div>
-                                                                        }
-                                                                        .into_any()
-                                                                    })}
-                                                            </Show>
-
                                                             <div style=move || {
-                                                                if resolved_titlebar_height > 0 {
-                                                                    format!(
-                                                                        "margin-top: {}px; width: 100%; height: calc(100% - {}px); box-sizing: border-box; {}",
-                                                                        resolved_titlebar_height,
-                                                                        resolved_titlebar_height,
-                                                                        body_style_value.clone(),
-                                                                    )
-                                                                } else {
-                                                                    format!(
-                                                                        "height: 100%; width: 100%; box-sizing: border-box; {}",
-                                                                        body_style_value.clone(),
-                                                                    )
-                                                                }
+                                                                let layout_style = app_state
+                                                                    .session
+                                                                    .get()
+                                                                    .snapshot_node_for_window(&fallback_window_id)
+                                                                    .and_then(|node| node.layout_style.clone());
+                                                                format!(
+                                                                    "height: 100%; width: 100%; box-sizing: border-box; {}",
+                                                                    body_style(layout_style.as_ref()),
+                                                                )
                                                             }>
                                                             {if is_foot {
                                                                 view! {
                                                                     <FootTerminal focused=Signal::derive(move || {
                                                                         app_state.session.get().focused_window_id().as_ref()
-                                                                            == Some(&fallback_window_id)
+                                                                            == Some(&foot_focus_window_id)
                                                                     }) />
                                                                 }
                                                                     .into_any()

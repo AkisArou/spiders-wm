@@ -11,8 +11,9 @@ pub use module_graph_runtime::{
 };
 pub use runtime::QuickJsPreparedLayoutRuntime;
 
-pub type DefaultLayoutRuntime =
-    runtime::QuickJsPreparedLayoutRuntime<spiders_runtime_js_core::loader::RuntimeProjectLayoutSourceLoader>;
+pub type DefaultLayoutRuntime = runtime::QuickJsPreparedLayoutRuntime<
+    spiders_runtime_js_core::loader::RuntimeProjectLayoutSourceLoader,
+>;
 
 pub fn build_default_runtime(paths: &ConfigPaths) -> DefaultLayoutRuntime {
     let resolver = spiders_runtime_js_core::loader::RuntimePathResolver::new(
@@ -40,7 +41,10 @@ impl RuntimeProvider for JavaScriptNativeRuntimeProvider {
         RuntimeKind::JavaScript
     }
 
-    fn build_runtime_bundle(&self, paths: &ConfigPaths) -> Result<RuntimeBundle, LayoutConfigError> {
+    fn build_runtime_bundle(
+        &self,
+        paths: &ConfigPaths,
+    ) -> Result<RuntimeBundle, LayoutConfigError> {
         let runtime = build_default_runtime(paths);
         Ok(RuntimeBundle {
             config_runtime: Box::new(runtime.clone()),

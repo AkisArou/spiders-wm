@@ -57,9 +57,7 @@ impl<M: MotionModifier> AnimationModifierApplier<M> {
         keyframes: &[CompiledKeyframesRule],
     ) -> bool {
         let base_value = M::base_value(style);
-        style
-            .and_then(|style| self.extract_animation_spec(style, keyframes, &base_value))
-            .is_some()
+        style.and_then(|style| self.extract_animation_spec(style, keyframes, &base_value)).is_some()
     }
 
     pub(crate) fn apply_modifier(
@@ -75,13 +73,7 @@ impl<M: MotionModifier> AnimationModifierApplier<M> {
         let animation_spec =
             style.and_then(|style| self.extract_animation_spec(style, keyframes, &base_value));
 
-        self.apply_state(
-            state,
-            &base_value,
-            animation_spec,
-            M::context_from_motion(context),
-            now,
-        )
+        self.apply_state(state, &base_value, animation_spec, M::context_from_motion(context), now)
     }
 
     #[cfg(test)]
@@ -183,10 +175,8 @@ impl<M: MotionModifier> AnimationModifierApplier<M> {
             .steps
             .iter()
             .filter_map(|step| {
-                M::keyframe_value(step).map(|value| MotionKeyframe {
-                    offset: step.offset.clamp(0.0, 1.0),
-                    value,
-                })
+                M::keyframe_value(step)
+                    .map(|value| MotionKeyframe { offset: step.offset.clamp(0.0, 1.0), value })
             })
             .collect::<Vec<_>>();
 
@@ -195,22 +185,14 @@ impl<M: MotionModifier> AnimationModifierApplier<M> {
         }
 
         if !frames.iter().any(|frame| frame.offset <= 0.0) {
-            frames.push(MotionKeyframe {
-                offset: 0.0,
-                value: base_value.clone(),
-            });
+            frames.push(MotionKeyframe { offset: 0.0, value: base_value.clone() });
         }
         if !frames.iter().any(|frame| frame.offset >= 1.0) {
-            frames.push(MotionKeyframe {
-                offset: 1.0,
-                value: base_value.clone(),
-            });
+            frames.push(MotionKeyframe { offset: 1.0, value: base_value.clone() });
         }
 
         frames.sort_by(|left, right| {
-            left.offset
-                .partial_cmp(&right.offset)
-                .unwrap_or(std::cmp::Ordering::Equal)
+            left.offset.partial_cmp(&right.offset).unwrap_or(std::cmp::Ordering::Equal)
         });
 
         let mut deduped: Vec<MotionKeyframe<M::Value>> = Vec::with_capacity(frames.len());
@@ -291,9 +273,7 @@ impl<M: MotionModifier> AnimationModifierApplier<M> {
     ) -> (M::Output, bool, bool) {
         let spec = &animation.spec;
         let overall_progress = animation.paused_progress.unwrap_or_else(|| {
-            let elapsed = now
-                .saturating_duration_since(animation.started_at)
-                .as_secs_f32();
+            let elapsed = now.saturating_duration_since(animation.started_at).as_secs_f32();
             if spec.duration_secs <= 0.0 {
                 0.0
             } else {
@@ -373,11 +353,7 @@ impl<M: MotionModifier> AnimationModifierApplier<M> {
             AnimationDirectionValue::AlternateReverse => cycle_index % 2 == 0,
         };
 
-        if reverse {
-            1.0 - cycle_progress
-        } else {
-            cycle_progress
-        }
+        if reverse { 1.0 - cycle_progress } else { cycle_progress }
     }
 
     fn sample_keyframes(
@@ -421,9 +397,5 @@ impl<M: MotionModifier> AnimationModifierApplier<M> {
 }
 
 fn cycle_value<T>(values: &[T], index: usize) -> Option<&T> {
-    if values.is_empty() {
-        None
-    } else {
-        values.get(index % values.len())
-    }
+    if values.is_empty() { None } else { values.get(index % values.len()) }
 }

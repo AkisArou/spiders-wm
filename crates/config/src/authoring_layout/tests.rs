@@ -14,7 +14,8 @@ use tempfile::TempDir;
 use super::*;
 use crate::model::{Config, ConfigDiscoveryOptions, ConfigPaths, LayoutDefinition};
 use crate::runtime::{
-    AuthoringConfigRuntime, SourceBundle, SourceBundleConfigRuntime, SourceBundlePreparedLayoutRuntime,
+    AuthoringConfigRuntime, SourceBundle, SourceBundleConfigRuntime,
+    SourceBundlePreparedLayoutRuntime,
 };
 
 #[derive(Debug, Clone)]
@@ -190,7 +191,12 @@ impl SourceBundlePreparedLayoutRuntime for StubSourceBundleRuntime {
         _sources: &'a SourceBundle,
         _config: &'a Config,
         _workspace: &'a WorkspaceSnapshot,
-    ) -> Pin<Box<dyn Future<Output = Result<Option<PreparedLayout>, crate::model::LayoutConfigError>> + 'a>> {
+    ) -> Pin<
+        Box<
+            dyn Future<Output = Result<Option<PreparedLayout>, crate::model::LayoutConfigError>>
+                + 'a,
+        >,
+    > {
         let loaded = self.loaded.clone();
         Box::pin(async move { Ok(loaded) })
     }
@@ -210,7 +216,8 @@ impl SourceBundlePreparedLayoutRuntime for StubSourceBundleRuntime {
         _sources: &'a SourceBundle,
         _artifact: &'a PreparedLayout,
         _context: &'a LayoutEvaluationContext,
-    ) -> Pin<Box<dyn Future<Output = Result<SourceLayoutNode, crate::model::LayoutConfigError>> + 'a>> {
+    ) -> Pin<Box<dyn Future<Output = Result<SourceLayoutNode, crate::model::LayoutConfigError>> + 'a>>
+    {
         Box::pin(async move {
             Ok(SourceLayoutNode::Workspace { meta: Default::default(), children: vec![] })
         })
@@ -449,7 +456,9 @@ fn source_bundle_authoring_layout_service_loads_config() {
                 directory: "layouts/master-stack".into(),
                 module: "layouts/master-stack/index.tsx".into(),
                 stylesheet_path: Some("layouts/master-stack/index.css".into()),
-                runtime_cache_payload: Some(runtime_cache_payload("layouts/master-stack/index.tsx")),
+                runtime_cache_payload: Some(runtime_cache_payload(
+                    "layouts/master-stack/index.tsx",
+                )),
             }],
             ..Config::default()
         },
@@ -480,7 +489,9 @@ fn source_bundle_authoring_layout_service_evaluates_prepared_layout() {
                 directory: "layouts/master-stack".into(),
                 module: "layouts/master-stack/index.tsx".into(),
                 stylesheet_path: Some("layouts/master-stack/index.css".into()),
-                runtime_cache_payload: Some(runtime_cache_payload("layouts/master-stack/index.tsx")),
+                runtime_cache_payload: Some(runtime_cache_payload(
+                    "layouts/master-stack/index.tsx",
+                )),
             }],
             ..Config::default()
         },

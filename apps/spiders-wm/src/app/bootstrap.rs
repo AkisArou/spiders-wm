@@ -1,5 +1,6 @@
 use std::sync::Arc;
 use std::sync::mpsc;
+use std::time::Duration;
 
 use spiders_config::model::{Config, ConfigPaths, config_discovery_options_from_env};
 use spiders_config::runtime::build_authoring_layout_service;
@@ -15,16 +16,19 @@ use smithay::desktop::{PopupManager, Space};
 use smithay::input::{Seat, SeatState};
 use smithay::output::{Mode, Output, PhysicalProperties, Subpixel};
 use smithay::reexports::calloop::{
-    EventLoop, Interest, Mode as CalloopMode, PostAction, generic::Generic,
+    EventLoop, Interest, LoopHandle, Mode as CalloopMode, PostAction,
+    generic::Generic,
+    timer::{TimeoutAction, Timer},
 };
 use smithay::reexports::wayland_server::Display;
-use smithay::utils::Transform;
+use smithay::utils::{Physical, Size, Transform};
 use smithay::wayland::compositor::CompositorState;
 use smithay::wayland::dmabuf::DmabufFeedbackBuilder;
 use smithay::wayland::dmabuf::{DmabufGlobal, DmabufState};
 use smithay::wayland::output::OutputManagerState;
 use smithay::wayland::selection::data_device::DataDeviceState;
 use smithay::wayland::shell::xdg::XdgShellState;
+use smithay::wayland::shell::xdg::decoration::XdgDecorationState;
 use smithay::wayland::shm::ShmState;
 use smithay::wayland::socket::ListeningSocketSource;
 use tracing::warn;
@@ -45,6 +49,7 @@ pub(crate) fn build_state(
     let display_handle = display.handle();
     let compositor_state = CompositorState::new::<SpidersWm>(&display_handle);
     let xdg_shell_state = XdgShellState::new::<SpidersWm>(&display_handle);
+    let xdg_decoration_state = XdgDecorationState::new::<SpidersWm>(&display_handle);
     let shm_state = ShmState::new::<SpidersWm>(&display_handle, vec![]);
     let dmabuf_state = DmabufState::new();
     let _output_manager_state =
@@ -83,6 +88,7 @@ pub(crate) fn build_state(
         popups,
         compositor_state,
         xdg_shell_state,
+        _xdg_decoration_state: xdg_decoration_state,
         shm_state,
         dmabuf_state,
         dmabuf_global: None::<DmabufGlobal>,
@@ -96,8 +102,7 @@ pub(crate) fn build_state(
         config,
         managed_windows: Vec::new(),
         frame_sync: FrameSyncState::default(),
-        titlebar_overlays: Default::default(),
-        titlebar_layout: Default::default(),
+        scene_snapshot_root: None,
         ipc_server: spiders_ipc::IpcServerState::new(),
         ipc_clients: std::collections::BTreeMap::new(),
         ipc_socket_path,
@@ -105,7 +110,51 @@ pub(crate) fn build_state(
         scene: SceneLayoutState::new(config_paths.clone()),
         model,
         next_window_id: 1,
+        relayout_queued: false,
+        relayout_generation: 0,
+        relayout_cause: Default::default(),
     }
+}
+
+pub(crate) fn schedule_queued_relayout_timer(
+    event_loop: &LoopHandle<'static, SpidersWm>,
+    generation: u64,
+    cause: crate::state::RelayoutCause,
+) {
+    let delay_ms = match cause {
+        crate::state::RelayoutCause::General => 20,
+        crate::state::RelayoutCause::FirstMapBurst => 60,
+    };
+
+    event_loop
+        .insert_source(Timer::from_duration(Duration::from_millis(delay_ms)), move |_, _, state| {
+            if !state.relayout_queued || state.relayout_generation != generation {
+                return TimeoutAction::Drop;
+            }
+
+            let retry_delay_ms = match state.relayout_cause {
+                crate::state::RelayoutCause::General => 20,
+                crate::state::RelayoutCause::FirstMapBurst => 60,
+            };
+
+            let pending_unmapped_windows =
+                state.managed_windows.iter().filter(|record| !record.mapped).count();
+            if pending_unmapped_windows > 0 {
+                tracing::debug!(
+                    pending_unmapped_windows,
+                    window_count = state.managed_window_count(),
+                    generation,
+                    relayout_cause = ?state.relayout_cause,
+                    "wm deferred queued relayout while windows are still pending first map"
+                );
+                return TimeoutAction::ToDuration(Duration::from_millis(retry_delay_ms));
+            }
+
+            state.relayout_queued = false;
+            state.schedule_relayout();
+            TimeoutAction::Drop
+        })
+        .expect("failed to register queued relayout timer");
 }
 
 pub(crate) fn load_wm_config(existing_paths: Option<ConfigPaths>) -> (Option<ConfigPaths>, Config) {
@@ -196,8 +245,19 @@ pub(crate) fn init_winit(
 
     state.backend = Some(backend);
 
+    let reported_size =
+        state.backend.as_ref().expect("winit backend missing during init").window_size();
     let mode = Mode {
-        size: state.backend.as_ref().expect("winit backend missing during init").window_size(),
+        size: sanitize_winit_output_size(reported_size).unwrap_or_else(|| {
+            warn!(
+                reported_width = reported_size.w,
+                reported_height = reported_size.h,
+                fallback_width = DEFAULT_WINIT_OUTPUT_WIDTH,
+                fallback_height = DEFAULT_WINIT_OUTPUT_HEIGHT,
+                "wm ignoring tiny startup winit output size"
+            );
+            default_winit_output_size()
+        }),
         refresh: 60_000,
     };
 
@@ -237,6 +297,14 @@ pub(crate) fn init_winit(
 
     event_loop.handle().insert_source(winit, move |event, _, state| match event {
         WinitEvent::Resized { size, .. } => {
+            let Some(size) = sanitize_winit_output_size(size) else {
+                warn!(
+                    reported_width = size.w,
+                    reported_height = size.h,
+                    "wm ignoring tiny winit resize event"
+                );
+                return;
+            };
             output.change_current_state(Some(Mode { size, refresh: 60_000 }), None, None, None);
             let config = state.config.clone();
             let events = {
@@ -266,6 +334,18 @@ pub(crate) fn init_winit(
     Ok(())
 }
 
+const DEFAULT_WINIT_OUTPUT_WIDTH: i32 = 1280;
+const DEFAULT_WINIT_OUTPUT_HEIGHT: i32 = 800;
+const MIN_VALID_WINIT_OUTPUT_EDGE: i32 = 64;
+
+fn default_winit_output_size() -> Size<i32, Physical> {
+    Size::from((DEFAULT_WINIT_OUTPUT_WIDTH, DEFAULT_WINIT_OUTPUT_HEIGHT))
+}
+
+fn sanitize_winit_output_size(size: Size<i32, Physical>) -> Option<Size<i32, Physical>> {
+    (size.w >= MIN_VALID_WINIT_OUTPUT_EDGE && size.h >= MIN_VALID_WINIT_OUTPUT_EDGE).then_some(size)
+}
+
 fn init_wayland_listener(
     display: Display<SpidersWm>,
     event_loop: &mut EventLoop<'static, SpidersWm>,
@@ -281,6 +361,9 @@ fn init_wayland_listener(
                 .display_handle
                 .insert_client(client_stream, Arc::new(ClientState::default()))
                 .expect("failed to insert Wayland client");
+            if let Err(error) = state.display_handle.flush_clients() {
+                warn!(?error, "failed to flush Wayland clients after insert");
+            }
         })
         .expect("failed to register Wayland listening socket");
 
@@ -290,6 +373,9 @@ fn init_wayland_listener(
             |_, display, state| {
                 unsafe {
                     display.get_mut().dispatch_clients(state).expect("failed to dispatch clients");
+                }
+                if let Err(error) = state.display_handle.flush_clients() {
+                    warn!(?error, "failed to flush Wayland clients after dispatch");
                 }
                 Ok(PostAction::Continue)
             },
@@ -310,7 +396,8 @@ mod tests {
     use spiders_core::wm::WmModel;
     use spiders_wm_runtime::WmRuntime;
 
-    use super::load_wm_config;
+    use super::{default_winit_output_size, load_wm_config, sanitize_winit_output_size};
+    use smithay::utils::{Physical, Size};
 
     fn unique_root(name: &str) -> PathBuf {
         let nonce = SystemTime::now()
@@ -342,6 +429,21 @@ export default {{
             ),
         )
         .expect("failed to write authored config");
+    }
+
+    #[test]
+    fn sanitize_winit_output_size_rejects_placeholder_sizes() {
+        assert_eq!(sanitize_winit_output_size(Size::<i32, Physical>::from((2, 2))), None);
+        assert_eq!(sanitize_winit_output_size(Size::<i32, Physical>::from((63, 200))), None);
+    }
+
+    #[test]
+    fn sanitize_winit_output_size_keeps_real_sizes() {
+        assert_eq!(
+            sanitize_winit_output_size(Size::<i32, Physical>::from((1280, 800))),
+            Some(Size::<i32, Physical>::from((1280, 800)))
+        );
+        assert_eq!(default_winit_output_size(), Size::<i32, Physical>::from((1280, 800)));
     }
 
     #[test]

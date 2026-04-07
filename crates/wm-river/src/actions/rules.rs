@@ -1,18 +1,14 @@
 use spiders_config::model::{Config, WindowRule};
-use spiders_core::types::WindowMode;
 use spiders_core::WorkspaceId;
+use spiders_core::types::WindowMode;
 
 use crate::model::WindowState;
 
 fn rule_matches_window(rule: &WindowRule, window: &WindowState) -> bool {
-    let app_id_matches = rule
-        .app_id
-        .as_ref()
-        .is_none_or(|app_id| window.app_id.as_ref() == Some(app_id));
-    let title_matches = rule
-        .title
-        .as_ref()
-        .is_none_or(|title| window.title.as_ref() == Some(title));
+    let app_id_matches =
+        rule.app_id.as_ref().is_none_or(|app_id| window.app_id.as_ref() == Some(app_id));
+    let title_matches =
+        rule.title.as_ref().is_none_or(|title| window.title.as_ref() == Some(title));
 
     app_id_matches && title_matches
 }
@@ -30,17 +26,13 @@ pub fn configured_workspace_for_window(
 }
 
 pub fn configured_mode_for_window(config: &Config, window: &WindowState) -> Option<WindowMode> {
-    config
-        .rules
-        .iter()
-        .find(|rule| rule_matches_window(rule, window))
-        .and_then(|rule| {
-            if rule.fullscreen == Some(true) {
-                Some(WindowMode::Fullscreen)
-            } else if rule.floating == Some(true) {
-                Some(WindowMode::Floating { rect: None })
-            } else {
-                None
-            }
-        })
+    config.rules.iter().find(|rule| rule_matches_window(rule, window)).and_then(|rule| {
+        if rule.fullscreen == Some(true) {
+            Some(WindowMode::Fullscreen)
+        } else if rule.floating == Some(true) {
+            Some(WindowMode::Floating { rect: None })
+        } else {
+            None
+        }
+    })
 }

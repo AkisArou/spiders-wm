@@ -1,16 +1,14 @@
 use std::collections::BTreeMap;
 
+use spiders_core::SourceLayoutNode;
 use spiders_core::runtime::layout_context::{
     LayoutEvaluationContext, LayoutEvaluationDependencies,
 };
 use spiders_core::runtime::prepared_layout::PreparedLayout;
 use spiders_core::snapshot::{StateSnapshot, WorkspaceSnapshot};
-use spiders_core::SourceLayoutNode;
 
 use crate::model::{Config, LayoutConfigError};
-use crate::runtime::{
-    SourceBundle, SourceBundleConfigRuntime, SourceBundlePreparedLayoutRuntime,
-};
+use crate::runtime::{SourceBundle, SourceBundleConfigRuntime, SourceBundlePreparedLayoutRuntime};
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct EvaluationCacheKey {
@@ -64,10 +62,8 @@ impl SourceBundleAuthoringLayoutService {
         config: &Config,
         workspace: &WorkspaceSnapshot,
     ) -> Result<Option<&PreparedLayout>, LayoutConfigError> {
-        let Some(loaded) = self
-            .layout_runtime
-            .prepare_layout(root_dir, sources, config, workspace)
-            .await?
+        let Some(loaded) =
+            self.layout_runtime.prepare_layout(root_dir, sources, config, workspace).await?
         else {
             return Ok(None);
         };
@@ -85,7 +81,8 @@ impl SourceBundleAuthoringLayoutService {
         state: &StateSnapshot,
         workspace: &WorkspaceSnapshot,
     ) -> Result<Option<PreparedSourceBundleLayoutEvaluation>, LayoutConfigError> {
-        let Some(loaded) = self.prepare_for_workspace(root_dir, sources, config, workspace).await?.cloned()
+        let Some(loaded) =
+            self.prepare_for_workspace(root_dir, sources, config, workspace).await?.cloned()
         else {
             return Ok(None);
         };
@@ -93,23 +90,26 @@ impl SourceBundleAuthoringLayoutService {
         let context = self.layout_runtime.build_context(state, workspace, Some(&loaded));
         let cache_key = EvaluationCacheKey {
             layout_name: loaded.selected.name.clone(),
-            artifact_key: serde_json::to_string(&loaded)
-                .map_err(|error| LayoutConfigError::EvaluateAuthoredConfig {
+            artifact_key: serde_json::to_string(&loaded).map_err(|error| {
+                LayoutConfigError::EvaluateAuthoredConfig {
                     path: root_dir.join(&loaded.selected.module),
                     message: error.to_string(),
-                })?,
-            context_key: serde_json::to_string(&context)
-                .map_err(|error| LayoutConfigError::EvaluateAuthoredConfig {
+                }
+            })?,
+            context_key: serde_json::to_string(&context).map_err(|error| {
+                LayoutConfigError::EvaluateAuthoredConfig {
                     path: root_dir.join(&loaded.selected.module),
                     message: error.to_string(),
-                })?,
+                }
+            })?,
         };
 
         if let Some(cached) = self.evaluation_cache.get(&cache_key) {
             return Ok(Some(cached.clone()));
         }
 
-        let evaluated = self.layout_runtime.evaluate_layout(root_dir, sources, &loaded, &context).await?;
+        let evaluated =
+            self.layout_runtime.evaluate_layout(root_dir, sources, &loaded, &context).await?;
 
         let result = PreparedSourceBundleLayoutEvaluation {
             artifact: loaded,

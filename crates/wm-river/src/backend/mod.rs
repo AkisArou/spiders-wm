@@ -9,14 +9,12 @@ use spiders_config::model::ConfigPaths;
 use spiders_config::model::InputConfig;
 use spiders_config::model::{Binding, Config};
 use spiders_config::runtime::build_authoring_layout_service;
+use spiders_core::command::{FocusDirection, WmCommand};
 use spiders_runtime_js_native::JavaScriptNativeRuntimeProvider;
 use spiders_scene::pipeline::SceneCache;
-use spiders_core::command::{FocusDirection, WmCommand};
 use tracing::{debug, info, warn};
 use wayland_backend::client::ObjectId;
-use wayland_client::protocol::{
-    wl_buffer, wl_compositor, wl_output, wl_registry, wl_seat, wl_shm, wl_shm_pool, wl_surface,
-};
+use wayland_client::protocol::{wl_compositor, wl_output, wl_registry, wl_seat, wl_shm};
 use wayland_client::{Connection, Dispatch, EventQueue, Proxy, QueueHandle};
 use xkbcommon::xkb;
 
@@ -32,7 +30,7 @@ use crate::protocol::river_libinput_config::{
     river_libinput_config_v1, river_libinput_device_v1, river_libinput_result_v1,
 };
 use crate::protocol::river_window_management_v1::{
-    river_decoration_v1, river_node_v1, river_output_v1, river_pointer_binding_v1, river_seat_v1,
+    river_node_v1, river_output_v1, river_pointer_binding_v1, river_seat_v1,
     river_window_manager_v1, river_window_v1,
 };
 use crate::protocol::river_xkb_bindings::{river_xkb_binding_v1, river_xkb_bindings_v1};
@@ -44,7 +42,6 @@ use crate::protocol::{
     RIVER_WINDOW_MANAGEMENT_GLOBAL, RIVER_XKB_BINDINGS_GLOBAL, RIVER_XKB_CONFIG_GLOBAL,
     RiverProtocolSupport,
 };
-use crate::runtime::registry::TitlebarRecord;
 use crate::runtime::{
     BindingTargetKind, InputDeviceKind, InputDeviceRecord, LibinputDeviceRecord, OutputRecord,
     ParsedBinding, PointerBindingRecord, RiverRegistry, SeatRecord, WindowRecord, WlOutputRecord,
@@ -90,9 +87,7 @@ impl RiverConnection {
         event_queue.roundtrip(&mut state)?;
 
         if !state.protocol_support.supports_minimum_viable_wm() {
-            return Err(anyhow!(
-                "river_window_manager_v1 not available; is river running?"
-            ));
+            return Err(anyhow!("river_window_manager_v1 not available; is river running?"));
         }
 
         if !state.protocol_support.xkb_bindings {
@@ -101,11 +96,7 @@ impl RiverConnection {
             ));
         }
 
-        Ok(Self {
-            connection,
-            event_queue,
-            state,
-        })
+        Ok(Self { connection, event_queue, state })
     }
 
     pub fn connection(&self) -> &Connection {
@@ -166,25 +157,20 @@ impl RiverBackendState {
 
         for layout in &self.config.layouts {
             let workspace =
-                base_workspace
-                    .clone()
-                    .unwrap_or(spiders_core::snapshot::WorkspaceSnapshot {
-                        id: spiders_core::WorkspaceId::from("warmup"),
-                        name: "warmup".into(),
-                        output_id: None,
-                        active_workspaces: Vec::new(),
-                        focused: true,
-                        visible: true,
-                        effective_layout: None,
-                    });
+                base_workspace.clone().unwrap_or(spiders_core::snapshot::WorkspaceSnapshot {
+                    id: spiders_core::WorkspaceId::from("warmup"),
+                    name: "warmup".into(),
+                    output_id: None,
+                    active_workspaces: Vec::new(),
+                    focused: true,
+                    visible: true,
+                    effective_layout: None,
+                });
             let mut workspace = workspace;
-            workspace.effective_layout = Some(spiders_core::types::LayoutRef {
-                name: layout.name.clone(),
-            });
+            workspace.effective_layout =
+                Some(spiders_core::types::LayoutRef { name: layout.name.clone() });
 
-            let prepared = match self
-                .layout_service
-                .prepare_for_workspace(&self.config, &workspace)
+            let prepared = match self.layout_service.prepare_for_workspace(&self.config, &workspace)
             {
                 Ok(Some(prepared)) => prepared,
                 Ok(None) => {
@@ -203,28 +189,19 @@ impl RiverBackendState {
                 continue;
             }
 
-            if let Err(error) = self
-                .scene_cache
-                .precompile_layout(layout.name.clone(), &source)
-            {
+            if let Err(error) = self.scene_cache.precompile_layout(layout.name.clone(), &source) {
                 warn!(layout = %layout.name, %error, "failed to precompile stylesheet for scene cache");
             }
         }
     }
 
     fn seat_name(&self, seat_id: &ObjectId) -> Option<&str> {
-        self.registry
-            .seats
-            .get(seat_id)
-            .map(|seat| seat.state_name.as_str())
+        self.registry.seats.get(seat_id).map(|seat| seat.state_name.as_str())
     }
 
     fn seat_focused_state_window_id(&self, seat_id: &ObjectId) -> Option<spiders_core::WindowId> {
         let seat_name = self.seat_name(seat_id)?;
-        self.runtime_state
-            .seats
-            .get(seat_name)
-            .and_then(|seat| seat.focused_window_id.clone())
+        self.runtime_state.seats.get(seat_name).and_then(|seat| seat.focused_window_id.clone())
     }
 
     fn seat_interacted_object_id(&self, seat_id: &ObjectId) -> Option<ObjectId> {
@@ -233,10 +210,7 @@ impl RiverBackendState {
             .and_then(|seat_name| self.runtime_state.seats.get(seat_name))
             .and_then(|seat| seat.interacted_window_id.clone())?;
 
-        self.registry
-            .window_ids_by_state
-            .get(&state_window_id)
-            .cloned()
+        self.registry.window_ids_by_state.get(&state_window_id).cloned()
     }
 
     fn window_object_id(&self, state_id: &spiders_core::WindowId) -> Option<ObjectId> {
@@ -251,8 +225,7 @@ impl RiverBackendState {
         if let Some(workspace_id) = configured_workspace_for_window(&self.config, &window)
             && self.runtime_state.workspaces.contains_key(&workspace_id)
         {
-            self.runtime_state
-                .set_window_workspace(window_id, &workspace_id);
+            self.runtime_state.set_window_workspace(window_id, &workspace_id);
         }
 
         if let Some(mode) = configured_mode_for_window(&self.config, &window) {
@@ -261,10 +234,7 @@ impl RiverBackendState {
     }
 
     fn configured_input<'a>(&'a self, device_name: &str) -> Option<&'a InputConfig> {
-        self.config
-            .inputs
-            .iter()
-            .find(|input| input.name == device_name)
+        self.config.inputs.iter().find(|input| input.name == device_name)
     }
 
     fn apply_xkb_keymap_for_device(
@@ -310,9 +280,7 @@ impl RiverBackendState {
             qh,
             (),
         );
-        self.transient
-            .pending_xkb_keymaps
-            .insert(keymap_proxy.id(), input_device_id.clone());
+        self.transient.pending_xkb_keymaps.insert(keymap_proxy.id(), input_device_id.clone());
         self.transient.pending_xkb_keymap_context.insert(
             keymap_proxy.id(),
             format!(
@@ -324,15 +292,11 @@ impl RiverBackendState {
                 config.xkb_options
             ),
         );
-        self.transient
-            .xkb_keymap_proxies
-            .insert(keymap_proxy.id(), keymap_proxy);
+        self.transient.xkb_keymap_proxies.insert(keymap_proxy.id(), keymap_proxy);
     }
 
     fn track_input_result<T: Proxy>(&mut self, proxy: &T, description: String) {
-        self.transient
-            .pending_input_results
-            .insert(proxy.id(), description);
+        self.transient.pending_input_results.insert(proxy.id(), description);
     }
 
     fn apply_input_config_for_device(
@@ -373,12 +337,7 @@ impl RiverBackendState {
             }
         }
 
-        let libinput_devices = self
-            .registry
-            .libinput_devices
-            .values()
-            .cloned()
-            .collect::<Vec<_>>();
+        let libinput_devices = self.registry.libinput_devices.values().cloned().collect::<Vec<_>>();
         for libinput in &libinput_devices {
             if libinput.input_device_id.as_ref() != Some(input_device_id) {
                 continue;
@@ -489,11 +448,7 @@ impl RiverBackendState {
     }
 
     fn queue_seat_command(&mut self, seat_id: &ObjectId, command: RiverCommand) {
-        self.transient
-            .seat_command_mailbox
-            .entry(seat_id.clone())
-            .or_default()
-            .push_back(command);
+        self.transient.seat_command_mailbox.entry(seat_id.clone()).or_default().push_back(command);
     }
 
     fn new(paths: ConfigPaths, config: Config, runtime_state: WmState) -> Self {
@@ -540,64 +495,6 @@ impl RiverBackendState {
         format!("seat-{}", self.next_seat_serial)
     }
 
-    fn queue_handle(&self) -> &QueueHandle<Self> {
-        self.queue_handle
-            .as_ref()
-            .expect("backend queue handle must be initialized")
-    }
-
-    fn destroy_titlebar_record(titlebar: &mut TitlebarRecord) {
-        if let Some(buffer) = titlebar.buffer.take() {
-            buffer.buffer.destroy();
-            buffer.pool.destroy();
-        }
-        titlebar.decoration.destroy();
-        titlebar.surface.destroy();
-    }
-
-    fn sync_window_titlebars(&mut self, qh: &QueueHandle<Self>) {
-        let desired = self
-            .plan_window_appearance()
-            .into_iter()
-            .filter(|plan| matches!(plan.decoration_mode, DecorationMode::CompositorTitlebar))
-            .filter_map(|plan| self.window_object_id(&plan.window_id))
-            .collect::<Vec<_>>();
-
-        let existing = self.registry.titlebars.keys().cloned().collect::<Vec<_>>();
-        for object_id in existing {
-            if desired.iter().any(|desired_id| desired_id == &object_id) {
-                continue;
-            }
-            if let Some(mut titlebar) = self.registry.titlebars.remove(&object_id) {
-                Self::destroy_titlebar_record(&mut titlebar);
-            }
-        }
-
-        let Some(compositor) = self.compositor.clone() else {
-            return;
-        };
-
-        for object_id in desired {
-            if self.registry.titlebars.contains_key(&object_id) {
-                continue;
-            }
-            let Some(window) = self.registry.windows.get(&object_id) else {
-                continue;
-            };
-
-            let surface = compositor.create_surface(qh, ());
-            let decoration = window.proxy.get_decoration_above(&surface, qh, ());
-            self.registry.titlebars.insert(
-                object_id,
-                TitlebarRecord {
-                    decoration,
-                    surface,
-                    buffer: None,
-                },
-            );
-        }
-    }
-
     fn output_name_for_global(&self, global_name: u32) -> String {
         self.registry
             .wl_outputs_by_global
@@ -636,9 +533,6 @@ impl RiverBackendState {
         for window in self.registry.windows.values() {
             window.node.destroy();
             window.proxy.destroy();
-        }
-        for titlebar in self.registry.titlebars.values_mut() {
-            Self::destroy_titlebar_record(titlebar);
         }
         for output in self.registry.outputs.values() {
             output.proxy.destroy();
@@ -688,18 +582,10 @@ impl RiverBackendState {
             .windows
             .iter()
             .filter(|(_, window)| {
-                self.runtime_state
-                    .windows
-                    .get(&window.state_id)
-                    .is_some_and(|state| state.closed)
+                self.runtime_state.windows.get(&window.state_id).is_some_and(|state| state.closed)
             })
             .map(|(id, window)| {
-                (
-                    id.clone(),
-                    window.state_id.clone(),
-                    window.proxy.clone(),
-                    window.node.clone(),
-                )
+                (id.clone(), window.state_id.clone(), window.proxy.clone(), window.node.clone())
             })
             .collect::<Vec<_>>();
 
@@ -709,16 +595,13 @@ impl RiverBackendState {
             self.clear_window_motion_state(&state_id);
             self.registry.window_ids_by_state.remove(&state_id);
             for seat in self.registry.seats.values_mut() {
-                if self
-                    .runtime_state
-                    .seats
-                    .get(&seat.state_name)
-                    .is_some_and(|seat_state| match &seat_state.pointer_op {
+                if self.runtime_state.seats.get(&seat.state_name).is_some_and(|seat_state| {
+                    match &seat_state.pointer_op {
                         SeatPointerOpState::Move { window_id, .. }
                         | SeatPointerOpState::Resize { window_id, .. } => window_id == &state_id,
                         SeatPointerOpState::None => false,
-                    })
-                {
+                    }
+                }) {
                     self.runtime_state
                         .set_seat_pointer_op(&seat.state_name, SeatPointerOpState::None);
                 }
@@ -733,9 +616,6 @@ impl RiverBackendState {
                 if seat.interacted_window_id.as_ref() == Some(&state_id) {
                     seat.interacted_window_id = None;
                 }
-            }
-            if let Some(mut titlebar) = self.registry.titlebars.remove(&id) {
-                Self::destroy_titlebar_record(&mut titlebar);
             }
             self.registry.windows.remove(&id);
             self.runtime_state.remove_window(&state_id);
@@ -812,17 +692,11 @@ impl RiverBackendState {
             return;
         };
 
-        let parsed_bindings = effective_bindings(&self.config)
-            .iter()
-            .filter_map(parse_binding)
-            .collect::<Vec<_>>();
+        let parsed_bindings =
+            effective_bindings(&self.config).iter().filter_map(parse_binding).collect::<Vec<_>>();
 
         for seat in self.registry.seats.values_mut() {
-            if self
-                .transient
-                .initialized_seat_bindings
-                .contains(&seat.proxy.id())
-            {
+            if self.transient.initialized_seat_bindings.contains(&seat.proxy.id()) {
                 continue;
             }
 
@@ -886,9 +760,7 @@ impl RiverBackendState {
                 }
             }
 
-            self.transient
-                .initialized_seat_bindings
-                .insert(seat.proxy.id());
+            self.transient.initialized_seat_bindings.insert(seat.proxy.id());
         }
     }
 
@@ -901,14 +773,8 @@ impl RiverBackendState {
             .map(|id| {
                 (
                     id.clone(),
-                    self.transient
-                        .window_pointer_move_requests
-                        .get(&id)
-                        .cloned(),
-                    self.transient
-                        .window_pointer_resize_requests
-                        .get(&id)
-                        .cloned(),
+                    self.transient.window_pointer_move_requests.get(&id).cloned(),
+                    self.transient.window_pointer_resize_requests.get(&id).cloned(),
                 )
             })
             .collect::<Vec<_>>();
@@ -921,9 +787,7 @@ impl RiverBackendState {
                 && let Some(seat) = self.registry.seats.get_mut(&seat_id)
             {
                 seat.pointer_move(&mut self.runtime_state, &window, &window_state);
-                self.transient
-                    .window_pointer_move_requests
-                    .remove(&window_id);
+                self.transient.window_pointer_move_requests.remove(&window_id);
             }
 
             if let Some((seat_id, edges)) = resize_request
@@ -933,20 +797,14 @@ impl RiverBackendState {
                 && let Some(seat) = self.registry.seats.get_mut(&seat_id)
             {
                 seat.pointer_resize(&mut self.runtime_state, &window, &window_state, edges);
-                self.transient
-                    .window_pointer_resize_requests
-                    .remove(&window_id);
+                self.transient.window_pointer_resize_requests.remove(&window_id);
             }
         }
     }
 
     fn active_workspace_window_state_ids(&self) -> Vec<spiders_core::WindowId> {
-        let state_window_stack = self
-            .runtime_state
-            .window_stack
-            .iter()
-            .cloned()
-            .collect::<Vec<_>>();
+        let state_window_stack =
+            self.runtime_state.window_stack.iter().cloned().collect::<Vec<_>>();
 
         active_workspace_window_ids(&self.runtime_state, &state_window_stack)
     }
@@ -973,8 +831,7 @@ impl RiverBackendState {
 
         for window_id in &new_window_ids {
             let (x, y, width, height) = output_geometry;
-            self.runtime_state
-                .set_window_geometry(&window_id, x, y, width, height);
+            self.runtime_state.set_window_geometry(&window_id, x, y, width, height);
             self.runtime_state.set_window_new(&window_id, false);
         }
 
@@ -993,15 +850,11 @@ impl RiverBackendState {
                 (output.logical_x, output.logical_y, width, height)
             })
             .or_else(|| {
-                self.runtime_state
-                    .outputs
-                    .values()
-                    .find(|output| output.enabled)
-                    .map(|output| {
-                        let width = output.logical_width.max(1) as i32;
-                        let height = output.logical_height.max(1) as i32;
-                        (output.logical_x, output.logical_y, width, height)
-                    })
+                self.runtime_state.outputs.values().find(|output| output.enabled).map(|output| {
+                    let width = output.logical_width.max(1) as i32;
+                    let height = output.logical_height.max(1) as i32;
+                    (output.logical_x, output.logical_y, width, height)
+                })
             })
             .unwrap_or((0, 0, 1024, 768))
     }
@@ -1016,8 +869,7 @@ impl RiverBackendState {
         }
 
         let direction = match (
-            self.runtime_state
-                .workspace_order_index(&previous_workspace_id),
+            self.runtime_state.workspace_order_index(&previous_workspace_id),
             self.runtime_state.workspace_order_index(workspace_id),
         ) {
             (Some(previous_index), Some(next_index)) if next_index < previous_index => {
@@ -1038,21 +890,14 @@ impl RiverBackendState {
             return;
         };
 
-        let transition_is_active = self
-            .transient
-            .motion_active_windows
-            .iter()
-            .any(|window_id| {
-                self.runtime_state
-                    .windows
-                    .get(window_id)
-                    .is_some_and(|window| {
-                        window.workspace_ids.iter().any(|workspace_id| {
-                            workspace_id == &transition.from_workspace_id
-                                || workspace_id == &transition.to_workspace_id
-                        })
-                    })
-            });
+        let transition_is_active = self.transient.motion_active_windows.iter().any(|window_id| {
+            self.runtime_state.windows.get(window_id).is_some_and(|window| {
+                window.workspace_ids.iter().any(|workspace_id| {
+                    workspace_id == &transition.from_workspace_id
+                        || workspace_id == &transition.to_workspace_id
+                })
+            })
+        });
 
         if !transition_is_active {
             self.transient.workspace_transition = None;
@@ -1108,7 +953,6 @@ impl RiverBackendState {
         let mode_plans = self.plan_window_mode_updates();
         self.apply_window_mode_plan(&mode_plans);
         self.apply_window_appearance();
-        self.sync_window_titlebars(qh);
 
         let new_focus_candidate = self
             .active_workspace_window_state_ids()
@@ -1120,15 +964,11 @@ impl RiverBackendState {
         for seat_id in seat_ids {
             let interacted = self.seat_interacted_object_id(&seat_id);
             if let Some(seat_name) = self.seat_name(&seat_id).map(str::to_owned) {
-                self.runtime_state
-                    .set_seat_interacted_window(&seat_name, None);
+                self.runtime_state.set_seat_interacted_window(&seat_name, None);
             }
             if let Some(window_id) = interacted {
-                if let Some(state_id) = self
-                    .registry
-                    .windows
-                    .get(&window_id)
-                    .map(|window| window.state_id.clone())
+                if let Some(state_id) =
+                    self.registry.windows.get(&window_id).map(|window| window.state_id.clone())
                 {
                     self.runtime_state.move_window_to_top(&state_id);
                 }
@@ -1160,8 +1000,7 @@ impl RiverBackendState {
                     .is_some_and(|seat_state| seat_state.pointer_op_release);
                 if pointer_released {
                     seat.op_end(&mut self.runtime_state);
-                    self.runtime_state
-                        .set_seat_pointer_release(&seat.state_name, false);
+                    self.runtime_state.set_seat_pointer_release(&seat.state_name, false);
                 } else {
                     let plans = seat
                         .op_manage(&self.runtime_state, &self.registry.windows)
@@ -1189,7 +1028,6 @@ impl RiverBackendState {
         }
 
         self.apply_window_borders();
-        self.apply_window_titlebars();
         self.request_pending_window_closes();
 
         let plan = self.plan_pointer_render_ops();
@@ -1224,36 +1062,12 @@ mod tests {
         assert_eq!(bindings[3].trigger, "Alt+l");
         assert!(bindings.iter().any(|binding| binding.trigger == "Alt+1"));
         assert!(bindings.iter().any(|binding| binding.trigger == "Alt+9"));
-        assert!(
-            bindings
-                .iter()
-                .any(|binding| binding.trigger == "Alt+Shift+1")
-        );
-        assert!(
-            bindings
-                .iter()
-                .any(|binding| binding.trigger == "Alt+Shift+9")
-        );
-        assert!(
-            bindings
-                .iter()
-                .any(|binding| binding.trigger == "Alt+Shift+h")
-        );
-        assert!(
-            bindings
-                .iter()
-                .any(|binding| binding.trigger == "Alt+Shift+j")
-        );
-        assert!(
-            bindings
-                .iter()
-                .any(|binding| binding.trigger == "Alt+Shift+k")
-        );
-        assert!(
-            bindings
-                .iter()
-                .any(|binding| binding.trigger == "Alt+Shift+l")
-        );
+        assert!(bindings.iter().any(|binding| binding.trigger == "Alt+Shift+1"));
+        assert!(bindings.iter().any(|binding| binding.trigger == "Alt+Shift+9"));
+        assert!(bindings.iter().any(|binding| binding.trigger == "Alt+Shift+h"));
+        assert!(bindings.iter().any(|binding| binding.trigger == "Alt+Shift+j"));
+        assert!(bindings.iter().any(|binding| binding.trigger == "Alt+Shift+k"));
+        assert!(bindings.iter().any(|binding| binding.trigger == "Alt+Shift+l"));
     }
 
     #[test]
@@ -1261,9 +1075,7 @@ mod tests {
         let config = Config {
             bindings: vec![Binding {
                 trigger: "Alt+Enter".into(),
-                command: WmCommand::Spawn {
-                    command: "alacritty".into(),
-                },
+                command: WmCommand::Spawn { command: "alacritty".into() },
             }],
             ..Config::default()
         };
@@ -1277,36 +1089,12 @@ mod tests {
         assert!(bindings.iter().any(|binding| binding.trigger == "Alt+l"));
         assert!(bindings.iter().any(|binding| binding.trigger == "Alt+1"));
         assert!(bindings.iter().any(|binding| binding.trigger == "Alt+9"));
-        assert!(
-            bindings
-                .iter()
-                .any(|binding| binding.trigger == "Alt+Shift+1")
-        );
-        assert!(
-            bindings
-                .iter()
-                .any(|binding| binding.trigger == "Alt+Shift+9")
-        );
-        assert!(
-            bindings
-                .iter()
-                .any(|binding| binding.trigger == "Alt+Shift+h")
-        );
-        assert!(
-            bindings
-                .iter()
-                .any(|binding| binding.trigger == "Alt+Shift+j")
-        );
-        assert!(
-            bindings
-                .iter()
-                .any(|binding| binding.trigger == "Alt+Shift+k")
-        );
-        assert!(
-            bindings
-                .iter()
-                .any(|binding| binding.trigger == "Alt+Shift+l")
-        );
+        assert!(bindings.iter().any(|binding| binding.trigger == "Alt+Shift+1"));
+        assert!(bindings.iter().any(|binding| binding.trigger == "Alt+Shift+9"));
+        assert!(bindings.iter().any(|binding| binding.trigger == "Alt+Shift+h"));
+        assert!(bindings.iter().any(|binding| binding.trigger == "Alt+Shift+j"));
+        assert!(bindings.iter().any(|binding| binding.trigger == "Alt+Shift+k"));
+        assert!(bindings.iter().any(|binding| binding.trigger == "Alt+Shift+l"));
     }
 
     #[test]
@@ -1314,87 +1102,43 @@ mod tests {
         let config = Config {
             bindings: vec![Binding {
                 trigger: "Weird+Thing+Unsupported".into(),
-                command: WmCommand::Spawn {
-                    command: "foo".into(),
-                },
+                command: WmCommand::Spawn { command: "foo".into() },
             }],
             ..Config::default()
         };
 
         let bindings = effective_bindings(&config);
 
-        assert!(
-            bindings
-                .iter()
-                .any(|binding| binding.trigger == "Alt+Enter")
-        );
+        assert!(bindings.iter().any(|binding| binding.trigger == "Alt+Enter"));
         assert!(bindings.iter().any(|binding| binding.trigger == "Alt+q"));
         assert!(bindings.iter().any(|binding| binding.trigger == "Alt+1"));
         assert!(bindings.iter().any(|binding| binding.trigger == "Alt+9"));
-        assert!(
-            bindings
-                .iter()
-                .any(|binding| binding.trigger == "Alt+Shift+1")
-        );
-        assert!(
-            bindings
-                .iter()
-                .any(|binding| binding.trigger == "Alt+Shift+9")
-        );
-        assert!(
-            bindings
-                .iter()
-                .any(|binding| binding.trigger == "Alt+Shift+h")
-        );
-        assert!(
-            bindings
-                .iter()
-                .any(|binding| binding.trigger == "Alt+Shift+j")
-        );
+        assert!(bindings.iter().any(|binding| binding.trigger == "Alt+Shift+1"));
+        assert!(bindings.iter().any(|binding| binding.trigger == "Alt+Shift+9"));
+        assert!(bindings.iter().any(|binding| binding.trigger == "Alt+Shift+h"));
+        assert!(bindings.iter().any(|binding| binding.trigger == "Alt+Shift+j"));
     }
 
     #[test]
     fn milestone_bindings_follow_config_mod_key() {
         let config = Config {
-            options: ConfigOptions {
-                mod_key: Some("Super".into()),
-                ..ConfigOptions::default()
-            },
+            options: ConfigOptions { mod_key: Some("Super".into()), ..ConfigOptions::default() },
             ..Config::default()
         };
 
         let bindings = effective_bindings(&config);
 
-        assert!(
-            bindings
-                .iter()
-                .any(|binding| binding.trigger == "Super+Enter")
-        );
+        assert!(bindings.iter().any(|binding| binding.trigger == "Super+Enter"));
         assert!(bindings.iter().any(|binding| binding.trigger == "Super+1"));
-        assert!(
-            bindings
-                .iter()
-                .any(|binding| binding.trigger == "Super+Shift+1")
-        );
-        assert!(
-            bindings
-                .iter()
-                .any(|binding| binding.trigger == "Super+Shift+h")
-        );
-        assert!(
-            !bindings
-                .iter()
-                .any(|binding| binding.trigger == "Alt+Enter")
-        );
+        assert!(bindings.iter().any(|binding| binding.trigger == "Super+Shift+1"));
+        assert!(bindings.iter().any(|binding| binding.trigger == "Super+Shift+h"));
+        assert!(!bindings.iter().any(|binding| binding.trigger == "Alt+Enter"));
     }
 
     #[test]
     fn milestone_workspace_assign_bindings_follow_user_modifier_prefix() {
         let config = Config {
-            options: ConfigOptions {
-                mod_key: Some("Alt".into()),
-                ..ConfigOptions::default()
-            },
+            options: ConfigOptions { mod_key: Some("Alt".into()), ..ConfigOptions::default() },
             bindings: vec![Binding {
                 trigger: "Alt+Ctrl+1".into(),
                 command: WmCommand::AssignFocusedWindowToWorkspace { workspace: 1 },
@@ -1404,21 +1148,9 @@ mod tests {
 
         let bindings = effective_bindings(&config);
 
-        assert!(
-            bindings
-                .iter()
-                .any(|binding| binding.trigger == "Alt+Ctrl+1")
-        );
-        assert!(
-            bindings
-                .iter()
-                .any(|binding| binding.trigger == "Alt+Ctrl+9")
-        );
-        assert!(
-            !bindings
-                .iter()
-                .any(|binding| binding.trigger == "Alt+Shift+9")
-        );
+        assert!(bindings.iter().any(|binding| binding.trigger == "Alt+Ctrl+1"));
+        assert!(bindings.iter().any(|binding| binding.trigger == "Alt+Ctrl+9"));
+        assert!(!bindings.iter().any(|binding| binding.trigger == "Alt+Shift+9"));
     }
 
     #[test]
@@ -1512,30 +1244,17 @@ mod tests {
         state.set_window_mode(
             &"win-1".into(),
             spiders_core::types::WindowMode::Floating {
-                rect: Some(LayoutRect {
-                    x: 10.0,
-                    y: 20.0,
-                    width: 300.0,
-                    height: 200.0,
-                }),
+                rect: Some(LayoutRect { x: 10.0, y: 20.0, width: 300.0, height: 200.0 }),
             },
         );
         state.set_window_geometry(&"win-1".into(), 10, 20, 300, 200);
-        state.set_window_mode(
-            &"win-1".into(),
-            spiders_core::types::WindowMode::Fullscreen,
-        );
+        state.set_window_mode(&"win-1".into(), spiders_core::types::WindowMode::Fullscreen);
 
         let window = state.windows.get(&"win-1".into()).unwrap();
 
         assert_eq!(
             window.last_floating_rect,
-            Some(LayoutRect {
-                x: 10.0,
-                y: 20.0,
-                width: 300.0,
-                height: 200.0,
-            })
+            Some(LayoutRect { x: 10.0, y: 20.0, width: 300.0, height: 200.0 })
         );
     }
 }

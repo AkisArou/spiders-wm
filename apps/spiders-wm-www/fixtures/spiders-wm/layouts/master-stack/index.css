@@ -36,12 +36,3 @@
   border-width: 1px;
   border-color: #2f3647;
 }
-
-window:focused::titlebar {
-  background: #0f766e;
-  color: #f7f5ef;
-  height: 28px;
-  padding-left: 12px;
-  padding-right: 12px;
-  text-align: left;
-}

@@ -1,15 +1,11 @@
 use std::collections::{BTreeMap, HashMap};
-use std::fs::File;
 
-use spiders_scene::{BoxShadowValue, ColorValue, FontFamilyValue, FontWeightValue, TextAlignValue};
 use spiders_core::command::WmCommand;
 use spiders_core::{OutputId, WindowId};
 use wayland_backend::client::ObjectId;
-use wayland_client::protocol::{wl_buffer, wl_shm_pool, wl_surface};
 
 use crate::protocol::river_window_management_v1::{
-    river_decoration_v1, river_node_v1, river_output_v1, river_pointer_binding_v1, river_seat_v1,
-    river_window_v1,
+    river_node_v1, river_output_v1, river_pointer_binding_v1, river_seat_v1, river_window_v1,
 };
 use crate::protocol::river_xkb_bindings::river_xkb_binding_v1;
 
@@ -19,7 +15,6 @@ pub struct RiverRegistry {
     pub output_ids_by_state: HashMap<OutputId, ObjectId>,
     pub windows: HashMap<ObjectId, WindowRecord>,
     pub window_ids_by_state: HashMap<WindowId, ObjectId>,
-    pub titlebars: HashMap<ObjectId, TitlebarRecord>,
     pub seats: HashMap<ObjectId, SeatRecord>,
     pub input_devices: HashMap<ObjectId, InputDeviceRecord>,
     pub xkb_keyboards: HashMap<ObjectId, XkbKeyboardRecord>,
@@ -40,39 +35,6 @@ pub struct WindowRecord {
     pub node: river_node_v1::RiverNodeV1,
     pub state_id: spiders_core::WindowId,
     pub supports_ssd: bool,
-}
-
-#[derive(Debug)]
-pub struct TitlebarRecord {
-    pub decoration: river_decoration_v1::RiverDecorationV1,
-    pub surface: wl_surface::WlSurface,
-    pub buffer: Option<TitlebarBufferRecord>,
-}
-
-#[derive(Debug)]
-pub struct TitlebarBufferRecord {
-    pub buffer: wl_buffer::WlBuffer,
-    pub pool: wl_shm_pool::WlShmPool,
-    pub file: File,
-    pub width: i32,
-    pub height: i32,
-    pub background: ColorValue,
-    pub border_bottom_width: i32,
-    pub border_bottom_color: ColorValue,
-    pub title: String,
-    pub text_color: ColorValue,
-    pub text_align: TextAlignValue,
-    pub font_family: Option<FontFamilyValue>,
-    pub font_size: i32,
-    pub font_weight: FontWeightValue,
-    pub letter_spacing: i32,
-    pub box_shadow: Option<Vec<BoxShadowValue>>,
-    pub padding_top: i32,
-    pub padding_right: i32,
-    pub padding_bottom: i32,
-    pub padding_left: i32,
-    pub corner_radius_top_left: i32,
-    pub corner_radius_top_right: i32,
 }
 
 #[derive(Debug, Clone)]

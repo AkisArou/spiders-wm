@@ -141,7 +141,6 @@ Supported dump names:
 - `debug-profile`
 - `scene-snapshot`
 - `frame-sync`
-- `titlebar-overlays`
 - `seats`
 
 Examples:
@@ -230,7 +229,7 @@ Recommended repro loop:
 1. Start nested `spiders-wm` with `SPIDERS_WM_DEBUG_PROFILE=protocol` or `full`.
 2. Launch the target client with `WAYLAND_DISPLAY=<nested-display>` and `WAYLAND_DEBUG=1`.
 3. Reproduce the bug.
-4. Capture `wm-state`, `scene-snapshot`, `frame-sync`, or `titlebar-overlays` dumps over IPC.
+4. Capture `wm-state`, `scene-snapshot`, `frame-sync`, or `seats` dumps over IPC.
 5. Correlate the client-side `WAYLAND_DEBUG` log with compositor logs and dump timestamps.
 
 With `SPIDERS_WM_DEBUG_PROFILE=protocol`, the compositor now emits structured lifecycle logs around focus requests, backend focus application, initial configure sends, popup configure sends, and root commits. With `render` or `full`, it also emits map/unmap/commit render lifecycle logs.

@@ -250,8 +250,8 @@ mod tests {
     fn completes_property_value_keywords() {
         let response = completions_for(
             &Url::parse("file:///test.css").unwrap(),
-            "window::titlebar { text-align: ce }",
-            Position { line: 0, character: 32 },
+            "window { text-align: ce }",
+            Position { line: 0, character: 22 },
             &ProjectIndex::default(),
         )
         .unwrap();

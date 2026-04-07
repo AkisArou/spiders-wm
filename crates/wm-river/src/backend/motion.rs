@@ -1,9 +1,9 @@
 use std::time::Instant;
 
+use spiders_core::WindowId;
 use spiders_scene::{
     Animation, CompiledKeyframesRule, ComputedStyle, MotionContext, ResolvedMotion, Transition,
 };
-use spiders_core::WindowId;
 
 use crate::backend::transient::WindowMotionState;
 
@@ -12,7 +12,6 @@ use super::*;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum MotionStyleScope {
     Layout,
-    Titlebar,
 }
 
 impl RiverBackendState {
@@ -40,10 +39,7 @@ impl RiverBackendState {
         width: f32,
         height: f32,
     ) -> ResolvedMotion {
-        let now = self
-            .transient
-            .motion_frame_time
-            .unwrap_or_else(Instant::now);
+        let now = self.transient.motion_frame_time.unwrap_or_else(Instant::now);
 
         let window_state = self
             .transient
@@ -52,7 +48,6 @@ impl RiverBackendState {
             .or_insert_with(WindowMotionState::default);
         let track = match scope {
             MotionStyleScope::Layout => &mut window_state.layout,
-            MotionStyleScope::Titlebar => &mut window_state.titlebar,
         };
 
         let context = MotionContext { width, height };
@@ -75,9 +70,7 @@ impl RiverBackendState {
         let active = animation.active.any() || transition.active.any();
         if active {
             self.transient.motion_has_active_animations = true;
-            self.transient
-                .motion_active_windows
-                .insert(window_id.clone());
+            self.transient.motion_active_windows.insert(window_id.clone());
         }
         motion
     }

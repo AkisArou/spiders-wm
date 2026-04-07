@@ -10,6 +10,31 @@ AUTHORED_CONFIG="${SPIDERS_WM_AUTHORED_CONFIG:-$ROOT_DIR/test_config/config.ts}"
 CACHE_DIR="$SMOKE_ROOT/cache"
 IPC_SOCKET_PATH="$SMOKE_ROOT/wm.sock"
 CLIENT_LOG_DIR="$SMOKE_ROOT/clients"
+SMOKE_MODE="${WM_SMOKE_MODE:-default}"
+
+case "$SMOKE_MODE" in
+    default)
+        : "${WM_SMOKE_OPEN_COUNT:=4}"
+        : "${WM_SMOKE_CLIENT_SETTLE_DELAY:=0.4}"
+        : "${WM_SMOKE_OPEN_GAP:=0.8}"
+        : "${WM_SMOKE_CLOSE_COUNT:=$WM_SMOKE_OPEN_COUNT}"
+        : "${WM_SMOKE_CLOSE_SETTLE_DELAY:=0.7}"
+        : "${WM_SMOKE_ENABLE_WORKSPACE_SHORTCUTS:=1}"
+        ;;
+    burst)
+        : "${WM_SMOKE_OPEN_COUNT:=10}"
+        : "${WM_SMOKE_CLIENT_SETTLE_DELAY:=0.03}"
+        : "${WM_SMOKE_OPEN_GAP:=0.03}"
+        : "${WM_SMOKE_CLOSE_COUNT:=$WM_SMOKE_OPEN_COUNT}"
+        : "${WM_SMOKE_CLOSE_SETTLE_DELAY:=0.2}"
+        : "${WM_SMOKE_ENABLE_WORKSPACE_SHORTCUTS:=0}"
+        ;;
+    *)
+        echo "wm smoke harness does not recognize WM_SMOKE_MODE=$SMOKE_MODE" >&2
+        exit 1
+        ;;
+esac
+
 declare -a CLIENT_PIDS=()
 cleanup() {
     local status=$?
@@ -113,7 +138,7 @@ run_client() {
     WAYLAND_DISPLAY="$SOCKET_NAME" foot -e sh -lc 'trap : TERM INT; sleep 60' >"$client_log" 2>&1 &
     local client_pid=$!
     CLIENT_PIDS+=("$client_pid")
-    sleep 0.4
+    sleep "$WM_SMOKE_CLIENT_SETTLE_DELAY"
     if ! kill -0 "$client_pid" 2>/dev/null; then
         echo "wm smoke harness client exited immediately (pid=$client_pid, log=$client_log)" >&2
         cat "$client_log" >&2 || true
@@ -140,8 +165,51 @@ close_one_window() {
     local step="$1"
 
     run_ipc_command close-focused-window
-    sleep 0.7
+    sleep "$WM_SMOKE_CLOSE_SETTLE_DELAY"
     assert_wm_alive "close step $step"
+}
+
+log_count() {
+    local pattern="$1"
+    perl -pe 's/\e\[[0-9;]*m//g' "$LOG_FILE" | grep -c "$pattern" || true
+}
+
+wait_for_log_count() {
+    local pattern="$1"
+    local expected_count="$2"
+    local timeout_seconds="$3"
+    local description="$4"
+    local waited=0
+
+    while (( waited < timeout_seconds * 10 )); do
+        local current_count
+        current_count="$(log_count "$pattern")"
+        if [[ "$current_count" -ge "$expected_count" ]]; then
+            return 0
+        fi
+
+        assert_wm_alive "$description"
+        sleep 0.1
+        waited=$((waited + 1))
+    done
+
+    echo "wm smoke harness timed out waiting for $description: expected $expected_count matches for '$pattern'" >&2
+    tail -n 200 "$LOG_FILE" >&2 || true
+    return 1
+}
+
+max_metric_for_pattern() {
+    local pattern="$1"
+    local key="$2"
+
+    local result
+    result="$({
+        perl -pe 's/\e\[[0-9;]*m//g' "$LOG_FILE" | grep "$pattern" || true
+    } | {
+        grep -o "${key}=[0-9.]*" || true
+    } | cut -d= -f2 | sort -nr | head -n1)"
+
+    printf '%s\n' "${result:-n/a}"
 }
 
 send_alt_shortcut() {
@@ -162,30 +230,41 @@ send_alt_shortcut() {
     return 1
 }
 
-for _ in 1 2 3 4; do
+for _ in $(seq 1 "$WM_SMOKE_OPEN_COUNT"); do
     run_client >/dev/null
-    sleep 0.8
+    sleep "$WM_SMOKE_OPEN_GAP"
     assert_wm_alive "opening clients"
 done
 
-for step in 1 2 3 4; do
+wait_for_log_count 'wm added window' "$WM_SMOKE_OPEN_COUNT" 15 'initial window-add events'
+wait_for_log_count 'wm first map commit' "$WM_SMOKE_OPEN_COUNT" 15 'initial first-map commits'
+
+for step in $(seq 1 "$WM_SMOKE_CLOSE_COUNT"); do
     close_one_window "$step"
 done
 
 workspace_shortcut_smoke=0
-if send_alt_shortcut 2; then
-    workspace_shortcut_smoke=1
-    sleep 0.5
-    run_client >/dev/null
-    sleep 0.5
-    send_alt_shortcut 1
-    sleep 0.5
-elif [[ $? -eq 2 ]]; then
-    echo "wm workspace shortcut smoke skipped: nested compositor does not support virtual keyboard protocol" >&2
-else
-    echo "wm workspace shortcut smoke failed to inject Alt shortcut" >&2
-    cat "$LOG_FILE" >&2
-    exit 1
+if [[ "$WM_SMOKE_ENABLE_WORKSPACE_SHORTCUTS" -eq 1 ]]; then
+    shortcut_status=0
+    if send_alt_shortcut 2; then
+        workspace_shortcut_smoke=1
+        sleep 0.5
+        run_client >/dev/null
+        wait_for_log_count 'wm added window' "$((WM_SMOKE_OPEN_COUNT + 1))" 15 'workspace smoke window-add event'
+        wait_for_log_count 'wm first map commit' "$((WM_SMOKE_OPEN_COUNT + 1))" 15 'workspace smoke first-map commit'
+        sleep 0.5
+        send_alt_shortcut 1
+        sleep 0.5
+    else
+        shortcut_status=$?
+        if [[ "$shortcut_status" -eq 2 ]]; then
+            echo "wm workspace shortcut smoke skipped: nested compositor does not support virtual keyboard protocol" >&2
+        else
+            echo "wm workspace shortcut smoke failed to inject Alt shortcut" >&2
+            cat "$LOG_FILE" >&2
+            exit 1
+        fi
+    fi
 fi
 
 if ! kill -0 "$WM_PID" 2>/dev/null; then
@@ -198,15 +277,22 @@ open_count="$(grep -c 'wm added window' "$LOG_FILE" || true)"
 close_start_count="$(grep -c 'wm close start' "$LOG_FILE" || true)"
 close_unmap_count="$(grep -c 'wm compositor observed root unmap commit' "$LOG_FILE" || true)"
 relayout_count="$(grep -c 'wm relayout start' "$LOG_FILE" || true)"
+first_map_count="$(grep -c 'wm first map commit' "$LOG_FILE" || true)"
+deferred_first_map_count="$(grep -c 'wm deferred first-map relayout while additional windows are still pending map' "$LOG_FILE" || true)"
+prepared_snapshot_count="$(grep -c 'wm prepared titlebar snapshot for window' "$LOG_FILE" || true)"
+reused_snapshot_count="$(grep -c 'wm reused prepared titlebar snapshot for window' "$LOG_FILE" || true)"
+max_relayout_elapsed_ms="$(max_metric_for_pattern 'wm relayout finished' 'elapsed_ms')"
+max_overlay_elapsed_ms="$(max_metric_for_pattern 'wm relayout finished' 'overlay_elapsed_ms')"
+max_prepare_elapsed_ms="$(max_metric_for_pattern 'wm prepared titlebar snapshot for window' 'elapsed_ms')"
 
-if [[ "$open_count" -lt 4 ]]; then
-    echo "wm smoke harness expected at least 4 window-add events, saw $open_count" >&2
+if [[ "$open_count" -lt "$WM_SMOKE_OPEN_COUNT" ]]; then
+    echo "wm smoke harness expected at least $WM_SMOKE_OPEN_COUNT window-add events, saw $open_count" >&2
     tail -n 200 "$LOG_FILE" >&2 || true
     exit 1
 fi
 
-if [[ "$close_start_count" -lt 4 ]]; then
-    echo "wm smoke harness expected at least 4 close-start events, saw $close_start_count" >&2
+if [[ "$close_start_count" -lt "$WM_SMOKE_CLOSE_COUNT" ]]; then
+    echo "wm smoke harness expected at least $WM_SMOKE_CLOSE_COUNT close-start events, saw $close_start_count" >&2
     tail -n 200 "$LOG_FILE" >&2 || true
     exit 1
 fi
@@ -227,4 +313,4 @@ fi
 
 echo "wm smoke sequence passed on socket $SOCKET_NAME"
 echo "wm smoke log: $LOG_FILE"
-echo "wm smoke summary: opens=$open_count close_starts=$close_start_count close_unmaps=$close_unmap_count relayouts=$relayout_count"
+echo "wm smoke summary: mode=$SMOKE_MODE opens=$open_count first_maps=$first_map_count deferred_first_maps=$deferred_first_map_count close_starts=$close_start_count close_unmaps=$close_unmap_count relayouts=$relayout_count prepared_snapshots=$prepared_snapshot_count reused_snapshots=$reused_snapshot_count max_prepare_ms=${max_prepare_elapsed_ms:-n/a} max_overlay_ms=${max_overlay_elapsed_ms:-n/a} max_relayout_ms=${max_relayout_elapsed_ms:-n/a}"

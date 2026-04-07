@@ -1,5 +1,6 @@
 mod compositor;
 mod virtual_keyboard;
+mod xdg_decoration;
 mod xdg_shell;
 
 pub(crate) use compositor::ClientState;
@@ -18,7 +19,7 @@ use smithay::wayland::output::OutputHandler;
 use smithay::wayland::selection::SelectionHandler;
 use smithay::wayland::selection::data_device::DataDeviceHandler;
 use smithay::wayland::selection::data_device::{WaylandDndGrabHandler, set_data_device_focus};
-use smithay::{delegate_data_device, delegate_dmabuf, delegate_output, delegate_seat};
+use smithay::{delegate_data_device, delegate_dmabuf, delegate_output, delegate_seat, delegate_xdg_decoration};
 
 use crate::state::SpidersWm;
 
@@ -109,3 +110,4 @@ delegate_seat!(SpidersWm);
 delegate_data_device!(SpidersWm);
 delegate_dmabuf!(SpidersWm);
 delegate_output!(SpidersWm);
+delegate_xdg_decoration!(SpidersWm);

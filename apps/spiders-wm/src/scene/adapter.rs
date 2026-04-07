@@ -6,11 +6,11 @@ use spiders_config::model::{Config, ConfigPaths};
 use spiders_config::runtime::build_authoring_layout_service;
 use spiders_core::focus::{FocusTree, FocusTreeWindowGeometry};
 use spiders_core::query::state_snapshot_for_model;
-use spiders_core::runtime::layout_context::LayoutWindowContext;
 use spiders_core::runtime::prepared_layout::{PreparedStylesheet, PreparedStylesheets};
 use spiders_core::snapshot::{StateSnapshot, WindowSnapshot};
 use spiders_core::workspace::{fallback_master_stack_layout_tree, flat_workspace_root};
 use spiders_core::{LayoutRect, LayoutSpace, ResolvedLayoutNode, SourceLayoutNode, WindowId};
+use spiders_css::AppearanceValue;
 use spiders_runtime_js_native::JavaScriptNativeRuntimeProvider;
 use spiders_scene::ast::ValidatedLayoutTree;
 use spiders_scene::pipeline::SceneCache;
@@ -27,6 +27,11 @@ pub(crate) struct LayoutTarget {
     pub(crate) location: Point<i32, Logical>,
     pub(crate) size: Size<i32, Logical>,
     pub(crate) fullscreen: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct WindowAppearancePlan {
+    pub(crate) appearance: AppearanceValue,
 }
 
 #[derive(Debug, Default)]
@@ -62,34 +67,8 @@ impl SceneLayoutState {
         model: &mut WmModel,
         visible_window_ids: &[WindowId],
     ) -> Option<Vec<LayoutTarget>> {
-        if let Some(root) = self.compute_authored_layout_snapshot(config, model, visible_window_ids)
-        {
-            let targets = scene_targets_from_snapshot(&root);
-
-            if targets_cover_windows(&targets, visible_window_ids) {
-                return Some(targets);
-            }
-
-            warn!(
-                expected_window_count = visible_window_ids.len(),
-                resolved_window_count = targets.len(),
-                "scene layout did not cover all visible windows; retrying with scene fallback layout"
-            );
-        }
-
-        let root = self.compute_fallback_layout_snapshot(config, model, visible_window_ids)?;
-        let targets = scene_targets_from_snapshot(&root);
-
-        if targets_cover_windows(&targets, visible_window_ids) {
-            Some(targets)
-        } else {
-            warn!(
-                expected_window_count = visible_window_ids.len(),
-                resolved_window_count = targets.len(),
-                "scene fallback layout still did not cover all visible windows"
-            );
-            None
-        }
+        self.compute_layout_snapshot_and_targets(config, model, visible_window_ids)
+            .map(|(_, targets)| targets)
     }
 
     pub(crate) fn compute_layout_target(
@@ -111,23 +90,46 @@ impl SceneLayoutState {
         model: &mut WmModel,
         visible_window_ids: &[WindowId],
     ) -> Option<LayoutSnapshotNode> {
+        self.compute_layout_snapshot_and_targets(config, model, visible_window_ids)
+            .map(|(root, _)| root)
+    }
+
+    pub(crate) fn compute_layout_snapshot_and_targets(
+        &mut self,
+        config: &Config,
+        model: &mut WmModel,
+        visible_window_ids: &[WindowId],
+    ) -> Option<(LayoutSnapshotNode, Vec<LayoutTarget>)> {
         if let Some(root) = self.compute_authored_layout_snapshot(config, model, visible_window_ids)
         {
             let targets = scene_targets_from_snapshot(&root);
             if targets_cover_windows(&targets, visible_window_ids) {
-                return Some(root);
+                return Some((root, targets));
             }
         }
 
         let root = self.compute_fallback_layout_snapshot(config, model, visible_window_ids)?;
         let targets = scene_targets_from_snapshot(&root);
-        targets_cover_windows(&targets, visible_window_ids).then_some(root)
+        targets_cover_windows(&targets, visible_window_ids).then_some((root, targets))
     }
 
-    pub(crate) fn clear_cache(&mut self) {
-        self.cache.clear();
-    }
+    pub(crate) fn compute_window_appearance_plan(
+        &mut self,
+        config: &Config,
+        model: &WmModel,
+        visible_window_ids: &[WindowId],
+        target_window_id: &WindowId,
+    ) -> Option<WindowAppearancePlan> {
+        let mut model = model.clone();
+        let snapshot = self.compute_layout_snapshot(config, &mut model, visible_window_ids)?;
+        let appearance = snapshot
+            .find_by_window_id(target_window_id)
+            .and_then(|node| node.styles())
+            .and_then(|styles| styles.layout.appearance)
+            .unwrap_or(AppearanceValue::Auto);
 
+        Some(WindowAppearancePlan { appearance })
+    }
     fn compute_authored_layout_snapshot(
         &mut self,
         config: &Config,
@@ -153,12 +155,7 @@ impl SceneLayoutState {
         };
 
         let windows = visible_window_snapshots(&snapshot, visible_window_ids);
-        let resolved_root = attach_titlebar_content(
-            resolve_layout_root(evaluation.layout, &windows, visible_window_ids),
-            &windows,
-            config,
-            Some(workspace.name.as_str()),
-        );
+        let resolved_root = resolve_layout_root(evaluation.layout, &windows, visible_window_ids);
         let request = match config.build_scene_request_from_state(
             &snapshot,
             resolved_root,
@@ -195,15 +192,14 @@ impl SceneLayoutState {
     ) -> Option<LayoutSnapshotNode> {
         let snapshot = scene_input_snapshot(config, model, visible_window_ids);
         let workspace = snapshot.current_workspace()?.clone();
-        let output =
-            workspace.output_id.as_ref().and_then(|output_id| snapshot.output_by_id(output_id));
+        let output = workspace
+            .output_id
+            .as_ref()
+            .and_then(|output_id| snapshot.output_by_id(output_id))
+            .or_else(|| snapshot.current_output());
         let windows = visible_window_snapshots(&snapshot, visible_window_ids);
-        let resolved_root = attach_titlebar_content(
-            resolve_layout_root(fallback_master_stack_layout_tree(), &windows, visible_window_ids),
-            &windows,
-            config,
-            Some(workspace.name.as_str()),
-        );
+        let resolved_root =
+            resolve_layout_root(fallback_master_stack_layout_tree(), &windows, visible_window_ids);
         let request = SceneRequest {
             workspace_id: workspace.id,
             output_id: output.map(|output| output.id.clone()),
@@ -242,6 +238,11 @@ fn scene_input_snapshot(
 ) -> StateSnapshot {
     let mut snapshot = state_snapshot_for_model(model);
     snapshot.visible_window_ids = visible_window_ids.to_vec();
+    for window in &mut snapshot.windows {
+        if visible_window_ids.iter().any(|window_id| window_id == &window.id) {
+            window.mapped = true;
+        }
+    }
 
     snapshot
 }
@@ -277,94 +278,6 @@ fn resolve_layout_root(
             warn!(%error, window_count = windows.len(), "scene layout resolve failed");
             flat_workspace_root(visible_window_ids.iter().cloned())
         }
-    }
-}
-
-fn attach_titlebar_content(
-    node: ResolvedLayoutNode,
-    windows: &[WindowSnapshot],
-    config: &Config,
-    workspace_name: Option<&str>,
-) -> ResolvedLayoutNode {
-    match node {
-        ResolvedLayoutNode::Workspace { meta, children } => ResolvedLayoutNode::Workspace {
-            meta,
-            children: children
-                .into_iter()
-                .map(|child| attach_titlebar_content(child, windows, config, workspace_name))
-                .collect(),
-        },
-        ResolvedLayoutNode::Group { meta, children } => ResolvedLayoutNode::Group {
-            meta,
-            children: children
-                .into_iter()
-                .map(|child| attach_titlebar_content(child, windows, config, workspace_name))
-                .collect(),
-        },
-        ResolvedLayoutNode::Content {
-            meta,
-            kind,
-            text,
-            children,
-        } => ResolvedLayoutNode::Content {
-            meta,
-            kind,
-            text,
-            children: children
-                .into_iter()
-                .map(|child| attach_titlebar_content(child, windows, config, workspace_name))
-                .collect(),
-        },
-        ResolvedLayoutNode::Window {
-            meta,
-            window_id,
-            mut children,
-        } => {
-            children = children
-                .into_iter()
-                .map(|child| attach_titlebar_content(child, windows, config, workspace_name))
-                .collect();
-
-            if let Some(window_id) = window_id.as_ref()
-                && let Some(window) = windows.iter().find(|window| &window.id == window_id)
-                && let Ok(Some(titlebar)) = config.resolve_titlebar_runtime_node(
-                    &layout_window_context(window),
-                    workspace_name,
-                    None,
-                )
-            {
-                children.insert(0, titlebar);
-            }
-
-            ResolvedLayoutNode::Window {
-                meta,
-                window_id,
-                children,
-            }
-        }
-    }
-}
-
-fn layout_window_context(window: &WindowSnapshot) -> LayoutWindowContext {
-    LayoutWindowContext {
-        id: window.id.clone(),
-        app_id: window.app_id.clone(),
-        title: window.title.clone(),
-        class: window.class.clone(),
-        instance: window.instance.clone(),
-        role: window.role.clone(),
-        shell: Some(
-            match window.shell {
-                spiders_core::types::ShellKind::X11 => "x11",
-                spiders_core::types::ShellKind::XdgToplevel => "xdg_toplevel",
-                spiders_core::types::ShellKind::Unknown => "unknown",
-            }
-            .to_string(),
-        ),
-        window_type: window.window_type.clone(),
-        floating: window.mode.is_floating(),
-        fullscreen: window.mode.is_fullscreen(),
-        focused: window.focused,
     }
 }
 
@@ -480,6 +393,35 @@ mod tests {
 
         assert!(targets_cover_windows(&targets, &[window_id(1)]));
         assert!(!targets_cover_windows(&targets, &[window_id(1), window_id(2)]));
+    }
+
+    #[test]
+    fn scene_input_snapshot_marks_requested_visible_windows_mapped() {
+        let mut model = WmModel::default();
+        model.upsert_workspace(spiders_core::WorkspaceId::from("1"), "1".into());
+        model.set_current_workspace(spiders_core::WorkspaceId::from("1"));
+        model.upsert_output(spiders_core::OutputId::from("winit"), "winit", 1280, 800, None);
+        model.attach_workspace_to_output(
+            spiders_core::WorkspaceId::from("1"),
+            spiders_core::OutputId::from("winit"),
+        );
+        model.set_current_output(spiders_core::OutputId::from("winit"));
+        model.insert_window(
+            window_id(1),
+            Some(spiders_core::WorkspaceId::from("1")),
+            Some(spiders_core::OutputId::from("winit")),
+        );
+
+        let snapshot = scene_input_snapshot(&Config::default(), &model, &[window_id(1)]);
+
+        assert_eq!(snapshot.visible_window_ids, vec![window_id(1)]);
+        assert!(
+            snapshot
+                .windows
+                .iter()
+                .find(|window| window.id == window_id(1))
+                .is_some_and(|window| window.mapped)
+        );
     }
 
     #[test]

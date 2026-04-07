@@ -56,7 +56,6 @@ Supported debug dump kinds:
 - `debug-profile`
 - `scene-snapshot`
 - `frame-sync`
-- `titlebar-overlays`
 - `seats`
 
 The recommended client surface is:

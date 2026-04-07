@@ -14,13 +14,11 @@ members = [
   "crates/logging",
   "crates/wm-river",
   "crates/scene",
-  "crates/titlebar/native",
-  "crates/titlebar/core",
-  "crates/titlebar/web",
   "crates/runtimes/js/core",
   "crates/runtimes/js/browser",
   "crates/runtimes/js/native",
   "apps/spiders-wm",
+  "apps/spiders-wm-x",
   "apps/spiders-wm-www",
 ]
 
@@ -57,6 +55,7 @@ tracing-subscriber = { version = "0.3", features = [
   "fmt",
   "ansi",
 ] }
+xcb = "1.7"
 wasm-bindgen = "0.2.117"
 wasm-bindgen-futures = "0.4"
 web-sys = "0.3"

@@ -58,8 +58,8 @@ impl<'a> WmRuntime<'a> {
             WmSignal::InteractedWindowChanged { seat_id, interacted_window_id } => {
                 self.sync_interacted_window(seat_id, interacted_window_id);
             }
-            WmSignal::WindowIdentityChanged { window_id, title, app_id } => {
-                self.sync_window_identity(window_id, title, app_id);
+            WmSignal::WindowIdentityChanged { window_id, title, app_id, class, instance } => {
+                self.sync_window_identity(window_id, title, app_id, class, instance);
             }
             WmSignal::WindowMappedChanged { window_id, mapped } => {
                 self.sync_window_mapped(window_id, mapped);
@@ -99,10 +99,12 @@ impl<'a> WmRuntime<'a> {
                 .workspaces
                 .get(&workspace_id)
                 .and_then(|workspace| workspace.effective_layout.clone());
-            let next_layout = workspace_default_layout_name(self.model, config, &workspace_names, &workspace_id)
-                .map(|name| LayoutRef { name });
+            let next_layout =
+                workspace_default_layout_name(self.model, config, &workspace_names, &workspace_id)
+                    .map(|name| LayoutRef { name });
             if current_layout != next_layout {
-                self.model.set_workspace_effective_layout(workspace_id.clone(), next_layout.clone());
+                self.model
+                    .set_workspace_effective_layout(workspace_id.clone(), next_layout.clone());
                 self.push_layout_change(Some(workspace_id), next_layout);
             }
         }
@@ -112,8 +114,7 @@ impl<'a> WmRuntime<'a> {
         let workspace_id = self.model.current_workspace_id().cloned()?;
         let name = name.into();
         let layout = LayoutRef { name };
-        self.model
-            .set_workspace_effective_layout(workspace_id.clone(), Some(layout.clone()));
+        self.model.set_workspace_effective_layout(workspace_id.clone(), Some(layout.clone()));
         self.push_layout_change(Some(workspace_id), Some(layout.clone()));
         Some(layout)
     }
@@ -135,22 +136,22 @@ impl<'a> WmRuntime<'a> {
             .get(&workspace_id)
             .and_then(|workspace| workspace.effective_layout.as_ref())
             .map(|layout| layout.name.as_str());
-        let current_index = current_name.and_then(|name| layouts.iter().position(|candidate| *candidate == name));
+        let current_index =
+            current_name.and_then(|name| layouts.iter().position(|candidate| *candidate == name));
 
         let next_index = match (direction, current_index) {
             (Some(spiders_core::command::LayoutCycleDirection::Previous), Some(index)) => {
                 (index + layouts.len() - 1) % layouts.len()
             }
-            (Some(spiders_core::command::LayoutCycleDirection::Previous), None) => layouts.len() - 1,
+            (Some(spiders_core::command::LayoutCycleDirection::Previous), None) => {
+                layouts.len() - 1
+            }
             (_, Some(index)) => (index + 1) % layouts.len(),
             (_, None) => 0,
         };
 
-        let layout = LayoutRef {
-            name: layouts[next_index].to_string(),
-        };
-        self.model
-            .set_workspace_effective_layout(workspace_id.clone(), Some(layout.clone()));
+        let layout = LayoutRef { name: layouts[next_index].to_string() };
+        self.model.set_workspace_effective_layout(workspace_id.clone(), Some(layout.clone()));
         self.push_layout_change(Some(workspace_id), Some(layout.clone()));
         Some(layout)
     }
@@ -359,8 +360,10 @@ impl<'a> WmRuntime<'a> {
         window_id: WindowId,
         title: Option<String>,
         app_id: Option<String>,
+        class: Option<String>,
+        instance: Option<String>,
     ) -> Option<WindowId> {
-        let window_id = sync_window_identity(self.model, window_id, title, app_id);
+        let window_id = sync_window_identity(self.model, window_id, title, app_id, class, instance);
         if let Some(window_id) = window_id.as_ref() {
             self.push_window_identity_change(window_id);
         }
@@ -446,9 +449,8 @@ impl<'a> WmRuntime<'a> {
             return;
         };
 
-        self.pending_events.push(WmEvent::WindowIdentityChange {
-            window: window_snapshot(self.model, window),
-        });
+        self.pending_events
+            .push(WmEvent::WindowIdentityChange { window: window_snapshot(self.model, window) });
     }
 
     fn push_window_mapped_change(&mut self, window_id: &WindowId) {
@@ -495,9 +497,7 @@ impl<'a> WmRuntime<'a> {
             return;
         };
 
-        self.pending_events.push(WmEvent::OutputChange {
-            output: output_snapshot(output),
-        });
+        self.pending_events.push(WmEvent::OutputChange { output: output_snapshot(output) });
     }
 }
 
@@ -620,6 +620,8 @@ fn request_close_focused_window(model: &mut WmModel) -> CloseSelection {
 
     if let Some(window_id) = focused_id.as_ref() {
         model.set_window_closing(window_id.clone(), true);
+        let next_focus = model.preferred_focus_window_on_current_workspace(Vec::new());
+        model.set_window_focused(next_focus);
     }
 
     CloseSelection { closing_window_id: focused_id }
@@ -630,12 +632,14 @@ fn sync_window_identity(
     window_id: WindowId,
     title: Option<String>,
     app_id: Option<String>,
+    class: Option<String>,
+    instance: Option<String>,
 ) -> Option<WindowId> {
     if !model.windows.contains_key(&window_id) {
         return None;
     }
 
-    model.set_window_identity(window_id.clone(), title, app_id);
+    model.set_window_identity(window_id.clone(), title, app_id, class, instance);
     Some(window_id)
 }
 
@@ -711,8 +715,8 @@ fn toggle_focused_window_fullscreen(model: &mut WmModel) -> Option<WindowId> {
 mod tests {
     use super::*;
     use spiders_config::model::{Config, LayoutDefinition};
-    use spiders_core::window_id;
     use spiders_core::signal::WmSignal;
+    use spiders_core::window_id;
 
     struct NoopHost;
 
@@ -886,10 +890,7 @@ mod tests {
 
         let mut config = Config::default();
         config.layout_selection.default = Some("master-stack".to_string());
-        config
-            .layout_selection
-            .per_monitor
-            .insert("winit".to_string(), "focus-repro".to_string());
+        config.layout_selection.per_monitor.insert("winit".to_string(), "focus-repro".to_string());
 
         runtime.sync_layout_selection_defaults(&config);
         let events = runtime.take_events();
@@ -914,10 +915,7 @@ mod tests {
 
         let events = runtime.handle_signal(
             &mut host,
-            WmSignal::WindowMappedChanged {
-                window_id: window_id(1),
-                mapped: true,
-            },
+            WmSignal::WindowMappedChanged { window_id: window_id(1), mapped: true },
         );
 
         assert!(matches!(
@@ -967,6 +965,8 @@ mod tests {
                 window_id: window_id(1),
                 title: Some("Terminal".to_string()),
                 app_id: Some("foot".to_string()),
+                class: Some("foot".to_string()),
+                instance: Some("foot".to_string()),
             },
         );
 
@@ -976,6 +976,8 @@ mod tests {
                 if window.id == window_id(1)
                     && window.title.as_deref() == Some("Terminal")
                     && window.app_id.as_deref() == Some("foot")
+                    && window.class.as_deref() == Some("foot")
+                    && window.instance.as_deref() == Some("foot")
         ));
     }
 }

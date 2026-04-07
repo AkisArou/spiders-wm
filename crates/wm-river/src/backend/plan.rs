@@ -1,9 +1,22 @@
 use spiders_core::WindowId;
 use spiders_core::types::WindowMode;
 use spiders_core::{OutputId, WorkspaceId};
-pub use spiders_titlebar_core::{AppearancePlan, DecorationMode, TitlebarPlan};
+use spiders_scene::AppearanceValue;
 
 use crate::protocol::river_window_management_v1::river_window_v1;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DecorationMode {
+    ClientSide,
+    NoTitlebar,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AppearancePlan {
+    pub window_id: WindowId,
+    pub appearance: AppearanceValue,
+    pub decoration_mode: DecorationMode,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ManageWindowPlan {

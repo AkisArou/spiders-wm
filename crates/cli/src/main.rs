@@ -867,7 +867,6 @@ fn parse_debug_dump_kind(name: &str) -> Result<spiders_ipc::DebugDumpKind, Strin
         "debug-profile" => Ok(spiders_ipc::DebugDumpKind::DebugProfile),
         "scene-snapshot" => Ok(spiders_ipc::DebugDumpKind::SceneSnapshot),
         "frame-sync" => Ok(spiders_ipc::DebugDumpKind::FrameSync),
-        "titlebar-overlays" => Ok(spiders_ipc::DebugDumpKind::TitlebarOverlays),
         "seats" => Ok(spiders_ipc::DebugDumpKind::Seats),
         _ => Err(format!("unsupported IPC debug dump '{name}'")),
     }
@@ -965,7 +964,6 @@ fn debug_dump_label(kind: &spiders_ipc::DebugDumpKind) -> &'static str {
         spiders_ipc::DebugDumpKind::DebugProfile => "debug-profile",
         spiders_ipc::DebugDumpKind::SceneSnapshot => "scene-snapshot",
         spiders_ipc::DebugDumpKind::FrameSync => "frame-sync",
-        spiders_ipc::DebugDumpKind::TitlebarOverlays => "titlebar-overlays",
         spiders_ipc::DebugDumpKind::Seats => "seats",
     }
 }

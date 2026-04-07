@@ -162,6 +162,7 @@ fn resolved_layout_root(
                     ..LayoutNodeMeta::default()
                 },
                 window_id: Some(window_id.clone()),
+                children: Vec::new(),
             })
             .collect(),
     })

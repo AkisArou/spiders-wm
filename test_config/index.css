@@ -1,81 +1,10 @@
 window {
-  border-width: 1px;
+  border-width: 2px;
   border-color: #2f3647;
   background: #181b24;
+  appearance: none;
 }
 
 window:focused {
-  border-width: 2px;
   border-color: #7dd3c7;
-}
-
-.default-titlebar {
-  display: flex;
-  align-items: center;
-  justify-content: flex-start;
-  gap: 8px;
-  width: 100%;
-  min-width: 0;
-}
-
-.titlebar-left,
-.titlebar-center,
-.titlebar-right {
-  display: flex;
-  align-items: center;
-  min-width: 0;
-}
-
-.titlebar-left {
-  width: 18px;
-  flex-shrink: 0;
-}
-
-.titlebar-center {
-  flex-grow: 1;
-  flex-basis: 0;
-  justify-content: center;
-  overflow: hidden;
-}
-
-.titlebar-right {
-  width: 18px;
-  flex-shrink: 0;
-  justify-content: flex-end;
-}
-
-.window-title {
-  font-size: 13px;
-  font-weight: bold;
-}
-
-.close-button {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 18px;
-  height: 18px;
-  padding: 0;
-  border-width: 0;
-  border-radius: 999px;
-  background: rgba(247, 245, 239, 0.12);
-  color: #f7f5ef;
-}
-
-.close-icon {
-  width: 11px;
-  height: 11px;
-}
-
-window::titlebar {
-  background: #171717;
-  color: #f7f5ef;
-  height: 28px;
-  padding-left: 12px;
-  padding-right: 12px;
-  text-align: left;
-}
-
-window:focused::titlebar {
-  background: #0f766e;
 }

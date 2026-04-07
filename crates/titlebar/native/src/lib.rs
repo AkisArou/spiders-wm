@@ -1,5 +1,6 @@
 use std::fs;
 use std::path::Path;
+use std::sync::OnceLock;
 
 use ab_glyph::{Font, FontArc, PxScale, ScaleFont, point};
 use spiders_config::model::TitlebarFontConfig;
@@ -93,10 +94,15 @@ pub fn render_titlebar_snapshot(
     }
 
     let mut pixmap = Pixmap::new(width as u32, height as u32)?;
-    let resolver = CachedNativeFontResolver::new(FontDbNativeFontResolver::default());
-    draw_snapshot_node(&mut pixmap, root, rect.x, rect.y, scale.max(0.1), override_font, &resolver);
+    let resolver = shared_native_font_resolver();
+    draw_snapshot_node(&mut pixmap, root, rect.x, rect.y, scale.max(0.1), override_font, resolver);
 
     Some(RasterizedTitlebar { width, height, pixels: pixmap_argb_bytes(&pixmap) })
+}
+
+fn shared_native_font_resolver() -> &'static CachedNativeFontResolver<FontDbNativeFontResolver> {
+    static RESOLVER: OnceLock<CachedNativeFontResolver<FontDbNativeFontResolver>> = OnceLock::new();
+    RESOLVER.get_or_init(|| CachedNativeFontResolver::new(FontDbNativeFontResolver::default()))
 }
 
 fn draw_background(pixmap: &mut Pixmap, width: i32, plan: &TitlebarPlan) {

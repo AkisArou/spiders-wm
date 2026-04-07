@@ -7,7 +7,6 @@ use spiders_core::resize::LayoutAdjustmentState;
 use spiders_core::snapshot::WindowSnapshot;
 use spiders_core::wm::WindowGeometry;
 use spiders_core::{LayoutId, WindowId};
-use spiders_scene::ComputedStyle;
 use spiders_scene::pipeline::SceneCache;
 pub use spiders_wm_runtime::{PreviewDiagnostic, PreviewSnapshotNode};
 use spiders_wm_runtime::{
@@ -248,15 +247,6 @@ impl PreviewSessionState {
         }
 
         self.snapshot_root.as_ref().and_then(|root| find(root, window_id))
-    }
-
-    pub fn window_titlebar_styles(
-        &self,
-        window_id: &WindowId,
-    ) -> (Option<ComputedStyle>, Option<ComputedStyle>) {
-        self.snapshot_node_for_window(window_id)
-            .map(|node| (node.layout_style.clone(), node.titlebar_style.clone()))
-            .unwrap_or((None, None))
     }
 
     pub fn apply_command(&mut self, command: WmCommand) -> PreviewRenderAction {

@@ -7,15 +7,17 @@ use serde_json::Value;
 use spiders_core::command::{FocusDirection, WmCommand};
 use tracing::debug;
 
-use spiders_runtime_js_core::compile::{AppBuildPlan, compile_app, compiled_app_to_module_graph};
-use spiders_runtime_js_core::graph::{DiscoveredApp, ModuleGraph, ModuleGraphBuilder, discover_project_apps};
-use spiders_runtime_js_core::{
-    JavaScriptModule, JavaScriptModuleGraph, encode_runtime_graph_payload,
-};
 use crate::module_graph_runtime::evaluate_entry_export_to_json;
 use spiders_config::model::{
     Binding, Config, ConfigOptions, InputConfig, LayoutConfigError, LayoutDefinition,
-    LayoutSelectionConfig, TitlebarFontConfig, WindowRule,
+    LayoutSelectionConfig, WindowRule,
+};
+use spiders_runtime_js_core::compile::{AppBuildPlan, compile_app, compiled_app_to_module_graph};
+use spiders_runtime_js_core::graph::{
+    DiscoveredApp, ModuleGraph, ModuleGraphBuilder, discover_project_apps,
+};
+use spiders_runtime_js_core::{
+    JavaScriptModule, JavaScriptModuleGraph, encode_runtime_graph_payload,
 };
 
 pub fn load_authored_config(path: impl AsRef<Path>) -> Result<Config, LayoutConfigError> {
@@ -35,12 +37,12 @@ fn load_project_config(path: &Path) -> Result<Config, LayoutConfigError> {
             message: error.to_string(),
         })?;
 
-    let config_graph = ModuleGraphBuilder::new()
-        .build(&project.config_app)
-        .map_err(|error| LayoutConfigError::CompileAuthoredConfig {
+    let config_graph = ModuleGraphBuilder::new().build(&project.config_app).map_err(|error| {
+        LayoutConfigError::CompileAuthoredConfig {
             path: path.to_path_buf(),
             message: error.to_string(),
-        })?;
+        }
+    })?;
     let config_plan = AppBuildPlan::from_graph(&config_graph);
     let compiled_config =
         compile_app(&config_plan).map_err(|error| LayoutConfigError::CompileAuthoredConfig {
@@ -56,10 +58,8 @@ fn load_project_config(path: &Path) -> Result<Config, LayoutConfigError> {
     let config_value = evaluate_compiled_config(path, &config_runtime_graph)?;
     let mut config = decode_config_value(path, &config_value)?;
 
-    config.global_stylesheet_path = project
-        .global_stylesheet_path
-        .as_ref()
-        .map(|path| path.to_string_lossy().into_owned());
+    config.global_stylesheet_path =
+        project.global_stylesheet_path.as_ref().map(|path| path.to_string_lossy().into_owned());
 
     let mut layout_defs = Vec::new();
     for app in &project.layout_apps {
@@ -143,12 +143,8 @@ fn write_runtime_cache(
         }
     })?;
 
-    let config_outputs = write_compiled_app(
-        &project.config_app,
-        runtime_root,
-        runtime_path,
-        force_rebuild,
-    )?;
+    let config_outputs =
+        write_compiled_app(&project.config_app, runtime_root, runtime_path, force_rebuild)?;
     update.rebuilt_files += config_outputs.written_files;
     expected_paths.extend(config_outputs.paths);
     for app in &project.layout_apps {
@@ -159,10 +155,7 @@ fn write_runtime_cache(
 
     if let Some(stylesheet) = &project.global_stylesheet_path {
         let destination = runtime_root.join(
-            stylesheet
-                .file_name()
-                .map(PathBuf::from)
-                .unwrap_or_else(|| PathBuf::from("index.css")),
+            stylesheet.file_name().map(PathBuf::from).unwrap_or_else(|| PathBuf::from("index.css")),
         );
         if copy_stylesheet_if_stale(stylesheet, &destination, force_rebuild)? {
             update.copied_stylesheets += 1;
@@ -206,15 +199,13 @@ fn write_compiled_app(
         .values()
         .filter_map(|record| match &record.id {
             spiders_runtime_js_core::graph::ModuleId::File(path) => match record.kind {
-                spiders_runtime_js_core::graph::ModuleKind::Script => Some(
-                    runtime_root.join(runtime_relative_path(
+                spiders_runtime_js_core::graph::ModuleKind::Script => {
+                    Some(runtime_root.join(runtime_relative_path(
                         path,
                         &graph.app.root_dir,
-                        runtime_entry_path
-                            .file_name()
-                            .and_then(|name| name.to_str()),
-                    )),
-                ),
+                        runtime_entry_path.file_name().and_then(|name| name.to_str()),
+                    )))
+                }
                 spiders_runtime_js_core::graph::ModuleKind::Stylesheet => {
                     Some(runtime_root.join(runtime_static_relative_path(path, &graph.app.root_dir)))
                 }
@@ -224,10 +215,7 @@ fn write_compiled_app(
         })
         .collect::<Vec<_>>();
     if !force_rebuild && app_cache_is_fresh(&graph, runtime_root, runtime_entry_path) {
-        return Ok(CompiledRuntimeAppOutputs {
-            paths: expected_paths,
-            written_files: 0,
-        });
+        return Ok(CompiledRuntimeAppOutputs { paths: expected_paths, written_files: 0 });
     }
     let plan = AppBuildPlan::from_graph(&graph);
     let compiled =
@@ -261,31 +249,23 @@ fn write_compiled_app(
             &graph.app.root_dir,
         )?;
         if let Some(parent) = destination.parent() {
-            std::fs::create_dir_all(parent).map_err(|_| LayoutConfigError::ReadConfig {
-                path: parent.to_path_buf(),
-            })?;
+            std::fs::create_dir_all(parent)
+                .map_err(|_| LayoutConfigError::ReadConfig { path: parent.to_path_buf() })?;
         }
-        std::fs::write(&destination, rewritten).map_err(|_| LayoutConfigError::ReadConfig {
-            path: destination.clone(),
-        })?;
+        std::fs::write(&destination, rewritten)
+            .map_err(|_| LayoutConfigError::ReadConfig { path: destination.clone() })?;
         written_files += 1;
     }
 
     if let Some(stylesheet_path) = app.stylesheet_path.as_ref() {
-        let destination = runtime_root.join(runtime_static_relative_path(
-            stylesheet_path,
-            &graph.app.root_dir,
-        ));
+        let destination =
+            runtime_root.join(runtime_static_relative_path(stylesheet_path, &graph.app.root_dir));
         if let Some(parent) = destination.parent() {
-            std::fs::create_dir_all(parent).map_err(|_| LayoutConfigError::ReadConfig {
-                path: parent.to_path_buf(),
-            })?;
+            std::fs::create_dir_all(parent)
+                .map_err(|_| LayoutConfigError::ReadConfig { path: parent.to_path_buf() })?;
         }
-        std::fs::write(&destination, &compiled.stylesheet).map_err(|_| {
-            LayoutConfigError::ReadConfig {
-                path: destination.clone(),
-            }
-        })?;
+        std::fs::write(&destination, &compiled.stylesheet)
+            .map_err(|_| LayoutConfigError::ReadConfig { path: destination.clone() })?;
         written_files += 1;
     }
 
@@ -293,32 +273,21 @@ fn write_compiled_app(
         if app.stylesheet_path.as_ref() == Some(stylesheet) {
             continue;
         }
-        let destination = runtime_root.join(runtime_static_relative_path(
-            stylesheet,
-            &graph.app.root_dir,
-        ));
+        let destination =
+            runtime_root.join(runtime_static_relative_path(stylesheet, &graph.app.root_dir));
         if let Some(parent) = destination.parent() {
-            std::fs::create_dir_all(parent).map_err(|_| LayoutConfigError::ReadConfig {
-                path: parent.to_path_buf(),
-            })?;
+            std::fs::create_dir_all(parent)
+                .map_err(|_| LayoutConfigError::ReadConfig { path: parent.to_path_buf() })?;
         }
-        std::fs::copy(stylesheet, &destination).map_err(|_| LayoutConfigError::ReadConfig {
-            path: destination.clone(),
-        })?;
+        std::fs::copy(stylesheet, &destination)
+            .map_err(|_| LayoutConfigError::ReadConfig { path: destination.clone() })?;
         written_files += 1;
     }
 
-    Ok(CompiledRuntimeAppOutputs {
-        paths: expected_paths,
-        written_files,
-    })
+    Ok(CompiledRuntimeAppOutputs { paths: expected_paths, written_files })
 }
 
-fn app_cache_is_fresh(
-    graph: &ModuleGraph,
-    runtime_root: &Path,
-    runtime_entry_path: &Path,
-) -> bool {
+fn app_cache_is_fresh(graph: &ModuleGraph, runtime_root: &Path, runtime_entry_path: &Path) -> bool {
     let plan = AppBuildPlan::from_graph(graph);
     let source_files = graph
         .modules
@@ -340,10 +309,8 @@ fn app_cache_is_fresh(
         return false;
     }
 
-    let newest_source = source_files
-        .iter()
-        .filter_map(|path| std::fs::metadata(path).ok()?.modified().ok())
-        .max();
+    let newest_source =
+        source_files.iter().filter_map(|path| std::fs::metadata(path).ok()?.modified().ok()).max();
     let Some(newest_source) = newest_source else {
         return false;
     };
@@ -355,9 +322,7 @@ fn app_cache_is_fresh(
             runtime_relative_path(
                 path,
                 &graph.app.root_dir,
-                runtime_entry_path
-                    .file_name()
-                    .and_then(|name| name.to_str()),
+                runtime_entry_path.file_name().and_then(|name| name.to_str()),
             )
         };
         let destination = runtime_root.join(relative);
@@ -378,10 +343,8 @@ fn generated_stylesheet_matches_cached(
         return true;
     };
 
-    let destination = runtime_root.join(runtime_static_relative_path(
-        stylesheet_path,
-        &graph.app.root_dir,
-    ));
+    let destination =
+        runtime_root.join(runtime_static_relative_path(stylesheet_path, &graph.app.root_dir));
     let expected = plan
         .stylesheet_modules
         .iter()
@@ -403,9 +366,7 @@ fn runtime_destination_for_specifier(
     let entry_relative = runtime_relative_path(
         &authored_root.join(specifier),
         authored_root,
-        runtime_entry_path
-            .file_name()
-            .and_then(|name| name.to_str()),
+        runtime_entry_path.file_name().and_then(|name| name.to_str()),
     );
     runtime_root.join(entry_relative)
 }
@@ -429,16 +390,10 @@ fn runtime_relative_path(
 }
 
 fn runtime_static_relative_path(source_path: &Path, authored_root: &Path) -> PathBuf {
-    source_path
-        .strip_prefix(authored_root)
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|_| {
-            let extension = source_path
-                .extension()
-                .and_then(|ext| ext.to_str())
-                .unwrap_or("asset");
-            external_runtime_relative_path(source_path, extension)
-        })
+    source_path.strip_prefix(authored_root).map(Path::to_path_buf).unwrap_or_else(|_| {
+        let extension = source_path.extension().and_then(|ext| ext.to_str()).unwrap_or("asset");
+        external_runtime_relative_path(source_path, extension)
+    })
 }
 
 fn external_runtime_relative_path(source_path: &Path, extension: &str) -> PathBuf {
@@ -451,8 +406,7 @@ fn external_runtime_relative_path(source_path: &Path, extension: &str) -> PathBu
         .filter(|stem| !stem.is_empty())
         .unwrap_or("module");
 
-    PathBuf::from("__external")
-        .join(format!("{stem}-{hash:016x}.{extension}"))
+    PathBuf::from("__external").join(format!("{stem}-{hash:016x}.{extension}"))
 }
 
 fn rewrite_module_for_runtime(
@@ -597,9 +551,8 @@ fn copy_stylesheet_if_stale(
         }
     }
     if let Some(parent) = to.parent() {
-        std::fs::create_dir_all(parent).map_err(|_| LayoutConfigError::ReadConfig {
-            path: parent.to_path_buf(),
-        })?;
+        std::fs::create_dir_all(parent)
+            .map_err(|_| LayoutConfigError::ReadConfig { path: parent.to_path_buf() })?;
     }
     std::fs::copy(from, to).map_err(|_| LayoutConfigError::ReadConfig { path: from.into() })?;
     Ok(true)
@@ -621,16 +574,13 @@ fn prune_stale_runtime_cache_dir(
     expected_paths: &BTreeSet<PathBuf>,
 ) -> Result<usize, LayoutConfigError> {
     let mut pruned_files = 0usize;
-    for entry in std::fs::read_dir(dir).map_err(|_| LayoutConfigError::ReadConfig {
-        path: dir.to_path_buf(),
-    })? {
-        let entry = entry.map_err(|_| LayoutConfigError::ReadConfig {
-            path: dir.to_path_buf(),
-        })?;
+    for entry in std::fs::read_dir(dir)
+        .map_err(|_| LayoutConfigError::ReadConfig { path: dir.to_path_buf() })?
+    {
+        let entry = entry.map_err(|_| LayoutConfigError::ReadConfig { path: dir.to_path_buf() })?;
         let path = entry.path();
-        let file_type = entry
-            .file_type()
-            .map_err(|_| LayoutConfigError::ReadConfig { path: path.clone() })?;
+        let file_type =
+            entry.file_type().map_err(|_| LayoutConfigError::ReadConfig { path: path.clone() })?;
 
         if file_type.is_dir() {
             pruned_files += prune_stale_runtime_cache_dir(runtime_root, &path, expected_paths)?;
@@ -646,10 +596,8 @@ fn prune_stale_runtime_cache_dir(
             continue;
         }
 
-        let should_consider = matches!(
-            path.extension().and_then(|ext| ext.to_str()),
-            Some("js" | "css")
-        );
+        let should_consider =
+            matches!(path.extension().and_then(|ext| ext.to_str()), Some("js" | "css"));
         if should_consider && !expected_paths.contains(&path) {
             std::fs::remove_file(&path)
                 .map_err(|_| LayoutConfigError::ReadConfig { path: path.clone() })?;
@@ -683,7 +631,6 @@ fn decode_config_value(path: &Path, value: &Value) -> Result<Config, LayoutConfi
         global_stylesheet_path: None,
         layout_selection: decode_layout_selection(root.get("layouts"), path)?,
         rules: decode_rules(root.get("rules"), path)?,
-        titlebars: decode_titlebars(root.get("titlebars"), path)?,
         bindings: decode_bindings(root.get("bindings"), path)?,
         autostart: decode_string_array(root.get("autostart"), path, "root.autostart")?,
         autostart_once: decode_string_array(
@@ -699,10 +646,7 @@ fn validate_layout_selection(
     selection: &LayoutSelectionConfig,
     layouts: &[LayoutDefinition],
 ) -> Result<(), LayoutConfigError> {
-    let known = layouts
-        .iter()
-        .map(|layout| layout.name.as_str())
-        .collect::<Vec<_>>();
+    let known = layouts.iter().map(|layout| layout.name.as_str()).collect::<Vec<_>>();
     let is_known = |name: &str| known.iter().any(|known_name| *known_name == name);
 
     if let Some(default) = &selection.default {
@@ -716,11 +660,7 @@ fn validate_layout_selection(
         }
     }
 
-    for layout in selection
-        .per_workspace
-        .iter()
-        .chain(selection.per_monitor.values())
-    {
+    for layout in selection.per_workspace.iter().chain(selection.per_monitor.values()) {
         if !is_known(layout) {
             return Err(LayoutConfigError::DecodeAuthoredConfig {
                 path: path.to_path_buf(),
@@ -751,31 +691,7 @@ fn decode_options(value: Option<&Value>, path: &Path) -> Result<ConfigOptions, L
             "root.options.sloppyfocus",
         )?,
         attach: decode_optional_string(object.get("attach"), path, "root.options.attach")?,
-        titlebar_font: decode_titlebar_font(object.get("titlebar_font"), path)?,
     })
-}
-
-fn decode_titlebar_font(
-    value: Option<&Value>,
-    path: &Path,
-) -> Result<Option<TitlebarFontConfig>, LayoutConfigError> {
-    let Some(value) = value else {
-        return Ok(None);
-    };
-
-    let object = expect_object(path, value, "root.options.titlebar_font")?;
-    Ok(Some(TitlebarFontConfig {
-        regular_path: decode_optional_string(
-            object.get("regular_path"),
-            path,
-            "root.options.titlebar_font.regular_path",
-        )?,
-        bold_path: decode_optional_string(
-            object.get("bold_path"),
-            path,
-            "root.options.titlebar_font.bold_path",
-        )?,
-    }))
 }
 
 fn decode_inputs(
@@ -898,17 +814,6 @@ fn decode_rules(value: Option<&Value>, path: &Path) -> Result<Vec<WindowRule>, L
     Ok(rules)
 }
 
-fn decode_titlebars(
-    value: Option<&Value>,
-    path: &Path,
-) -> Result<Vec<Value>, LayoutConfigError> {
-    let Some(value) = value else {
-        return Ok(Vec::new());
-    };
-
-    expect_array(path, value, "root.titlebars").map(|entries| entries.to_vec())
-}
-
 fn decode_bindings(value: Option<&Value>, path: &Path) -> Result<Vec<Binding>, LayoutConfigError> {
     let Some(value) = value else {
         return Ok(Vec::new());
@@ -923,11 +828,8 @@ fn decode_bindings(value: Option<&Value>, path: &Path) -> Result<Vec<Binding>, L
     let mut bindings = Vec::new();
     for (index, entry) in entries.iter().enumerate() {
         let object = expect_object(path, entry, &format!("root.bindings.entries[{index}]"))?;
-        let bind = expect_array(
-            path,
-            required(object, "bind", path, "binding.bind")?,
-            "binding.bind",
-        )?;
+        let bind =
+            expect_array(path, required(object, "bind", path, "binding.bind")?, "binding.bind")?;
         let trigger = bind
             .iter()
             .map(|token| {
@@ -959,23 +861,17 @@ fn decode_command_descriptor(
     let command = expect_string(path, required(object, "_command", path, field)?, field)?;
     let arg = object.get("_arg").unwrap_or(&Value::Null);
     match command {
-        "spawn" => Ok(WmCommand::Spawn {
-            command: expect_string(path, arg, field)?.to_owned(),
-        }),
+        "spawn" => Ok(WmCommand::Spawn { command: expect_string(path, arg, field)?.to_owned() }),
         "reload_config" => Ok(WmCommand::ReloadConfig),
-        "focus_next" => Ok(WmCommand::FocusDirection {
-            direction: FocusDirection::Right,
-        }),
-        "focus_prev" => Ok(WmCommand::FocusDirection {
-            direction: FocusDirection::Left,
-        }),
-        "set_layout" => Ok(WmCommand::SetLayout {
-            name: expect_string(path, arg, field)?.to_owned(),
-        }),
+        "focus_next" => Ok(WmCommand::FocusDirection { direction: FocusDirection::Right }),
+        "focus_prev" => Ok(WmCommand::FocusDirection { direction: FocusDirection::Left }),
+        "set_layout" => {
+            Ok(WmCommand::SetLayout { name: expect_string(path, arg, field)?.to_owned() })
+        }
         "cycle_layout" => Ok(WmCommand::CycleLayout { direction: None }),
-        "view_workspace" => Ok(WmCommand::ViewWorkspace {
-            workspace: decode_workspace_shortcut(path, arg, field)?,
-        }),
+        "view_workspace" => {
+            Ok(WmCommand::ViewWorkspace { workspace: decode_workspace_shortcut(path, arg, field)? })
+        }
         "toggle_view_workspace" => Ok(WmCommand::ToggleViewWorkspace {
             workspace: decode_workspace_shortcut(path, arg, field)?,
         }),
@@ -985,24 +881,24 @@ fn decode_command_descriptor(
         "send_mon_right" => Ok(WmCommand::SendMonitorRight),
         "toggle_floating" => Ok(WmCommand::ToggleFloating),
         "toggle_fullscreen" => Ok(WmCommand::ToggleFullscreen),
-        "focus_dir" => Ok(WmCommand::FocusDirection {
-            direction: decode_focus_direction(path, arg, field)?,
-        }),
-        "swap_dir" => Ok(WmCommand::SwapDirection {
-            direction: decode_focus_direction(path, arg, field)?,
-        }),
-        "resize_dir" => Ok(WmCommand::ResizeDirection {
-            direction: decode_focus_direction(path, arg, field)?,
-        }),
+        "focus_dir" => {
+            Ok(WmCommand::FocusDirection { direction: decode_focus_direction(path, arg, field)? })
+        }
+        "swap_dir" => {
+            Ok(WmCommand::SwapDirection { direction: decode_focus_direction(path, arg, field)? })
+        }
+        "resize_dir" => {
+            Ok(WmCommand::ResizeDirection { direction: decode_focus_direction(path, arg, field)? })
+        }
         "resize_tiled" => Ok(WmCommand::ResizeTiledDirection {
             direction: decode_focus_direction(path, arg, field)?,
         }),
-        "move" => Ok(WmCommand::MoveDirection {
-            direction: decode_focus_direction(path, arg, field)?,
-        }),
-        "resize" => Ok(WmCommand::ResizeDirection {
-            direction: decode_focus_direction(path, arg, field)?,
-        }),
+        "move" => {
+            Ok(WmCommand::MoveDirection { direction: decode_focus_direction(path, arg, field)? })
+        }
+        "resize" => {
+            Ok(WmCommand::ResizeDirection { direction: decode_focus_direction(path, arg, field)? })
+        }
         "assign_workspace" => Ok(WmCommand::AssignFocusedWindowToWorkspace {
             workspace: decode_workspace_shortcut(path, arg, field)?,
         }),
@@ -1046,11 +942,7 @@ fn decode_rule_workspaces(
             .iter()
             .map(|value| decode_workspace_string(path, value, "rule.workspaces"))
             .collect(),
-        _ => Ok(vec![decode_workspace_string(
-            path,
-            value,
-            "rule.workspaces",
-        )?]),
+        _ => Ok(vec![decode_workspace_string(path, value, "rule.workspaces")?]),
     }
 }
 
@@ -1104,9 +996,7 @@ fn decode_optional_string(
     path: &Path,
     field: &str,
 ) -> Result<Option<String>, LayoutConfigError> {
-    value
-        .map(|value| expect_string(path, value, field).map(str::to_owned))
-        .transpose()
+    value.map(|value| expect_string(path, value, field).map(str::to_owned)).transpose()
 }
 
 fn decode_optional_stringish(
@@ -1130,9 +1020,7 @@ fn decode_optional_bool(
     path: &Path,
     field: &str,
 ) -> Result<Option<bool>, LayoutConfigError> {
-    value
-        .map(|value| expect_bool(path, value, field))
-        .transpose()
+    value.map(|value| expect_bool(path, value, field)).transpose()
 }
 
 fn decode_optional_u32(
@@ -1140,9 +1028,7 @@ fn decode_optional_u32(
     path: &Path,
     field: &str,
 ) -> Result<Option<u32>, LayoutConfigError> {
-    value
-        .map(|value| expect_u32(path, value, field))
-        .transpose()
+    value.map(|value| expect_u32(path, value, field)).transpose()
 }
 
 fn decode_optional_f64(
@@ -1150,9 +1036,7 @@ fn decode_optional_f64(
     path: &Path,
     field: &str,
 ) -> Result<Option<f64>, LayoutConfigError> {
-    value
-        .map(|value| expect_f64(path, value, field))
-        .transpose()
+    value.map(|value| expect_f64(path, value, field)).transpose()
 }
 
 fn decode_string_array(
@@ -1164,10 +1048,7 @@ fn decode_string_array(
         return Ok(Vec::new());
     };
     let items = expect_array(path, value, field)?;
-    items
-        .iter()
-        .map(|value| expect_string(path, value, field).map(str::to_owned))
-        .collect()
+    items.iter().map(|value| expect_string(path, value, field).map(str::to_owned)).collect()
 }
 
 fn expect_object<'a>(
@@ -1175,12 +1056,10 @@ fn expect_object<'a>(
     value: &'a Value,
     field: &str,
 ) -> Result<&'a serde_json::Map<String, Value>, LayoutConfigError> {
-    value
-        .as_object()
-        .ok_or_else(|| LayoutConfigError::DecodeAuthoredConfig {
-            path: path.to_path_buf(),
-            message: format!("expected object at {field}"),
-        })
+    value.as_object().ok_or_else(|| LayoutConfigError::DecodeAuthoredConfig {
+        path: path.to_path_buf(),
+        message: format!("expected object at {field}"),
+    })
 }
 
 fn expect_array<'a>(
@@ -1188,12 +1067,10 @@ fn expect_array<'a>(
     value: &'a Value,
     field: &str,
 ) -> Result<&'a Vec<Value>, LayoutConfigError> {
-    value
-        .as_array()
-        .ok_or_else(|| LayoutConfigError::DecodeAuthoredConfig {
-            path: path.to_path_buf(),
-            message: format!("expected array at {field}"),
-        })
+    value.as_array().ok_or_else(|| LayoutConfigError::DecodeAuthoredConfig {
+        path: path.to_path_buf(),
+        message: format!("expected array at {field}"),
+    })
 }
 
 fn expect_string<'a>(
@@ -1201,40 +1078,33 @@ fn expect_string<'a>(
     value: &'a Value,
     field: &str,
 ) -> Result<&'a str, LayoutConfigError> {
-    value
-        .as_str()
-        .ok_or_else(|| LayoutConfigError::DecodeAuthoredConfig {
-            path: path.to_path_buf(),
-            message: format!("expected string at {field}"),
-        })
+    value.as_str().ok_or_else(|| LayoutConfigError::DecodeAuthoredConfig {
+        path: path.to_path_buf(),
+        message: format!("expected string at {field}"),
+    })
 }
 
 fn expect_bool(path: &Path, value: &Value, field: &str) -> Result<bool, LayoutConfigError> {
-    value
-        .as_bool()
-        .ok_or_else(|| LayoutConfigError::DecodeAuthoredConfig {
-            path: path.to_path_buf(),
-            message: format!("expected boolean at {field}"),
-        })
+    value.as_bool().ok_or_else(|| LayoutConfigError::DecodeAuthoredConfig {
+        path: path.to_path_buf(),
+        message: format!("expected boolean at {field}"),
+    })
 }
 
 fn expect_u32(path: &Path, value: &Value, field: &str) -> Result<u32, LayoutConfigError> {
-    value
-        .as_u64()
-        .and_then(|value| u32::try_from(value).ok())
-        .ok_or_else(|| LayoutConfigError::DecodeAuthoredConfig {
+    value.as_u64().and_then(|value| u32::try_from(value).ok()).ok_or_else(|| {
+        LayoutConfigError::DecodeAuthoredConfig {
             path: path.to_path_buf(),
             message: format!("expected unsigned integer at {field}"),
-        })
+        }
+    })
 }
 
 fn expect_f64(path: &Path, value: &Value, field: &str) -> Result<f64, LayoutConfigError> {
-    value
-        .as_f64()
-        .ok_or_else(|| LayoutConfigError::DecodeAuthoredConfig {
-            path: path.to_path_buf(),
-            message: format!("expected number at {field}"),
-        })
+    value.as_f64().ok_or_else(|| LayoutConfigError::DecodeAuthoredConfig {
+        path: path.to_path_buf(),
+        message: format!("expected number at {field}"),
+    })
 }
 
 fn required<'a>(
@@ -1243,12 +1113,10 @@ fn required<'a>(
     path: &Path,
     field: &str,
 ) -> Result<&'a Value, LayoutConfigError> {
-    object
-        .get(key)
-        .ok_or_else(|| LayoutConfigError::DecodeAuthoredConfig {
-            path: path.to_path_buf(),
-            message: format!("missing required field `{key}` at {field}"),
-        })
+    object.get(key).ok_or_else(|| LayoutConfigError::DecodeAuthoredConfig {
+        path: path.to_path_buf(),
+        message: format!("missing required field `{key}` at {field}"),
+    })
 }
 
 #[cfg(test)]
@@ -1259,10 +1127,8 @@ mod tests {
     use super::*;
 
     fn unique_root(name: &str) -> PathBuf {
-        let unique = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
+        let unique =
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
         std::env::temp_dir().join(format!("spiders-config-authored-{name}-{unique}"))
     }
 
@@ -1348,44 +1214,28 @@ mod tests {
         assert_eq!(config.options.sloppyfocus, Some(true));
         assert_eq!(config.bindings.len(), 8);
         assert_eq!(config.bindings[0].trigger, "alt+Return");
-        assert_eq!(
-            config.bindings[0].command,
-            WmCommand::Spawn {
-                command: "foot".into(),
-            }
-        );
+        assert_eq!(config.bindings[0].command, WmCommand::Spawn { command: "foot".into() });
         assert_eq!(
             config.bindings[1].command,
-            WmCommand::FocusDirection {
-                direction: FocusDirection::Left,
-            }
+            WmCommand::FocusDirection { direction: FocusDirection::Left }
         );
         assert_eq!(
             config.bindings[2].command,
-            WmCommand::SwapDirection {
-                direction: FocusDirection::Left,
-            }
+            WmCommand::SwapDirection { direction: FocusDirection::Left }
         );
         assert_eq!(
             config.bindings[3].command,
-            WmCommand::ResizeDirection {
-                direction: FocusDirection::Left,
-            }
+            WmCommand::ResizeDirection { direction: FocusDirection::Left }
         );
         assert_eq!(
             config.bindings[4].command,
-            WmCommand::ResizeTiledDirection {
-                direction: FocusDirection::Left,
-            }
+            WmCommand::ResizeTiledDirection { direction: FocusDirection::Left }
         );
         assert_eq!(config.bindings[5].command, WmCommand::FocusMonitorLeft);
         assert_eq!(config.bindings[6].command, WmCommand::FocusMonitorRight);
         assert_eq!(config.bindings[7].command, WmCommand::ToggleFullscreen);
         assert_eq!(config.inputs.len(), 1);
-        assert_eq!(
-            config.layout_selection.default.as_deref(),
-            Some("master-stack")
-        );
+        assert_eq!(config.layout_selection.default.as_deref(), Some("master-stack"));
         assert_eq!(config.layouts.len(), 1);
         assert_eq!(config.layouts[0].module, "layouts/master-stack/index.tsx");
         let runtime_graph =
@@ -1492,11 +1342,6 @@ mod tests {
 
         let config = load_prepared_config(&runtime_entry).unwrap();
         assert_eq!(config.bindings.len(), 1);
-        assert_eq!(
-            config.bindings[0].command,
-            WmCommand::Spawn {
-                command: "foot".into(),
-            }
-        );
+        assert_eq!(config.bindings[0].command, WmCommand::Spawn { command: "foot".into() });
     }
 }

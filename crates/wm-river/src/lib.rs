@@ -34,12 +34,7 @@ impl SpidersWm {
         let config = layout_service.load_config(&paths)?;
         let state = WmState::from_config(&config);
 
-        Ok(Self {
-            paths,
-            layout_service,
-            config,
-            state,
-        })
+        Ok(Self { paths, layout_service, config, state })
     }
 
     pub fn connect(&self) -> Result<backend::RiverConnection> {
@@ -77,10 +72,8 @@ mod tests {
 
     #[test]
     fn runtime_state_bootstraps_from_config_workspaces() {
-        let config = Config {
-            workspaces: vec!["1".into(), "2".into(), "web".into()],
-            ..Config::default()
-        };
+        let config =
+            Config { workspaces: vec!["1".into(), "2".into(), "web".into()], ..Config::default() };
 
         let state = WmState::from_config(&config);
 
@@ -105,10 +98,7 @@ mod tests {
 
     #[test]
     fn runtime_state_snapshot_includes_bootstrapped_workspace() {
-        let config = Config {
-            workspaces: vec!["1".into(), "2".into()],
-            ..Config::default()
-        };
+        let config = Config { workspaces: vec!["1".into(), "2".into()], ..Config::default() };
 
         let state = WmState::from_config(&config);
         let snapshot = state.as_state_snapshot();

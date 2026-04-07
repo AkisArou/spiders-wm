@@ -1,6 +1,6 @@
 use selectors::parser::SelectorList;
 
-use crate::stylo_adapter::{LayoutPseudoElement, LayoutSelectorImpl};
+use crate::stylo_adapter::LayoutSelectorImpl;
 
 use crate::compile::CompiledDeclaration;
 
@@ -19,8 +19,6 @@ impl CompiledStyleSheet {
 #[derive(Debug, Clone, PartialEq)]
 pub struct CompiledStyleRule {
     pub selectors: SelectorList<LayoutSelectorImpl>,
-    pub target_pseudo: Option<LayoutPseudoElement>,
-    pub pseudo_base_selectors: Option<SelectorList<LayoutSelectorImpl>>,
     pub declarations: Vec<CompiledDeclaration>,
 }
 

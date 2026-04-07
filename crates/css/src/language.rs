@@ -17,7 +17,6 @@ pub enum StyleTarget {
     Workspace,
     Group,
     Window,
-    WindowTitlebar,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -55,22 +54,17 @@ pub const SELECTOR_TARGETS: &[SelectorTarget] =
 pub const INVALID_SELECTOR_TARGET_NAMES: &[&str] = &["slot"];
 
 const ALL_STYLE_TARGETS: &[StyleTarget] =
-    &[StyleTarget::Workspace, StyleTarget::Group, StyleTarget::Window, StyleTarget::WindowTitlebar];
+    &[StyleTarget::Workspace, StyleTarget::Group, StyleTarget::Window];
 
 const ALL_ELEMENT_TARGETS: &[StyleTarget] =
     &[StyleTarget::Workspace, StyleTarget::Group, StyleTarget::Window];
-
-const WINDOW_AND_TITLEBAR_TARGETS: &[StyleTarget] =
-    &[StyleTarget::Window, StyleTarget::WindowTitlebar];
-
-const TITLEBAR_ONLY_TARGETS: &[StyleTarget] = &[StyleTarget::WindowTitlebar];
 
 const WINDOW_ONLY_TARGETS: &[StyleTarget] = &[StyleTarget::Window];
 
 const NO_KEYWORDS: &[&str] = &[];
 const DISPLAY_KEYWORDS: &[&str] = &["flex", "grid", "none"];
 const BOX_SIZING_KEYWORDS: &[&str] = &["border-box", "content-box"];
-const APPEARANCE_KEYWORDS: &[&str] = &["none", "client-side", "server-side"];
+const APPEARANCE_KEYWORDS: &[&str] = &["auto", "none"];
 const TEXT_ALIGN_KEYWORDS: &[&str] = &["left", "center", "right"];
 const TEXT_TRANSFORM_KEYWORDS: &[&str] = &["none", "uppercase", "lowercase", "capitalize"];
 const ANIMATION_DIRECTION_KEYWORDS: &[&str] =
@@ -180,11 +174,7 @@ pub const PSEUDO_CLASS_SPECS: &[PseudoClassSpec] = &[
     },
 ];
 
-pub const PSEUDO_ELEMENT_SPECS: &[PseudoElementSpec] = &[PseudoElementSpec {
-    name: "titlebar",
-    targets: &[SelectorTarget::Window],
-    hover: "Targets the compositor-managed window titlebar pseudo element.",
-}];
+pub const PSEUDO_ELEMENT_SPECS: &[PseudoElementSpec] = &[];
 
 pub const PROPERTY_SPECS: &[PropertySpec] = &[
     PropertySpec {
@@ -213,68 +203,68 @@ pub const PROPERTY_SPECS: &[PropertySpec] = &[
         status: SupportStatus::Partial,
         applies_to: WINDOW_ONLY_TARGETS,
         value_keywords: APPEARANCE_KEYWORDS,
-        hover: "Controls compositor titlebar and decoration behavior for windows.",
+        hover: "Controls window decoration behavior for windows.",
     },
     PropertySpec {
         name: "background",
         status: SupportStatus::Partial,
-        applies_to: WINDOW_AND_TITLEBAR_TARGETS,
+        applies_to: WINDOW_ONLY_TARGETS,
         value_keywords: NO_KEYWORDS,
         hover: "Sets a solid background color where compositor rendering consumes it.",
     },
     PropertySpec {
         name: "background-color",
         status: SupportStatus::Partial,
-        applies_to: WINDOW_AND_TITLEBAR_TARGETS,
+        applies_to: WINDOW_ONLY_TARGETS,
         value_keywords: NO_KEYWORDS,
         hover: "Sets a solid background color where compositor rendering consumes it.",
     },
     PropertySpec {
         name: "color",
         status: SupportStatus::Partial,
-        applies_to: WINDOW_AND_TITLEBAR_TARGETS,
+        applies_to: WINDOW_ONLY_TARGETS,
         value_keywords: NO_KEYWORDS,
         hover: "Sets compositor-rendered text color where supported.",
     },
     PropertySpec {
         name: "opacity",
         status: SupportStatus::Partial,
-        applies_to: WINDOW_AND_TITLEBAR_TARGETS,
+        applies_to: WINDOW_ONLY_TARGETS,
         value_keywords: NO_KEYWORDS,
         hover: "Controls compositor-managed opacity effects where currently implemented.",
     },
     PropertySpec {
         name: "border-color",
         status: SupportStatus::Partial,
-        applies_to: WINDOW_AND_TITLEBAR_TARGETS,
+        applies_to: WINDOW_ONLY_TARGETS,
         value_keywords: NO_KEYWORDS,
         hover: "Sets compositor-consumed border color where supported.",
     },
     PropertySpec {
         name: "border-style",
         status: SupportStatus::Partial,
-        applies_to: WINDOW_AND_TITLEBAR_TARGETS,
+        applies_to: WINDOW_ONLY_TARGETS,
         value_keywords: NO_KEYWORDS,
         hover: "Controls compositor border edge visibility where supported.",
     },
     PropertySpec {
         name: "border-radius",
         status: SupportStatus::Partial,
-        applies_to: WINDOW_AND_TITLEBAR_TARGETS,
+        applies_to: WINDOW_ONLY_TARGETS,
         value_keywords: NO_KEYWORDS,
-        hover: "Controls rounded titlebar top corners where compositor rendering consumes it.",
+        hover: "Controls rounded window corners where compositor rendering consumes it.",
     },
     PropertySpec {
         name: "box-shadow",
         status: SupportStatus::Partial,
-        applies_to: WINDOW_AND_TITLEBAR_TARGETS,
+        applies_to: WINDOW_ONLY_TARGETS,
         value_keywords: NO_KEYWORDS,
-        hover: "Controls compositor titlebar shadow rendering where supported.",
+        hover: "Controls compositor shadow rendering where supported.",
     },
     PropertySpec {
         name: "backdrop-filter",
         status: SupportStatus::Planned,
-        applies_to: WINDOW_AND_TITLEBAR_TARGETS,
+        applies_to: WINDOW_ONLY_TARGETS,
         value_keywords: NO_KEYWORDS,
         hover: "Reserved for future compositor backdrop effects.",
     },
@@ -288,44 +278,44 @@ pub const PROPERTY_SPECS: &[PropertySpec] = &[
     PropertySpec {
         name: "text-align",
         status: SupportStatus::Partial,
-        applies_to: TITLEBAR_ONLY_TARGETS,
+        applies_to: ALL_STYLE_TARGETS,
         value_keywords: TEXT_ALIGN_KEYWORDS,
-        hover: "Controls compositor titlebar label alignment.",
+        hover: "Controls text alignment where rendering consumes it.",
     },
     PropertySpec {
         name: "text-transform",
         status: SupportStatus::Partial,
-        applies_to: TITLEBAR_ONLY_TARGETS,
+        applies_to: ALL_STYLE_TARGETS,
         value_keywords: TEXT_TRANSFORM_KEYWORDS,
-        hover: "Controls compositor titlebar label text casing.",
+        hover: "Controls text casing where rendering consumes it.",
     },
     PropertySpec {
         name: "font-family",
         status: SupportStatus::Partial,
-        applies_to: TITLEBAR_ONLY_TARGETS,
+        applies_to: ALL_STYLE_TARGETS,
         value_keywords: NO_KEYWORDS,
-        hover: "Controls compositor titlebar font family selection.",
+        hover: "Controls font family selection where rendering consumes it.",
     },
     PropertySpec {
         name: "font-size",
         status: SupportStatus::Partial,
-        applies_to: TITLEBAR_ONLY_TARGETS,
+        applies_to: ALL_STYLE_TARGETS,
         value_keywords: NO_KEYWORDS,
-        hover: "Controls compositor titlebar font size.",
+        hover: "Controls font size where rendering consumes it.",
     },
     PropertySpec {
         name: "font-weight",
         status: SupportStatus::Partial,
-        applies_to: TITLEBAR_ONLY_TARGETS,
+        applies_to: ALL_STYLE_TARGETS,
         value_keywords: NO_KEYWORDS,
-        hover: "Controls compositor titlebar font weight.",
+        hover: "Controls font weight where rendering consumes it.",
     },
     PropertySpec {
         name: "letter-spacing",
         status: SupportStatus::Partial,
-        applies_to: TITLEBAR_ONLY_TARGETS,
+        applies_to: ALL_STYLE_TARGETS,
         value_keywords: NO_KEYWORDS,
-        hover: "Controls compositor titlebar label letter spacing.",
+        hover: "Controls letter spacing where rendering consumes it.",
     },
     PropertySpec {
         name: "animation",
@@ -722,91 +712,91 @@ pub const PROPERTY_SPECS: &[PropertySpec] = &[
     PropertySpec {
         name: "border-width",
         status: SupportStatus::Partial,
-        applies_to: WINDOW_AND_TITLEBAR_TARGETS,
+        applies_to: WINDOW_ONLY_TARGETS,
         value_keywords: NO_KEYWORDS,
         hover: "Sets compositor-consumed border widths where supported.",
     },
     PropertySpec {
         name: "border-top-width",
         status: SupportStatus::Partial,
-        applies_to: WINDOW_AND_TITLEBAR_TARGETS,
+        applies_to: WINDOW_ONLY_TARGETS,
         value_keywords: NO_KEYWORDS,
         hover: "Sets the top border width where compositor rendering consumes it.",
     },
     PropertySpec {
         name: "border-right-width",
         status: SupportStatus::Partial,
-        applies_to: WINDOW_AND_TITLEBAR_TARGETS,
+        applies_to: WINDOW_ONLY_TARGETS,
         value_keywords: NO_KEYWORDS,
         hover: "Sets the right border width where compositor rendering consumes it.",
     },
     PropertySpec {
         name: "border-bottom-width",
         status: SupportStatus::Partial,
-        applies_to: WINDOW_AND_TITLEBAR_TARGETS,
+        applies_to: WINDOW_ONLY_TARGETS,
         value_keywords: NO_KEYWORDS,
         hover: "Sets the bottom border width where compositor rendering consumes it.",
     },
     PropertySpec {
         name: "border-left-width",
         status: SupportStatus::Partial,
-        applies_to: WINDOW_AND_TITLEBAR_TARGETS,
+        applies_to: WINDOW_ONLY_TARGETS,
         value_keywords: NO_KEYWORDS,
         hover: "Sets the left border width where compositor rendering consumes it.",
     },
     PropertySpec {
         name: "border-top-color",
         status: SupportStatus::Partial,
-        applies_to: WINDOW_AND_TITLEBAR_TARGETS,
+        applies_to: WINDOW_ONLY_TARGETS,
         value_keywords: NO_KEYWORDS,
         hover: "Sets the top border color where compositor rendering consumes it.",
     },
     PropertySpec {
         name: "border-right-color",
         status: SupportStatus::Partial,
-        applies_to: WINDOW_AND_TITLEBAR_TARGETS,
+        applies_to: WINDOW_ONLY_TARGETS,
         value_keywords: NO_KEYWORDS,
         hover: "Sets the right border color where compositor rendering consumes it.",
     },
     PropertySpec {
         name: "border-bottom-color",
         status: SupportStatus::Partial,
-        applies_to: WINDOW_AND_TITLEBAR_TARGETS,
+        applies_to: WINDOW_ONLY_TARGETS,
         value_keywords: NO_KEYWORDS,
         hover: "Sets the bottom border color where compositor rendering consumes it.",
     },
     PropertySpec {
         name: "border-left-color",
         status: SupportStatus::Partial,
-        applies_to: WINDOW_AND_TITLEBAR_TARGETS,
+        applies_to: WINDOW_ONLY_TARGETS,
         value_keywords: NO_KEYWORDS,
         hover: "Sets the left border color where compositor rendering consumes it.",
     },
     PropertySpec {
         name: "border-top-style",
         status: SupportStatus::Partial,
-        applies_to: WINDOW_AND_TITLEBAR_TARGETS,
+        applies_to: WINDOW_ONLY_TARGETS,
         value_keywords: NO_KEYWORDS,
         hover: "Sets the top border style where compositor rendering consumes it.",
     },
     PropertySpec {
         name: "border-right-style",
         status: SupportStatus::Partial,
-        applies_to: WINDOW_AND_TITLEBAR_TARGETS,
+        applies_to: WINDOW_ONLY_TARGETS,
         value_keywords: NO_KEYWORDS,
         hover: "Sets the right border style where compositor rendering consumes it.",
     },
     PropertySpec {
         name: "border-bottom-style",
         status: SupportStatus::Partial,
-        applies_to: WINDOW_AND_TITLEBAR_TARGETS,
+        applies_to: WINDOW_ONLY_TARGETS,
         value_keywords: NO_KEYWORDS,
         hover: "Sets the bottom border style where compositor rendering consumes it.",
     },
     PropertySpec {
         name: "border-left-style",
         status: SupportStatus::Partial,
-        applies_to: WINDOW_AND_TITLEBAR_TARGETS,
+        applies_to: WINDOW_ONLY_TARGETS,
         value_keywords: NO_KEYWORDS,
         hover: "Sets the left border style where compositor rendering consumes it.",
     },

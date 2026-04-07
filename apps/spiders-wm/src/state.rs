@@ -18,6 +18,7 @@ use smithay::wayland::compositor::CompositorState;
 use smithay::wayland::dmabuf::{DmabufGlobal, DmabufState};
 use smithay::wayland::selection::data_device::DataDeviceState;
 use smithay::wayland::shell::xdg::XdgShellState;
+use smithay::wayland::shell::xdg::decoration::XdgDecorationState;
 use smithay::wayland::shm::ShmState;
 
 use crate::debug::DebugState;
@@ -41,6 +42,7 @@ pub struct SpidersWm {
     pub popups: PopupManager,
     pub compositor_state: CompositorState,
     pub xdg_shell_state: XdgShellState,
+    pub _xdg_decoration_state: XdgDecorationState,
     pub shm_state: ShmState,
     pub dmabuf_state: DmabufState,
     pub dmabuf_global: Option<DmabufGlobal>,
@@ -56,8 +58,7 @@ pub struct SpidersWm {
 
     pub(crate) managed_windows: Vec<ManagedWindow>,
     pub(crate) frame_sync: FrameSyncState,
-    pub(crate) titlebar_overlays: BTreeMap<WindowId, NativeTitlebarOverlay>,
-    pub(crate) titlebar_layout: NativeTitlebarLayoutState,
+    pub(crate) scene_snapshot_root: Option<LayoutSnapshotNode>,
     pub(crate) ipc_server: IpcServerState,
     pub(crate) ipc_clients: BTreeMap<IpcClientId, UnixStream>,
     pub(crate) ipc_socket_path: Option<PathBuf>,
@@ -65,24 +66,16 @@ pub struct SpidersWm {
     pub(crate) scene: SceneLayoutState,
     pub(crate) model: WmModel,
     pub(crate) next_window_id: u64,
+    pub(crate) relayout_queued: bool,
+    pub(crate) relayout_generation: u64,
+    pub(crate) relayout_cause: RelayoutCause,
 }
 
-#[derive(Debug, Clone)]
-pub(crate) struct NativeTitlebarOverlay {
-    pub(crate) rect: spiders_core::LayoutRect,
-    pub(crate) pixels: Vec<u8>,
-    pub(crate) hit_regions: Vec<NativeTitlebarHitRegion>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct NativeTitlebarHitRegion {
-    pub(crate) rect: spiders_core::LayoutRect,
-    pub(crate) command: crate::runtime::WmCommand,
-}
-
-#[derive(Debug, Clone, Default)]
-pub(crate) struct NativeTitlebarLayoutState {
-    pub(crate) snapshot_root: Option<LayoutSnapshotNode>,
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum RelayoutCause {
+    #[default]
+    General,
+    FirstMapBurst,
 }
 
 pub(crate) struct ManagedWindow {

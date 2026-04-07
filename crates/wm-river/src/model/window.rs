@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
-use spiders_core::types::WindowMode;
 use spiders_core::LayoutRect;
+use spiders_core::types::WindowMode;
 use spiders_core::{OutputId, WindowId, WorkspaceId};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

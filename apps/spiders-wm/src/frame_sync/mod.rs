@@ -25,7 +25,7 @@ use self::{
 
 use crate::state::SpidersWm;
 
-pub(crate) use render_snapshot::{SnapshotRenderElement, memory_render_element};
+pub(crate) use render_snapshot::SnapshotRenderElement;
 
 #[derive(Debug, Clone)]
 pub(crate) struct SyncHandle(transaction::Transaction);
@@ -39,10 +39,8 @@ pub(crate) fn install_window_pre_commit_hook(toplevel: &ToplevelSurface) {
         let (commit_serial, dmabuf, got_unmapped) = with_states(surface, |states| {
             let dmabuf = {
                 let mut guard = states.cached_state.get::<SurfaceAttributes>();
-                let got_unmapped = matches!(
-                    guard.pending().buffer.as_ref(),
-                    Some(BufferAssignment::Removed)
-                );
+                let got_unmapped =
+                    matches!(guard.pending().buffer.as_ref(), Some(BufferAssignment::Removed));
                 let dmabuf = match guard.pending().buffer.as_ref() {
                     Some(BufferAssignment::NewBuffer(buffer)) => {
                         smithay::wayland::dmabuf::get_dmabuf(buffer).cloned().ok()
@@ -87,9 +85,7 @@ pub(crate) fn install_window_pre_commit_hook(toplevel: &ToplevelSurface) {
             &event_loop,
             |state, client| {
                 let display_handle = state.display_handle.clone();
-                state
-                    .client_compositor_state(&client)
-                    .blocker_cleared(state, &display_handle);
+                state.client_compositor_state(&client).blocker_cleared(state, &display_handle);
             },
         );
         tracing::debug!(
@@ -111,6 +107,7 @@ pub(crate) struct CapturedCloseSnapshot(WindowSnapshot);
 pub(crate) struct WindowFrameSyncState {
     close_snapshot: Option<CapturedCloseSnapshot>,
     pending_configures: PendingConfigureState,
+    relayout_needed_after_configure: bool,
 }
 
 #[derive(Debug, Default)]
@@ -165,9 +162,8 @@ impl WindowFrameSyncState {
 
     pub(crate) fn begin_unmap(&mut self) -> BeginUnmapResult {
         self.pending_configures.clear();
-        BeginUnmapResult {
-            snapshot: self.close_snapshot.take(),
-        }
+        self.relayout_needed_after_configure = false;
+        BeginUnmapResult { snapshot: self.close_snapshot.take() }
     }
 
     pub(crate) fn has_pending_configures(&self) -> bool {
@@ -175,9 +171,7 @@ impl WindowFrameSyncState {
     }
 
     pub(crate) fn live_transaction(&self) -> Option<SyncHandle> {
-        self.pending_configures
-            .latest_live_transaction()
-            .map(SyncHandle)
+        self.pending_configures.latest_live_transaction().map(SyncHandle)
     }
 
     pub(crate) fn track_pending_layout(
@@ -187,16 +181,21 @@ impl WindowFrameSyncState {
         size: Size<i32, Logical>,
         sync_handle: SyncHandle,
     ) {
-        self.pending_configures
-            .push(serial, PendingLayout { location, size }, sync_handle.0);
+        self.pending_configures.push(serial, PendingLayout { location, size }, sync_handle.0);
     }
 
     pub(crate) fn take_ready_layout(
         &mut self,
     ) -> Option<(Point<i32, Logical>, Size<i32, Logical>)> {
-        self.pending_configures
-            .take_ready()
-            .map(|layout| (layout.location, layout.size))
+        self.pending_configures.take_ready().map(|layout| (layout.location, layout.size))
+    }
+
+    pub(crate) fn note_relayout_needed_after_configure(&mut self) {
+        self.relayout_needed_after_configure = true;
+    }
+
+    pub(crate) fn take_relayout_needed_after_configure(&mut self) -> bool {
+        std::mem::take(&mut self.relayout_needed_after_configure)
     }
 
     pub(crate) fn install_commit_blockers<T: 'static, F>(
@@ -219,9 +218,7 @@ impl WindowFrameSyncState {
         let mut outcome = CommitSyncOutcome {
             had_match,
             has_pending_configures: self.pending_configures.has_pending(),
-            transaction_debug_id: live_transaction
-                .as_ref()
-                .map(transaction::Transaction::debug_id),
+            transaction_debug_id: live_transaction.as_ref().map(transaction::Transaction::debug_id),
             waited_on_dmabuf: false,
         };
 
@@ -293,10 +290,7 @@ impl FrameSyncState {
             presented_once: false,
         });
 
-        Some(OverlayPushResult {
-            transaction_debug_id,
-            carried_overlays,
-        })
+        Some(OverlayPushResult { transaction_debug_id, carried_overlays })
     }
 
     pub(crate) fn render_elements(
@@ -309,9 +303,7 @@ impl FrameSyncState {
             .iter()
             .filter_map(|overlay| {
                 let location = overlay.location.to_f64().to_physical_precise_round(scale);
-                overlay
-                    .snapshot
-                    .render_element(renderer, location, scale, alpha)
+                overlay.snapshot.render_element(renderer, location, scale, alpha)
             })
             .collect()
     }

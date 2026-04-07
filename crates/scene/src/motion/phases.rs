@@ -14,11 +14,7 @@ pub struct Animation<'a> {
 
 impl<'a> Animation<'a> {
     pub fn new(style: Option<&'a ComputedStyle>, keyframes: &'a [CompiledKeyframesRule]) -> Self {
-        Self {
-            style,
-            keyframes,
-            appliers: AnimationAppliers::new(style, keyframes),
-        }
+        Self { style, keyframes, appliers: AnimationAppliers::new(style, keyframes) }
     }
 
     pub fn apply(
@@ -28,14 +24,7 @@ impl<'a> Animation<'a> {
         now: Instant,
     ) -> AppliedMotionPhase {
         let mut applied = AppliedMotionPhase::default();
-        self.appliers.apply(
-            track,
-            self.style,
-            self.keyframes,
-            context,
-            now,
-            &mut applied,
-        );
+        self.appliers.apply(track, self.style, self.keyframes, context, now, &mut applied);
         applied
     }
 }
@@ -47,10 +36,7 @@ pub struct Transition<'a> {
 
 impl<'a> Transition<'a> {
     pub fn new(style: Option<&'a ComputedStyle>) -> Self {
-        Self {
-            style,
-            appliers: TransitionAppliers::new(style),
-        }
+        Self { style, appliers: TransitionAppliers::new(style) }
     }
 
     pub fn apply(
@@ -61,8 +47,7 @@ impl<'a> Transition<'a> {
         now: Instant,
     ) -> AppliedMotionPhase {
         let mut applied = AppliedMotionPhase::default();
-        self.appliers
-            .apply(track, self.style, context, animation, now, &mut applied);
+        self.appliers.apply(track, self.style, context, animation, now, &mut applied);
         applied
     }
 }

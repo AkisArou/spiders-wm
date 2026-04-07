@@ -1,12 +1,10 @@
 use cssparser::{
     AtRuleParser, CowRcStr, Parser, ParserInput, QualifiedRuleParser, StyleSheetParser,
-    ToCss as CssParserToCss,
 };
-use selectors::parser::{Combinator, Component, Selector};
 
 use crate::selector_matches;
 use crate::stylo_adapter::{
-    LayoutPseudoElement, LayoutSelectorImpl, LayoutSelectorParser, parse_selector_list_from_parser,
+    LayoutSelectorImpl, LayoutSelectorParser, parse_selector_list_from_parser,
 };
 
 use crate::compile::{CssValueError, compile_declaration, compile_declaration_from_value};
@@ -25,8 +23,6 @@ use style_traits::values::ToCss;
 
 struct ParsedSelectorPrelude {
     selectors: selectors::parser::SelectorList<LayoutSelectorImpl>,
-    target_pseudo: Option<LayoutPseudoElement>,
-    pseudo_base_selectors: Option<selectors::parser::SelectorList<LayoutSelectorImpl>>,
 }
 
 #[derive(Debug, thiserror::Error, PartialEq)]
@@ -103,19 +99,12 @@ impl<'i> QualifiedRuleParser<'i> for LayoutCssRuleParser {
         })?;
 
         let selector = input.slice_from(start.position()).trim().to_string();
-        let target_pseudo = selector_target_pseudo(&parsed);
-        let pseudo_base_selectors =
-            selector_base_selectors(&parsed, target_pseudo).map_err(|_| {
-                input.new_custom_error(CssParseError::UnsupportedSelector {
-                    selector: selector.clone(),
-                })
-            })?;
 
         if selector_matches_slot(&parsed) {
             return Err(input.new_custom_error(CssParseError::UnsupportedSelector { selector }));
         }
 
-        Ok(ParsedSelectorPrelude { selectors: parsed, target_pseudo, pseudo_base_selectors })
+        Ok(ParsedSelectorPrelude { selectors: parsed })
     }
 
     fn parse_block<'t>(
@@ -141,12 +130,7 @@ impl<'i> QualifiedRuleParser<'i> for LayoutCssRuleParser {
         let declarations = compile_declarations_from_raw_block(&raw_block)
             .map_err(|error| input.new_custom_error(error))?;
 
-        Ok(CompiledStyleRule {
-            selectors: prelude.selectors,
-            target_pseudo: prelude.target_pseudo,
-            pseudo_base_selectors: prelude.pseudo_base_selectors,
-            declarations,
-        })
+        Ok(CompiledStyleRule { selectors: prelude.selectors, declarations })
     }
 }
 
@@ -335,45 +319,6 @@ fn matching_brace_end(input: &str, open_brace: usize) -> Option<usize> {
     None
 }
 
-fn selector_target_pseudo(
-    selectors: &selectors::parser::SelectorList<LayoutSelectorImpl>,
-) -> Option<LayoutPseudoElement> {
-    let mut found_titlebar = false;
-
-    for selector in selectors.slice() {
-        match selector.pseudo_element() {
-            Some(LayoutPseudoElement::Titlebar) => found_titlebar = true,
-            None => {}
-        }
-    }
-
-    found_titlebar.then_some(LayoutPseudoElement::Titlebar)
-}
-
-fn selector_base_selectors(
-    selectors: &selectors::parser::SelectorList<LayoutSelectorImpl>,
-    target_pseudo: Option<LayoutPseudoElement>,
-) -> Result<Option<selectors::parser::SelectorList<LayoutSelectorImpl>>, CssParseError> {
-    let Some(LayoutPseudoElement::Titlebar) = target_pseudo else {
-        return Ok(None);
-    };
-
-    let base_selectors = selectors
-        .slice()
-        .iter()
-        .map(strip_titlebar_from_selector)
-        .collect::<Option<Vec<_>>>()
-        .ok_or_else(|| CssParseError::UnsupportedSelector { selector: "::titlebar".to_string() })?;
-
-    let joined = base_selectors.join(", ");
-    let mut input = ParserInput::new(&joined);
-    let mut parser_input = Parser::new(&mut input);
-    let parsed = parse_selector_list_from_parser(&LayoutSelectorParser, &mut parser_input)
-        .map_err(|_| CssParseError::UnsupportedSelector { selector: joined.clone() })?;
-
-    Ok(Some(parsed))
-}
-
 fn selector_matches_slot(selectors: &selectors::parser::SelectorList<LayoutSelectorImpl>) -> bool {
     selector_matches(selectors, &synthetic_slot_node())
 }
@@ -388,20 +333,6 @@ fn synthetic_slot_node() -> spiders_core::ResolvedLayoutNode {
         text: None,
         children: Vec::new(),
     }
-}
-
-fn strip_titlebar_from_selector(selector: &Selector<LayoutSelectorImpl>) -> Option<String> {
-    let mut out = String::new();
-
-    for component in selector.iter_raw_parse_order_from(0) {
-        match component {
-            Component::PseudoElement(LayoutPseudoElement::Titlebar) => continue,
-            Component::Combinator(Combinator::PseudoElement) => continue,
-            other => other.to_css(&mut out).ok()?,
-        }
-    }
-
-    Some(out)
 }
 
 fn is_ignored_background_expansion(property: &str) -> bool {
@@ -659,9 +590,9 @@ mod tests {
     }
 
     #[test]
-    fn keeps_window_titlebar_supported() {
+    fn rejects_window_titlebar_selectors() {
         let parsed = parse_stylesheet("window::titlebar { text-align: center; }");
-        assert!(parsed.is_ok());
+        assert!(matches!(parsed, Err(CssParseError::UnsupportedSelector { .. })));
     }
 
     #[test]

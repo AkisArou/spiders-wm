@@ -34,42 +34,6 @@ smithay::backend::renderer::element::render_elements! {
 pub(crate) type SnapshotRenderElement =
     RescaleRenderElement<SurfaceTextureRenderElement<GlesRenderer>>;
 
-pub(crate) fn memory_render_element(
-    renderer: &mut GlesRenderer,
-    location: Point<i32, Physical>,
-    scale: Scale<f64>,
-    alpha: f32,
-    bytes: &[u8],
-    width: i32,
-    height: i32,
-) -> Option<SnapshotRenderElement> {
-    let texture = TextureBuffer::from_memory(
-        renderer,
-        bytes,
-        Fourcc::Argb8888,
-        (width, height),
-        false,
-        1,
-        Transform::Normal,
-        None,
-    )
-    .ok()?;
-    let element = TextureRenderElement::from_texture_buffer(
-        location.to_f64(),
-        &texture,
-        Some(alpha),
-        None,
-        None,
-        element::Kind::Unspecified,
-    );
-
-    Some(RescaleRenderElement::from_element(
-        SurfaceTextureRenderElement::Texture(element),
-        location,
-        Scale::from((1.0 / scale.x, 1.0 / scale.y)),
-    ))
-}
-
 #[derive(Debug, Clone)]
 struct EncompassingTexture {
     texture: GlesTexture,

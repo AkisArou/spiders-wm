@@ -294,14 +294,14 @@ pub fn decode_titlebar_rules(value: &JsonValue) -> Result<Vec<TitlebarRule>, ser
 }
 
 fn looks_like_normalized_titlebar_rules(value: &JsonValue) -> bool {
-    value
-        .as_array()
-        .is_some_and(|entries| entries.iter().all(looks_like_normalized_titlebar_rule))
+    value.as_array().is_some_and(|entries| entries.iter().all(looks_like_normalized_titlebar_rule))
 }
 
 fn looks_like_normalized_titlebar_rule(value: &JsonValue) -> bool {
     value.as_object().is_some_and(|object| {
-        if object.contains_key("props") || matches!(object.get("type").and_then(JsonValue::as_str), Some("titlebar")) {
+        if object.contains_key("props")
+            || matches!(object.get("type").and_then(JsonValue::as_str), Some("titlebar"))
+        {
             return false;
         }
 
@@ -570,9 +570,7 @@ pub fn titlebar_icon_asset_from_data(data: &BTreeMap<String, String>) -> Option<
 pub fn titlebar_button_action_from_data(
     data: &BTreeMap<String, String>,
 ) -> Option<TitlebarButtonAction> {
-    data.get(TITLEBAR_ACTION_KEY)
-        .map(String::as_str)
-        .and_then(parse_button_action_name)
+    data.get(TITLEBAR_ACTION_KEY).map(String::as_str).and_then(parse_button_action_name)
 }
 
 pub fn titlebar_icon_view_box(nodes: &[TitlebarIconNode]) -> Option<String> {
@@ -670,21 +668,13 @@ fn titlebar_runtime_node_from_resolved(node: &ResolvedTitlebarNode) -> ResolvedL
                 children: Vec::new(),
             }
         }
-        ResolvedTitlebarNode::Button {
-            meta,
-            action,
-            children,
-        } => ResolvedLayoutNode::Content {
+        ResolvedTitlebarNode::Button { meta, action, children } => ResolvedLayoutNode::Content {
             meta: titlebar_button_meta(meta, *action),
             kind: RuntimeContentKind::Container,
             text: None,
             children: children.iter().map(titlebar_runtime_node_from_resolved).collect(),
         },
-        ResolvedTitlebarNode::Icon {
-            meta,
-            asset,
-            children,
-        } => ResolvedLayoutNode::Content {
+        ResolvedTitlebarNode::Icon { meta, asset, children } => ResolvedLayoutNode::Content {
             meta: titlebar_icon_meta(meta, asset.as_deref(), children),
             kind: RuntimeContentKind::Container,
             text: None,
@@ -702,10 +692,16 @@ fn titlebar_meta(class: Option<&str>, node_name: &str) -> LayoutNodeMeta {
     meta
 }
 
-fn titlebar_button_meta(meta: &LayoutNodeMeta, action: Option<TitlebarButtonAction>) -> LayoutNodeMeta {
+fn titlebar_button_meta(
+    meta: &LayoutNodeMeta,
+    action: Option<TitlebarButtonAction>,
+) -> LayoutNodeMeta {
     let mut meta = meta.clone();
     if let Some(action) = action {
-        meta.data.insert(TITLEBAR_ACTION_KEY.to_string(), titlebar_button_action_name(action).to_string());
+        meta.data.insert(
+            TITLEBAR_ACTION_KEY.to_string(),
+            titlebar_button_action_name(action).to_string(),
+        );
     }
     meta
 }
@@ -719,7 +715,9 @@ fn titlebar_icon_meta(
     if let Some(asset) = asset.filter(|asset| !asset.trim().is_empty()) {
         meta.data.insert(TITLEBAR_ICON_ASSET_KEY.to_string(), asset.to_string());
     }
-    if !children.is_empty() && let Ok(serialized) = serde_json::to_string(children) {
+    if !children.is_empty()
+        && let Ok(serialized) = serde_json::to_string(children)
+    {
         meta.data.insert(TITLEBAR_ICON_CHILDREN_KEY.to_string(), serialized);
     }
     meta
@@ -748,10 +746,7 @@ fn normalize_button_action(value: &JsonValue) -> Option<TitlebarButtonAction> {
     }
 
     let object = value.as_object()?;
-    object
-        .get("action")
-        .and_then(JsonValue::as_str)
-        .and_then(parse_button_action_name)
+    object.get("action").and_then(JsonValue::as_str).and_then(parse_button_action_name)
 }
 
 fn parse_button_action_name(name: &str) -> Option<TitlebarButtonAction> {
@@ -1384,7 +1379,10 @@ mod tests {
         match &rules[0].children[0] {
             TitlebarNode::Button { on_click, .. } => {
                 assert_eq!(
-                    on_click.as_ref().and_then(|value| value.get("action")).and_then(JsonValue::as_str),
+                    on_click
+                        .as_ref()
+                        .and_then(|value| value.get("action"))
+                        .and_then(JsonValue::as_str),
                     Some("close")
                 );
             }
@@ -1657,9 +1655,7 @@ mod tests {
                 disabled: false,
                 class: None,
                 children: vec![
-                    TitlebarNode::WorkspaceName {
-                        class: Some("workspace-name".into()),
-                    },
+                    TitlebarNode::WorkspaceName { class: Some("workspace-name".into()) },
                     TitlebarNode::WindowTitle {
                         class: Some("window-title".into()),
                         fallback: Some("fallback".into()),
@@ -1704,7 +1700,10 @@ mod tests {
         match runtime {
             ResolvedLayoutNode::Content { children, .. } => match &children[0] {
                 ResolvedLayoutNode::Content { meta, .. } => {
-                    assert_eq!(meta.data.get(TITLEBAR_ACTION_KEY).map(String::as_str), Some("close"));
+                    assert_eq!(
+                        meta.data.get(TITLEBAR_ACTION_KEY).map(String::as_str),
+                        Some("close")
+                    );
                 }
                 other => panic!("expected content button node, got {other:?}"),
             },
@@ -1742,7 +1741,8 @@ mod tests {
                     assert_eq!(*kind, RuntimeContentKind::Container);
                     assert_eq!(text, &None);
                     assert_eq!(titlebar_icon_asset_from_data(&meta.data).as_deref(), Some("close"));
-                    let nodes = titlebar_icon_nodes_from_data(&meta.data).expect("icon metadata missing");
+                    let nodes =
+                        titlebar_icon_nodes_from_data(&meta.data).expect("icon metadata missing");
                     assert_eq!(titlebar_icon_view_box(&nodes).as_deref(), Some("0 0 16 16"));
                     assert_eq!(titlebar_icon_paths(&nodes).len(), 2);
                 }

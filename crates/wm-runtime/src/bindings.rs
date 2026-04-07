@@ -265,10 +265,12 @@ fn parse_wm_command(command_name: &str, arg_source: &str) -> Option<WmCommand> {
         "reload_config" => Some(WmCommand::ReloadConfig),
         "focus_next" => Some(WmCommand::FocusNextWindow),
         "focus_prev" => Some(WmCommand::FocusPreviousWindow),
-        "focus_dir" => parse_direction_arg(arg_source)
-            .map(|direction| WmCommand::FocusDirection { direction }),
-        "swap_dir" => parse_direction_arg(arg_source)
-            .map(|direction| WmCommand::SwapDirection { direction }),
+        "focus_dir" => {
+            parse_direction_arg(arg_source).map(|direction| WmCommand::FocusDirection { direction })
+        }
+        "swap_dir" => {
+            parse_direction_arg(arg_source).map(|direction| WmCommand::SwapDirection { direction })
+        }
         "resize_dir" | "resize" => parse_direction_arg(arg_source)
             .map(|direction| WmCommand::ResizeDirection { direction }),
         "resize_tiled" => parse_direction_arg(arg_source)
@@ -277,8 +279,9 @@ fn parse_wm_command(command_name: &str, arg_source: &str) -> Option<WmCommand> {
         "focus_mon_right" => Some(WmCommand::FocusMonitorRight),
         "send_mon_left" => Some(WmCommand::SendMonitorLeft),
         "send_mon_right" => Some(WmCommand::SendMonitorRight),
-        "view_workspace" => parse_workspace_arg(arg_source)
-            .map(|workspace| WmCommand::ViewWorkspace { workspace }),
+        "view_workspace" => {
+            parse_workspace_arg(arg_source).map(|workspace| WmCommand::ViewWorkspace { workspace })
+        }
         "toggle_view_workspace" => parse_workspace_arg(arg_source)
             .map(|workspace| WmCommand::ToggleViewWorkspace { workspace }),
         "assign_workspace" => parse_workspace_arg(arg_source)
@@ -287,11 +290,13 @@ fn parse_wm_command(command_name: &str, arg_source: &str) -> Option<WmCommand> {
             .map(|workspace| WmCommand::ToggleAssignFocusedWindowToWorkspace { workspace }),
         "toggle_floating" => Some(WmCommand::ToggleFloating),
         "toggle_fullscreen" => Some(WmCommand::ToggleFullscreen),
-        "set_layout" => parse_string_arg(arg_source)
-            .map(|name| WmCommand::SetLayout { name: name.to_string() }),
+        "set_layout" => {
+            parse_string_arg(arg_source).map(|name| WmCommand::SetLayout { name: name.to_string() })
+        }
         "cycle_layout" => Some(WmCommand::CycleLayout { direction: None }),
-        "move" => parse_direction_arg(arg_source)
-            .map(|direction| WmCommand::MoveDirection { direction }),
+        "move" => {
+            parse_direction_arg(arg_source).map(|direction| WmCommand::MoveDirection { direction })
+        }
         "kill_client" => Some(WmCommand::CloseFocusedWindow),
         _ => None,
     }
@@ -408,9 +413,7 @@ mod tests {
 
         assert_eq!(
             resize_left.command,
-            Some(WmCommand::ResizeTiledDirection {
-                direction: FocusDirection::Left,
-            })
+            Some(WmCommand::ResizeTiledDirection { direction: FocusDirection::Left })
         );
         assert_eq!(resize_left.command_label, "resize_tiled(left)");
         assert_eq!(kill_client.command, Some(WmCommand::CloseFocusedWindow));

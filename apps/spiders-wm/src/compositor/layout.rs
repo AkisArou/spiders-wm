@@ -6,15 +6,57 @@ use smithay::utils::{Logical, Point, Rectangle, Size};
 use tracing::{debug, info};
 
 use crate::frame_sync::SyncHandle;
-use crate::state::SpidersWm;
+use crate::state::{RelayoutCause, SpidersWm};
 use spiders_core::WindowId;
 use spiders_core::wm::WindowGeometry;
 use spiders_core::workspace::flat_workspace_root;
 
 impl SpidersWm {
     pub fn schedule_relayout(&mut self) {
+        self.relayout_queued = false;
+        self.relayout_cause = RelayoutCause::General;
         debug!(window_count = self.managed_window_count(), "wm schedule relayout");
         let _ = self.start_relayout();
+    }
+
+    pub(crate) fn queue_relayout(&mut self) {
+        self.queue_relayout_with_cause(RelayoutCause::General);
+    }
+
+    pub(crate) fn queue_first_map_burst_relayout(&mut self) {
+        self.queue_relayout_with_cause(RelayoutCause::FirstMapBurst);
+    }
+
+    fn queue_relayout_with_cause(&mut self, cause: RelayoutCause) {
+        if self.relayout_queued {
+            if matches!(cause, RelayoutCause::FirstMapBurst) {
+                self.relayout_cause = RelayoutCause::FirstMapBurst;
+                self.relayout_generation += 1;
+                debug!(window_count = self.managed_window_count(), relayout_cause = ?self.relayout_cause, "wm extended queued relayout");
+                crate::app::bootstrap::schedule_queued_relayout_timer(
+                    &mut self.event_loop,
+                    self.relayout_generation,
+                    self.relayout_cause,
+                );
+                return;
+            }
+
+            if self.relayout_cause != RelayoutCause::General {
+                self.relayout_cause = cause;
+            }
+            debug!(window_count = self.managed_window_count(), relayout_cause = ?self.relayout_cause, "wm relayout already queued");
+            return;
+        }
+
+        self.relayout_queued = true;
+        self.relayout_generation += 1;
+        self.relayout_cause = cause;
+        debug!(window_count = self.managed_window_count(), relayout_cause = ?self.relayout_cause, "wm queued relayout");
+        crate::app::bootstrap::schedule_queued_relayout_timer(
+            &mut self.event_loop,
+            self.relayout_generation,
+            self.relayout_cause,
+        );
     }
 
     pub fn planned_layout_for_surface(
@@ -22,11 +64,14 @@ impl SpidersWm {
         surface: &WlSurface,
     ) -> Option<(Point<i32, Logical>, Size<i32, Logical>)> {
         let output_geometry = self.current_output_geometry()?;
-        let visible_window_ids = self.visible_managed_window_ids();
         let window_id = self.window_id_for_surface(surface)?;
+        let window_is_mapped =
+            self.managed_window_for_id(&window_id).is_some_and(|record| record.mapped);
+
+        let layout_window_ids = self.layout_window_ids_for_window(&window_id);
 
         let fullscreen_window_id =
-            self.model.fullscreen_window_on_current_workspace(visible_window_ids.iter().cloned());
+            self.model.fullscreen_window_on_current_workspace(layout_window_ids.iter().cloned());
 
         if let Some(fullscreen_window_id) = fullscreen_window_id.as_ref() {
             return (fullscreen_window_id == &window_id)
@@ -37,24 +82,43 @@ impl SpidersWm {
             return self.floating_layout_for_window(&window_id, output_geometry);
         }
 
-        let tiled_window_ids = self.tiled_visible_window_ids(&visible_window_ids);
-
-        if let Some(target) = self.scene.compute_layout_target(
+        let tiled_window_ids = self.tiled_visible_window_ids(&layout_window_ids);
+        let scene_target = self.scene.compute_layout_target(
             &self.config,
             &mut self.model,
             &tiled_window_ids,
             &window_id,
+        );
+
+        if let Some(target) = select_tiled_layout_target(
+            window_is_mapped,
+            output_geometry,
+            &tiled_window_ids,
+            &window_id,
+            scene_target,
         ) {
             return Some(target);
         }
 
-        let visible_index = tiled_window_ids.iter().position(|id| id == &window_id)?;
-        let fallback = plan_tiled_slot(output_geometry, tiled_window_ids.len(), visible_index)?;
+        None
+    }
 
-        Some((fallback.location, fallback.size))
+    pub(crate) fn layout_window_ids_for_window(&self, window_id: &WindowId) -> Vec<WindowId> {
+        let target_workspace_id = self.window_workspace_id(window_id);
+
+        self.managed_windows()
+            .iter()
+            .filter(|record| {
+                self.window_workspace_id(&record.id) == target_workspace_id
+                    && !self.window_is_closing(&record.id)
+                    && (record.mapped || record.id == *window_id)
+            })
+            .map(|record| record.id.clone())
+            .collect()
     }
 
     pub(crate) fn start_relayout(&mut self) -> Option<SyncHandle> {
+        let started_at = std::time::Instant::now();
         let output = self.current_output_cloned().expect("output must exist before relayout");
         let output_geometry =
             self.output_geometry_for(&output).expect("output geometry missing during relayout");
@@ -88,8 +152,7 @@ impl SpidersWm {
 
         if visible_window_ids.is_empty() {
             self.model.set_focus_tree(None);
-            self.titlebar_layout.snapshot_root = None;
-            self.titlebar_overlays.clear();
+            self.scene_snapshot_root = None;
             debug!("wm relayout skipped because there are no visible windows");
             return None;
         }
@@ -110,10 +173,11 @@ impl SpidersWm {
             }
         }
 
+        let snapshot_started_at = std::time::Instant::now();
         let relayout_targets = if let Some(fullscreen_window_id) = fullscreen_window_id.as_ref() {
             let focus_root = flat_workspace_root([fullscreen_window_id.clone()]);
             self.model.set_focus_tree(Some(&focus_root));
-            self.titlebar_layout.snapshot_root = None;
+            self.scene_snapshot_root = None;
             visible_window_ids
                 .iter()
                 .filter(|window_id| *window_id == fullscreen_window_id)
@@ -134,19 +198,17 @@ impl SpidersWm {
             let mut targets = if tiled_window_ids.is_empty() {
                 let focus_root = flat_workspace_root(floating_window_ids.iter().cloned());
                 self.model.set_focus_tree(Some(&focus_root));
-                self.titlebar_layout.snapshot_root = None;
+                self.scene_snapshot_root = None;
                 Vec::new()
             } else {
-                match self.scene.compute_layout_snapshot(
+                match self.scene.compute_layout_snapshot_and_targets(
                     &self.config,
                     &mut self.model,
                     &tiled_window_ids,
                 ) {
-                    Some(snapshot) => {
-                        let scene_targets =
-                            crate::scene::adapter::scene_targets_from_snapshot(&snapshot);
+                    Some((snapshot, scene_targets)) => {
                         if scene_targets.len() == tiled_window_ids.len() {
-                            self.titlebar_layout.snapshot_root = Some(snapshot);
+                            self.scene_snapshot_root = Some(snapshot);
                             scene_targets
                         } else {
                             debug!(
@@ -154,7 +216,7 @@ impl SpidersWm {
                                 actual = scene_targets.len(),
                                 "wm falling back to native tiled slot planning because scene targets were incomplete"
                             );
-                            self.titlebar_layout.snapshot_root = None;
+                            self.scene_snapshot_root = None;
                             tiled_window_ids
                                 .iter()
                                 .enumerate()
@@ -179,7 +241,7 @@ impl SpidersWm {
                             window_count = tiled_window_ids.len(),
                             "wm falling back to native tiled slot planning because scene snapshot was unavailable"
                         );
-                        self.titlebar_layout.snapshot_root = None;
+                        self.scene_snapshot_root = None;
                         tiled_window_ids
                             .iter()
                             .enumerate()
@@ -207,7 +269,9 @@ impl SpidersWm {
             );
             targets
         };
+        let snapshot_elapsed_ms = snapshot_started_at.elapsed().as_secs_f64() * 1000.0;
         let mut relayout_transaction: Option<SyncHandle> = None;
+        let configure_loop_started_at = std::time::Instant::now();
 
         for target in relayout_targets {
             let Some(record) = self.managed_window_for_id(&target.window_id) else {
@@ -217,9 +281,16 @@ impl SpidersWm {
             let current_location = self.element_location(&record.window);
             let toplevel = record.window.toplevel().cloned();
             let window_id = record.id.clone();
+            let closing = self.window_is_closing(&window_id);
             let mapped = record.mapped;
+            let has_pending_configures = record.frame_sync.has_pending_configures();
 
             if let Some(toplevel) = toplevel {
+                if closing {
+                    debug!(window = %window_id.0, mapped, "wm skipped relayout for closing window");
+                    continue;
+                }
+
                 let fullscreen_output = target
                     .fullscreen
                     .then(|| fullscreen_output_for_toplevel(&output, &toplevel))
@@ -242,9 +313,7 @@ impl SpidersWm {
                 debug!(
                     window = %window_id.0,
                     mapped,
-                    pending_configures = self
-                        .managed_window_for_id(&window_id)
-                        .is_some_and(|record| record.frame_sync.has_pending_configures()),
+                    pending_configures = has_pending_configures,
                     current_location = ?current_location,
                     target_location = ?target.location,
                     target_size = ?target.size,
@@ -253,7 +322,12 @@ impl SpidersWm {
                     "wm relayout window plan"
                 );
 
-                if needs_configure {
+                if needs_configure && has_pending_configures {
+                    if let Some(record) = self.managed_window_mut_for_id(&target.window_id) {
+                        record.frame_sync.note_relayout_needed_after_configure();
+                    }
+                    debug!(window = %window_id.0, "wm deferred configure until pending configure commits");
+                } else if needs_configure {
                     let serial = toplevel.send_configure();
                     let transaction = relayout_transaction
                         .get_or_insert_with(|| crate::frame_sync::new_sync_handle(&self.event_loop))
@@ -282,10 +356,18 @@ impl SpidersWm {
                 }
             }
         }
-
-        self.refresh_titlebar_overlays();
+        let configure_loop_elapsed_ms = configure_loop_started_at.elapsed().as_secs_f64() * 1000.0;
 
         self.log_managed_window_state("after relayout");
+        debug!(
+            visible_windows = visible_window_ids.len(),
+            tiled_windows = tiled_window_ids.len(),
+            snapshot_elapsed_ms,
+            configure_loop_elapsed_ms,
+            elapsed_ms = started_at.elapsed().as_secs_f64() * 1000.0,
+            has_transaction = relayout_transaction.is_some(),
+            "wm relayout finished"
+        );
         relayout_transaction
     }
 }
@@ -404,6 +486,34 @@ fn plan_tiled_slot(
     })
 }
 
+fn select_tiled_layout_target(
+    window_is_mapped: bool,
+    output_geometry: Rectangle<i32, Logical>,
+    tiled_window_ids: &[WindowId],
+    window_id: &WindowId,
+    scene_target: Option<(Point<i32, Logical>, Size<i32, Logical>)>,
+) -> Option<(Point<i32, Logical>, Size<i32, Logical>)> {
+    if let Some(target) = scene_target {
+        return Some(target);
+    }
+
+    let visible_index = tiled_window_ids.iter().position(|id| id == window_id)?;
+    let fallback = plan_tiled_slot(output_geometry, tiled_window_ids.len(), visible_index)?;
+
+    if !window_is_mapped {
+        debug!(
+            window = %window_id.0,
+            tiled_windows = tiled_window_ids.len(),
+            visible_index,
+            location = ?fallback.location,
+            size = ?fallback.size,
+            "wm using provisional tiled slot for unmapped window"
+        );
+    }
+
+    Some((fallback.location, fallback.size))
+}
+
 fn default_floating_geometry(output_geometry: Rectangle<i32, Logical>) -> WindowGeometry {
     let width = ((output_geometry.size.w * 4) / 5).max(320).min(output_geometry.size.w.max(1));
     let height = ((output_geometry.size.h * 4) / 5).max(240).min(output_geometry.size.h.max(1));
@@ -482,6 +592,43 @@ mod tests {
         assert_eq!(geometry.height, 640);
         assert_eq!(geometry.x, 110);
         assert_eq!(geometry.y, 100);
+    }
+
+    #[test]
+    fn select_tiled_layout_target_prefers_scene_target_for_unmapped_window() {
+        let output = Rectangle::new((0, 0).into(), (1280, 800).into());
+        let tiled_window_ids = vec![WindowId::from("1")];
+        let scene_target = Some((Point::from((6, 6)), Size::from((1268, 788))));
+
+        let target = select_tiled_layout_target(
+            false,
+            output,
+            &tiled_window_ids,
+            &WindowId::from("1"),
+            scene_target,
+        )
+        .expect("target should exist");
+
+        assert_eq!(target.0, Point::from((6, 6)));
+        assert_eq!(target.1, Size::from((1268, 788)));
+    }
+
+    #[test]
+    fn select_tiled_layout_target_falls_back_when_scene_target_is_missing() {
+        let output = Rectangle::new((0, 0).into(), (1280, 800).into());
+        let tiled_window_ids = vec![WindowId::from("1")];
+
+        let target = select_tiled_layout_target(
+            false,
+            output,
+            &tiled_window_ids,
+            &WindowId::from("1"),
+            None,
+        )
+        .expect("fallback target should exist");
+
+        assert_eq!(target.0, Point::from((0, 0)));
+        assert_eq!(target.1, Size::from((1280, 800)));
     }
 
     #[test]

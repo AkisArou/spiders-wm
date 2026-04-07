@@ -4,7 +4,6 @@ use std::collections::BTreeMap;
 pub enum EditorFileId {
     Config,
     RootCss,
-    ConfigTitlebar,
     ConfigBindings,
     ConfigInputs,
     ConfigLayouts,
@@ -25,7 +24,7 @@ pub struct EditorFile {
 pub const WORKSPACE_ROOT: &str = "~/.config/spiders-wm";
 pub const WORKSPACE_FS_ROOT: &str = "/home/demo/.config/spiders-wm";
 
-pub const EDITOR_FILES: [EditorFile; 10] = [
+pub const EDITOR_FILES: [EditorFile; 9] = [
     EditorFile {
         id: EditorFileId::Config,
         label: "config.tsx",
@@ -37,12 +36,6 @@ pub const EDITOR_FILES: [EditorFile; 10] = [
         label: "index.css",
         path: "~/.config/spiders-wm/index.css",
         language: "css",
-    },
-    EditorFile {
-        id: EditorFileId::ConfigTitlebar,
-        label: "titlebar.tsx",
-        path: "~/.config/spiders-wm/config/titlebar.tsx",
-        language: "typescriptreact",
     },
     EditorFile {
         id: EditorFileId::ConfigBindings,
@@ -100,9 +93,6 @@ pub fn initial_content(file_id: EditorFileId) -> &'static str {
     match file_id {
         EditorFileId::Config => include_str!("../fixtures/spiders-wm/config.tsx"),
         EditorFileId::RootCss => include_str!("../fixtures/spiders-wm/index.css"),
-        EditorFileId::ConfigTitlebar => {
-            include_str!("../fixtures/spiders-wm/config/titlebar.tsx")
-        }
         EditorFileId::ConfigBindings => include_str!("../fixtures/spiders-wm/config/bindings.ts"),
         EditorFileId::ConfigInputs => include_str!("../fixtures/spiders-wm/config/inputs.ts"),
         EditorFileId::ConfigLayouts => include_str!("../fixtures/spiders-wm/config/layouts.ts"),
@@ -129,7 +119,6 @@ pub fn runtime_path(file_id: EditorFileId) -> &'static str {
     match file_id {
         EditorFileId::Config => "/home/demo/.config/spiders-wm/config.tsx",
         EditorFileId::RootCss => "/home/demo/.config/spiders-wm/index.css",
-        EditorFileId::ConfigTitlebar => "/home/demo/.config/spiders-wm/config/titlebar.tsx",
         EditorFileId::ConfigBindings => "/home/demo/.config/spiders-wm/config/bindings.ts",
         EditorFileId::ConfigInputs => "/home/demo/.config/spiders-wm/config/inputs.ts",
         EditorFileId::ConfigLayouts => "/home/demo/.config/spiders-wm/config/layouts.ts",
@@ -148,7 +137,6 @@ pub fn model_path(file_id: EditorFileId) -> &'static str {
     match file_id {
         EditorFileId::Config => "file:///home/demo/.config/spiders-wm/config.tsx",
         EditorFileId::RootCss => "file:///home/demo/.config/spiders-wm/index.css",
-        EditorFileId::ConfigTitlebar => "file:///home/demo/.config/spiders-wm/config/titlebar.tsx",
         EditorFileId::ConfigBindings => "file:///home/demo/.config/spiders-wm/config/bindings.ts",
         EditorFileId::ConfigInputs => "file:///home/demo/.config/spiders-wm/config/inputs.ts",
         EditorFileId::ConfigLayouts => "file:///home/demo/.config/spiders-wm/config/layouts.ts",

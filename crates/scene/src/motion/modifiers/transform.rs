@@ -32,18 +32,14 @@ impl MotionModifier for TransformMotion {
     }
 
     fn base_value(style: Option<&ComputedStyle>) -> Self::Value {
-        style
-            .and_then(|style| style.transform.clone())
-            .unwrap_or_default()
+        style.and_then(|style| style.transform.clone()).unwrap_or_default()
     }
 
     fn keyframe_value(step: &CompiledKeyframeStep) -> Option<Self::Value> {
-        step.declarations
-            .iter()
-            .find_map(|declaration| match declaration {
-                CompiledDeclaration::Transform(value) => Some(value.clone()),
-                _ => None,
-            })
+        step.declarations.iter().find_map(|declaration| match declaration {
+            CompiledDeclaration::Transform(value) => Some(value.clone()),
+            _ => None,
+        })
     }
 
     fn output_from_value(value: &Self::Value, context: Self::Context) -> Self::Output {
@@ -111,12 +107,10 @@ fn transform_value_from_resolved(transform: ResolvedTransform) -> TransformValue
     if transform.translate_x_px.abs() > f32::EPSILON
         || transform.translate_y_px.abs() > f32::EPSILON
     {
-        operations.push(TransformOperationValue::Translate(
-            TranslateTransformValue {
-                x: LengthPercentage::Px(transform.translate_x_px),
-                y: LengthPercentage::Px(transform.translate_y_px),
-            },
-        ));
+        operations.push(TransformOperationValue::Translate(TranslateTransformValue {
+            x: LengthPercentage::Px(transform.translate_x_px),
+            y: LengthPercentage::Px(transform.translate_y_px),
+        }));
     }
     if (transform.scale_x - 1.0).abs() > f32::EPSILON
         || (transform.scale_y - 1.0).abs() > f32::EPSILON
@@ -150,12 +144,10 @@ mod tests {
             steps: vec![CompiledKeyframeStep {
                 offset: 0.5,
                 declarations: vec![CompiledDeclaration::Transform(TransformValue {
-                    operations: vec![TransformOperationValue::Translate(
-                        TranslateTransformValue {
-                            x: LengthPercentage::Percent(100.0),
-                            y: LengthPercentage::Px(0.0),
-                        },
-                    )],
+                    operations: vec![TransformOperationValue::Translate(TranslateTransformValue {
+                        x: LengthPercentage::Percent(100.0),
+                        y: LengthPercentage::Px(0.0),
+                    })],
                 })],
             }],
         };
@@ -195,10 +187,7 @@ mod tests {
         let (value, active) = TransitionModifierApplier::<TransformMotion>::new()
             .sample_transition(
                 &transition,
-                MotionContext {
-                    width: 320.0,
-                    height: 120.0,
-                },
+                MotionContext { width: 320.0, height: 120.0 },
                 started_at + std::time::Duration::from_millis(200),
             );
 

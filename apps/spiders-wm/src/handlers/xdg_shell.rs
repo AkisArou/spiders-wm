@@ -1,6 +1,7 @@
 use smithay::delegate_xdg_shell;
 use smithay::desktop::{PopupKind, Window};
 use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel;
+use smithay::reexports::wayland_protocols::xdg::decoration::zv1::server::zxdg_toplevel_decoration_v1::Mode;
 use smithay::reexports::wayland_server::Resource;
 use smithay::reexports::wayland_server::protocol::{wl_seat, wl_surface::WlSurface};
 use smithay::utils::Serial;
@@ -10,7 +11,8 @@ use smithay::wayland::shell::xdg::{
     PopupSurface, PositionerState, ToplevelSurface, XdgShellHandler, XdgToplevelSurfaceData,
 };
 use spiders_core::signal::WmSignal;
-use tracing::info;
+use spiders_css::AppearanceValue;
+use tracing::{debug, info};
 
 use crate::runtime::NoopHost;
 use crate::state::SpidersWm;
@@ -86,46 +88,52 @@ pub fn handle_commit(state: &mut SpidersWm, surface: &WlSurface) {
             .map(|role| role.initial_configure_sent)
             .unwrap_or(false)
     });
-    let planned_size = (!initial_configure_sent)
-        .then(|| state.planned_layout_for_surface(surface).map(|(_, size)| size))
-        .flatten();
     let planned_layout =
         (!initial_configure_sent).then(|| state.planned_layout_for_surface(surface)).flatten();
+    let planned_size = planned_layout.map(|(_, size)| size);
     let initial_transaction =
         (!initial_configure_sent).then(|| crate::frame_sync::new_sync_handle(&state.event_loop));
 
-    if let Some(record) = state.find_window_mut(surface) {
-        if !initial_configure_sent {
-            if let Some(toplevel) = record.toplevel() {
-                if let Some(size) = planned_size {
-                    toplevel.with_pending_state(|state| {
-                        state.size = Some(size);
-                    });
-                }
-                info!(window = %record.id.0, planned_size = ?planned_size, "wm sending initial configure");
-                let serial = toplevel.send_configure();
-                let window_id = record.id.to_string();
-                if let Some((location, size)) = planned_layout {
-                    record.frame_sync.track_pending_layout(
-                        serial,
-                        location,
-                        size,
-                        initial_transaction.expect("initial transaction missing"),
-                    );
-                }
-                let tracked_layout = planned_layout.map(|(location, size)| {
-                    format!("serial={serial:?} location={location:?} size={size:?}")
+    if !initial_configure_sent {
+        let toplevel = state.find_window_mut(surface).and_then(|record| record.toplevel().cloned());
+        if let Some(toplevel) = toplevel {
+            state.apply_toplevel_decoration_mode(&toplevel);
+
+            if let Some(size) = planned_size {
+                toplevel.with_pending_state(|state| {
+                    state.size = Some(size);
                 });
-                let configure_details = format!(
-                    "planned_size={planned_size:?} planned_layout={planned_layout:?} initial_configure_sent={initial_configure_sent}"
+            }
+
+            let window_id = state
+                .window_id_for_surface(surface)
+                .expect("window id missing for initial configure")
+                .to_string();
+            info!(window = %window_id, planned_size = ?planned_size, "wm sending initial configure");
+            let serial = toplevel.send_configure();
+
+            if let Some(record) = state.find_window_mut(surface)
+                && let Some((location, size)) = planned_layout
+            {
+                record.frame_sync.track_pending_layout(
+                    serial,
+                    location,
+                    size,
+                    initial_transaction.expect("initial transaction missing"),
                 );
-                state.debug_protocol_event("send-initial-configure", Some(&window_id), || {
-                    configure_details
-                });
-                if let Some(details) = tracked_layout {
-                    state
-                        .debug_protocol_event("track-pending-layout", Some(&window_id), || details);
-                }
+            }
+
+            let tracked_layout = planned_layout.map(|(location, size)| {
+                format!("serial={serial:?} location={location:?} size={size:?}")
+            });
+            let configure_details = format!(
+                "planned_size={planned_size:?} planned_layout={planned_layout:?} initial_configure_sent={initial_configure_sent}"
+            );
+            state.debug_protocol_event("send-initial-configure", Some(&window_id), || {
+                configure_details
+            });
+            if let Some(details) = tracked_layout {
+                state.debug_protocol_event("track-pending-layout", Some(&window_id), || details);
             }
         }
     }
@@ -164,8 +172,54 @@ fn sync_toplevel_identity(state: &mut SpidersWm, surface: &WlSurface) {
         let mut runtime = state.runtime();
         runtime.handle_signal(
             &mut NoopHost,
-            WmSignal::WindowIdentityChanged { window_id, title, app_id },
+            WmSignal::WindowIdentityChanged {
+                window_id,
+                title,
+                app_id,
+                class: None,
+                instance: None,
+            },
         )
     };
     state.broadcast_runtime_events(events);
+}
+
+impl SpidersWm {
+    pub(crate) fn apply_toplevel_decoration_mode(&mut self, toplevel: &ToplevelSurface) {
+        let Some(window_id) = self.window_id_for_surface(toplevel.wl_surface()) else {
+            return;
+        };
+
+        let visible_window_ids = self.layout_window_ids_for_window(&window_id);
+        let workspace_id = self.window_workspace_id(&window_id);
+        let workspace_layout = workspace_id
+            .as_ref()
+            .and_then(|id| self.model.workspaces.get(id))
+            .and_then(|workspace| workspace.effective_layout.as_ref())
+            .map(|layout| layout.name.clone());
+        let appearance = self
+            .scene
+            .compute_window_appearance_plan(&self.config, &self.model, &visible_window_ids, &window_id)
+            .map(|plan| plan.appearance)
+            .unwrap_or(AppearanceValue::Auto);
+
+        let decoration_mode = match appearance {
+            AppearanceValue::Auto => None,
+            AppearanceValue::None => Some(Mode::ServerSide),
+        };
+
+        toplevel.with_pending_state(|state| {
+            state.decoration_mode = decoration_mode;
+        });
+
+        debug!(
+            window = %window_id.0,
+            ?workspace_id,
+            workspace_layout = ?workspace_layout,
+            visible_window_ids = ?visible_window_ids,
+            appearance = ?appearance,
+            decoration_mode = ?decoration_mode,
+            "wm applied toplevel decoration mode"
+        );
+    }
 }

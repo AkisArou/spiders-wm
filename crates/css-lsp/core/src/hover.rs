@@ -274,7 +274,6 @@ fn style_targets_label(targets: &[StyleTarget]) -> String {
             StyleTarget::Workspace => "`workspace`",
             StyleTarget::Group => "`group`",
             StyleTarget::Window => "`window`",
-            StyleTarget::WindowTitlebar => "`window::titlebar`",
         })
         .collect::<Vec<_>>()
         .join(", ")
@@ -310,7 +309,7 @@ mod tests {
             panic!("expected markup hover");
         };
         assert!(markup.value.contains("`text-align`"));
-        assert!(markup.value.contains("Applies to: `window::titlebar`"));
+        assert!(markup.value.contains("Applies to: `window`"));
     }
 
     #[test]

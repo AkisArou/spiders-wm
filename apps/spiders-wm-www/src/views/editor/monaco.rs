@@ -64,7 +64,6 @@ fn sdk_type_libs() -> Vec<MonacoExtraLib> {
                 "export * from \"./jsx-dev-runtime\";\n",
                 "export * from \"./jsx-runtime\";\n",
                 "export * from \"./layout\";\n",
-                "export * from \"./titlebar\";\n",
             ),
         },
         MonacoExtraLib {
@@ -94,10 +93,6 @@ fn sdk_type_libs() -> Vec<MonacoExtraLib> {
         MonacoExtraLib {
             file_path: format!("{workspace_node_modules}/layout.d.ts"),
             content: include_str!("../../../../../packages/sdk/js/src/layout.d.ts"),
-        },
-        MonacoExtraLib {
-            file_path: format!("{workspace_node_modules}/titlebar.d.ts"),
-            content: include_str!("../../../../../packages/sdk/js/src/titlebar.d.ts"),
         },
     ]
 }

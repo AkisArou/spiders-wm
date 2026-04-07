@@ -1,13 +1,13 @@
-use std::collections::BTreeMap;
 use std::cell::RefCell;
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
 
-use spiders_config::model::Config;
 use spiders_config::authoring_layout::SourceBundleAuthoringLayoutService;
+use spiders_config::model::Config;
 use spiders_config::runtime::build_source_bundle_authoring_layout_service;
-use spiders_core::runtime::layout_context::LayoutEvaluationDependencies;
 use spiders_core::LayoutId;
+use spiders_core::runtime::layout_context::LayoutEvaluationDependencies;
 use spiders_runtime_js_browser::JavaScriptBrowserRuntimeProvider;
 use spiders_wm_runtime::{PreviewSession, build_preview_layout_context};
 
@@ -97,7 +97,9 @@ thread_local! {
     static LAYOUT_SERVICE: RefCell<Option<SourceBundleAuthoringLayoutService>> = const { RefCell::new(None) };
 }
 
-fn build_preview_state_snapshot(request: &PreviewRenderRequest) -> spiders_core::snapshot::StateSnapshot {
+fn build_preview_state_snapshot(
+    request: &PreviewRenderRequest,
+) -> spiders_core::snapshot::StateSnapshot {
     let context = build_preview_layout_context(
         &request.runtime_state,
         Some(request.active_layout.as_str().to_string()),
@@ -140,7 +142,12 @@ fn build_preview_state_snapshot(request: &PreviewRenderRequest) -> spiders_core:
             .windows
             .iter()
             .filter(|window| window.workspace_name == request.runtime_state.active_workspace_name)
-            .map(|window| spiders_wm_runtime::preview_window_snapshot(window, Some(window.workspace_name.as_str())))
+            .map(|window| {
+                spiders_wm_runtime::preview_window_snapshot(
+                    window,
+                    Some(window.workspace_name.as_str()),
+                )
+            })
             .collect(),
         visible_window_ids: request
             .runtime_state

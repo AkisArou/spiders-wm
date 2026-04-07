@@ -14,12 +14,9 @@ impl SpidersWm {
             return;
         };
 
-        let output_geo = self
-            .current_output_geometry()
-            .expect("output geometry missing");
-        let window_geo = self
-            .element_geometry(&window)
-            .unwrap_or(Rectangle::new((0, 0).into(), (0, 0).into()));
+        let output_geo = self.current_output_geometry().expect("output geometry missing");
+        let window_geo =
+            self.element_geometry(&window).unwrap_or(Rectangle::new((0, 0).into(), (0, 0).into()));
 
         let mut target = output_geo;
         target.loc -= smithay::desktop::get_popup_toplevel_coords(&PopupKind::Xdg(popup.clone()));

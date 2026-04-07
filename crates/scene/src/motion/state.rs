@@ -53,10 +53,7 @@ pub struct MotionContext {
 
 impl Default for MotionContext {
     fn default() -> Self {
-        Self {
-            width: 0.0,
-            height: 0.0,
-        }
+        Self { width: 0.0, height: 0.0 }
     }
 }
 
@@ -68,10 +65,7 @@ pub struct ResolvedMotion {
 
 impl Default for ResolvedMotion {
     fn default() -> Self {
-        Self {
-            opacity: 1.0,
-            transform: ResolvedTransform::default(),
-        }
+        Self { opacity: 1.0, transform: ResolvedTransform::default() }
     }
 }
 
@@ -95,21 +89,13 @@ pub struct AppliedMotionPhase {
 
 impl Default for AppliedMotionPhase {
     fn default() -> Self {
-        Self {
-            motion: ResolvedMotion::default(),
-            active: MotionPhaseActivity::default(),
-        }
+        Self { motion: ResolvedMotion::default(), active: MotionPhaseActivity::default() }
     }
 }
 
 impl Default for ResolvedTransform {
     fn default() -> Self {
-        Self {
-            translate_x_px: 0.0,
-            translate_y_px: 0.0,
-            scale_x: 1.0,
-            scale_y: 1.0,
-        }
+        Self { translate_x_px: 0.0, translate_y_px: 0.0, scale_x: 1.0, scale_y: 1.0 }
     }
 }
 

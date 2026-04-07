@@ -7,10 +7,8 @@ pub struct CloseSelection {
 }
 
 pub fn mark_focused_window_closing(model: &mut WmModel) -> Option<WindowId> {
-    let focused_id = model
-        .focused_window_id
-        .clone()
-        .filter(|window_id| model.windows.contains_key(window_id));
+    let focused_id =
+        model.focused_window_id.clone().filter(|window_id| model.windows.contains_key(window_id));
 
     if focused_id != model.focused_window_id {
         model.set_window_focused(None);
@@ -24,9 +22,7 @@ pub fn mark_focused_window_closing(model: &mut WmModel) -> Option<WindowId> {
 }
 
 pub fn request_close_focused_window(model: &mut WmModel) -> CloseSelection {
-    CloseSelection {
-        closing_window_id: mark_focused_window_closing(model),
-    }
+    CloseSelection { closing_window_id: mark_focused_window_closing(model) }
 }
 
 pub fn sync_window_identity(
@@ -51,10 +47,8 @@ pub fn assign_focused_window_to_workspace<I>(
 where
     I: IntoIterator<Item = WindowId>,
 {
-    let focused_window_id = model
-        .focused_window_id
-        .clone()
-        .filter(|window_id| model.windows.contains_key(window_id));
+    let focused_window_id =
+        model.focused_window_id.clone().filter(|window_id| model.windows.contains_key(window_id));
     let Some(focused_window_id) = focused_window_id else {
         return model.focused_window_id.clone();
     };
@@ -82,37 +76,27 @@ where
 }
 
 pub fn toggle_focused_window_floating(model: &mut WmModel) -> Option<WindowId> {
-    let focused_window_id = model
-        .focused_window_id
-        .clone()
-        .filter(|window_id| model.windows.contains_key(window_id));
+    let focused_window_id =
+        model.focused_window_id.clone().filter(|window_id| model.windows.contains_key(window_id));
     let Some(focused_window_id) = focused_window_id else {
         return None;
     };
 
-    let next_floating = model
-        .windows
-        .get(&focused_window_id)
-        .map(|window| !window.floating)
-        .unwrap_or(false);
+    let next_floating =
+        model.windows.get(&focused_window_id).map(|window| !window.floating).unwrap_or(false);
     model.set_window_floating(focused_window_id.clone(), next_floating);
     Some(focused_window_id)
 }
 
 pub fn toggle_focused_window_fullscreen(model: &mut WmModel) -> Option<WindowId> {
-    let focused_window_id = model
-        .focused_window_id
-        .clone()
-        .filter(|window_id| model.windows.contains_key(window_id));
+    let focused_window_id =
+        model.focused_window_id.clone().filter(|window_id| model.windows.contains_key(window_id));
     let Some(focused_window_id) = focused_window_id else {
         return None;
     };
 
-    let next_fullscreen = model
-        .windows
-        .get(&focused_window_id)
-        .map(|window| !window.fullscreen)
-        .unwrap_or(false);
+    let next_fullscreen =
+        model.windows.get(&focused_window_id).map(|window| !window.fullscreen).unwrap_or(false);
 
     let window_ids = model.windows.keys().cloned().collect::<Vec<_>>();
     for window_id in window_ids {
@@ -138,20 +122,8 @@ mod tests {
         let closing_id = mark_focused_window_closing(&mut model);
 
         assert_eq!(closing_id, Some(window_id(2)));
-        assert_eq!(
-            model
-                .windows
-                .get(&window_id(1))
-                .map(|window| window.closing),
-            Some(false)
-        );
-        assert_eq!(
-            model
-                .windows
-                .get(&window_id(2))
-                .map(|window| window.closing),
-            Some(true)
-        );
+        assert_eq!(model.windows.get(&window_id(1)).map(|window| window.closing), Some(false));
+        assert_eq!(model.windows.get(&window_id(2)).map(|window| window.closing), Some(true));
         assert_eq!(model.focused_window_id, Some(window_id(2)));
     }
 
@@ -163,12 +135,7 @@ mod tests {
 
         let selection = request_close_focused_window(&mut model);
 
-        assert_eq!(
-            selection,
-            CloseSelection {
-                closing_window_id: Some(window_id(4)),
-            }
-        );
+        assert_eq!(selection, CloseSelection { closing_window_id: Some(window_id(4)) });
     }
 
     #[test]
@@ -179,13 +146,7 @@ mod tests {
         let closing_id = mark_focused_window_closing(&mut model);
 
         assert_eq!(closing_id, None);
-        assert_eq!(
-            model
-                .windows
-                .get(&window_id(1))
-                .map(|window| window.closing),
-            Some(false)
-        );
+        assert_eq!(model.windows.get(&window_id(1)).map(|window| window.closing), Some(false));
     }
 
     #[test]
@@ -248,10 +209,7 @@ mod tests {
         );
 
         assert_eq!(
-            model
-                .windows
-                .get(&window_id(2))
-                .and_then(|window| window.workspace_id.clone()),
+            model.windows.get(&window_id(2)).and_then(|window| window.workspace_id.clone()),
             Some(WorkspaceId("2".to_string()))
         );
         assert_eq!(next_focus, Some(window_id(1)));
@@ -284,23 +242,11 @@ mod tests {
 
         let toggled = toggle_focused_window_floating(&mut model);
         assert_eq!(toggled, Some(window_id(12)));
-        assert_eq!(
-            model
-                .windows
-                .get(&window_id(12))
-                .map(|window| window.floating),
-            Some(true)
-        );
+        assert_eq!(model.windows.get(&window_id(12)).map(|window| window.floating), Some(true));
 
         let toggled_again = toggle_focused_window_floating(&mut model);
         assert_eq!(toggled_again, Some(window_id(12)));
-        assert_eq!(
-            model
-                .windows
-                .get(&window_id(12))
-                .map(|window| window.floating),
-            Some(false)
-        );
+        assert_eq!(model.windows.get(&window_id(12)).map(|window| window.floating), Some(false));
     }
 
     #[test]
@@ -311,13 +257,7 @@ mod tests {
         let toggled = toggle_focused_window_floating(&mut model);
 
         assert_eq!(toggled, None);
-        assert_eq!(
-            model
-                .windows
-                .get(&window_id(13))
-                .map(|window| window.floating),
-            Some(false)
-        );
+        assert_eq!(model.windows.get(&window_id(13)).map(|window| window.floating), Some(false));
     }
 
     #[test]
@@ -329,13 +269,7 @@ mod tests {
         let toggled = toggle_focused_window_fullscreen(&mut model);
 
         assert_eq!(toggled, Some(window_id(14)));
-        assert_eq!(
-            model
-                .windows
-                .get(&window_id(14))
-                .map(|window| window.fullscreen),
-            Some(true)
-        );
+        assert_eq!(model.windows.get(&window_id(14)).map(|window| window.fullscreen), Some(true));
     }
 
     #[test]
@@ -349,20 +283,8 @@ mod tests {
         let toggled = toggle_focused_window_fullscreen(&mut model);
 
         assert_eq!(toggled, Some(window_id(15)));
-        assert_eq!(
-            model
-                .windows
-                .get(&window_id(14))
-                .map(|window| window.fullscreen),
-            Some(false)
-        );
-        assert_eq!(
-            model
-                .windows
-                .get(&window_id(15))
-                .map(|window| window.fullscreen),
-            Some(true)
-        );
+        assert_eq!(model.windows.get(&window_id(14)).map(|window| window.fullscreen), Some(false));
+        assert_eq!(model.windows.get(&window_id(15)).map(|window| window.fullscreen), Some(true));
     }
 
     #[test]
@@ -373,12 +295,6 @@ mod tests {
         let toggled = toggle_focused_window_fullscreen(&mut model);
 
         assert_eq!(toggled, None);
-        assert_eq!(
-            model
-                .windows
-                .get(&window_id(16))
-                .map(|window| window.fullscreen),
-            Some(false)
-        );
+        assert_eq!(model.windows.get(&window_id(16)).map(|window| window.fullscreen), Some(false));
     }
 }

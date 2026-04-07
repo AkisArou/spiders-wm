@@ -8,13 +8,12 @@ pub(crate) mod stylo_adapter {
 }
 
 pub use crate::style::*;
-pub use crate::style_calc::{compute_style, compute_style_for_pseudo};
+pub use crate::style_calc::compute_style;
 pub use spiders_css::compile;
 pub use spiders_css::compile::CompiledDeclaration;
 pub use spiders_css::compile::CssValueError;
 pub use spiders_css::compiled::*;
 pub use spiders_css::parsing::{CssParseError, parse_stylesheet};
-pub use spiders_css::LayoutPseudoElement;
 pub use taffy::{NodeComputedStyle, StyledLayoutTree, map_computed_style_to_taffy};
 
 #[cfg(test)]
@@ -27,10 +26,7 @@ mod tests {
     use spiders_core::{LayoutNodeMeta, ResolvedLayoutNode};
 
     fn runtime_window_with_meta(meta: LayoutNodeMeta) -> ResolvedLayoutNode {
-        ResolvedLayoutNode::Window {
-            meta,
-            window_id: Some(WindowId::from("win-1")),
-        }
+        ResolvedLayoutNode::Window { meta, window_id: Some(WindowId::from("win-1")) }
     }
 
     fn only_declaration(source: &str) -> CompiledDeclaration {
@@ -75,12 +71,7 @@ mod tests {
     fn rejects_unsupported_selector() {
         let error = parse_stylesheet("slot { display: flex; }").unwrap_err();
 
-        assert_eq!(
-            error,
-            CssParseError::UnsupportedSelector {
-                selector: "slot".into(),
-            }
-        );
+        assert_eq!(error, CssParseError::UnsupportedSelector { selector: "slot".into() });
     }
 
     #[test]
@@ -100,12 +91,7 @@ mod tests {
     fn rejects_at_rules_for_v1() {
         let error = parse_stylesheet("@media screen { window { width: 100%; } }").unwrap_err();
 
-        assert_eq!(
-            error,
-            CssParseError::UnsupportedAtRule {
-                name: "media".into(),
-            }
-        );
+        assert_eq!(error, CssParseError::UnsupportedAtRule { name: "media".into() });
     }
 
     #[test]
@@ -117,30 +103,12 @@ mod tests {
             ..LayoutNodeMeta::default()
         });
 
-        assert!(selector_matches(
-            &parse_selector_list("window").unwrap(),
-            &node
-        ));
-        assert!(selector_matches(
-            &parse_selector_list("#main").unwrap(),
-            &node
-        ));
-        assert!(selector_matches(
-            &parse_selector_list(".stack").unwrap(),
-            &node
-        ));
-        assert!(selector_matches(
-            &parse_selector_list("[app_id='foot']").unwrap(),
-            &node
-        ));
-        assert!(!selector_matches(
-            &parse_selector_list("group").unwrap(),
-            &node
-        ));
-        assert!(!selector_matches(
-            &parse_selector_list(".missing").unwrap(),
-            &node
-        ));
+        assert!(selector_matches(&parse_selector_list("window").unwrap(), &node));
+        assert!(selector_matches(&parse_selector_list("#main").unwrap(), &node));
+        assert!(selector_matches(&parse_selector_list(".stack").unwrap(), &node));
+        assert!(selector_matches(&parse_selector_list("[app_id='foot']").unwrap(), &node));
+        assert!(!selector_matches(&parse_selector_list("group").unwrap(), &node));
+        assert!(!selector_matches(&parse_selector_list(".missing").unwrap(), &node));
     }
 
     #[test]
@@ -150,18 +118,9 @@ mod tests {
             ..LayoutNodeMeta::default()
         });
 
-        assert!(selector_matches(
-            &parse_selector_list("window:focused").unwrap(),
-            &node
-        ));
-        assert!(selector_matches(
-            &parse_selector_list("window:floating").unwrap(),
-            &node
-        ));
-        assert!(!selector_matches(
-            &parse_selector_list("window:fullscreen").unwrap(),
-            &node
-        ));
+        assert!(selector_matches(&parse_selector_list("window:focused").unwrap(), &node));
+        assert!(selector_matches(&parse_selector_list("window:floating").unwrap(), &node));
+        assert!(!selector_matches(&parse_selector_list("window:fullscreen").unwrap(), &node));
     }
 
     #[test]
@@ -179,14 +138,8 @@ mod tests {
         let matches = matching_rules(&sheet, &node);
 
         assert_eq!(matches.len(), 2);
-        assert!(matches!(
-            matches[0].declarations[0],
-            CompiledDeclaration::Width(_)
-        ));
-        assert!(matches!(
-            matches[1].declarations[0],
-            CompiledDeclaration::Height(_)
-        ));
+        assert!(matches!(matches[0].declarations[0], CompiledDeclaration::Width(_)));
+        assert!(matches!(matches[1].declarations[0], CompiledDeclaration::Height(_)));
     }
 
     #[test]
@@ -220,10 +173,7 @@ mod tests {
         assert_eq!(style.aspect_ratio, Some(16.0 / 9.0));
         assert_eq!(
             style.gap,
-            Some(Size2 {
-                width: LengthPercentage::Px(20.0),
-                height: LengthPercentage::Px(10.0),
-            })
+            Some(Size2 { width: LengthPercentage::Px(20.0), height: LengthPercentage::Px(10.0) })
         );
         assert_eq!(style.box_sizing, Some(BoxSizingValue::ContentBox));
         assert_eq!(
@@ -254,133 +204,12 @@ mod tests {
     }
 
     #[test]
-    fn computes_titlebar_pseudo_styles_separately_from_window_styles() {
-        let sheet = parse_stylesheet(
-            "window { height: 100%; } window::titlebar { height: 28px; background: rgba(12, 24, 48, 0.5); color: #ddeeff; padding: 4px 10px; text-align: center; text-transform: uppercase; font-family: 'DejaVu Sans', sans-serif; font-size: 15px; font-weight: bold; letter-spacing: 2px; box-shadow: 0 3px 8px rgba(0, 0, 0, 0.35); border-bottom-width: 2px; border-bottom-style: solid; border-color: #102030; border-bottom-color: #aabbcc; }",
-        )
-        .unwrap();
-        let node = runtime_window_with_meta(LayoutNodeMeta::default());
+    fn rejects_titlebar_pseudo_styles() {
+        let error = parse_stylesheet("window::titlebar { text-align: center; }").unwrap_err();
 
-        let window_style = compute_style(&sheet, &node).unwrap();
-        let titlebar_style = compute_style_for_pseudo(&sheet, &node, LayoutPseudoElement::Titlebar)
-            .unwrap()
-            .unwrap();
-
-        assert_eq!(window_style.background, None);
         assert_eq!(
-            titlebar_style.height,
-            Some(SizeValue::LengthPercentage(LengthPercentage::Px(28.0)))
-        );
-        assert_eq!(
-            titlebar_style.background,
-            Some(ColorValue {
-                red: 12,
-                green: 24,
-                blue: 48,
-                alpha: 128,
-            })
-        );
-        assert_eq!(
-            titlebar_style.color,
-            Some(ColorValue {
-                red: 221,
-                green: 238,
-                blue: 255,
-                alpha: 255,
-            })
-        );
-        assert_eq!(
-            titlebar_style.padding,
-            Some(BoxEdges {
-                top: LengthPercentage::Px(4.0),
-                right: LengthPercentage::Px(10.0),
-                bottom: LengthPercentage::Px(4.0),
-                left: LengthPercentage::Px(10.0),
-            })
-        );
-        assert_eq!(titlebar_style.text_align, Some(TextAlignValue::Center));
-        assert_eq!(
-            titlebar_style.text_transform,
-            Some(TextTransformValue::Uppercase)
-        );
-        assert_eq!(
-            titlebar_style.font_family,
-            Some(vec!["\"DejaVu Sans\"".into(), "sans-serif".into()])
-        );
-        assert_eq!(titlebar_style.font_size, Some(LengthPercentage::Px(15.0)));
-        assert_eq!(titlebar_style.font_weight, Some(FontWeightValue::Bold));
-        assert_eq!(titlebar_style.letter_spacing, Some(2.0));
-        assert_eq!(
-            titlebar_style.box_shadow,
-            Some(vec![BoxShadowValue {
-                color: Some(ColorValue {
-                    red: 0,
-                    green: 0,
-                    blue: 0,
-                    alpha: 89,
-                }),
-                offset_x: 0,
-                offset_y: 3,
-                blur_radius: 8,
-                spread_radius: 0,
-                inset: false,
-            }])
-        );
-        assert_eq!(
-            titlebar_style.border,
-            Some(BoxEdges {
-                top: LengthPercentage::Px(0.0),
-                right: LengthPercentage::Px(0.0),
-                bottom: LengthPercentage::Px(2.0),
-                left: LengthPercentage::Px(0.0),
-            })
-        );
-        assert_eq!(
-            titlebar_style.border_color,
-            Some(ColorValue {
-                red: 16,
-                green: 32,
-                blue: 48,
-                alpha: 255,
-            })
-        );
-        assert_eq!(
-            titlebar_style.border_style,
-            Some(BoxEdges {
-                top: BorderStyleValue::None,
-                right: BorderStyleValue::None,
-                bottom: BorderStyleValue::Solid,
-                left: BorderStyleValue::None,
-            })
-        );
-        assert_eq!(
-            titlebar_style.border_side_colors,
-            Some(BoxEdges {
-                top: Some(ColorValue {
-                    red: 16,
-                    green: 32,
-                    blue: 48,
-                    alpha: 255,
-                }),
-                right: Some(ColorValue {
-                    red: 16,
-                    green: 32,
-                    blue: 48,
-                    alpha: 255,
-                }),
-                bottom: Some(ColorValue {
-                    red: 170,
-                    green: 187,
-                    blue: 204,
-                    alpha: 255,
-                }),
-                left: Some(ColorValue {
-                    red: 16,
-                    green: 32,
-                    blue: 48,
-                    alpha: 255,
-                }),
-            })
+            error,
+            CssParseError::UnsupportedSelector { selector: "window::titlebar".into() }
         );
     }
 
@@ -407,27 +236,17 @@ mod tests {
         let node = runtime_window_with_meta(LayoutNodeMeta::default());
         let style = compute_style(&sheet, &node).unwrap();
 
-        assert_eq!(
-            style.color,
-            Some(ColorValue {
-                red: 12,
-                green: 34,
-                blue: 56,
-                alpha: 128,
-            })
-        );
+        assert_eq!(style.color, Some(ColorValue { red: 12, green: 34, blue: 56, alpha: 128 }));
     }
 
     #[test]
     fn supports_text_align_and_text_transform_properties() {
         let sheet = parse_stylesheet(
-            "window::titlebar { text-align: end; text-transform: capitalize; font-family: serif; font-size: 85%; font-weight: 700; letter-spacing: normal; }",
+            "window { text-align: end; text-transform: capitalize; font-family: serif; font-size: 85%; font-weight: 700; letter-spacing: normal; }",
         )
         .unwrap();
         let node = runtime_window_with_meta(LayoutNodeMeta::default());
-        let style = compute_style_for_pseudo(&sheet, &node, LayoutPseudoElement::Titlebar)
-            .unwrap()
-            .unwrap();
+        let style = compute_style(&sheet, &node).unwrap();
 
         assert_eq!(style.text_align, Some(TextAlignValue::End));
         assert_eq!(style.text_transform, Some(TextTransformValue::Capitalize));
@@ -462,9 +281,7 @@ mod tests {
 
         assert_eq!(
             declaration,
-            CompiledDeclaration::Transform(TransformValue {
-                operations: Vec::new(),
-            })
+            CompiledDeclaration::Transform(TransformValue { operations: Vec::new() })
         );
     }
 
@@ -515,12 +332,7 @@ mod tests {
         assert_eq!(style.opacity, Some(0.94));
         assert_eq!(
             style.border_color,
-            Some(ColorValue {
-                red: 34,
-                green: 34,
-                blue: 34,
-                alpha: 255,
-            })
+            Some(ColorValue { red: 34, green: 34, blue: 34, alpha: 255 })
         );
         assert_eq!(
             style.border_radius,
@@ -548,17 +360,13 @@ mod tests {
         assert_eq!(sheet.keyframes.len(), 1);
         assert_eq!(sheet.keyframes[0].name, "open-zoom");
         assert_eq!(sheet.keyframes[0].steps.len(), 2);
-        assert!(
-            sheet.keyframes[0]
-                .steps
-                .iter()
-                .flat_map(|step| step.declarations.iter())
-                .any(|declaration| matches!(
-                    declaration,
-                    CompiledDeclaration::Transform(TransformValue { operations })
-                    if operations.len() == 2
-                ))
-        );
+        assert!(sheet.keyframes[0].steps.iter().flat_map(|step| step.declarations.iter()).any(
+            |declaration| matches!(
+                declaration,
+                CompiledDeclaration::Transform(TransformValue { operations })
+                if operations.len() == 2
+            )
+        ));
         assert!(style.box_shadow.is_some());
     }
 
@@ -572,10 +380,7 @@ mod tests {
 
         assert_eq!(
             style.gap,
-            Some(Size2 {
-                width: LengthPercentage::Px(24.0),
-                height: LengthPercentage::Px(12.0),
-            })
+            Some(Size2 { width: LengthPercentage::Px(24.0), height: LengthPercentage::Px(12.0) })
         );
     }
 
@@ -588,18 +393,9 @@ mod tests {
 
         let style = compute_style(&sheet, &node).unwrap();
 
-        assert_eq!(
-            style.flex_basis,
-            Some(SizeValue::LengthPercentage(LengthPercentage::Px(0.0)))
-        );
-        assert_eq!(
-            style.min_width,
-            Some(SizeValue::LengthPercentage(LengthPercentage::Px(0.0)))
-        );
-        assert_eq!(
-            style.min_height,
-            Some(SizeValue::LengthPercentage(LengthPercentage::Px(0.0)))
-        );
+        assert_eq!(style.flex_basis, Some(SizeValue::LengthPercentage(LengthPercentage::Px(0.0))));
+        assert_eq!(style.min_width, Some(SizeValue::LengthPercentage(LengthPercentage::Px(0.0))));
+        assert_eq!(style.min_height, Some(SizeValue::LengthPercentage(LengthPercentage::Px(0.0))));
         assert_eq!(
             style.padding,
             Some(BoxEdges {
@@ -625,16 +421,10 @@ mod tests {
 
         let style = compute_style(&sheet, &node).unwrap();
 
-        assert_eq!(
-            style.width,
-            Some(SizeValue::LengthPercentage(LengthPercentage::Percent(60.0)))
-        );
+        assert_eq!(style.width, Some(SizeValue::LengthPercentage(LengthPercentage::Percent(60.0))));
         assert_eq!(
             style.gap,
-            Some(Size2 {
-                width: LengthPercentage::Px(12.0),
-                height: LengthPercentage::Px(12.0),
-            })
+            Some(Size2 { width: LengthPercentage::Px(12.0), height: LengthPercentage::Px(12.0) })
         );
     }
 
@@ -665,9 +455,7 @@ mod tests {
                     GridTemplateComponent::Single(GridTrackValue::Fraction(1.0)),
                     GridTemplateComponent::Repeat(GridTrackRepeat {
                         count: GridRepetitionCount::Count(2),
-                        tracks: vec![GridTrackValue::LengthPercentage(LengthPercentage::Px(
-                            500.0
-                        ))],
+                        tracks: vec![GridTrackValue::LengthPercentage(LengthPercentage::Px(500.0))],
                         line_names: vec![vec!["mid".into()], vec![]],
                     }),
                     GridTemplateComponent::Single(GridTrackValue::MinMax(
@@ -758,9 +546,7 @@ mod tests {
                     GridTemplateComponent::Single(GridTrackValue::Fraction(1.0)),
                     GridTemplateComponent::Repeat(GridTrackRepeat {
                         count: GridRepetitionCount::Count(2),
-                        tracks: vec![GridTrackValue::LengthPercentage(LengthPercentage::Px(
-                            500.0,
-                        ))],
+                        tracks: vec![GridTrackValue::LengthPercentage(LengthPercentage::Px(500.0))],
                         line_names: vec![vec!["mid".into()], vec![]],
                     }),
                 ],
@@ -815,22 +601,10 @@ mod tests {
         let mapped = map_computed_style_to_taffy(&style);
 
         assert_eq!(mapped.display, ::taffy::prelude::Display::Flex);
-        assert_eq!(
-            mapped.flex_direction,
-            ::taffy::prelude::FlexDirection::Column
-        );
+        assert_eq!(mapped.flex_direction, ::taffy::prelude::FlexDirection::Column);
         assert_eq!(mapped.size.width, ::taffy::prelude::Dimension::percent(0.6));
-        assert_eq!(
-            mapped.size.height,
-            ::taffy::prelude::Dimension::length(200.0)
-        );
-        assert_eq!(
-            mapped.gap.width,
-            ::taffy::style::LengthPercentage::length(12.0)
-        );
-        assert_eq!(
-            mapped.padding.left,
-            ::taffy::style::LengthPercentage::length(16.0)
-        );
+        assert_eq!(mapped.size.height, ::taffy::prelude::Dimension::length(200.0));
+        assert_eq!(mapped.gap.width, ::taffy::style::LengthPercentage::length(12.0));
+        assert_eq!(mapped.padding.left, ::taffy::style::LengthPercentage::length(16.0));
     }
 }

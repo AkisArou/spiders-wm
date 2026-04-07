@@ -78,23 +78,6 @@ export default {
 - `layouts_dir?: string`
 - `source_layouts_dir?: string`
 - `snapshot_fadeout_ms?: number`
-- `titlebar_font?: { regular_path?: string; bold_path?: string }`
-
-`titlebar_font` lets the compositor titlebar renderer use explicit font files instead of only probing common Linux defaults.
-
-The compositor titlebar renderer currently supports titlebar background, bottom border, text typography, top corner radii, and non-inset `box-shadow`. Shadow rendering is intentionally approximate: multiple non-inset shadows are drawn, rounded top corners are respected, and the clipped titlebar body is composited over the shadow layer.
-
-Example:
-
-```ts
-options: {
-  sloppyfocus: true,
-  titlebar_font: {
-    regular_path: "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-    bold_path: "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-  },
-}
-```
 
 ## Bindings
 

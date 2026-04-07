@@ -19,10 +19,7 @@ fn wm_live_ipc_smoke_uses_test_config() {
     let workspace_root = workspace_root();
     let test_config_root = workspace_root.join("test_config");
     let authored_config = test_config_root.join("config.ts");
-    assert!(
-        authored_config.exists(),
-        "missing test_config authored config"
-    );
+    assert!(authored_config.exists(), "missing test_config authored config");
 
     let temp_root = unique_temp_root("wm-live-ipc-smoke");
     std::fs::create_dir_all(&temp_root).unwrap();
@@ -70,19 +67,11 @@ fn wm_live_ipc_smoke_uses_test_config() {
 }
 
 fn workspace_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .to_path_buf()
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).parent().unwrap().parent().unwrap().to_path_buf()
 }
 
 fn unique_temp_root(label: &str) -> PathBuf {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
+    let nanos = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
     std::env::temp_dir().join(format!("{label}-{nanos}"))
 }
 
@@ -128,10 +117,7 @@ fn wait_for_socket(socket_path: &Path, timeout: Duration) {
         thread::sleep(Duration::from_millis(50));
     }
 
-    panic!(
-        "timed out waiting for wm IPC socket at {}",
-        socket_path.display()
-    );
+    panic!("timed out waiting for wm IPC socket at {}", socket_path.display());
 }
 
 fn terminate_child(child: &mut Child) {

@@ -10,11 +10,7 @@ impl Dispatch<wl_registry::WlRegistry, ()> for RiverBackendState {
         qh: &QueueHandle<Self>,
     ) {
         match event {
-            wl_registry::Event::Global {
-                name,
-                interface,
-                version,
-            } => match interface.as_str() {
+            wl_registry::Event::Global { name, interface, version } => match interface.as_str() {
                 RIVER_WINDOW_MANAGEMENT_GLOBAL => {
                     let wm = registry.bind::<river_window_manager_v1::RiverWindowManagerV1, _, _>(
                         name,
@@ -143,9 +139,7 @@ impl Dispatch<wl_output::WlOutput, u32> for RiverBackendState {
                 .collect::<Vec<_>>();
 
             for output_id in output_ids {
-                state
-                    .runtime_state
-                    .set_output_name(&output_id, name.clone());
+                state.runtime_state.set_output_name(&output_id, name.clone());
             }
         }
     }
@@ -213,48 +207,29 @@ impl Dispatch<river_window_manager_v1::RiverWindowManagerV1, ()> for RiverBacken
                 let window_id = state.next_window_id();
                 let node = id.get_node(qh, ());
                 state.runtime_state.insert_window(window_id.clone());
-                state
-                    .registry
-                    .window_ids_by_state
-                    .insert(window_id.clone(), id.id());
+                state.registry.window_ids_by_state.insert(window_id.clone(), id.id());
                 state.registry.windows.insert(
                     id.id(),
-                    WindowRecord {
-                        proxy: id,
-                        node,
-                        state_id: window_id,
-                        supports_ssd: true,
-                    },
+                    WindowRecord { proxy: id, node, state_id: window_id, supports_ssd: true },
                 );
             }
             river_window_manager_v1::Event::Output { id } => {
                 let output_id = state.next_output_id();
                 let output_name = output_id.as_str().to_owned();
-                state
-                    .runtime_state
-                    .insert_output(output_id.clone(), output_name);
+                state.runtime_state.insert_output(output_id.clone(), output_name);
                 if state.runtime_state.current_output_id.is_none() {
                     state.runtime_state.focus_output(&output_id);
                 }
+                state.registry.output_ids_by_state.insert(output_id.clone(), id.id());
                 state
                     .registry
-                    .output_ids_by_state
-                    .insert(output_id.clone(), id.id());
-                state.registry.outputs.insert(
-                    id.id(),
-                    OutputRecord {
-                        proxy: id,
-                        state_id: output_id,
-                    },
-                );
+                    .outputs
+                    .insert(id.id(), OutputRecord { proxy: id, state_id: output_id });
             }
             river_window_manager_v1::Event::Seat { id } => {
                 let seat_name = state.next_seat_name();
                 state.runtime_state.insert_seat(seat_name.clone());
-                state
-                    .registry
-                    .seats
-                    .insert(id.id(), SeatRecord::new(id, seat_name));
+                state.registry.seats.insert(id.id(), SeatRecord::new(id, seat_name));
             }
             river_window_manager_v1::Event::ManageStart => state.handle_manage_start(qh),
             river_window_manager_v1::Event::RenderStart => state.handle_render_start(),
@@ -281,9 +256,7 @@ impl Dispatch<river_window_v1::RiverWindowV1, ()> for RiverBackendState {
 
         match event {
             river_window_v1::Event::Closed => {
-                state
-                    .runtime_state
-                    .set_window_closed(&window.state_id, true);
+                state.runtime_state.set_window_closed(&window.state_id, true);
             }
             river_window_v1::Event::Dimensions { width, height } => {
                 let (x, y) = state
@@ -292,26 +265,18 @@ impl Dispatch<river_window_v1::RiverWindowV1, ()> for RiverBackendState {
                     .get(&window.state_id)
                     .map(|window| (window.x, window.y))
                     .unwrap_or((0, 0));
-                state
-                    .runtime_state
-                    .set_window_geometry(&window.state_id, x, y, width, height);
+                state.runtime_state.set_window_geometry(&window.state_id, x, y, width, height);
             }
             river_window_v1::Event::AppId { app_id } => {
-                state
-                    .runtime_state
-                    .set_window_app_id(&window.state_id, app_id);
+                state.runtime_state.set_window_app_id(&window.state_id, app_id);
                 state.apply_window_rules(&window.state_id);
             }
             river_window_v1::Event::Title { title } => {
-                state
-                    .runtime_state
-                    .set_window_title(&window.state_id, title);
+                state.runtime_state.set_window_title(&window.state_id, title);
                 state.apply_window_rules(&window.state_id);
             }
             river_window_v1::Event::Identifier { identifier } => {
-                state
-                    .runtime_state
-                    .set_window_identifier(&window.state_id, Some(identifier));
+                state.runtime_state.set_window_identifier(&window.state_id, Some(identifier));
             }
             river_window_v1::Event::UnreliablePid { unreliable_pid } => {
                 state.runtime_state.set_window_unreliable_pid(
@@ -320,10 +285,7 @@ impl Dispatch<river_window_v1::RiverWindowV1, ()> for RiverBackendState {
                 );
             }
             river_window_v1::Event::PointerMoveRequested { seat } => {
-                state
-                    .transient
-                    .window_pointer_move_requests
-                    .insert(proxy.id(), seat.id());
+                state.transient.window_pointer_move_requests.insert(proxy.id(), seat.id());
             }
             river_window_v1::Event::PointerResizeRequested { seat, edges } => {
                 if let Ok(edges) = edges.into_result() {
@@ -355,20 +317,6 @@ impl Dispatch<river_window_v1::RiverWindowV1, ()> for RiverBackendState {
     }
 }
 
-impl Dispatch<river_decoration_v1::RiverDecorationV1, ()> for RiverBackendState {
-    fn event(
-        _state: &mut Self,
-        _proxy: &river_decoration_v1::RiverDecorationV1,
-        _event: river_decoration_v1::Event,
-        _: &(),
-        _conn: &Connection,
-        _qh: &QueueHandle<Self>,
-    ) {
-        // river_decoration_v1 does not currently deliver actionable input events here.
-        // Pointer interaction is exposed at the river_seat_v1/river_window_v1 level instead.
-    }
-}
-
 impl Dispatch<wl_compositor::WlCompositor, ()> for RiverBackendState {
     fn event(
         _state: &mut Self,
@@ -386,42 +334,6 @@ impl Dispatch<wl_shm::WlShm, ()> for RiverBackendState {
         _state: &mut Self,
         _proxy: &wl_shm::WlShm,
         _event: wl_shm::Event,
-        _: &(),
-        _conn: &Connection,
-        _qh: &QueueHandle<Self>,
-    ) {
-    }
-}
-
-impl Dispatch<wl_surface::WlSurface, ()> for RiverBackendState {
-    fn event(
-        _state: &mut Self,
-        _proxy: &wl_surface::WlSurface,
-        _event: wl_surface::Event,
-        _: &(),
-        _conn: &Connection,
-        _qh: &QueueHandle<Self>,
-    ) {
-    }
-}
-
-impl Dispatch<wl_shm_pool::WlShmPool, ()> for RiverBackendState {
-    fn event(
-        _state: &mut Self,
-        _proxy: &wl_shm_pool::WlShmPool,
-        _event: wl_shm_pool::Event,
-        _: &(),
-        _conn: &Connection,
-        _qh: &QueueHandle<Self>,
-    ) {
-    }
-}
-
-impl Dispatch<wl_buffer::WlBuffer, ()> for RiverBackendState {
-    fn event(
-        _state: &mut Self,
-        _proxy: &wl_buffer::WlBuffer,
-        _event: wl_buffer::Event,
         _: &(),
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
@@ -450,14 +362,10 @@ impl Dispatch<river_output_v1::RiverOutputV1, ()> for RiverBackendState {
             river_output_v1::Event::WlOutput { name } => {
                 let resolved_name = state.output_name_for_global(name);
                 state.transient.output_global_links.insert(output_id, name);
-                state
-                    .runtime_state
-                    .set_output_name(&existing.state_id, resolved_name);
+                state.runtime_state.set_output_name(&existing.state_id, resolved_name);
             }
             river_output_v1::Event::Position { x, y } => {
-                state
-                    .runtime_state
-                    .set_output_position(&existing.state_id, x, y);
+                state.runtime_state.set_output_position(&existing.state_id, x, y);
             }
             river_output_v1::Event::Dimensions { width, height } => {
                 if width > 0 && height > 0 {
@@ -499,30 +407,20 @@ impl Dispatch<river_seat_v1::RiverSeatV1, ()> for RiverBackendState {
                 state.transient.seat_global_links.insert(seat_id, name);
             }
             river_seat_v1::Event::PointerEnter { window } => {
-                let hovered_window_id = state
-                    .registry
-                    .windows
-                    .get(&window.id())
-                    .map(|window| window.state_id.clone());
+                let hovered_window_id =
+                    state.registry.windows.get(&window.id()).map(|window| window.state_id.clone());
                 if let Some(seat_name) = state.seat_name(&seat_id).map(str::to_owned) {
-                    state
-                        .runtime_state
-                        .set_seat_hovered_window(&seat_name, hovered_window_id);
+                    state.runtime_state.set_seat_hovered_window(&seat_name, hovered_window_id);
                 }
             }
             river_seat_v1::Event::PointerLeave => {
                 if let Some(seat_name) = state.seat_name(&seat_id).map(str::to_owned) {
-                    state
-                        .runtime_state
-                        .set_seat_hovered_window(&seat_name, None);
+                    state.runtime_state.set_seat_hovered_window(&seat_name, None);
                 }
             }
             river_seat_v1::Event::WindowInteraction { window } => {
-                let interacted_window_id = state
-                    .registry
-                    .windows
-                    .get(&window.id())
-                    .map(|window| window.state_id.clone());
+                let interacted_window_id =
+                    state.registry.windows.get(&window.id()).map(|window| window.state_id.clone());
                 if let Some(seat_name) = state.seat_name(&seat_id).map(str::to_owned) {
                     state
                         .runtime_state
@@ -531,16 +429,12 @@ impl Dispatch<river_seat_v1::RiverSeatV1, ()> for RiverBackendState {
             }
             river_seat_v1::Event::OpDelta { dx, dy } => {
                 if let Some(seat_name) = state.seat_name(&seat_id).map(str::to_owned) {
-                    state
-                        .runtime_state
-                        .set_seat_pointer_delta(&seat_name, dx, dy);
+                    state.runtime_state.set_seat_pointer_delta(&seat_name, dx, dy);
                 }
             }
             river_seat_v1::Event::OpRelease => {
                 if let Some(seat_name) = state.seat_name(&seat_id).map(str::to_owned) {
-                    state
-                        .runtime_state
-                        .set_seat_pointer_release(&seat_name, true);
+                    state.runtime_state.set_seat_pointer_release(&seat_name, true);
                 }
             }
             _ => {}
@@ -577,10 +471,7 @@ impl Dispatch<river_xkb_binding_v1::RiverXkbBindingV1, ObjectId> for RiverBacken
                     "received keybinding press"
                 );
                 if let RiverCommand::Unsupported { action } = &river_command {
-                    tracing::warn!(
-                        action = *action,
-                        "received keybinding for unsupported command"
-                    );
+                    tracing::warn!(action = *action, "received keybinding for unsupported command");
                 }
                 state.queue_seat_command(seat_id, river_command);
             }
@@ -668,14 +559,10 @@ impl Dispatch<river_input_manager_v1::RiverInputManagerV1, ()> for RiverBackendS
         _qh: &QueueHandle<Self>,
     ) {
         if let river_input_manager_v1::Event::InputDevice { id } = event {
-            state.registry.input_devices.insert(
-                id.id(),
-                InputDeviceRecord {
-                    proxy: id,
-                    name: None,
-                    kind: None,
-                },
-            );
+            state
+                .registry
+                .input_devices
+                .insert(id.id(), InputDeviceRecord { proxy: id, name: None, kind: None });
         }
     }
 }
@@ -694,13 +581,10 @@ impl Dispatch<river_xkb_config_v1::RiverXkbConfigV1, ()> for RiverBackendState {
         _qh: &QueueHandle<Self>,
     ) {
         if let river_xkb_config_v1::Event::XkbKeyboard { id } = event {
-            state.registry.xkb_keyboards.insert(
-                id.id(),
-                XkbKeyboardRecord {
-                    proxy: id,
-                    input_device_id: None,
-                },
-            );
+            state
+                .registry
+                .xkb_keyboards
+                .insert(id.id(), XkbKeyboardRecord { proxy: id, input_device_id: None });
         }
     }
 }
@@ -719,13 +603,10 @@ impl Dispatch<river_libinput_config_v1::RiverLibinputConfigV1, ()> for RiverBack
         _qh: &QueueHandle<Self>,
     ) {
         if let river_libinput_config_v1::Event::LibinputDevice { id } = event {
-            state.registry.libinput_devices.insert(
-                id.id(),
-                LibinputDeviceRecord {
-                    proxy: id,
-                    input_device_id: None,
-                },
-            );
+            state
+                .registry
+                .libinput_devices
+                .insert(id.id(), LibinputDeviceRecord { proxy: id, input_device_id: None });
         }
     }
 }
@@ -818,10 +699,8 @@ impl Dispatch<river_xkb_keymap_v1::RiverXkbKeymapV1, ()> for RiverBackendState {
                 else {
                     return;
                 };
-                if let Some(context) = state
-                    .transient
-                    .pending_xkb_keymap_context
-                    .remove(&proxy.id())
+                if let Some(context) =
+                    state.transient.pending_xkb_keymap_context.remove(&proxy.id())
                 {
                     info!(target: "spiders_wm::input", "applied xkb keymap: {context}");
                 }
@@ -865,9 +744,7 @@ impl Dispatch<river_libinput_device_v1::RiverLibinputDeviceV1, ()> for RiverBack
                 state.registry.libinput_devices.remove(&proxy.id());
                 proxy.destroy();
             }
-            river_libinput_device_v1::Event::InputDevice {
-                device: input_device,
-            } => {
+            river_libinput_device_v1::Event::InputDevice { device: input_device } => {
                 device.input_device_id = Some(input_device.id());
                 state.apply_input_config_for_device(&input_device.id(), qh);
             }

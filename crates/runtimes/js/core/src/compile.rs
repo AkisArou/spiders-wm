@@ -336,9 +336,6 @@ fn read_virtual_module_source(specifier: &str) -> Result<String, CompileError> {
         }
         "spiders-wm/layout" | "@spiders-wm/sdk/layout" => include_str!("virtual/layout.js"),
         "spiders-wm/api" | "@spiders-wm/sdk/api" => include_str!("virtual/api.js"),
-        "spiders-wm/titlebar" | "@spiders-wm/sdk/titlebar" => {
-            include_str!("../../../../../packages/sdk/js/src/titlebar.js")
-        }
         _ => {
             return Err(CompileError::UnsupportedVirtualModule { specifier: specifier.into() });
         }

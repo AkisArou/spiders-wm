@@ -30,8 +30,6 @@ pub struct PreviewSnapshotNode {
     #[serde(default)]
     pub layout_style: Option<ComputedStyle>,
     #[serde(default)]
-    pub titlebar_style: Option<ComputedStyle>,
-    #[serde(default)]
     pub text: Option<String>,
     #[serde(default)]
     pub data: BTreeMap<String, String>,

@@ -20,23 +20,10 @@ pub struct AuthoredNodeMeta {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AuthoredLayoutNode {
-    Workspace {
-        meta: AuthoredNodeMeta,
-        children: Vec<AuthoredLayoutNode>,
-    },
-    Group {
-        meta: AuthoredNodeMeta,
-        children: Vec<AuthoredLayoutNode>,
-    },
-    Window {
-        meta: AuthoredNodeMeta,
-        match_expr: Option<String>,
-    },
-    Slot {
-        meta: AuthoredNodeMeta,
-        match_expr: Option<String>,
-        take: SlotTake,
-    },
+    Workspace { meta: AuthoredNodeMeta, children: Vec<AuthoredLayoutNode> },
+    Group { meta: AuthoredNodeMeta, children: Vec<AuthoredLayoutNode> },
+    Window { meta: AuthoredNodeMeta, match_expr: Option<String> },
+    Slot { meta: AuthoredNodeMeta, match_expr: Option<String>, take: SlotTake },
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -46,10 +33,7 @@ pub enum LayoutValidationError {
     #[error("node id `{id}` is duplicated")]
     DuplicateId { id: String },
     #[error("node type `{child:?}` is not allowed under `{parent:?}`")]
-    InvalidChild {
-        parent: LayoutNodeType,
-        child: LayoutNodeType,
-    },
+    InvalidChild { parent: LayoutNodeType, child: LayoutNodeType },
     #[error("slot `take` must be a positive integer or `remaining`")]
     InvalidSlotTake,
     #[error("`match` must contain at least one clause when provided")]
@@ -100,11 +84,7 @@ fn normalize_authored_node(
             meta: normalize_meta(meta),
             window_match: normalize_match(match_expr)?,
         },
-        AuthoredLayoutNode::Slot {
-            meta,
-            match_expr,
-            take,
-        } => SourceLayoutNode::Slot {
+        AuthoredLayoutNode::Slot { meta, match_expr, take } => SourceLayoutNode::Slot {
             meta: normalize_meta(meta),
             window_match: normalize_match(match_expr)?,
             take,
@@ -113,12 +93,7 @@ fn normalize_authored_node(
 }
 
 fn normalize_meta(meta: AuthoredNodeMeta) -> LayoutNodeMeta {
-    LayoutNodeMeta {
-        id: meta.id,
-        class: meta.class,
-        name: meta.name,
-        data: meta.data,
-    }
+    LayoutNodeMeta { id: meta.id, class: meta.class, name: meta.name, data: meta.data }
 }
 
 fn normalize_match(
@@ -149,10 +124,7 @@ fn validate_node(
         );
 
         if !child_allowed {
-            return Err(LayoutValidationError::InvalidChild {
-                parent,
-                child: node_type,
-            });
+            return Err(LayoutValidationError::InvalidChild { parent, child: node_type });
         }
     }
 
@@ -164,9 +136,7 @@ fn validate_node(
 
     match node {
         SourceLayoutNode::Window { window_match, .. } => validate_match(window_match.as_ref())?,
-        SourceLayoutNode::Slot {
-            window_match, take, ..
-        } => {
+        SourceLayoutNode::Slot { window_match, take, .. } => {
             validate_match(window_match.as_ref())?;
 
             if matches!(take, SlotTake::Count(0)) {

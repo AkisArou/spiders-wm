@@ -15,6 +15,24 @@ dev:
     RUST_LOG=debug \
     cargo run -p spiders-wm
 
+dev-x:
+    SPIDERS_WM_AUTHORED_CONFIG="$PWD/test_config/config.ts" \
+    SPIDERS_WM_CACHE_DIR="$PWD/test_config/.spiders-wm-build" \
+    RUST_LOG=debug \
+    cargo run -p spiders-wm-x -- --dump-state
+
+dev-x-observe:
+    SPIDERS_WM_AUTHORED_CONFIG="$PWD/test_config/config.ts" \
+    SPIDERS_WM_CACHE_DIR="$PWD/test_config/.spiders-wm-build" \
+    RUST_LOG=debug \
+    cargo run -p spiders-wm-x -- --observe --event-limit 10 --idle-timeout-ms 1000
+
+dev-x-manage:
+    SPIDERS_WM_AUTHORED_CONFIG="$PWD/test_config/config.ts" \
+    SPIDERS_WM_CACHE_DIR="$PWD/test_config/.spiders-wm-build" \
+    RUST_LOG=debug \
+    cargo run -p spiders-wm-x -- --manage
+
 dev-debug:
     mkdir -p "$PWD/.spiders-wm-debug"
     SPIDERS_WM_AUTHORED_CONFIG="$PWD/test_config/config.ts" \

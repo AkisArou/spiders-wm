@@ -1,5 +1,5 @@
-use spiders_core::types::WindowMode;
 use spiders_core::WindowId;
+use spiders_core::types::WindowMode;
 
 use crate::model::{SeatPointerOpState, WmState};
 
@@ -98,10 +98,7 @@ pub fn compute_horizontal_tiled_edges(window_ids: &[WindowId]) -> Vec<WindowTile
                 tiled_edges |= river_window_v1::Edges::Right;
             }
 
-            WindowTiledEdges {
-                window_id: window_id.clone(),
-                tiled_edges,
-            }
+            WindowTiledEdges { window_id: window_id.clone(), tiled_edges }
         })
         .collect()
 }
@@ -150,14 +147,7 @@ pub fn compute_window_borders(
                 (1, 0x0028_ffff, 0x0028_ffff, 0x0032_ffff, 0xffff_ffff)
             };
 
-            WindowBorder {
-                window_id: window.id.clone(),
-                width,
-                red,
-                green,
-                blue,
-                alpha,
-            }
+            WindowBorder { window_id: window.id.clone(), width, red, green, blue, alpha }
         })
         .collect()
 }
@@ -168,11 +158,7 @@ pub fn compute_pointer_render_positions(state: &WmState) -> Vec<WindowPosition> 
         .values()
         .filter_map(|seat| match &seat.pointer_op {
             SeatPointerOpState::None => None,
-            SeatPointerOpState::Move {
-                window_id,
-                start_x,
-                start_y,
-            } => Some(WindowPosition {
+            SeatPointerOpState::Move { window_id, start_x, start_y } => Some(WindowPosition {
                 window_id: window_id.clone(),
                 x: start_x + seat.pointer_op_dx,
                 y: start_y + seat.pointer_op_dy,
@@ -198,11 +184,7 @@ pub fn compute_pointer_render_positions(state: &WmState) -> Vec<WindowPosition> 
                 if edges.contains(river_window_v1::Edges::Top) {
                     y += start_height - current_height;
                 }
-                Some(WindowPosition {
-                    window_id: window_id.clone(),
-                    x,
-                    y,
-                })
+                Some(WindowPosition { window_id: window_id.clone(), x, y })
             }
         })
         .collect()

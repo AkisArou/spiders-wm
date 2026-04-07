@@ -108,8 +108,11 @@ impl StateSnapshot {
     }
 
     fn layout_space_for_workspace(&self, workspace: &WorkspaceSnapshot) -> LayoutSpace {
-        let output =
-            workspace.output_id.as_ref().and_then(|output_id| self.output_by_id(output_id));
+        let output = workspace
+            .output_id
+            .as_ref()
+            .and_then(|output_id| self.output_by_id(output_id))
+            .or_else(|| self.current_output());
 
         LayoutSpace {
             width: output.map(|output| output.logical_width as f32).unwrap_or_default(),
@@ -127,6 +130,7 @@ impl StateSnapshot {
             .output_id
             .as_ref()
             .and_then(|output_id| self.output_by_id(output_id))
+            .or_else(|| self.current_output())
             .cloned();
         let selected_layout_name = selected_layout.as_ref().map(|layout| layout.name.clone());
 
@@ -272,6 +276,53 @@ mod tests {
         assert_eq!(context.space.width, 1920.0);
         assert_eq!(context.workspace.name, "1");
         assert_eq!(context.workspace.window_count, 0);
+    }
+
+    #[test]
+    fn state_snapshot_layout_context_falls_back_to_current_output() {
+        let state = StateSnapshot {
+            focused_window_id: None,
+            current_output_id: Some(OutputId::from("out-1")),
+            current_workspace_id: Some(WorkspaceId::from("ws-1")),
+            outputs: vec![OutputSnapshot {
+                id: OutputId::from("out-1"),
+                name: "HDMI-A-1".into(),
+                logical_x: 0,
+                logical_y: 0,
+                logical_width: 1920,
+                logical_height: 1080,
+                scale: 1,
+                transform: OutputTransform::Normal,
+                enabled: true,
+                current_workspace_id: Some(WorkspaceId::from("ws-1")),
+            }],
+            workspaces: vec![WorkspaceSnapshot {
+                id: WorkspaceId::from("ws-1"),
+                name: "1".into(),
+                output_id: None,
+                active_workspaces: vec!["1".into()],
+                focused: true,
+                visible: true,
+                effective_layout: Some(LayoutRef { name: "master-stack".into() }),
+            }],
+            windows: vec![],
+            visible_window_ids: vec![],
+            workspace_names: vec!["1".into()],
+        };
+        let workspace = state.current_workspace().unwrap();
+
+        let context = state.layout_context(
+            workspace,
+            Some(SelectedLayout {
+                name: "master-stack".into(),
+                directory: "layouts/master-stack".into(),
+                module: "layouts/master-stack.js".into(),
+            }),
+        );
+
+        assert_eq!(context.output.unwrap().id, OutputId::from("out-1"));
+        assert_eq!(context.space.width, 1920.0);
+        assert_eq!(context.space.height, 1080.0);
     }
 
     #[test]

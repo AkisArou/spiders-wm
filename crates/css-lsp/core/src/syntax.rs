@@ -648,11 +648,9 @@ mod tests {
 
     #[test]
     fn detects_property_value_context() {
-        let (context, _, _) = cursor_context(
-            "window::titlebar { text-align: ce }",
-            Position { line: 0, character: 32 },
-        )
-        .unwrap();
+        let (context, _, _) =
+            cursor_context("window { text-align: ce }", Position { line: 0, character: 22 })
+                .unwrap();
         assert_eq!(context, CursorContext::PropertyValue);
     }
 

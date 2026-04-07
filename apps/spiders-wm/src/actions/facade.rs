@@ -2,8 +2,8 @@ use crate::actions::focus::FocusSelection;
 use crate::actions::window::CloseSelection;
 use crate::actions::workspace::WorkspaceSelection;
 use crate::actions::{focus, output, seat, window, workspace};
-use spiders_core::{OutputId, SeatId, WindowId, WorkspaceId};
 use spiders_core::wm::WmModel;
+use spiders_core::{OutputId, SeatId, WindowId, WorkspaceId};
 
 pub struct WmActions<'a> {
     model: &'a mut WmModel,
@@ -217,16 +217,10 @@ mod tests {
 
         assert_eq!(focused.focused_window_id, Some(window_id(5)));
         assert_eq!(mapped, Some(window_id(5)));
-        assert_eq!(
-            model.current_workspace_id,
-            Some(WorkspaceId("1".to_string()))
-        );
+        assert_eq!(model.current_workspace_id, Some(WorkspaceId("1".to_string())));
         assert_eq!(model.current_output_id, Some(OutputId("winit".to_string())));
         assert_eq!(model.focused_window_id, Some(window_id(5)));
-        assert_eq!(
-            model.windows.get(&window_id(5)).map(|window| window.mapped),
-            Some(true)
-        );
+        assert_eq!(model.windows.get(&window_id(5)).map(|window| window.mapped), Some(true));
         assert_eq!(
             model
                 .seats

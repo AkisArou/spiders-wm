@@ -1,84 +1,16 @@
 use smithay::desktop::Window;
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
-use spiders_core::command::WmCommand;
-use spiders_core::LayoutRect;
-use spiders_scene::LayoutSnapshotNode;
-use spiders_titlebar_core::{TitlebarButtonAction, titlebar_button_action_from_data};
-use spiders_titlebar_native::render_titlebar_snapshot;
 use tracing::{debug, info};
 
 use crate::actions::focus::FocusUpdate;
 use crate::frame_sync;
+use crate::state::{ManagedWindow, SpidersWm};
 use spiders_core::window_id;
-use crate::state::{ManagedWindow, NativeTitlebarHitRegion, NativeTitlebarOverlay, SpidersWm};
 
 impl SpidersWm {
-    pub(crate) fn refresh_titlebar_overlays(&mut self) {
-        let Some(root) = self.titlebar_layout.snapshot_root.as_ref() else {
-            self.titlebar_overlays.clear();
-            return;
-        };
-
-        let mut overlays = std::collections::BTreeMap::new();
-        for record in self.managed_windows() {
-            let Some(window_node) = root.find_by_window_id(&record.id) else {
-                continue;
-            };
-            let Some(titlebar) = titlebar_snapshot_node(window_node) else {
-                continue;
-            };
-            let Some(rasterized) =
-                render_titlebar_snapshot(titlebar, 1.0, self.config.options.titlebar_font.as_ref())
-            else {
-                continue;
-            };
-            overlays.insert(
-                record.id.clone(),
-                NativeTitlebarOverlay {
-                    rect: titlebar.rect(),
-                    pixels: rasterized.pixels,
-                    hit_regions: titlebar_hit_regions(titlebar),
-                },
-            );
-        }
-
-        self.titlebar_overlays = overlays;
-    }
-
-    pub(crate) fn refresh_titlebar_snapshot_and_overlays(&mut self) {
-        let visible_window_ids = self.visible_managed_window_ids();
-        let tiled_window_ids = self.tiled_visible_window_ids(&visible_window_ids);
-        let fullscreen_window_id =
-            self.model.fullscreen_window_on_current_workspace(visible_window_ids.iter().cloned());
-
-        if visible_window_ids.is_empty() || fullscreen_window_id.is_some() || tiled_window_ids.is_empty() {
-            self.titlebar_layout.snapshot_root = None;
-            self.titlebar_overlays.clear();
-            return;
-        }
-
-        self.scene.clear_cache();
-        self.titlebar_layout.snapshot_root =
-            self.scene.compute_layout_snapshot(&self.config, &mut self.model, &tiled_window_ids);
-        self.refresh_titlebar_overlays();
-    }
-
-    pub(crate) fn titlebar_action_at(
-        &self,
-        location: smithay::utils::Point<f64, smithay::utils::Logical>,
-    ) -> Option<(spiders_core::WindowId, WmCommand)> {
-        self.titlebar_overlays.iter().find_map(|(window_id, overlay)| {
-            rect_contains_point(overlay.rect, location).then(|| {
-                overlay.hit_regions.iter().find_map(|region| {
-                    rect_contains_point(region.rect, location).then(|| (window_id.clone(), region.command.clone()))
-                })
-            })
-            .flatten()
-        })
-    }
-
     pub fn close_focused_window(&mut self) {
-        let closing_window_id = self.runtime().request_close_focused_window_selection().closing_window_id;
+        let closing_window_id =
+            self.runtime().request_close_focused_window_selection().closing_window_id;
         info!(closing_window = ?closing_window_id, "wm close focused window request");
         let Some(focused_surface) =
             closing_window_id.and_then(|window_id| self.surface_for_window_id(window_id))
@@ -88,9 +20,12 @@ impl SpidersWm {
 
         self.capture_close_snapshot(&focused_surface);
 
-        if let Some(record) = self.managed_window_for_surface(&focused_surface) {
-            if let Some(toplevel) = record.window.toplevel() {
-                toplevel.send_close();
+        if let Some(record) = self.managed_window_for_surface(&focused_surface)
+            && let Some(toplevel) = record.window.toplevel()
+        {
+            toplevel.send_close();
+            if let Err(error) = self.display_handle.flush_clients() {
+                debug!(?error, "failed to flush Wayland clients after close request");
             }
         }
     }
@@ -173,11 +108,9 @@ impl SpidersWm {
             return;
         };
         let debug_window_id = window_id.to_string();
-        self.titlebar_overlays.remove(&window_id);
         let snapshot = unmap.snapshot;
-        let location = self
-            .element_location(&window)
-            .map(|location| location - window.geometry().loc);
+        let location =
+            self.element_location(&window).map(|location| location - window.geometry().loc);
         let window_order = self.managed_window_ids();
 
         let (focus_update, events) = {
@@ -194,7 +127,10 @@ impl SpidersWm {
             "wm close start"
         );
         self.debug_render_event("window-unmap", Some(&debug_window_id), || {
-            format!("closing={closing} location={location:?} has_snapshot={} focus_update={focus_update:?}", snapshot.is_some())
+            format!(
+                "closing={closing} location={location:?} has_snapshot={} focus_update={focus_update:?}",
+                snapshot.is_some()
+            )
         });
 
         self.unmap_window_element(&window);
@@ -206,8 +142,7 @@ impl SpidersWm {
         let relayout_transaction = self.closing_overlay_transaction();
 
         if let Some(result) =
-            self.frame_sync
-                .push_closing_overlay(snapshot, location, relayout_transaction)
+            self.frame_sync.push_closing_overlay(snapshot, location, relayout_transaction)
         {
             debug!(
                 window = %window_id.0,
@@ -240,16 +175,14 @@ impl SpidersWm {
         };
 
         let destroy_overlay = destroy_overlay.map(|(window, snapshot)| {
-            let location = self
-                .element_location(&window)
-                .map(|location| location - window.geometry().loc);
+            let location =
+                self.element_location(&window).map(|location| location - window.geometry().loc);
             (window, location, snapshot)
         });
 
         let window_order = self.managed_window_ids();
         let record = self.remove_managed_window_at(position);
         let window_id = record.id.clone();
-        self.titlebar_overlays.remove(&window_id);
         let mut focus_update = FocusUpdate::Unchanged;
         let mut runtime_events = Vec::new();
 
@@ -291,8 +224,7 @@ impl SpidersWm {
             let relayout_transaction = self.closing_overlay_transaction();
 
             if let Some(result) =
-                self.frame_sync
-                    .push_closing_overlay(snapshot, location, relayout_transaction)
+                self.frame_sync.push_closing_overlay(snapshot, location, relayout_transaction)
             {
                 debug!(
                     window = %window_id.0,
@@ -303,8 +235,6 @@ impl SpidersWm {
                     "wm added closing snapshot overlay during destroy"
                 );
             }
-        } else {
-            self.schedule_relayout();
         }
     }
 
@@ -335,8 +265,7 @@ impl SpidersWm {
     }
 
     pub fn is_known_window_mapped(&self, surface: &WlSurface) -> bool {
-        self.managed_window_for_surface(surface)
-            .is_some_and(|record| record.mapped)
+        self.managed_window_for_surface(surface).is_some_and(|record| record.mapped)
     }
 
     pub fn handle_window_commit(&mut self, surface: &WlSurface) {
@@ -347,12 +276,15 @@ impl SpidersWm {
             }
 
             let ready_layout = record.frame_sync.take_ready_layout();
+            let relayout_needed_after_configure =
+                record.frame_sync.take_relayout_needed_after_configure();
             let render_debug_details = format!(
-                "mapped={} first_map={} ready_layout={ready_layout:?} pending_configures={} has_close_snapshot={}",
+                "mapped={} first_map={} ready_layout={ready_layout:?} pending_configures={} has_close_snapshot={} relayout_needed_after_configure={}",
                 record.mapped,
                 first_map,
                 record.frame_sync.has_pending_configures(),
                 record.frame_sync.has_close_snapshot(),
+                relayout_needed_after_configure,
             );
 
             debug!(
@@ -361,6 +293,7 @@ impl SpidersWm {
                 first_map,
                 ready_layout = ?ready_layout,
                 pending_configures = record.frame_sync.has_pending_configures(),
+                relayout_needed_after_configure,
                 "wm handle window commit"
             );
             Some((
@@ -368,13 +301,22 @@ impl SpidersWm {
                 record.window.clone(),
                 first_map,
                 ready_layout,
+                relayout_needed_after_configure,
                 render_debug_details,
             ))
         } else {
             None
         };
 
-        if let Some((window_id, window, first_map, ready_layout, render_debug_details)) = window_update {
+        if let Some((
+            window_id,
+            window,
+            first_map,
+            ready_layout,
+            relayout_needed_after_configure,
+            render_debug_details,
+        )) = window_update
+        {
             let debug_window_id = window_id.to_string();
             self.debug_render_event("window-commit", Some(&debug_window_id), || {
                 render_debug_details
@@ -385,16 +327,15 @@ impl SpidersWm {
                 let events = {
                     let mut runtime = self.runtime();
                     let _ = runtime.sync_window_mapped(window_id.clone(), true);
+                    let _ =
+                        runtime.request_focus_window_selection("winit", Some(window_id.clone()));
                     runtime.take_events()
                 };
                 self.broadcast_runtime_events(events);
             }
 
-            let layout = ready_layout.or_else(|| {
-                first_map
-                    .then(|| self.planned_layout_for_surface(surface))
-                    .flatten()
-            });
+            let layout = ready_layout
+                .or_else(|| first_map.then(|| self.planned_layout_for_surface(surface)).flatten());
 
             if let Some((location, size)) = layout {
                 self.map_window_element(window.clone(), location);
@@ -408,136 +349,30 @@ impl SpidersWm {
 
             if first_map {
                 info!(window = %window_id.0, "wm first map commit");
-                self.schedule_relayout();
-                self.set_focus_with_new_serial(Some(surface.clone()));
+                self.apply_modeled_focus(
+                    Some(window_id),
+                    smithay::utils::SERIAL_COUNTER.next_serial(),
+                );
+                debug!(
+                    window = %debug_window_id,
+                    relayout_already_queued = self.relayout_queued,
+                    "wm first-map relayout queued"
+                );
+                self.queue_first_map_burst_relayout();
+            } else if relayout_needed_after_configure {
+                debug!(window = %debug_window_id, "wm queued relayout after pending configure commit");
+                self.queue_relayout();
             }
         }
     }
 
     fn live_frame_sync_transaction(&self) -> Option<frame_sync::SyncHandle> {
-        self.managed_windows()
-            .iter()
-            .find_map(|record| record.frame_sync.live_transaction())
+        self.managed_windows().iter().find_map(|record| record.frame_sync.live_transaction())
     }
 
     fn closing_overlay_transaction(&mut self) -> Option<frame_sync::SyncHandle> {
         self.start_relayout()
             .or_else(|| self.live_frame_sync_transaction())
             .or_else(|| Some(frame_sync::new_sync_handle(&self.event_loop)))
-    }
-}
-
-fn titlebar_snapshot_node(node: &LayoutSnapshotNode) -> Option<&LayoutSnapshotNode> {
-    node.children().iter().find(|child| {
-        matches!(child, LayoutSnapshotNode::Content { meta, .. } if meta.name.as_deref() == Some("titlebar"))
-    })
-}
-
-fn titlebar_hit_regions(node: &LayoutSnapshotNode) -> Vec<NativeTitlebarHitRegion> {
-    let mut regions = Vec::new();
-    collect_titlebar_hit_regions(node, &mut regions);
-    regions
-}
-
-fn collect_titlebar_hit_regions(node: &LayoutSnapshotNode, out: &mut Vec<NativeTitlebarHitRegion>) {
-    if let LayoutSnapshotNode::Content { meta, rect, .. } = node
-        && let Some(command) = titlebar_action_command(titlebar_button_action_from_data(&meta.data))
-    {
-        out.push(NativeTitlebarHitRegion { rect: *rect, command });
-    }
-
-    for child in node.children() {
-        collect_titlebar_hit_regions(child, out);
-    }
-}
-
-fn titlebar_action_command(action: Option<TitlebarButtonAction>) -> Option<WmCommand> {
-    match action {
-        Some(TitlebarButtonAction::Close) => Some(WmCommand::CloseFocusedWindow),
-        Some(TitlebarButtonAction::ToggleFullscreen) => Some(WmCommand::ToggleFullscreen),
-        Some(TitlebarButtonAction::ToggleFloating) => Some(WmCommand::ToggleFloating),
-        _ => None,
-    }
-}
-
-fn rect_contains_point(
-    rect: LayoutRect,
-    point: smithay::utils::Point<f64, smithay::utils::Logical>,
-) -> bool {
-    point.x >= f64::from(rect.x)
-        && point.x < f64::from(rect.x + rect.width)
-        && point.y >= f64::from(rect.y)
-        && point.y < f64::from(rect.y + rect.height)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use spiders_core::LayoutNodeMeta;
-
-    #[test]
-    fn titlebar_hit_regions_collect_button_commands_from_metadata() {
-        let mut button_meta = LayoutNodeMeta::default();
-        button_meta.name = Some("titlebar-button".into());
-        button_meta.data.insert(
-            spiders_titlebar_core::TITLEBAR_ACTION_KEY.to_string(),
-            "close".into(),
-        );
-
-        let titlebar = LayoutSnapshotNode::Content {
-            meta: LayoutNodeMeta {
-                name: Some("titlebar".into()),
-                ..LayoutNodeMeta::default()
-            },
-            rect: LayoutRect { x: 0.0, y: 0.0, width: 200.0, height: 28.0 },
-            styles: None,
-            text: None,
-            children: vec![LayoutSnapshotNode::Content {
-                meta: button_meta,
-                rect: LayoutRect { x: 8.0, y: 5.0, width: 18.0, height: 18.0 },
-                styles: None,
-                text: None,
-                children: Vec::new(),
-            }],
-        };
-
-        let hit_regions = titlebar_hit_regions(&titlebar);
-
-        assert_eq!(hit_regions.len(), 1);
-        assert_eq!(hit_regions[0].rect, LayoutRect { x: 8.0, y: 5.0, width: 18.0, height: 18.0 });
-        assert_eq!(hit_regions[0].command, WmCommand::CloseFocusedWindow);
-    }
-
-    #[test]
-    fn titlebar_snapshot_node_finds_injected_titlebar_child() {
-        let window = LayoutSnapshotNode::Window {
-            meta: LayoutNodeMeta::default(),
-            rect: LayoutRect { x: 0.0, y: 0.0, width: 800.0, height: 600.0 },
-            styles: None,
-            window_id: None,
-            children: vec![LayoutSnapshotNode::Content {
-                meta: LayoutNodeMeta {
-                    name: Some("titlebar".into()),
-                    ..LayoutNodeMeta::default()
-                },
-                rect: LayoutRect { x: 0.0, y: 0.0, width: 800.0, height: 28.0 },
-                styles: None,
-                text: None,
-                children: Vec::new(),
-            }],
-        };
-
-        let node = titlebar_snapshot_node(&window).expect("titlebar child should be found");
-
-        assert_eq!(node.meta().name.as_deref(), Some("titlebar"));
-    }
-
-    #[test]
-    fn rect_contains_point_uses_half_open_bounds() {
-        let rect = LayoutRect { x: 10.0, y: 20.0, width: 30.0, height: 40.0 };
-
-        assert!(rect_contains_point(rect, (10.0, 20.0).into()));
-        assert!(rect_contains_point(rect, (39.999, 59.999).into()));
-        assert!(!rect_contains_point(rect, (40.0, 60.0).into()));
     }
 }

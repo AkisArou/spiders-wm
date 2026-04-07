@@ -22,7 +22,6 @@ pub enum DebugDumpKind {
     DebugProfile,
     SceneSnapshot,
     FrameSync,
-    TitlebarOverlays,
     Seats,
 }
 

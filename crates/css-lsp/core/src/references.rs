@@ -1,5 +1,5 @@
-use spiders_css::analysis::{CssReferenceKind, CssSymbolKind, analyze_stylesheet};
 use lsp_types::{Location, Position, Url};
+use spiders_css::analysis::{CssReferenceKind, CssSymbolKind, analyze_stylesheet};
 
 use crate::project::{ProjectIndex, ProjectSelectorKind};
 use crate::syntax::{
@@ -99,11 +99,8 @@ fn selector_reference_locations(
         locations.extend(project_index.selector_definitions_for_path(path, kind, name));
     }
 
-    let document_source: Vec<(Url, String)> = if scoped_documents.is_empty() {
-        documents.to_vec()
-    } else {
-        scoped_documents
-    };
+    let document_source: Vec<(Url, String)> =
+        if scoped_documents.is_empty() { documents.to_vec() } else { scoped_documents };
 
     for (uri, source) in &document_source {
         if !uri.path().ends_with(".css") {
@@ -271,7 +268,8 @@ mod tests {
     fn finds_css_references_from_layout_selector_definition() {
         let tsx_uri = Url::parse("file:///tmp/layouts/example/index.tsx").unwrap();
         let css_uri = Url::parse("file:///tmp/layouts/example/index.css").unwrap();
-        let tsx_source = r#"export default function layout() { return <workspace id="root" class="shell" /> }"#;
+        let tsx_source =
+            r#"export default function layout() { return <workspace id="root" class="shell" /> }"#;
         let css_source = "window#root.shell { color: red; }";
         let mut project_index = ProjectIndex::default();
         project_index.index_app_scope(

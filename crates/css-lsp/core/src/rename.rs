@@ -1,5 +1,5 @@
-use spiders_css::analysis::{CssReferenceKind, CssSymbolKind, analyze_stylesheet};
 use lsp_types::{Position, TextEdit, Url, WorkspaceEdit};
+use spiders_css::analysis::{CssReferenceKind, CssSymbolKind, analyze_stylesheet};
 
 use crate::project::{ProjectIndex, ProjectSelectorKind};
 use crate::references::references_for;
@@ -110,21 +110,17 @@ fn rename_project_selector(
         std::collections::HashMap::new();
 
     for location in definition_edits.into_iter().chain(references) {
-        changes.entry(location.uri).or_default().push(TextEdit {
-            range: location.range,
-            new_text: new_name.to_string(),
-        });
+        changes
+            .entry(location.uri)
+            .or_default()
+            .push(TextEdit { range: location.range, new_text: new_name.to_string() });
     }
 
     if changes.is_empty() {
         return None;
     }
 
-    Some(WorkspaceEdit {
-        changes: Some(changes),
-        document_changes: None,
-        change_annotations: None,
-    })
+    Some(WorkspaceEdit { changes: Some(changes), document_changes: None, change_annotations: None })
 }
 
 #[cfg(test)]
@@ -218,9 +214,8 @@ mod tests {
 
         let changes = edit.changes.unwrap();
         assert_eq!(changes.len(), 2);
-        assert!(changes
-            .values()
-            .flat_map(|edits| edits.iter())
-            .all(|edit| edit.new_text == "main"));
+        assert!(
+            changes.values().flat_map(|edits| edits.iter()).all(|edit| edit.new_text == "main")
+        );
     }
 }

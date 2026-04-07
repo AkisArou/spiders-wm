@@ -1,3 +1,5 @@
+use crate::runtime::WmCommand;
+use crate::state::SpidersWm;
 use smithay::backend::input::{
     AbsolutePositionEvent, Event, InputBackend, InputEvent, KeyState, KeyboardKeyEvent, Keycode,
     PointerAxisEvent, PointerButtonEvent,
@@ -9,8 +11,6 @@ use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::utils::SERIAL_COUNTER;
 use spiders_config::model::Binding;
 use spiders_core::signal::WmSignal;
-use crate::runtime::WmCommand;
-use crate::state::SpidersWm;
 
 impl SpidersWm {
     pub fn process_input_event<I: InputBackend>(&mut self, event: InputEvent<I>) {
@@ -54,21 +54,6 @@ impl SpidersWm {
                 let pointer = self.seat.get_pointer().expect("pointer missing");
 
                 if event.state() == ButtonState::Pressed && !pointer.is_grabbed() {
-                    if event.button_code() == 0x110
-                        && let Some((window_id, command)) =
-                            self.titlebar_action_at(pointer.current_location())
-                    {
-                        let debug_window_id = window_id.to_string();
-                        self.debug_protocol_event("titlebar-action", Some(&debug_window_id), || {
-                            format!("command={command:?} location={:?}", pointer.current_location())
-                        });
-                        if let Some(surface) = self.surface_for_window_id(window_id.clone()) {
-                            self.set_focus(Some(surface), serial);
-                        }
-                        self.execute_wm_command_with_serial(command, serial);
-                        return;
-                    }
-
                     let interacted_window_id = self.window_id_under(pointer.current_location());
                     let events = {
                         let mut runtime = self.runtime();
@@ -87,10 +72,8 @@ impl SpidersWm {
                             .expect("window missing toplevel")
                             .wl_surface()
                             .clone();
-                        let debug_window_id = self
-                            .window_id_for_surface(&surface)
-                            .as_ref()
-                            .map(ToString::to_string);
+                        let debug_window_id =
+                            self.window_id_for_surface(&surface).as_ref().map(ToString::to_string);
                         self.debug_protocol_event(
                             "pointer-focus-request",
                             debug_window_id.as_deref(),

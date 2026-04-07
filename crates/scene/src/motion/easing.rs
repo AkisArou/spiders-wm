@@ -21,15 +21,10 @@ pub fn expand_transition_lists(
     timing_functions: &[MotionEasingValue],
     delays: &[MotionTimeValue],
 ) -> Vec<ResolvedTransition> {
-    let count = [
-        properties.len(),
-        durations.len(),
-        timing_functions.len(),
-        delays.len(),
-    ]
-    .into_iter()
-    .max()
-    .unwrap_or(0);
+    let count = [properties.len(), durations.len(), timing_functions.len(), delays.len()]
+        .into_iter()
+        .max()
+        .unwrap_or(0);
 
     if count == 0 {
         return Vec::new();
@@ -37,18 +32,12 @@ pub fn expand_transition_lists(
 
     (0..count)
         .map(|index| ResolvedTransition {
-            property: cycle_value(properties, index)
-                .cloned()
-                .unwrap_or(MotionPropertyValue::All),
-            duration: cycle_value(durations, index)
-                .copied()
-                .unwrap_or(MotionTimeValue(0.0)),
+            property: cycle_value(properties, index).cloned().unwrap_or(MotionPropertyValue::All),
+            duration: cycle_value(durations, index).copied().unwrap_or(MotionTimeValue(0.0)),
             timing_function: cycle_value(timing_functions, index)
                 .cloned()
                 .unwrap_or(MotionEasingValue::Keyword(MotionEasingKeywordValue::Ease)),
-            delay: cycle_value(delays, index)
-                .copied()
-                .unwrap_or(MotionTimeValue(0.0)),
+            delay: cycle_value(delays, index).copied().unwrap_or(MotionTimeValue(0.0)),
         })
         .collect()
 }
@@ -71,11 +60,7 @@ pub fn sample_easing(easing: &MotionEasingValue, progress: f32) -> f32 {
 }
 
 fn cycle_value<T>(values: &[T], index: usize) -> Option<&T> {
-    if values.is_empty() {
-        None
-    } else {
-        values.get(index % values.len())
-    }
+    if values.is_empty() { None } else { values.get(index % values.len()) }
 }
 
 fn sample_keyword(keyword: MotionEasingKeywordValue, progress: f32) -> f32 {
@@ -167,9 +152,7 @@ mod tests {
                 MotionPropertyValue::Named("transform".into()),
             ],
             &[MotionTimeValue(0.2)],
-            &[MotionEasingValue::Keyword(
-                MotionEasingKeywordValue::EaseInOut,
-            )],
+            &[MotionEasingValue::Keyword(MotionEasingKeywordValue::EaseInOut)],
             &[MotionTimeValue(0.05), MotionTimeValue(0.15)],
         );
 
@@ -182,18 +165,9 @@ mod tests {
     #[test]
     fn samples_piecewise_linear_timing_functions() {
         let easing = MotionEasingValue::LinearFunction(vec![
-            LinearStopValue {
-                input: 0.0,
-                output: 0.0,
-            },
-            LinearStopValue {
-                input: 0.25,
-                output: 0.6,
-            },
-            LinearStopValue {
-                input: 1.0,
-                output: 1.0,
-            },
+            LinearStopValue { input: 0.0, output: 0.0 },
+            LinearStopValue { input: 0.25, output: 0.6 },
+            LinearStopValue { input: 1.0, output: 1.0 },
         ]);
 
         let sample = sample_easing(&easing, 0.125);

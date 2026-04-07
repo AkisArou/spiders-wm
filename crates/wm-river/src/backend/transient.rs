@@ -1,8 +1,8 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::Instant;
 
-use spiders_scene::MotionTrackState;
 use spiders_core::{WindowId, WorkspaceId};
+use spiders_scene::MotionTrackState;
 use wayland_backend::client::ObjectId;
 
 use crate::action_bridge::RiverCommand;
@@ -46,5 +46,4 @@ pub struct BackendTransientState {
 #[derive(Debug, Default)]
 pub struct WindowMotionState {
     pub layout: MotionTrackState,
-    pub titlebar: MotionTrackState,
 }
