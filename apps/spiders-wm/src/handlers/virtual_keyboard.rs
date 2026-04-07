@@ -14,13 +14,12 @@ use smithay::reexports::wayland_server::{
     Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, Resource,
 };
 use smithay::utils::SERIAL_COUNTER;
-use tracing::debug;
 
 const MANAGER_VERSION: u32 = 1;
 
 #[derive(Debug)]
 pub(crate) struct VirtualKeyboardManagerState {
-    global: GlobalId,
+    _global: GlobalId,
 }
 
 pub(crate) struct VirtualKeyboardManagerGlobalData {
@@ -79,11 +78,7 @@ impl VirtualKeyboardManagerState {
         let data = VirtualKeyboardManagerGlobalData { filter: Box::new(filter) };
         let global = display
             .create_global::<SpidersWm, ZwpVirtualKeyboardManagerV1, _>(MANAGER_VERSION, data);
-        Self { global }
-    }
-
-    pub(crate) fn global(&self) -> GlobalId {
-        self.global.clone()
+        Self { _global: global }
     }
 }
 
@@ -120,7 +115,6 @@ impl Dispatch<ZwpVirtualKeyboardManagerV1, (), SpidersWm> for VirtualKeyboardMan
             zwp_virtual_keyboard_manager_v1::Request::CreateVirtualKeyboard { seat, id } => {
                 let seat =
                     Seat::<SpidersWm>::from_resource(&seat).expect("virtual keyboard seat missing");
-                debug!("virtual keyboard created");
                 data_init.init(
                     id,
                     VirtualKeyboardUserData { handle: VirtualKeyboardHandle::default(), seat },
@@ -145,7 +139,6 @@ impl Dispatch<ZwpVirtualKeyboardV1, VirtualKeyboardUserData, SpidersWm>
     ) {
         match request {
             zwp_virtual_keyboard_v1::Request::Keymap { format, fd, size } => {
-                debug!(format, size, "virtual keyboard keymap request");
                 update_keymap(state, data, format, fd, size as usize, virtual_keyboard);
             }
             zwp_virtual_keyboard_v1::Request::Key { time, key, state: key_state } => {
@@ -159,7 +152,6 @@ impl Dispatch<ZwpVirtualKeyboardV1, VirtualKeyboardUserData, SpidersWm>
 
                 let state_value =
                     if key_state == 1 { KeyState::Pressed } else { KeyState::Released };
-                debug!(?state_value, key, time, "virtual keyboard key request");
                 state.handle_keyboard_key(
                     key.saturating_add(8).into(),
                     state_value,
@@ -182,10 +174,6 @@ impl Dispatch<ZwpVirtualKeyboardV1, VirtualKeyboardUserData, SpidersWm>
                 }
 
                 let keyboard = data.seat.get_keyboard().expect("keyboard missing");
-                debug!(
-                    mods_depressed,
-                    mods_latched, mods_locked, group, "virtual keyboard modifiers request"
-                );
                 let mods = {
                     let mut virtual_state = data.handle.inner.lock().unwrap();
                     let Some(xkb) = virtual_state.xkb.as_mut() else {

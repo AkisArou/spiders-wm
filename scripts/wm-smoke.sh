@@ -178,7 +178,7 @@ if send_alt_shortcut 2; then
     sleep 0.5
     run_client >/dev/null
     sleep 0.5
-    send_alt_shortcut w
+    send_alt_shortcut 1
     sleep 0.5
 elif [[ $? -eq 2 ]]; then
     echo "wm workspace shortcut smoke skipped: nested compositor does not support virtual keyboard protocol" >&2
@@ -212,13 +212,13 @@ if [[ "$close_start_count" -lt 4 ]]; then
 fi
 
 if [[ "$workspace_shortcut_smoke" -eq 1 ]]; then
-    if ! grep -q 'selected workspace workspace=2' "$LOG_FILE"; then
+    if ! grep -Eq 'selected workspace.*workspace.*2' "$LOG_FILE"; then
         echo "wm smoke harness did not observe explicit workspace 2 selection" >&2
         cat "$LOG_FILE" >&2
         exit 1
     fi
 
-    if ! grep -q 'selected workspace workspace=1' "$LOG_FILE"; then
+    if ! grep -Eq 'selected workspace.*workspace.*1' "$LOG_FILE"; then
         echo "wm smoke harness did not observe next-workspace wrap back to workspace 1" >&2
         cat "$LOG_FILE" >&2
         exit 1

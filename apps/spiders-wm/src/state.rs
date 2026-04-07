@@ -46,7 +46,7 @@ pub struct SpidersWm {
     pub dmabuf_global: Option<DmabufGlobal>,
     pub seat_state: SeatState<Self>,
     pub data_device_state: DataDeviceState,
-    pub virtual_keyboard_manager_state: VirtualKeyboardManagerState,
+    pub _virtual_keyboard_manager_state: VirtualKeyboardManagerState,
     pub seat: Seat<Self>,
     pub backend: Option<WinitGraphicsBackend<GlesRenderer>>,
 

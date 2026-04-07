@@ -88,7 +88,7 @@ pub(crate) fn build_state(
         dmabuf_global: None::<DmabufGlobal>,
         seat_state,
         data_device_state,
-        virtual_keyboard_manager_state,
+        _virtual_keyboard_manager_state: virtual_keyboard_manager_state,
         seat,
         backend: None::<WinitGraphicsBackend<GlesRenderer>>,
         focused_surface: None,

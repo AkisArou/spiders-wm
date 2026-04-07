@@ -9,8 +9,6 @@ use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::utils::SERIAL_COUNTER;
 use spiders_config::model::Binding;
 use spiders_core::signal::WmSignal;
-use tracing::debug;
-
 use crate::runtime::WmCommand;
 use crate::state::SpidersWm;
 
@@ -165,14 +163,6 @@ impl SpidersWm {
         let command = keyboard
             .input(self, keycode, state, serial, time, |_, modifiers, handle| {
                 let keysym = handle.modified_sym();
-                debug!(
-                    ?state,
-                    ?modifiers,
-                    ?keycode,
-                    raw_keysym = keysym.raw(),
-                    "keyboard event"
-                );
-
                 if state == KeyState::Pressed {
                     binding_command(&bindings, *modifiers, keysym)
                         .or_else(|| {
