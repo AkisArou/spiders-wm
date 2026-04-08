@@ -570,6 +570,7 @@ mod tests {
                 .map(|id| ResolvedLayoutNode::Window {
                     meta: LayoutNodeMeta::default(),
                     window_id: Some(window_id(*id)),
+                    children: vec![],
                 })
                 .collect(),
         }
@@ -585,10 +586,12 @@ mod tests {
                         ResolvedLayoutNode::Window {
                             meta: LayoutNodeMeta::default(),
                             window_id: Some(window_id(1)),
+                            children: vec![],
                         },
                         ResolvedLayoutNode::Window {
                             meta: LayoutNodeMeta::default(),
                             window_id: Some(window_id(2)),
+                            children: vec![],
                         },
                     ],
                 },
@@ -597,6 +600,7 @@ mod tests {
                     children: vec![ResolvedLayoutNode::Window {
                         meta: LayoutNodeMeta::default(),
                         window_id: Some(window_id(3)),
+                        children: vec![],
                     }],
                 },
             ],

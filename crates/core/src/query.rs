@@ -129,6 +129,7 @@ pub fn window_mode(window: &WindowModel) -> WindowMode {
 mod tests {
     use crate::window_id;
     use crate::wm::WmModel;
+    use crate::{OutputId, WorkspaceId};
 
     use super::*;
 

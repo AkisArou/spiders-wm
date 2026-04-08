@@ -96,7 +96,6 @@ Config can specify custom `bindings`. If not provided, default milestone binding
 
 **Default Spawn/Utility Bindings**:
 
-- `{mod_key}+Return` - spawn terminal (foot)
 - `{mod_key}+q` - close focused window
 - `{mod_key}+space` - cycle layout
 - `{mod_key}+Shift+space` - toggle floating

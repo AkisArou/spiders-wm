@@ -40,7 +40,6 @@ pub enum WmHostEffect {
     RequestQuit,
     ActivateWorkspace { target: WorkspaceTarget },
     AssignFocusedWindowToWorkspace { assignment: WorkspaceAssignment },
-    SpawnTerminal,
     FocusWindow { target: FocusTarget },
     CloseFocusedWindow,
     ReloadConfig,

@@ -42,8 +42,12 @@ These are explicitly out of scope for the first real-session milestone:
 - tablet/pad feature completeness
 - a polished lock screen UI
 - shipping a full desktop shell
+- touchscreen / absolute-pointer / tablet-tool support for the first daily-driver milestone
 
 These may be added later, but they are not allowed to delay the first real-session bring-up.
+
+For the current scope, `spiders-wm` should be treated as a tiling compositor targeting keyboard + relative pointer workflows.
+Partial touch/tablet/absolute-device support should be removed rather than carried as misleading half-support.
 
 ## Definition Of Done
 
@@ -129,6 +133,18 @@ When a protocol or backend area already exists in `~/projects/niri`, we should t
 ## Required Protocol Set
 
 The list below is grouped by priority.
+
+Protocol work should be done protocol-by-protocol to a usable/full level, not by scattering thin partial support across many protocols at once.
+
+For this plan, "implemented" means:
+
+- the protocol global exists
+- the compositor handles the full basic lifecycle correctly
+- the protocol affects compositor behavior in the expected way
+- the protocol is exercised in tests where practical
+- the protocol is manually validated on a real session before being considered complete
+
+Avoid landing protocol work that only advertises the global or wires delegate macros without the real compositor behavior needed for desktop use.
 
 ### Tier 0: Mandatory For First Real Session
 
@@ -374,6 +390,8 @@ Protocol surface is good enough for launchers, bars, portals, modern apps, scree
 1. Implement `zwlr_layer_shell_v1`.
    - panels, backgrounds, notifications, launchers
    - anchor/exclusive zone handling
+   - keyboard interactivity and focus behavior
+   - popup handling and output arrangement interaction
    - this is mandatory very early for a practical desktop
 
 2. Implement `xdg_activation_v1`.
@@ -549,6 +567,14 @@ There is one recommended order.
 7. Remaining core desktop protocols
 8. XWayland and desktop integration
 9. Hardening
+
+Protocol execution rule:
+
+1. pick the next protocol from the ordered list
+2. implement it to a usable/full level
+3. validate it before moving to the next one
+
+Do not parallelize broad protocol breadth unless there is a concrete dependency between protocols.
 
 Do not start with protocol breadth before tty rendering/input works.
 

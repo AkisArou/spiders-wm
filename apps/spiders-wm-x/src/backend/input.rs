@@ -1,10 +1,7 @@
-use std::collections::BTreeSet;
-use std::fs;
-
 use anyhow::{Context, Result};
-use spiders_config::model::ConfigPaths;
+use spiders_config::model::{Binding, Config};
 use spiders_core::command::WmCommand;
-use spiders_wm_runtime::parse_bindings_source;
+use std::collections::BTreeSet;
 use tracing::{debug, warn};
 use x11rb::connection::Connection;
 use x11rb::protocol::xproto::{
@@ -27,6 +24,34 @@ pub(crate) struct KeyboardBindings {
     xkb_state: XkbBindingState,
 }
 
+#[cfg(test)]
+impl KeyboardBindings {
+    pub(crate) fn empty_for_tests() -> Self {
+        let context = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
+        let keymap = xkb::Keymap::new_from_names(
+            &context,
+            "",
+            "",
+            "us",
+            "",
+            None,
+            xkb::KEYMAP_COMPILE_NO_FLAGS,
+        )
+        .expect("test keymap");
+        let state = xkb::State::new(&keymap);
+        let modifier_masks = ModifierMasks::from_keymap(&keymap);
+        let significant_modifiers = modifier_masks.shift
+            | modifier_masks.control
+            | modifier_masks.mod1
+            | modifier_masks.mod4;
+
+        Self {
+            installed: Vec::new(),
+            xkb_state: XkbBindingState { keymap, state, modifier_masks, significant_modifiers },
+        }
+    }
+}
+
 #[derive(Clone)]
 struct BindingSpec {
     keysym: xkb::Keysym,
@@ -38,7 +63,6 @@ struct BindingSpec {
 #[derive(Clone)]
 pub(crate) struct InstalledBinding {
     pub(crate) keycode: u8,
-    pub(crate) keysym: xkb::Keysym,
     pub(crate) required_modifiers: xkb::ModMask,
     pub(crate) grab_modifiers: ModMask,
     pub(crate) command: WmCommand,
@@ -65,25 +89,21 @@ struct ModifierMasks {
 
 pub(crate) fn load_keyboard_bindings(
     connection: &XCBConnection,
-    config_paths: Option<&ConfigPaths>,
+    config: &Config,
 ) -> Result<KeyboardBindings> {
     let xkb_state = XkbBindingState::new(connection)?;
-    let Some(source) = load_bindings_source(config_paths) else {
-        return Ok(KeyboardBindings { installed: Vec::new(), xkb_state });
-    };
-
-    let parsed = parse_bindings_source(&source);
+    let mod_key = config.options.mod_key.as_deref().unwrap_or("mod");
     let mut installed = Vec::new();
 
-    for entry in &parsed.entries {
-        let Some(spec) = compile_binding_spec(&xkb_state.keymap, entry, &parsed.mod_key) else {
+    for binding in &config.bindings {
+        let Some(spec) = compile_binding_spec(&xkb_state.keymap, binding, mod_key) else {
             continue;
         };
         let mut compiled = compile_binding_variants(&xkb_state, &spec);
 
         if compiled.is_empty() {
-            let key_token = entry.bind.last().map(String::as_str).unwrap_or("<missing>");
-            warn!(key = %key_token, chord = %entry.chord, "spiders-wm-x could not resolve binding keysym to XKB keycode");
+            let key_token = binding.trigger.split('+').next_back().unwrap_or("<missing>").trim();
+            warn!(key = %key_token, trigger = %binding.trigger, "spiders-wm-x could not resolve binding keysym to XKB keycode");
             continue;
         }
 
@@ -166,9 +186,7 @@ pub(crate) fn binding_for_key_event(
 
     let active_modifiers = bindings.xkb_state.binding_modifiers_for_key(keycode);
     let matched = bindings.installed.iter().find(|binding| {
-        binding.keycode == event.detail
-            && binding.keysym == keysym
-            && binding.required_modifiers == active_modifiers
+        binding.keycode == event.detail && binding.required_modifiers == active_modifiers
     });
 
     if let Some(binding) = matched {
@@ -251,8 +269,8 @@ impl XkbBindingState {
     }
 
     fn binding_modifiers_for_key(&self, keycode: xkb::Keycode) -> xkb::ModMask {
-        let effective = self.state.serialize_mods(xkb::STATE_MODS_EFFECTIVE);
-        self.state.mod_mask_remove_consumed(keycode, effective) & self.significant_modifiers
+        let _ = keycode;
+        self.state.serialize_mods(xkb::STATE_MODS_EFFECTIVE) & self.significant_modifiers
     }
 }
 
@@ -342,22 +360,6 @@ impl ModifierMasks {
     }
 }
 
-fn load_bindings_source(config_paths: Option<&ConfigPaths>) -> Option<String> {
-    let paths = config_paths?;
-    let candidates = [
-        paths.prepared_config.parent().map(|parent| parent.join("config/bindings.js")),
-        paths.authored_config.parent().map(|parent| parent.join("config/bindings.ts")),
-    ];
-
-    for candidate in candidates.into_iter().flatten() {
-        if let Ok(source) = fs::read_to_string(&candidate) {
-            return Some(source);
-        }
-    }
-
-    None
-}
-
 fn compile_binding_variants(
     xkb_state: &XkbBindingState,
     spec: &BindingSpec,
@@ -404,7 +406,6 @@ fn compile_binding_variants(
 
                         installed.push(InstalledBinding {
                             keycode: keycode.raw() as u8,
-                            keysym: spec.keysym,
                             required_modifiers: spec.required_modifiers,
                             grab_modifiers: ModMask::from(grab_bits as u16),
                             command: spec.command.clone(),
@@ -420,17 +421,17 @@ fn compile_binding_variants(
 
 fn compile_binding_spec(
     keymap: &xkb::Keymap,
-    entry: &spiders_wm_runtime::ParsedBindingEntry,
+    binding: &Binding,
     mod_key: &str,
 ) -> Option<BindingSpec> {
-    let command = entry.command.clone()?;
-    let key_token = entry.bind.last()?;
+    let bind = binding.trigger.split('+').map(|token| token.trim().to_string()).collect::<Vec<_>>();
+    let command = binding.command.clone();
+    let key_token = bind.last()?;
     let keysym = resolve_binding_keysym(key_token).or_else(|| {
-        warn!(key = %key_token, chord = %entry.chord, "spiders-wm-x could not resolve binding key to XKB keysym");
+        warn!(key = %key_token, trigger = %binding.trigger, "spiders-wm-x could not resolve binding key to XKB keysym");
         None
     })?;
-    let modifiers =
-        compile_binding_modifiers(&entry.bind[..entry.bind.len().saturating_sub(1)], mod_key);
+    let modifiers = compile_binding_modifiers(&bind[..bind.len().saturating_sub(1)], mod_key);
 
     Some(BindingSpec {
         keysym,
@@ -459,11 +460,14 @@ fn resolve_binding_keysym(token: &str) -> Option<xkb::Keysym> {
 }
 
 fn binding_keysym_name(token: &str) -> String {
-    match token {
-        "space" => "space".to_string(),
-        "comma" => "comma".to_string(),
-        "period" => "period".to_string(),
-        _ => token.to_string(),
+    if token.eq_ignore_ascii_case("space") {
+        "space".to_string()
+    } else if token.eq_ignore_ascii_case("comma") {
+        "comma".to_string()
+    } else if token.eq_ignore_ascii_case("period") {
+        "period".to_string()
+    } else {
+        token.to_string()
     }
 }
 
@@ -519,12 +523,28 @@ fn compile_binding_modifiers(bind: &[String], mod_key: &str) -> BindingModifiers
     let mut modifiers = BindingModifiers::default();
 
     for token in bind {
-        let resolved = if token == "mod" { mod_key } else { token.as_str() };
+        let resolved = if token.eq_ignore_ascii_case("mod") { mod_key } else { token.as_str() };
         match resolved {
-            "shift" => modifiers.shift = true,
-            "ctrl" | "control" => modifiers.control = true,
-            "alt" | "mod1" => modifiers.alt = true,
-            "super" | "logo" | "mod4" => modifiers.super_ = true,
+            resolved if resolved.eq_ignore_ascii_case("shift") => modifiers.shift = true,
+            resolved
+                if resolved.eq_ignore_ascii_case("ctrl")
+                    || resolved.eq_ignore_ascii_case("control") =>
+            {
+                modifiers.control = true
+            }
+            resolved
+                if resolved.eq_ignore_ascii_case("alt")
+                    || resolved.eq_ignore_ascii_case("mod1") =>
+            {
+                modifiers.alt = true
+            }
+            resolved
+                if resolved.eq_ignore_ascii_case("super")
+                    || resolved.eq_ignore_ascii_case("logo")
+                    || resolved.eq_ignore_ascii_case("mod4") =>
+            {
+                modifiers.super_ = true
+            }
             _ => {}
         }
     }
@@ -558,8 +578,8 @@ fn relevant_key_state_bits(state: KeyButMask) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use spiders_config::model::Binding;
     use spiders_core::command::WmCommand;
-    use spiders_wm_runtime::ParsedBindingEntry;
 
     #[test]
     fn resolve_binding_keysym_handles_common_aliases() {
@@ -592,6 +612,20 @@ mod tests {
     }
 
     #[test]
+    fn compile_binding_modifiers_is_case_insensitive() {
+        let modifiers = compile_binding_modifiers(
+            &["Alt".to_string(), "Shift".to_string(), "Control".to_string()],
+            "super",
+        );
+
+        assert!(modifiers.alt);
+        assert!(modifiers.shift);
+        assert!(modifiers.control);
+        assert!(!modifiers.super_);
+        assert_eq!(modifiers.x11_bits(), MOD_SHIFT_BIT | MOD_CONTROL_BIT | MOD1_BIT);
+    }
+
+    #[test]
     fn expand_modifier_masks_includes_lock_variants() {
         let masks = expand_modifier_masks(MOD4_BIT | MOD_SHIFT_BIT);
 
@@ -609,12 +643,7 @@ mod tests {
     #[test]
     fn compile_binding_spec_builds_expected_keysym_and_masks() {
         let keymap = test_keymap();
-        let entry = ParsedBindingEntry {
-            bind: vec!["mod".to_string(), "shift".to_string(), "Return".to_string()],
-            chord: "Super + Shift + Enter".to_string(),
-            command: Some(WmCommand::Quit),
-            command_label: "quit".to_string(),
-        };
+        let entry = Binding { trigger: "mod+shift+Return".to_string(), command: WmCommand::Quit };
 
         let spec = compile_binding_spec(&keymap, &entry, "super").expect("binding spec");
 
@@ -625,14 +654,21 @@ mod tests {
     }
 
     #[test]
+    fn compile_binding_spec_accepts_capitalized_modifiers() {
+        let keymap = test_keymap();
+        let entry = Binding { trigger: "Alt+Return".to_string(), command: WmCommand::Quit };
+
+        let spec = compile_binding_spec(&keymap, &entry, "super").expect("binding spec");
+
+        assert_eq!(xkb::keysym_get_name(spec.keysym), "Return");
+        assert_eq!(spec.required_x11_bits, MOD1_BIT);
+        assert_ne!(spec.required_modifiers, 0);
+    }
+
+    #[test]
     fn compile_binding_spec_returns_none_for_missing_command() {
         let keymap = test_keymap();
-        let entry = ParsedBindingEntry {
-            bind: vec!["mod".to_string(), "q".to_string()],
-            chord: "Super + Q".to_string(),
-            command: None,
-            command_label: "noop".to_string(),
-        };
+        let entry = Binding { trigger: "".to_string(), command: WmCommand::Quit };
 
         assert!(compile_binding_spec(&keymap, &entry, "super").is_none());
     }

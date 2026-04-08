@@ -1,5 +1,6 @@
 use smithay::delegate_xdg_shell;
-use smithay::desktop::{PopupKind, Window};
+use smithay::desktop::{PopupKeyboardGrab, PopupKind, PopupPointerGrab, Window};
+use smithay::input::pointer::Focus;
 use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel;
 use smithay::reexports::wayland_protocols::xdg::decoration::zv1::server::zxdg_toplevel_decoration_v1::Mode;
 use smithay::reexports::wayland_server::Resource;
@@ -59,7 +60,60 @@ impl XdgShellHandler for SpidersWm {
     ) {
     }
 
-    fn grab(&mut self, _surface: PopupSurface, _seat: wl_seat::WlSeat, _serial: Serial) {}
+    fn grab(&mut self, surface: PopupSurface, _seat: wl_seat::WlSeat, serial: Serial) {
+        let popup = PopupKind::Xdg(surface);
+        let Ok(root) = smithay::desktop::find_popup_root_surface(&popup) else {
+            return;
+        };
+
+        let root_layer_surface = self.layer_surface_for_surface(&root);
+        let root_output = self.output_for_surface(&root);
+        let focused_layer_output = self
+            .layer_shell_focus_surface
+            .as_ref()
+            .and_then(|surface| self.output_for_surface(surface));
+        if popup_grab_should_be_denied(
+            root_layer_surface.is_some(),
+            root_output.as_ref(),
+            focused_layer_output.as_ref(),
+        ) {
+            let _ = smithay::desktop::PopupManager::dismiss_popup(&root, &popup);
+            return;
+        }
+
+        let mut grab = match self.popups.grab_popup(root.clone(), popup, &self.seat, serial) {
+            Ok(grab) => grab,
+            Err(_) => return,
+        };
+
+        let keyboard = self.seat.get_keyboard().expect("keyboard missing");
+        let pointer = self.seat.get_pointer().expect("pointer missing");
+
+        let can_receive_keyboard_focus = popup_grab_can_take_keyboard_focus(
+            root_layer_surface.is_some(),
+            root_layer_surface.map(|layer_surface| layer_surface.can_receive_keyboard_focus()),
+        );
+
+        let keyboard_grab_mismatches = keyboard.is_grabbed()
+            && popup_grab_has_mismatch(
+                keyboard.has_grab(serial),
+                grab.previous_serial().is_some_and(|s| keyboard.has_grab(s)),
+            );
+        let pointer_grab_mismatches = pointer.is_grabbed()
+            && popup_grab_has_mismatch(
+                pointer.has_grab(serial),
+                grab.previous_serial().is_some_and(|s| pointer.has_grab(s)),
+            );
+        if (can_receive_keyboard_focus && keyboard_grab_mismatches) || pointer_grab_mismatches {
+            let _ = grab.ungrab(smithay::desktop::PopupUngrabStrategy::All);
+            return;
+        }
+
+        if can_receive_keyboard_focus {
+            keyboard.set_grab(self, PopupKeyboardGrab::new(&grab), serial);
+        }
+        pointer.set_grab(self, PopupPointerGrab::new(&grab), serial, Focus::Keep);
+    }
 
     fn app_id_changed(&mut self, surface: ToplevelSurface) {
         sync_toplevel_identity(self, surface.wl_surface());
@@ -79,6 +133,7 @@ delegate_xdg_shell!(SpidersWm);
 
 pub fn handle_commit(state: &mut SpidersWm, surface: &WlSurface) {
     sync_toplevel_identity(state, surface);
+    state.refresh_fractional_scale_for_window_surface(surface);
 
     let initial_configure_sent = with_states(surface, |states| {
         states
@@ -178,10 +233,39 @@ fn sync_toplevel_identity(state: &mut SpidersWm, surface: &WlSurface) {
                 app_id,
                 class: None,
                 instance: None,
+                role: None,
+                window_type: None,
+                urgent: false,
             },
         )
     };
     state.broadcast_runtime_events(events);
+}
+
+fn popup_grab_can_take_keyboard_focus(
+    root_is_layer_surface: bool,
+    layer_can_receive_keyboard_focus: Option<bool>,
+) -> bool {
+    if root_is_layer_surface {
+        layer_can_receive_keyboard_focus.unwrap_or(false)
+    } else {
+        true
+    }
+}
+
+fn popup_grab_has_mismatch(
+    current_grab_matches_serial: bool,
+    previous_grab_matches_serial: bool,
+) -> bool {
+    !(current_grab_matches_serial || previous_grab_matches_serial)
+}
+
+fn popup_grab_should_be_denied(
+    root_is_layer_surface: bool,
+    root_output: Option<&smithay::output::Output>,
+    focused_layer_output: Option<&smithay::output::Output>,
+) -> bool {
+    !root_is_layer_surface && root_output.is_some() && root_output == focused_layer_output
 }
 
 impl SpidersWm {
@@ -221,5 +305,72 @@ impl SpidersWm {
             decoration_mode = ?decoration_mode,
             "wm applied toplevel decoration mode"
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn popup_grab_keyboard_focus_allowed_for_regular_windows() {
+        assert!(popup_grab_can_take_keyboard_focus(false, None));
+    }
+
+    #[test]
+    fn popup_grab_keyboard_focus_depends_on_layer_interactivity() {
+        assert!(popup_grab_can_take_keyboard_focus(true, Some(true)));
+        assert!(!popup_grab_can_take_keyboard_focus(true, Some(false)));
+        assert!(!popup_grab_can_take_keyboard_focus(true, None));
+    }
+
+    #[test]
+    fn popup_grab_mismatch_requires_current_or_previous_serial_match() {
+        assert!(!popup_grab_has_mismatch(true, false));
+        assert!(!popup_grab_has_mismatch(false, true));
+        assert!(popup_grab_has_mismatch(false, false));
+    }
+
+    #[test]
+    fn popup_grab_denied_for_regular_window_when_layer_has_focus() {
+        let output = output("a");
+
+        assert!(popup_grab_should_be_denied(false, Some(&output), Some(&output)));
+    }
+
+    #[test]
+    fn popup_grab_allowed_for_layer_roots_even_when_layer_has_focus() {
+        let output = output("a");
+
+        assert!(!popup_grab_should_be_denied(true, Some(&output), Some(&output)));
+    }
+
+    #[test]
+    fn popup_grab_allowed_for_regular_window_without_layer_focus() {
+        let output = output("a");
+
+        assert!(!popup_grab_should_be_denied(false, Some(&output), None));
+    }
+
+    #[test]
+    fn popup_grab_allowed_for_regular_window_on_different_output() {
+        assert!(!popup_grab_should_be_denied(
+            false,
+            Some(&output("a")),
+            Some(&output("b")),
+        ));
+    }
+
+    fn output(name: &str) -> smithay::output::Output {
+        smithay::output::Output::new(
+            name.to_string(),
+            smithay::output::PhysicalProperties {
+                size: (0, 0).into(),
+                subpixel: smithay::output::Subpixel::Unknown,
+                make: "test".to_string(),
+                model: "test".to_string(),
+                serial_number: "test".to_string(),
+            },
+        )
     }
 }

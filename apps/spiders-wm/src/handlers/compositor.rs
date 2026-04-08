@@ -69,7 +69,9 @@ impl CompositorHandler for SpidersWm {
             }
         }
 
-        xdg_shell::handle_commit(self, surface);
+        if !self.layer_shell_handle_commit(surface) {
+            xdg_shell::handle_commit(self, surface);
+        }
     }
 }
 

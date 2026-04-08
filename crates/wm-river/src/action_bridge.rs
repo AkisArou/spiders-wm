@@ -80,8 +80,7 @@ pub fn bridge_action(action: &WmCommand) -> RiverCommand {
         WmCommand::MoveDirection { direction } => {
             RiverCommand::MoveDirection { direction: *direction }
         }
-        WmCommand::SpawnTerminal
-        | WmCommand::FocusNextWindow
+        WmCommand::FocusNextWindow
         | WmCommand::FocusPreviousWindow
         | WmCommand::SelectNextWorkspace
         | WmCommand::SelectPreviousWorkspace

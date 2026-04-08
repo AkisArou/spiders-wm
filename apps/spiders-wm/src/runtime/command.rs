@@ -47,7 +47,6 @@ impl WmHost for SpidersWm {
                     );
                 }
             },
-            WmHostEffect::SpawnTerminal => self.spawn_foot(),
             WmHostEffect::FocusWindow { target } => match target {
                 FocusTarget::Next => self.focus_next_window(SERIAL_COUNTER.next_serial()),
                 FocusTarget::Previous => self.focus_previous_window(SERIAL_COUNTER.next_serial()),

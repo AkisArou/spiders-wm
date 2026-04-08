@@ -18,12 +18,17 @@ use smithay::reexports::calloop::{
 use smithay::reexports::wayland_server::Display;
 use smithay::wayland::compositor::CompositorState;
 use smithay::wayland::dmabuf::{DmabufGlobal, DmabufState};
+use smithay::wayland::fractional_scale::FractionalScaleManagerState;
 use smithay::wayland::output::OutputManagerState;
+use smithay::wayland::pointer_constraints::PointerConstraintsState;
+use smithay::wayland::relative_pointer::RelativePointerManagerState;
 use smithay::wayland::selection::data_device::DataDeviceState;
+use smithay::wayland::shell::wlr_layer::WlrLayerShellState;
 use smithay::wayland::shell::xdg::XdgShellState;
 use smithay::wayland::shell::xdg::decoration::XdgDecorationState;
 use smithay::wayland::shm::ShmState;
 use smithay::wayland::socket::ListeningSocketSource;
+use smithay::wayland::xdg_activation::XdgActivationState;
 use tracing::warn;
 
 use crate::backend::BackendKind;
@@ -53,6 +58,13 @@ pub(crate) fn build_state(
     let _output_manager_state =
         OutputManagerState::new_with_xdg_output::<SpidersWm>(&display_handle);
     let data_device_state = DataDeviceState::new::<SpidersWm>(&display_handle);
+    let layer_shell_state = WlrLayerShellState::new::<SpidersWm>(&display_handle);
+    let activation_state = XdgActivationState::new::<SpidersWm>(&display_handle);
+    let fractional_scale_manager_state =
+        FractionalScaleManagerState::new::<SpidersWm>(&display_handle);
+    let pointer_constraints_state = PointerConstraintsState::new::<SpidersWm>(&display_handle);
+    let relative_pointer_manager_state =
+        RelativePointerManagerState::new::<SpidersWm>(&display_handle);
     let virtual_keyboard_manager_state =
         VirtualKeyboardManagerState::new(&display_handle, |_client| true);
     let popups = PopupManager::default();
@@ -97,17 +109,26 @@ pub(crate) fn build_state(
         dmabuf_global: None::<DmabufGlobal>,
         seat_state,
         data_device_state,
+        layer_shell_state,
+        activation_state,
+        _fractional_scale_manager_state: fractional_scale_manager_state,
+        _pointer_constraints_state: pointer_constraints_state,
+        _relative_pointer_manager_state: relative_pointer_manager_state,
         _virtual_keyboard_manager_state: virtual_keyboard_manager_state,
         seat,
+        cursor_image_status: smithay::input::pointer::CursorImageStatus::default_named(),
+        pointer_location: (0.0, 0.0).into(),
         backend: None,
         focused_surface: None,
+        layer_shell_focus_surface: None,
+        pending_activation_requests: Vec::new(),
         config_paths: config_paths.clone(),
         config,
         managed_windows: Vec::new(),
         frame_sync: FrameSyncState::default(),
         scene_snapshot_root: None,
-        ipc_server: spiders_ipc::IpcServerState::new(),
-        ipc_clients: std::collections::BTreeMap::new(),
+        scene_snapshot_roots_by_output: std::collections::BTreeMap::new(),
+        ipc: spiders_ipc_native::NativeIpcState::default(),
         ipc_socket_path,
         debug,
         scene: SceneLayoutState::new(config_paths.clone()),
@@ -215,8 +236,7 @@ fn init_wayland_listener(
     display: Display<SpidersWm>,
     event_loop: &mut EventLoop<'static, SpidersWm>,
 ) -> std::ffi::OsString {
-    let listening_socket =
-        ListeningSocketSource::new_auto().expect("failed to create Wayland socket");
+    let listening_socket = configured_wayland_listener();
     let socket_name = listening_socket.socket_name().to_os_string();
     let loop_handle = event_loop.handle();
 
@@ -250,6 +270,16 @@ fn init_wayland_listener(
     socket_name
 }
 
+fn configured_wayland_listener() -> ListeningSocketSource {
+    if let Some(socket_name) = std::env::var_os("SPIDERS_WM_WAYLAND_SOCKET") {
+        let socket_name = socket_name.to_string_lossy().into_owned();
+        return ListeningSocketSource::with_name(&socket_name)
+            .expect("failed to create Wayland socket from SPIDERS_WM_WAYLAND_SOCKET");
+    }
+
+    ListeningSocketSource::new_auto().expect("failed to create Wayland socket")
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs;
@@ -261,7 +291,8 @@ mod tests {
     use spiders_core::wm::WmModel;
     use spiders_wm_runtime::WmRuntime;
 
-    use super::{default_winit_output_size, load_wm_config, sanitize_winit_output_size};
+    use super::load_wm_config;
+    use crate::backend::winit::{default_winit_output_size, sanitize_winit_output_size};
     use smithay::utils::{Physical, Size};
 
     fn unique_root(name: &str) -> PathBuf {

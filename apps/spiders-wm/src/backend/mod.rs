@@ -2,6 +2,9 @@ pub mod drm;
 pub mod output;
 pub mod session;
 pub mod tty;
+pub mod tty_drm;
+pub mod tty_render;
+pub mod tty_setup;
 pub mod winit;
 
 use smithay::backend::renderer::gles::GlesRenderer;
@@ -10,6 +13,7 @@ use smithay::backend::winit::WinitGraphicsBackend;
 use self::drm::TtyDrmBackendState;
 use self::output::TtyOutputState;
 use self::session::BackendSession;
+use crate::state::SpidersWm;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BackendKind {
@@ -60,4 +64,14 @@ pub struct TtyBackendState {
     pub session: BackendSession,
     pub outputs: Vec<TtyOutputState>,
     pub drm: TtyDrmBackendState,
+    pub redraw_pending: bool,
+}
+
+impl SpidersWm {
+    pub(crate) fn active_backend_seat_name(&self) -> &str {
+        match self.backend.as_ref() {
+            Some(BackendState::Tty(backend)) => backend.session.seat_name(),
+            Some(BackendState::Winit(_)) | None => "winit",
+        }
+    }
 }

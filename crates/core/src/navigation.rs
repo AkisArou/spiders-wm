@@ -741,6 +741,7 @@ mod tests {
                 crate::ResolvedLayoutNode::Window {
                     meta: crate::LayoutNodeMeta::default(),
                     window_id: Some(window_id(1)),
+                    children: vec![],
                 },
                 crate::ResolvedLayoutNode::Group {
                     meta: crate::LayoutNodeMeta {
@@ -751,6 +752,7 @@ mod tests {
                         crate::ResolvedLayoutNode::Window {
                             meta: crate::LayoutNodeMeta::default(),
                             window_id: Some(window_id(2)),
+                            children: vec![],
                         },
                         crate::ResolvedLayoutNode::Group {
                             meta: crate::LayoutNodeMeta {
@@ -761,10 +763,12 @@ mod tests {
                                 crate::ResolvedLayoutNode::Window {
                                     meta: crate::LayoutNodeMeta::default(),
                                     window_id: Some(window_id(3)),
+                                    children: vec![],
                                 },
                                 crate::ResolvedLayoutNode::Window {
                                     meta: crate::LayoutNodeMeta::default(),
                                     window_id: Some(window_id(4)),
+                                    children: vec![],
                                 },
                             ],
                         },
@@ -909,10 +913,12 @@ mod tests {
                         crate::ResolvedLayoutNode::Window {
                             meta: crate::LayoutNodeMeta::default(),
                             window_id: Some(window_id(1)),
+                            children: vec![],
                         },
                         crate::ResolvedLayoutNode::Window {
                             meta: crate::LayoutNodeMeta::default(),
                             window_id: Some(window_id(2)),
+                            children: vec![],
                         },
                     ],
                 },
@@ -925,14 +931,17 @@ mod tests {
                         crate::ResolvedLayoutNode::Window {
                             meta: crate::LayoutNodeMeta::default(),
                             window_id: Some(window_id(3)),
+                            children: vec![],
                         },
                         crate::ResolvedLayoutNode::Window {
                             meta: crate::LayoutNodeMeta::default(),
                             window_id: Some(window_id(4)),
+                            children: vec![],
                         },
                         crate::ResolvedLayoutNode::Window {
                             meta: crate::LayoutNodeMeta::default(),
                             window_id: Some(window_id(5)),
+                            children: vec![],
                         },
                     ],
                 },

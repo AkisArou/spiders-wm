@@ -6,7 +6,7 @@ use spiders_core::command::WmCommand;
 use spiders_core::runtime::prepared_layout::{PreparedLayout, SelectedLayout};
 use spiders_core::snapshot::{OutputSnapshot, StateSnapshot, WorkspaceSnapshot};
 use spiders_core::types::LayoutRef;
-use spiders_core::{LayoutSpace, ResolvedLayoutNode};
+use spiders_core::{LayoutSpace, OutputId, ResolvedLayoutNode};
 use spiders_scene::SceneRequest;
 use thiserror::Error;
 
@@ -333,6 +333,25 @@ impl Config {
 
         self.build_scene_request(workspace, output, root, artifact).map(Some)
     }
+
+    pub fn build_scene_request_for_output_from_state(
+        &self,
+        state: &StateSnapshot,
+        output_id: &OutputId,
+        root: ResolvedLayoutNode,
+        artifact: &PreparedLayout,
+    ) -> Result<Option<SceneRequest>, LayoutConfigError> {
+        let Some(workspace) = state
+            .workspaces
+            .iter()
+            .find(|workspace| workspace.output_id.as_ref() == Some(output_id))
+        else {
+            return Ok(None);
+        };
+        let output = state.output_by_id(output_id);
+
+        self.build_scene_request(workspace, output, root, artifact).map(Some)
+    }
 }
 
 impl From<&LayoutDefinition> for LayoutRef {
@@ -535,6 +554,70 @@ mod tests {
         assert_eq!(request.layout_name.as_deref(), Some("master-stack"));
         assert_eq!(request.space.width, 1920.0);
         assert_eq!(request.space.height, 1080.0);
+    }
+
+    #[test]
+    fn builds_scene_request_for_specific_output_from_state_snapshot() {
+        let config = Config {
+            layouts: vec![LayoutDefinition {
+                name: "master-stack".into(),
+                directory: "layouts/master-stack".into(),
+                module: "layouts/master-stack.js".into(),
+                stylesheet_path: Some("layouts/master-stack/index.css".into()),
+                runtime_cache_payload: None,
+            }],
+            ..Config::default()
+        };
+        let state = StateSnapshot {
+            focused_window_id: None,
+            current_output_id: Some(OutputId::from("out-1")),
+            current_workspace_id: Some(WorkspaceId::from("ws-1")),
+            outputs: vec![
+                output(),
+                OutputSnapshot {
+                    id: OutputId::from("out-2"),
+                    name: "DP-1".into(),
+                    logical_x: 1920,
+                    logical_y: 0,
+                    logical_width: 1280,
+                    logical_height: 720,
+                    scale: 1,
+                    transform: OutputTransform::Normal,
+                    enabled: true,
+                    current_workspace_id: Some(WorkspaceId::from("ws-2")),
+                },
+            ],
+            workspaces: vec![
+                workspace("master-stack"),
+                WorkspaceSnapshot {
+                    id: WorkspaceId::from("ws-2"),
+                    name: "2".into(),
+                    output_id: Some(OutputId::from("out-2")),
+                    active_workspaces: vec!["2".into()],
+                    focused: false,
+                    visible: true,
+                    effective_layout: Some(LayoutRef { name: "master-stack".into() }),
+                },
+            ],
+            windows: vec![],
+            visible_window_ids: vec![],
+            workspace_names: vec!["1".into(), "2".into()],
+        };
+
+        let request = config
+            .build_scene_request_for_output_from_state(
+                &state,
+                &OutputId::from("out-2"),
+                ResolvedLayoutNode::Workspace { meta: Default::default(), children: vec![] },
+                &artifact("master-stack", "layouts/master-stack.js"),
+            )
+            .unwrap()
+            .expect("request should be produced for selected output");
+
+        assert_eq!(request.output_id, Some(OutputId::from("out-2")));
+        assert_eq!(request.workspace_id, WorkspaceId::from("ws-2"));
+        assert_eq!(request.space.width, 1280.0);
+        assert_eq!(request.space.height, 720.0);
     }
 
     #[test]

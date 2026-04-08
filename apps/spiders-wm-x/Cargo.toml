@@ -10,10 +10,15 @@ anyhow.workspace = true
 serde_json.workspace = true
 tracing.workspace = true
 calloop.workspace = true
+thiserror.workspace = true
+libc = "0.2"
 x11rb = { workspace = true, features = ["allow-unsafe-code", "randr"] }
 xkbcommon = { workspace = true, features = ["x11"] }
 spiders-config = { path = "../../crates/config" }
 spiders-core = { path = "../../crates/core" }
+spiders-ipc = { path = "../../crates/ipc" }
+spiders-ipc-core = { path = "../../crates/ipc/core" }
+spiders-ipc-native = { path = "../../crates/ipc/native" }
 spiders-logging = { path = "../../crates/logging" }
 spiders-runtime-js-native = { path = "../../crates/runtimes/js/native" }
 spiders-wm-runtime = { path = "../../crates/wm-runtime" }

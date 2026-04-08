@@ -6,18 +6,26 @@ mod output;
 
 use anyhow::{Context, Result};
 use std::collections::{BTreeMap, BTreeSet};
+use std::os::unix::net::UnixListener;
 use std::process::Command;
 
 use spiders_config::authoring_layout::AuthoringLayoutService;
 use spiders_config::model::{Config, ConfigPaths};
 use spiders_core::effect::{FocusTarget, WindowToggle, WmHostEffect, WorkspaceAssignment, WorkspaceTarget};
+use spiders_core::event::WmEvent;
 use spiders_core::focus::FocusTree;
-use spiders_core::query::state_snapshot_for_model;
+use spiders_core::navigation::{WindowGeometryCandidate, managed_window_swap_positions, select_directional_focus_candidate};
+use spiders_core::query::{QueryRequest, QueryResponse, state_snapshot_for_model};
 use spiders_core::signal::WmSignal;
 use spiders_core::snapshot::StateSnapshot;
 use spiders_core::types::{ShellKind, WindowMode};
 use spiders_core::wm::{WindowGeometry, WmModel};
-use spiders_core::{SeatId, WindowId};
+use spiders_core::{SeatId, WindowId, WorkspaceId};
+use spiders_ipc_core::IpcHandler;
+use spiders_ipc_native::{
+    IpcTransportError, NativeIpcServeError, NativeIpcState, accept_pending_ipc_clients,
+    bind_native_ipc_listener, send_response,
+};
 use spiders_wm_runtime::{
     PreviewRenderAction, PreviewWindow, WmHost, WmRuntime, collect_snapshot_geometries,
     compute_layout_preview_from_source_layout, dispatch_wm_command,
@@ -32,6 +40,9 @@ use x11rb::protocol::xproto::{
     StackMode, Window, WindowClass,
 };
 use x11rb::wrapper::ConnectionExt as _;
+
+use crate::ipc::handle_debug_dump;
+use spiders_ipc::DebugRequest;
 use x11rb::{COPY_DEPTH_FROM_PARENT, COPY_FROM_PARENT, CURRENT_TIME};
 
 use crate::config;
@@ -39,7 +50,8 @@ use crate::config;
 use self::atoms::Atoms;
 use self::discovery::{DiscoveredWindow, discover_window_for_event, discover_windows};
 use self::event::{
-    ManageEventHandler, install_manage_root_mask, observe_connection_events, run_manage_event_loop,
+    ManageEventHandler, ManageLoopDispatchState, install_manage_root_mask, observe_connection_events,
+    register_ipc_client_source, run_manage_event_loop,
 };
 use self::input::{KeyboardBindings, binding_for_key_event, install_key_grabs, load_keyboard_bindings, uninstall_key_grabs};
 use self::output::{DiscoveredOutput, discover_outputs};
@@ -77,6 +89,7 @@ pub(crate) struct BackendApp {
     connection: XCBConnection,
     atoms: Atoms,
     state: RuntimeState,
+    ipc_listener: Option<UnixListener>,
 }
 
 impl BackendApp {
@@ -94,7 +107,7 @@ impl BackendApp {
                 || discovered_outputs.iter().any(|output| output.x != 0 || output.y != 0),
         };
         let discovered_windows = discover_windows(&connection, screen.root_window, &atoms)?;
-        let keyboard_bindings = load_keyboard_bindings(&connection, config_paths.as_ref())?;
+        let keyboard_bindings = load_keyboard_bindings(&connection, &config)?;
         let state = RuntimeState::bootstrap(
             config_paths,
             display_name,
@@ -107,7 +120,7 @@ impl BackendApp {
             keyboard_bindings,
         );
 
-        Ok(Self { connection, atoms, state })
+        Ok(Self { connection, atoms, state, ipc_listener: None })
     }
 
     pub(crate) fn log_bootstrap(&self) {
@@ -147,6 +160,17 @@ impl BackendApp {
 
     pub(crate) fn manage(&mut self) -> Result<()> {
         let screen = *self.state.screen();
+        if let Some(socket_path) = self.state.ipc.init_socket_path("spiders-wm-x") {
+            match bind_native_ipc_listener(&socket_path) {
+                Ok(listener) => {
+                    info!(path = %socket_path.display(), "spiders-wm-x bound IPC socket");
+                    self.ipc_listener = Some(listener);
+                }
+                Err(error) => {
+                    warn!(path = %socket_path.display(), %error, "failed to bind wm-x IPC socket");
+                }
+            }
+        }
         install_manage_root_mask(&self.connection, &screen)?;
         install_key_grabs(&self.connection, screen.root_window, &self.state.keyboard_bindings.installed)?;
         self.scan_existing_windows()?;
@@ -158,8 +182,12 @@ impl BackendApp {
             "spiders-wm-x acquired X11 window manager ownership"
         );
 
-        let mut handler = BackendManageHandler { atoms: self.atoms, state: &mut self.state };
-        let result = run_manage_event_loop(&self.connection, &screen, &mut handler);
+        let mut handler = BackendManageHandler {
+            atoms: self.atoms,
+            state: &mut self.state,
+            ipc_listener: self.ipc_listener.as_ref(),
+        };
+        let result = run_manage_event_loop(&self.connection, &screen, self.ipc_listener.as_ref(), &mut handler);
         uninstall_key_grabs(&self.connection, screen.root_window, &self.state.keyboard_bindings.installed)?;
         result
     }
@@ -178,7 +206,6 @@ impl BackendApp {
 struct RuntimeState {
     config_paths: Option<ConfigPaths>,
     display_name: String,
-    #[allow(dead_code)]
     config: Config,
     layout_service: Option<AuthoringLayoutService>,
     ewmh_window: Window,
@@ -191,6 +218,9 @@ struct RuntimeState {
     stacking_order: Vec<u32>,
     workspace_hidden_windows: BTreeSet<u32>,
     keyboard_bindings: KeyboardBindings,
+    quit_requested: bool,
+    pending_events: Vec<WmEvent>,
+    ipc: NativeIpcState,
 }
 
 impl RuntimeState {
@@ -240,7 +270,7 @@ impl RuntimeState {
             }
             runtime.sync_layout_selection_defaults(&config);
             self::discovery::sync_discovered_windows(&mut runtime, discovered_windows);
-            let _ = runtime.take_events();
+            let _initial_events = runtime.take_events();
         }
 
         model.set_current_output(primary_output.output_id.clone());
@@ -272,6 +302,9 @@ impl RuntimeState {
             stacking_order,
             workspace_hidden_windows: BTreeSet::new(),
             keyboard_bindings,
+            quit_requested: false,
+            pending_events: Vec::new(),
+            ipc: NativeIpcState::default(),
         }
     }
 
@@ -291,9 +324,45 @@ impl RuntimeState {
         state_snapshot_for_model(&self.model)
     }
 
+    fn query(&self, request: QueryRequest) -> QueryResponse {
+        spiders_core::query::query_response_for_model(&self.model, request)
+    }
+
+    fn take_pending_events(&mut self) -> Vec<WmEvent> {
+        std::mem::take(&mut self.pending_events)
+    }
+
+    fn reload_config(&mut self, connection: &XCBConnection) -> Result<bool> {
+        let (config_paths, config) = config::load_config();
+        let keyboard_bindings = load_keyboard_bindings(connection, &config)?;
+        let workspace_names = crate::config::configured_workspace_names(&config);
+
+        {
+            let mut runtime = WmRuntime::new(&mut self.model);
+
+            if let Some(default_workspace) = workspace_names.first() {
+                runtime.ensure_default_workspace(default_workspace.clone());
+                for workspace_name in workspace_names.iter().skip(1) {
+                    runtime.ensure_workspace(workspace_name.clone());
+                }
+            }
+
+            runtime.sync_layout_selection_defaults(&config);
+            self.pending_events.extend(runtime.take_events());
+        }
+
+        self.config_paths = config_paths;
+        self.layout_service = self.config_paths.as_ref().and_then(crate::config::build_layout_service);
+        self.config = config;
+        self.keyboard_bindings = keyboard_bindings;
+
+        Ok(true)
+    }
+
     fn ensure_runtime_window(&mut self, discovered: &DiscoveredWindow) {
         let mut runtime = WmRuntime::new(&mut self.model);
         self::discovery::sync_discovered_windows(&mut runtime, std::slice::from_ref(discovered));
+        self.pending_events.extend(runtime.take_events());
         self.x_windows.insert(discovered.window, discovered.window_id.clone());
         self.workspace_hidden_windows.remove(&discovered.window);
         self.raise_in_stacking(discovered.window);
@@ -310,33 +379,43 @@ impl RuntimeState {
                 app_id: discovered.app_id.clone(),
                 class: discovered.class.clone(),
                 instance: discovered.instance.clone(),
+                role: discovered.role.clone(),
+                window_type: discovered.window_type.clone(),
+                urgent: discovered.urgent,
             },
         );
+        self.pending_events.extend(runtime.take_events());
     }
 
     fn sync_window_mapped(&mut self, window_id: WindowId, mapped: bool) {
         let mut runtime = WmRuntime::new(&mut self.model);
         let _ = runtime.sync_window_mapped(window_id, mapped);
+        self.pending_events.extend(runtime.take_events());
     }
 
     fn focus_window(&mut self, window_id: Option<WindowId>) {
         let seat_id = SeatId::from("x11");
         let mut runtime = WmRuntime::new(&mut self.model);
         let _ = runtime.request_focus_window_selection(seat_id, window_id);
+        self.pending_events.extend(runtime.take_events());
     }
 
     fn focus_next_window(&mut self) -> Option<WindowId> {
         let seat_id = SeatId::from("x11");
         let window_order = self.window_order();
         let mut runtime = WmRuntime::new(&mut self.model);
-        runtime.request_focus_next_window_selection(seat_id, window_order).focused_window_id
+        let focused = runtime.request_focus_next_window_selection(seat_id, window_order).focused_window_id;
+        self.pending_events.extend(runtime.take_events());
+        focused
     }
 
     fn focus_previous_window(&mut self) -> Option<WindowId> {
         let seat_id = SeatId::from("x11");
         let window_order = self.window_order();
         let mut runtime = WmRuntime::new(&mut self.model);
-        runtime.request_focus_previous_window_selection(seat_id, window_order).focused_window_id
+        let focused = runtime.request_focus_previous_window_selection(seat_id, window_order).focused_window_id;
+        self.pending_events.extend(runtime.take_events());
+        focused
     }
 
     fn focus_direction_window(&mut self, direction: spiders_core::command::FocusDirection) -> Option<WindowId> {
@@ -350,8 +429,42 @@ impl RuntimeState {
         info!(?direction, candidate_count = geometries.len(), current_focus = ?self.model.focused_window_id, "wm-x focus direction start");
         let mut runtime = WmRuntime::new(&mut self.model);
         let selection = runtime.request_focus_direction_window_selection(seat_id, direction, geometries);
+        self.pending_events.extend(runtime.take_events());
         info!(?direction, focused_window_id = ?selection.focused_window_id, "wm-x focus direction finished");
         selection.focused_window_id
+    }
+
+    fn swap_focused_window_direction(&mut self, direction: spiders_core::command::FocusDirection) -> bool {
+        let ordered_window_ids = self.tiled_window_order_on_current_workspace();
+        let candidates = self.directional_swap_candidates(&ordered_window_ids);
+        let Some(focused_window_id) = self.model.focused_window_id.clone() else {
+            return false;
+        };
+        let Some(target_window_id) = select_directional_focus_candidate(
+            &candidates,
+            Some(focused_window_id.clone()),
+            navigation_direction(direction),
+            &self.model.last_focused_window_id_by_scope,
+            self.model.focus_tree.as_ref(),
+        ) else {
+            return false;
+        };
+        let Some((focused_index, target_index)) =
+            managed_window_swap_positions(&ordered_window_ids, focused_window_id.clone(), target_window_id.clone())
+        else {
+            return false;
+        };
+        let Some(focused_x_window) = self.x_window_for_window_id(&ordered_window_ids[focused_index]) else {
+            return false;
+        };
+        let Some(target_x_window) = self.x_window_for_window_id(&ordered_window_ids[target_index]) else {
+            return false;
+        };
+
+        self.swap_x_window_positions(focused_x_window, target_x_window);
+        self.model.set_window_focused(Some(focused_window_id.clone()));
+        info!(?direction, ?focused_window_id, ?target_window_id, "wm-x swapped focused window with directional neighbor");
+        true
     }
 
     fn switch_to_workspace_index(&mut self, index: u32) -> bool {
@@ -372,6 +485,21 @@ impl RuntimeState {
             .collect()
     }
 
+    fn tiled_window_order_on_current_workspace(&self) -> Vec<WindowId> {
+        self.window_order()
+            .into_iter()
+            .filter(|window_id| {
+                self.model.windows.get(window_id).is_some_and(|window| {
+                    window.workspace_id == self.model.current_workspace_id
+                        && window.mapped
+                        && !window.floating
+                        && !window.fullscreen
+                        && !window.closing
+                })
+            })
+            .collect()
+    }
+
     fn select_named_workspace(&mut self, name: String) -> bool {
         let workspace_id = self
             .model
@@ -383,10 +511,28 @@ impl RuntimeState {
             Some(workspace_id) => {
                 let window_order = self.window_order();
                 let mut runtime = WmRuntime::new(&mut self.model);
-                runtime.request_select_workspace(workspace_id, window_order).is_some()
+                let changed = runtime.request_select_workspace(workspace_id, window_order).is_some();
+                self.pending_events.extend(runtime.take_events());
+                changed
             }
             None => false,
         }
+    }
+
+    fn select_next_workspace(&mut self) -> bool {
+        let window_order = self.window_order();
+        let mut runtime = WmRuntime::new(&mut self.model);
+        let changed = runtime.request_select_next_workspace(window_order).is_some();
+        self.pending_events.extend(runtime.take_events());
+        changed
+    }
+
+    fn select_previous_workspace(&mut self) -> bool {
+        let window_order = self.window_order();
+        let mut runtime = WmRuntime::new(&mut self.model);
+        let changed = runtime.request_select_previous_workspace(window_order).is_some();
+        self.pending_events.extend(runtime.take_events());
+        changed
     }
 
     fn assign_focused_window_to_workspace(&mut self, workspace: u8, toggle: bool) -> bool {
@@ -398,18 +544,23 @@ impl RuntimeState {
         } else {
             runtime.assign_focused_window_to_workspace(workspace_id, window_order)
         };
+        self.pending_events.extend(runtime.take_events());
 
         selection.focused_window_id.is_some() || self.model.focused_window_id.is_some()
     }
 
     fn toggle_focused_window_floating(&mut self) -> bool {
         let mut runtime = WmRuntime::new(&mut self.model);
-        runtime.toggle_focused_window_floating().is_some()
+        let changed = runtime.toggle_focused_window_floating().is_some();
+        self.pending_events.extend(runtime.take_events());
+        changed
     }
 
     fn toggle_focused_window_fullscreen(&mut self) -> bool {
         let mut runtime = WmRuntime::new(&mut self.model);
-        runtime.toggle_focused_window_fullscreen().is_some()
+        let changed = runtime.toggle_focused_window_fullscreen().is_some();
+        self.pending_events.extend(runtime.take_events());
+        changed
     }
 
     fn request_close_focused_window(&mut self) -> Option<(Window, WindowId)> {
@@ -427,6 +578,12 @@ impl RuntimeState {
         self.x_windows
             .iter()
             .find_map(|(x_window_id, window_id)| (window_id == focused_window_id).then_some(*x_window_id))
+    }
+
+    fn x_window_for_window_id(&self, target_window_id: &WindowId) -> Option<Window> {
+        self.x_windows
+            .iter()
+            .find_map(|(x_window_id, window_id)| (window_id == target_window_id).then_some(*x_window_id))
     }
 
     fn activate_x_window(&mut self, window: Window) -> Option<WindowId> {
@@ -476,6 +633,7 @@ impl RuntimeState {
     fn set_window_floating_geometry(&mut self, window_id: WindowId, geometry: WindowGeometry) {
         let mut runtime = WmRuntime::new(&mut self.model);
         let _ = runtime.set_window_floating_geometry(window_id, geometry);
+        self.pending_events.extend(runtime.take_events());
     }
 
     fn sync_actual_window_geometry(&mut self, window: Window, geometry: WindowGeometry) {
@@ -488,6 +646,7 @@ impl RuntimeState {
 
     fn current_layout_geometries(&mut self) -> Result<Vec<(Window, WindowGeometry)>> {
         let state = self.snapshot();
+        let ordered_window_ids = self.window_order();
         let Some(layout_service) = self.layout_service.as_mut() else {
             return Ok(Vec::new());
         };
@@ -533,15 +692,24 @@ impl RuntimeState {
             };
 
             let stylesheet_source = prepared.artifact.stylesheets.combined_source();
-            let windows = state
-                .windows
+            let ordered_windows = ordered_window_ids
                 .iter()
+                .filter_map(|window_id| state.windows.iter().find(|window| &window.id == window_id))
                 .filter(|window| {
                     window.workspace_id.as_ref() == Some(&workspace.id)
                         && window.output_id.as_ref() == Some(&output.id)
                         && window.mapped
                         && matches!(window.mode, WindowMode::Tiled)
-                })
+                });
+            let unordered_windows = state.windows.iter().filter(|window| {
+                !ordered_window_ids.contains(&window.id)
+                    && window.workspace_id.as_ref() == Some(&workspace.id)
+                    && window.output_id.as_ref() == Some(&output.id)
+                    && window.mapped
+                    && matches!(window.mode, WindowMode::Tiled)
+            });
+            let windows = ordered_windows
+                .chain(unordered_windows)
                 .map(|window| PreviewWindow {
                     id: window.id.to_string(),
                     app_id: window.app_id.clone(),
@@ -604,6 +772,7 @@ impl RuntimeState {
         let window_order = self.model.windows.keys().cloned().collect::<Vec<_>>();
         let mut runtime = WmRuntime::new(&mut self.model);
         let _ = runtime.unmap_window(window_id, window_order);
+        self.pending_events.extend(runtime.take_events());
     }
 
     fn remove_window(&mut self, window: Window) {
@@ -616,6 +785,7 @@ impl RuntimeState {
         let window_order = self.model.windows.keys().cloned().collect::<Vec<_>>();
         let mut runtime = WmRuntime::new(&mut self.model);
         let _ = runtime.remove_window(window_id, window_order);
+        self.pending_events.extend(runtime.take_events());
     }
 
     fn window_id_for_x_window(&self, window: Window) -> Option<WindowId> {
@@ -627,16 +797,91 @@ impl RuntimeState {
         self.stacking_order.push(x_window_id);
     }
 
+    fn swap_x_window_positions(&mut self, first: Window, second: Window) {
+        let Some(first_index) = self.stacking_order.iter().position(|candidate| *candidate == first) else {
+            return;
+        };
+        let Some(second_index) = self.stacking_order.iter().position(|candidate| *candidate == second) else {
+            return;
+        };
+
+        self.stacking_order.swap(first_index, second_index);
+    }
+
+    fn directional_swap_candidates(&mut self, ordered_window_ids: &[WindowId]) -> Vec<WindowGeometryCandidate> {
+        let mut geometry_by_window = self
+            .current_layout_geometries()
+            .ok()
+            .into_iter()
+            .flatten()
+            .filter_map(|(x_window, geometry)| self.window_id_for_x_window(x_window).map(|window_id| (window_id, geometry)))
+            .collect::<BTreeMap<_, _>>();
+
+        if geometry_by_window.is_empty()
+            && let Some(focus_tree) = self.model.focus_tree.as_ref()
+        {
+            for (index, window_id) in focus_tree.ordered_window_ids().iter().enumerate() {
+                geometry_by_window.entry(window_id.clone()).or_insert(WindowGeometry {
+                    x: index as i32 * 100,
+                    y: 0,
+                    width: 100,
+                    height: 100,
+                });
+            }
+        }
+
+        ordered_window_ids
+            .iter()
+            .filter_map(|window_id| {
+                geometry_by_window.get(window_id).copied().map(|geometry| WindowGeometryCandidate {
+                    window_id: window_id.clone(),
+                    geometry,
+                    scope_path: self
+                        .model
+                        .focus_scope_path(window_id)
+                        .map(|scope_path| scope_path.to_vec())
+                        .unwrap_or_else(|| vec![FocusTree::workspace_scope()]),
+                })
+            })
+            .collect()
+    }
+
     #[allow(dead_code)]
     fn refresh_outputs(&mut self, connection: &XCBConnection) -> Result<()> {
         let outputs = discover_outputs(connection, &self.screen)?;
+        let previous_outputs = self.outputs.clone();
+        let previous_current_output_id = self.model.current_output_id.clone();
         self.capabilities.randr =
             outputs.len() > 1 || outputs.iter().any(|output| output.x != 0 || output.y != 0);
         self.outputs = outputs.clone();
 
+        let previous_output_names = previous_outputs
+            .iter()
+            .map(|output| (output.output_id.clone(), output.name.clone()))
+            .collect::<BTreeMap<_, _>>();
+        let previous_workspace_by_output_name = self
+            .model
+            .outputs
+            .values()
+            .filter_map(|output| {
+                output
+                    .focused_workspace_id
+                    .clone()
+                    .map(|workspace_id| (output.name.clone(), workspace_id))
+            })
+            .collect::<BTreeMap<_, _>>();
+        let next_output_ids = outputs.iter().map(|output| output.output_id.clone()).collect::<BTreeSet<_>>();
+
         {
             let mut runtime = WmRuntime::new(&mut self.model);
             let mut host = NoopHost;
+
+            for removed_output_id in previous_output_names.keys().filter(|output_id| !next_output_ids.contains(*output_id)) {
+                let _ = runtime.handle_signal(
+                    &mut host,
+                    WmSignal::OutputRemoved { output_id: removed_output_id.clone() },
+                );
+            }
 
             for output in &outputs {
                 let _ = runtime.handle_signal(
@@ -653,7 +898,11 @@ impl RuntimeState {
             let _ = runtime.take_events();
         }
 
-        attach_workspaces_to_outputs(&mut self.model, &outputs);
+        preserve_workspace_output_attachments(
+            &mut self.model,
+            &outputs,
+            &previous_workspace_by_output_name,
+        );
         for output in &outputs {
             self.model.outputs.entry(output.output_id.clone()).and_modify(|model_output| {
                 model_output.logical_x = output.x;
@@ -661,7 +910,9 @@ impl RuntimeState {
             });
         }
 
-        if let Some(primary_output) = outputs.iter().find(|output| output.primary).or_else(|| outputs.first()) {
+        if let Some(current_output_id) = previous_current_output_id.filter(|output_id| next_output_ids.contains(output_id)) {
+            self.model.set_current_output(current_output_id);
+        } else if let Some(primary_output) = outputs.iter().find(|output| output.primary).or_else(|| outputs.first()) {
             self.model.set_current_output(primary_output.output_id.clone());
         }
 
@@ -1015,6 +1266,15 @@ fn collect_focus_tree_entries(
     }
 }
 
+fn navigation_direction(direction: spiders_core::command::FocusDirection) -> spiders_core::navigation::NavigationDirection {
+    match direction {
+        spiders_core::command::FocusDirection::Left => spiders_core::navigation::NavigationDirection::Left,
+        spiders_core::command::FocusDirection::Right => spiders_core::navigation::NavigationDirection::Right,
+        spiders_core::command::FocusDirection::Up => spiders_core::navigation::NavigationDirection::Up,
+        spiders_core::command::FocusDirection::Down => spiders_core::navigation::NavigationDirection::Down,
+    }
+}
+
 fn workareas_for_snapshot(snapshot: &StateSnapshot) -> Vec<u32> {
     snapshot
         .workspaces
@@ -1074,6 +1334,67 @@ fn attach_workspaces_to_outputs(model: &mut WmModel, outputs: &[DiscoveredOutput
     }
 }
 
+fn preserve_workspace_output_attachments(
+    model: &mut WmModel,
+    outputs: &[DiscoveredOutput],
+    previous_workspace_by_output_name: &BTreeMap<String, WorkspaceId>,
+) {
+    if outputs.is_empty() {
+        return;
+    }
+
+    let next_output_ids = outputs.iter().map(|output| output.output_id.clone()).collect::<BTreeSet<_>>();
+
+    for workspace in model.workspaces.values_mut() {
+        if workspace.output_id.as_ref().is_some_and(|output_id| !next_output_ids.contains(output_id)) {
+            workspace.output_id = None;
+            workspace.visible = false;
+            workspace.focused = false;
+        }
+    }
+
+    let workspace_ids = model.workspaces.keys().cloned().collect::<Vec<_>>();
+    let mut used_workspace_ids = BTreeSet::new();
+
+    for output in outputs {
+        if let Some(workspace_id) = previous_workspace_by_output_name.get(&output.name)
+            && model.workspaces.contains_key(workspace_id)
+        {
+            model.attach_workspace_to_output(workspace_id.clone(), output.output_id.clone());
+            model.outputs.entry(output.output_id.clone()).and_modify(|model_output| {
+                model_output.focused_workspace_id = Some(workspace_id.clone());
+            });
+            used_workspace_ids.insert(workspace_id.clone());
+        }
+    }
+
+    let mut available_workspace_ids = workspace_ids
+        .into_iter()
+        .filter(|workspace_id| !used_workspace_ids.contains(workspace_id))
+        .collect::<Vec<_>>()
+        .into_iter();
+
+    for output in outputs {
+        let already_attached = model
+            .workspaces
+            .values()
+            .any(|workspace| workspace.output_id.as_ref() == Some(&output.output_id));
+        if already_attached {
+            continue;
+        }
+
+        let Some(workspace_id) = available_workspace_ids.next() else {
+            continue;
+        };
+        model.attach_workspace_to_output(workspace_id.clone(), output.output_id.clone());
+        model.outputs.entry(output.output_id.clone()).and_modify(|model_output| {
+            if model_output.focused_workspace_id.is_none() {
+                model_output.focused_workspace_id = Some(workspace_id.clone());
+            }
+        });
+    }
+}
+
 fn install_managed_window_event_mask<C: Connection>(connection: &C, window: Window) -> Result<()> {
     connection
         .change_window_attributes(
@@ -1127,9 +1448,94 @@ impl WmHost for NoopHost {
 struct BackendManageHandler<'a> {
     atoms: Atoms,
     state: &'a mut RuntimeState,
+    ipc_listener: Option<&'a UnixListener>,
 }
 
 impl ManageEventHandler for BackendManageHandler<'_> {
+    fn should_exit(&self) -> bool {
+        self.state.quit_requested
+    }
+
+    fn on_ipc_listener_ready(
+        &mut self,
+        handle: &calloop::LoopHandle<'_, ManageLoopDispatchState>,
+    ) -> Result<()> {
+        let Some(listener) = self.ipc_listener else {
+            return Ok(());
+        };
+
+        for (client_id, stream) in accept_pending_ipc_clients(&mut self.state.ipc, listener) {
+            register_ipc_client_source(handle, client_id, &stream)?;
+        }
+
+        Ok(())
+    }
+
+    fn on_ipc_client_ready(
+        &mut self,
+        connection: &XCBConnection,
+        _handle: &calloop::LoopHandle<'_, ManageLoopDispatchState>,
+        client_id: spiders_ipc::IpcClientId,
+    ) -> Result<()> {
+        let mut ipc = std::mem::take(&mut self.state.ipc);
+        let result = {
+            let mut handler = X11IpcHandler { backend: self, connection };
+            spiders_ipc_native::serve_ipc_client_once(&mut ipc, client_id, &mut handler)
+        };
+        self.state.ipc = ipc;
+
+        match result {
+            Ok(_) => Ok(()),
+            Err(NativeIpcServeError::Transport(IpcTransportError::Io(error)))
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::WouldBlock
+                        | std::io::ErrorKind::UnexpectedEof
+                        | std::io::ErrorKind::ConnectionReset
+                        | std::io::ErrorKind::BrokenPipe
+                ) =>
+            {
+                self.state.ipc.remove_client(client_id);
+                Ok(())
+            }
+            Err(NativeIpcServeError::Transport(IpcTransportError::Codec(
+                spiders_ipc::IpcCodecError::EmptyFrame,
+            ))) => {
+                self.state.ipc.remove_client(client_id);
+                Ok(())
+            }
+            Err(NativeIpcServeError::UnknownClient(_)) => Ok(()),
+            Err(NativeIpcServeError::Transport(IpcTransportError::Codec(error))) => {
+                warn!(client_id, %error, "discarding malformed wm-x IPC request");
+                let response = self
+                    .state
+                    .ipc
+                    .server
+                    .error_response(client_id, None, error.to_string())
+                    .map_err(anyhow::Error::from)?;
+                if let Some(stream) = self.state.ipc.clients.get_mut(&client_id)
+                    && let Err(error) = send_response(stream, &response)
+                {
+                    warn!(client_id, %error, "failed to send wm-x IPC error response");
+                    self.state.ipc.remove_client(client_id);
+                }
+                Ok(())
+            }
+            Err(NativeIpcServeError::Transport(IpcTransportError::Io(error))) => {
+                Err(error).context("failed reading wm-x IPC request")
+            }
+            Err(NativeIpcServeError::Handler(error)) => Err(anyhow::Error::new(error)),
+        }
+    }
+
+    fn after_dispatch(&mut self, _connection: &XCBConnection) -> Result<()> {
+        for event in self.state.take_pending_events() {
+            self.state.ipc.broadcast_event(event);
+        }
+
+        Ok(())
+    }
+
     fn on_map_request(&mut self, connection: &XCBConnection, window: Window) -> Result<()> {
         if let Some(discovered) = discover_window_for_event(connection, &self.atoms, window)? {
             install_managed_window_event_mask(connection, window)?;
@@ -1397,12 +1803,45 @@ impl ManageEventHandler for BackendManageHandler<'_> {
     }
 }
 
+struct X11IpcHandler<'a, 'b> {
+    backend: &'a mut BackendManageHandler<'b>,
+    connection: &'a XCBConnection,
+}
+
+impl IpcHandler for X11IpcHandler<'_, '_> {
+    type Error = std::io::Error;
+
+    fn handle_query(&mut self, query: QueryRequest) -> Result<QueryResponse, Self::Error> {
+        Ok(self.backend.state.query(query))
+    }
+
+    fn handle_command(
+        &mut self,
+        command: spiders_core::command::WmCommand,
+    ) -> Result<(), Self::Error> {
+        self.backend.execute_command(self.connection, command).map_err(std::io::Error::other)
+    }
+
+    fn handle_debug(&mut self, request: DebugRequest) -> Result<spiders_ipc::DebugResponse, Self::Error> {
+        match request {
+            DebugRequest::Dump { kind } => {
+                let state_json = serde_json::to_string_pretty(&self.backend.state.snapshot())?;
+                handle_debug_dump(kind, &state_json).map_err(std::io::Error::other)
+            }
+        }
+    }
+}
+
 impl BackendManageHandler<'_> {
     fn execute_command(&mut self, connection: &XCBConnection, command: spiders_core::command::WmCommand) -> Result<()> {
+        let root_window = self.state.screen.root_window;
         let post_actions = {
             let mut host = X11CommandHost {
                 state: self.state,
+                connection,
                 relayout_needed: false,
+                rebind_needed: false,
+                previous_bindings: None,
                 publish_ewmh_needed: false,
                 focused_window: None,
                 close_request: None,
@@ -1411,6 +1850,8 @@ impl BackendManageHandler<'_> {
             dispatch_wm_command(&mut host, command);
             PostCommandActions {
                 relayout_needed: host.relayout_needed,
+                rebind_needed: host.rebind_needed,
+                previous_bindings: host.previous_bindings,
                 publish_ewmh_needed: host.publish_ewmh_needed,
                 focused_window: host.focused_window,
                 close_request: host.close_request,
@@ -1430,6 +1871,12 @@ impl BackendManageHandler<'_> {
         if post_actions.relayout_needed {
             self.apply_shared_layout(connection)?;
             publish_ewmh_needed = true;
+        }
+        if post_actions.rebind_needed {
+            if let Some(previous_bindings) = post_actions.previous_bindings.as_ref() {
+                uninstall_key_grabs(connection, root_window, previous_bindings)?;
+            }
+            install_key_grabs(connection, root_window, &self.state.keyboard_bindings.installed)?;
         }
         if publish_ewmh_needed {
             self.state.publish_ewmh_state(connection, self.atoms)?;
@@ -1612,7 +2059,10 @@ fn supports_wm_delete_window(
 
 struct X11CommandHost<'a> {
     state: &'a mut RuntimeState,
+    connection: &'a XCBConnection,
     relayout_needed: bool,
+    rebind_needed: bool,
+    previous_bindings: Option<Vec<input::InstalledBinding>>,
     publish_ewmh_needed: bool,
     focused_window: Option<Window>,
     close_request: Option<(Window, WindowId)>,
@@ -1620,6 +2070,8 @@ struct X11CommandHost<'a> {
 
 struct PostCommandActions {
     relayout_needed: bool,
+    rebind_needed: bool,
+    previous_bindings: Option<Vec<input::InstalledBinding>>,
     publish_ewmh_needed: bool,
     focused_window: Option<Window>,
     close_request: Option<(Window, WindowId)>,
@@ -1635,12 +2087,14 @@ impl WmHost for X11CommandHost<'_> {
                 }
             }
             WmHostEffect::RequestQuit => {
-                warn!("spiders-wm-x received quit request but quit handling is not implemented yet");
+                self.state.quit_requested = true;
+                info!("spiders-wm-x received quit request");
             }
             WmHostEffect::ActivateWorkspace { target } => {
                 let changed = match target {
                     WorkspaceTarget::Named(name) => self.state.select_named_workspace(name),
-                    WorkspaceTarget::Next | WorkspaceTarget::Previous => false,
+                    WorkspaceTarget::Next => self.state.select_next_workspace(),
+                    WorkspaceTarget::Previous => self.state.select_previous_workspace(),
                 };
                 self.relayout_needed |= changed;
                 self.publish_ewmh_needed |= changed;
@@ -1652,9 +2106,6 @@ impl WmHost for X11CommandHost<'_> {
                 };
                 self.relayout_needed |= changed;
                 self.publish_ewmh_needed |= changed;
-            }
-            WmHostEffect::SpawnTerminal => {
-                warn!("spiders-wm-x received spawn-terminal effect but no terminal command is configured");
             }
             WmHostEffect::FocusWindow { target } => {
                 let focused_window_id = match target {
@@ -1677,7 +2128,21 @@ impl WmHost for X11CommandHost<'_> {
                 self.close_request = self.state.request_close_focused_window();
             }
             WmHostEffect::ReloadConfig => {
-                warn!("spiders-wm-x reload-config effect is not implemented yet");
+                let previous_bindings = self.state.keyboard_bindings.installed.clone();
+                match self.state.reload_config(self.connection) {
+                    Ok(changed) => {
+                        self.relayout_needed |= changed;
+                        self.rebind_needed |= changed;
+                        self.previous_bindings = Some(previous_bindings);
+                        self.publish_ewmh_needed |= changed;
+                        if changed {
+                            self.state.pending_events.push(WmEvent::ConfigReloaded);
+                        }
+                    }
+                    Err(error) => {
+                        warn!(?error, "spiders-wm-x failed to reload config");
+                    }
+                }
             }
             WmHostEffect::ToggleFocusedWindow { toggle } => {
                 let changed = match toggle {
@@ -1688,11 +2153,14 @@ impl WmHost for X11CommandHost<'_> {
                 self.publish_ewmh_needed |= changed;
             }
             WmHostEffect::SwapFocusedWindow { direction } => {
-                warn!(?direction, "spiders-wm-x swap-focused-window effect is not implemented yet");
+                let changed = self.state.swap_focused_window_direction(direction);
+                self.relayout_needed |= changed;
+                self.publish_ewmh_needed |= changed;
             }
             WmHostEffect::SetLayout { name } => {
                 let mut runtime = WmRuntime::new(&mut self.state.model);
                 let changed = runtime.set_current_workspace_layout(name).is_some();
+                self.state.pending_events.extend(runtime.take_events());
                 self.relayout_needed |= changed;
                 self.publish_ewmh_needed |= changed;
             }
@@ -1700,6 +2168,7 @@ impl WmHost for X11CommandHost<'_> {
                 let config = self.state.config.clone();
                 let mut runtime = WmRuntime::new(&mut self.state.model);
                 let changed = runtime.cycle_current_workspace_layout(&config, direction).is_some();
+                self.state.pending_events.extend(runtime.take_events());
                 self.relayout_needed |= changed;
                 self.publish_ewmh_needed |= changed;
             }
@@ -1721,10 +2190,215 @@ fn x11_spawn_command(display_name: &str, command: &str) -> std::io::Result<std::
 
 #[cfg(test)]
 mod tests {
-    use super::{output_geometry, should_window_be_visible};
+    use super::{
+        X11CommandHost, RuntimeState, ScreenDescriptor, output_geometry,
+        preserve_workspace_output_attachments, should_window_be_visible,
+    };
+    use spiders_core::effect::WmHostEffect;
+    use spiders_config::model::Config;
+    use spiders_core::focus::{FocusTree, FocusTreeWindowGeometry};
     use spiders_core::snapshot::{OutputSnapshot, StateSnapshot, WindowSnapshot, WorkspaceSnapshot};
     use spiders_core::types::{LayoutRef, OutputTransform, ShellKind, WindowMode};
+    use spiders_core::wm::WindowGeometry;
     use spiders_core::{OutputId, WindowId, WorkspaceId};
+    use spiders_wm_runtime::WmHost;
+
+    use crate::backend::input::KeyboardBindings;
+    use x11rb::xcb_ffi::XCBConnection;
+
+    #[test]
+    fn request_quit_sets_quit_flag() {
+        let mut state = test_runtime_state();
+        let (connection, _) = XCBConnection::connect(None).expect("x11 connection");
+        let mut host = X11CommandHost {
+            state: &mut state,
+            connection: &connection,
+            relayout_needed: false,
+            rebind_needed: false,
+            previous_bindings: None,
+            publish_ewmh_needed: false,
+            focused_window: None,
+            close_request: None,
+        };
+
+        host.on_effect(WmHostEffect::RequestQuit);
+
+        assert!(host.state.quit_requested);
+    }
+
+    #[test]
+    fn preserve_workspace_output_attachments_keeps_named_output_assignments() {
+        let mut model = test_runtime_state().model;
+        model.attach_workspace_to_output(WorkspaceId::from("1"), OutputId::from("out-1"));
+        model.attach_workspace_to_output(WorkspaceId::from("2"), OutputId::from("out-2"));
+        model.outputs.entry(OutputId::from("out-1")).and_modify(|output| {
+            output.name = "HDMI-1".into();
+            output.focused_workspace_id = Some(WorkspaceId::from("1"));
+        });
+        model.outputs.entry(OutputId::from("out-2")).and_modify(|output| {
+            output.name = "DP-1".into();
+            output.focused_workspace_id = Some(WorkspaceId::from("2"));
+        });
+
+        preserve_workspace_output_attachments(
+            &mut model,
+            &[
+                super::output::DiscoveredOutput {
+                    output_id: OutputId::from("out-2b"),
+                    name: "DP-1".into(),
+                    x: 1920,
+                    y: 0,
+                    width: 1920,
+                    height: 1080,
+                    primary: false,
+                },
+                super::output::DiscoveredOutput {
+                    output_id: OutputId::from("out-1b"),
+                    name: "HDMI-1".into(),
+                    x: 0,
+                    y: 0,
+                    width: 1920,
+                    height: 1080,
+                    primary: true,
+                },
+            ],
+            &std::collections::BTreeMap::from([
+                ("HDMI-1".to_string(), WorkspaceId::from("1")),
+                ("DP-1".to_string(), WorkspaceId::from("2")),
+            ]),
+        );
+
+        assert_eq!(
+            model.workspaces.get(&WorkspaceId::from("1")).and_then(|workspace| workspace.output_id.clone()),
+            Some(OutputId::from("out-1b"))
+        );
+        assert_eq!(
+            model.workspaces.get(&WorkspaceId::from("2")).and_then(|workspace| workspace.output_id.clone()),
+            Some(OutputId::from("out-2b"))
+        );
+    }
+
+    #[test]
+    fn preserve_workspace_output_attachments_assigns_new_output_to_unattached_workspace() {
+        let mut model = test_runtime_state().model;
+        model.attach_workspace_to_output(WorkspaceId::from("1"), OutputId::from("out-1"));
+        model.outputs.entry(OutputId::from("out-1")).and_modify(|output| {
+            output.name = "HDMI-1".into();
+            output.focused_workspace_id = Some(WorkspaceId::from("1"));
+        });
+
+        preserve_workspace_output_attachments(
+            &mut model,
+            &[
+                super::output::DiscoveredOutput {
+                    output_id: OutputId::from("out-1b"),
+                    name: "HDMI-1".into(),
+                    x: 0,
+                    y: 0,
+                    width: 1920,
+                    height: 1080,
+                    primary: true,
+                },
+                super::output::DiscoveredOutput {
+                    output_id: OutputId::from("out-2b"),
+                    name: "DP-1".into(),
+                    x: 1920,
+                    y: 0,
+                    width: 1920,
+                    height: 1080,
+                    primary: false,
+                },
+            ],
+            &std::collections::BTreeMap::from([("HDMI-1".to_string(), WorkspaceId::from("1"))]),
+        );
+
+        assert_eq!(
+            model.workspaces.get(&WorkspaceId::from("1")).and_then(|workspace| workspace.output_id.clone()),
+            Some(OutputId::from("out-1b"))
+        );
+        assert_eq!(
+            model.workspaces.get(&WorkspaceId::from("2")).and_then(|workspace| workspace.output_id.clone()),
+            Some(OutputId::from("out-2b"))
+        );
+    }
+
+    #[test]
+    fn select_next_workspace_advances_current_workspace() {
+        let mut state = test_runtime_state();
+
+        assert!(state.select_next_workspace());
+        assert_eq!(state.model.current_workspace_id, Some(WorkspaceId::from("2")));
+
+        assert!(state.select_next_workspace());
+        assert_eq!(state.model.current_workspace_id, Some(WorkspaceId::from("3")));
+
+        assert!(state.select_next_workspace());
+        assert_eq!(state.model.current_workspace_id, Some(WorkspaceId::from("1")));
+    }
+
+    #[test]
+    fn select_previous_workspace_rewinds_current_workspace() {
+        let mut state = test_runtime_state();
+
+        assert!(state.select_previous_workspace());
+        assert_eq!(state.model.current_workspace_id, Some(WorkspaceId::from("3")));
+
+        assert!(state.select_previous_workspace());
+        assert_eq!(state.model.current_workspace_id, Some(WorkspaceId::from("2")));
+    }
+
+    #[test]
+    fn swap_focused_window_direction_swaps_neighbor_positions() {
+        let mut state = test_runtime_state();
+        state.model.insert_window(WindowId::from("w1"), Some(WorkspaceId::from("1")), Some(OutputId::from("out-1")));
+        state.model.insert_window(WindowId::from("w2"), Some(WorkspaceId::from("1")), Some(OutputId::from("out-1")));
+        state.model.insert_window(WindowId::from("w3"), Some(WorkspaceId::from("1")), Some(OutputId::from("out-1")));
+        state.model.set_window_mapped(WindowId::from("w1"), true);
+        state.model.set_window_mapped(WindowId::from("w2"), true);
+        state.model.set_window_mapped(WindowId::from("w3"), true);
+        state.model.set_window_focused(Some(WindowId::from("w1")));
+        state.x_windows.insert(11, WindowId::from("w1"));
+        state.x_windows.insert(22, WindowId::from("w2"));
+        state.x_windows.insert(33, WindowId::from("w3"));
+        state.stacking_order = vec![11, 22, 33];
+        state.model.set_focus_tree_value(Some(FocusTree::from_window_geometries(&[
+            FocusTreeWindowGeometry {
+                window_id: WindowId::from("w1"),
+                geometry: WindowGeometry { x: 0, y: 0, width: 400, height: 400 },
+            },
+            FocusTreeWindowGeometry {
+                window_id: WindowId::from("w2"),
+                geometry: WindowGeometry { x: 500, y: 0, width: 400, height: 400 },
+            },
+            FocusTreeWindowGeometry {
+                window_id: WindowId::from("w3"),
+                geometry: WindowGeometry { x: 0, y: 500, width: 400, height: 400 },
+            },
+        ])));
+
+        assert!(state.swap_focused_window_direction(spiders_core::command::FocusDirection::Right));
+        assert_eq!(state.stacking_order, vec![22, 11, 33]);
+        assert_eq!(state.model.focused_window_id, Some(WindowId::from("w1")));
+    }
+
+    #[test]
+    fn swap_focused_window_direction_returns_false_without_directional_neighbor() {
+        let mut state = test_runtime_state();
+        state.model.insert_window(WindowId::from("w1"), Some(WorkspaceId::from("1")), Some(OutputId::from("out-1")));
+        state.model.set_window_mapped(WindowId::from("w1"), true);
+        state.model.set_window_focused(Some(WindowId::from("w1")));
+        state.x_windows.insert(11, WindowId::from("w1"));
+        state.stacking_order = vec![11];
+        state.model.set_focus_tree_value(Some(FocusTree::from_window_geometries(&[
+            FocusTreeWindowGeometry {
+                window_id: WindowId::from("w1"),
+                geometry: WindowGeometry { x: 0, y: 0, width: 500, height: 900 },
+            },
+        ])));
+
+        assert!(!state.swap_focused_window_direction(spiders_core::command::FocusDirection::Right));
+        assert_eq!(state.stacking_order, vec![11]);
+    }
 
     #[test]
     fn window_visibility_tracks_workspace_visibility() {
@@ -1808,5 +2482,32 @@ mod tests {
         assert_eq!(geometry.y, 50);
         assert_eq!(geometry.width, 2560);
         assert_eq!(geometry.height, 1440);
+    }
+
+    fn test_runtime_state() -> RuntimeState {
+        let config = Config {
+            workspaces: vec!["1".into(), "2".into(), "3".into()],
+            ..Config::default()
+        };
+
+        RuntimeState::bootstrap(
+            None,
+            ":1".into(),
+            config,
+            ScreenDescriptor { index: 0, root_window: 1, width: 1440, height: 900 },
+            Default::default(),
+            2,
+            &[super::output::DiscoveredOutput {
+                output_id: OutputId::from("out-1"),
+                name: "screen-0".into(),
+                x: 0,
+                y: 0,
+                width: 1440,
+                height: 900,
+                primary: true,
+            }],
+            &[],
+            KeyboardBindings::empty_for_tests(),
+        )
     }
 }

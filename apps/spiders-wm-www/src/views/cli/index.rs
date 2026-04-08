@@ -41,6 +41,9 @@ mod wasm {
         #[wasm_bindgen(catch, js_name = replaceXtermInput)]
         fn replace_xterm_input_js(handle: &JsValue, input: &str) -> Result<(), JsValue>;
 
+        #[wasm_bindgen(catch, js_name = focusXtermTerminal)]
+        fn focus_xterm_terminal_js(handle: &JsValue) -> Result<(), JsValue>;
+
     }
 
     pub struct XtermHandle {
@@ -64,6 +67,10 @@ mod wasm {
 
         pub fn replace_input(&self, input: &str) -> Result<(), String> {
             replace_xterm_input_js(&self.handle, input).map_err(js_error_message)
+        }
+
+        pub fn focus(&self) -> Result<(), String> {
+            focus_xterm_terminal_js(&self.handle).map_err(js_error_message)
         }
 
     }
@@ -107,7 +114,10 @@ pub fn CliView() -> impl IntoView {
     let app_state = expect_context::<AppState>();
     let terminal_mount = NodeRef::<html::Div>::new();
     let terminal_error = RwSignal::new(None::<String>);
-    let transcript = RwSignal::new(Vec::<String>::new());
+    let transcript = RwSignal::new(vec![
+        "spiders-wm browser cli".to_string(),
+        "type 'help' for commands".to_string(),
+    ]);
     let suggestions = RwSignal::new(Vec::<String>::new());
     let terminal_handle = Rc::new(RefCell::new(None::<XtermHandle>));
 
@@ -141,6 +151,7 @@ pub fn CliView() -> impl IntoView {
                 },
             ) {
                 Ok(handle) => {
+                    let _ = handle.focus();
                     *terminal_handle.borrow_mut() = Some(handle);
                     terminal_error.set(None);
                 }
@@ -192,11 +203,11 @@ pub fn CliView() -> impl IntoView {
                         }
                     }
                 >
-                    <div node_ref=terminal_mount class="h-full min-h-[24rem] w-full bg-terminal-bg-panel" />
+                    <div node_ref=terminal_mount class="h-full min-h-[24rem] w-full overflow-hidden bg-terminal-bg-panel" />
                 </Show>
             </Panel>
 
-            <div class="grid gap-2 min-h-0 xl:grid-rows-[auto_minmax(0,1fr)]">
+            <div class="grid gap-2 min-h-0">
                 <Panel>
                     <PanelBar>
                         <div>"cli://commands"</div>
@@ -207,29 +218,6 @@ pub fn CliView() -> impl IntoView {
                         </div>
                         <div class="border border-terminal-border bg-terminal-bg-panel px-2 py-1">
                             "Tab completes from shared cli metadata. Suggestions below are powered by spiders-cli-core."
-                        </div>
-                    </div>
-                </Panel>
-
-                <Panel>
-                    <PanelBar>
-                        <div>"cli://suggestions"</div>
-                    </PanelBar>
-                    <div class="overflow-auto p-2 min-h-0 text-sm text-terminal-muted">
-                        <div class="grid gap-1">
-                            {move || {
-                                suggestions
-                                    .get()
-                                    .into_iter()
-                                    .map(|line| {
-                                        view! {
-                                            <div class="border border-terminal-border bg-terminal-bg-panel px-2 py-1">
-                                                {line}
-                                            </div>
-                                        }
-                                    })
-                                    .collect_view()
-                            }}
                         </div>
                     </div>
                 </Panel>
@@ -367,23 +355,65 @@ fn handle_tab_completion(
             .collect(),
     );
 
-    if candidates.len() == 1 {
-        let mut next_tokens = input.split_whitespace().map(str::to_string).collect::<Vec<_>>();
-        if input.trim().is_empty() {
-            next_tokens = vec![candidates[0].value.clone()];
-        } else if ends_with_space {
-            next_tokens.push(candidates[0].value.clone());
-        } else if let Some(last) = next_tokens.last_mut() {
-            *last = candidates[0].value.clone();
-        }
-        let completed = format!("{} ", next_tokens.join(" "));
+    let Some(completed) = completed_input(&input, ends_with_space, &candidates) else {
+        return;
+    };
 
-        if let Some(handle) = terminal_handle.borrow().as_ref()
-            && let Err(error) = handle.replace_input(&completed)
-        {
-            transcript.update(|lines| lines.push(format!("< completion error: {error}")));
+    if let Some(handle) = terminal_handle.borrow().as_ref()
+        && let Err(error) = handle.replace_input(&completed)
+    {
+        transcript.update(|lines| lines.push(format!("< completion error: {error}")));
+    }
+}
+
+fn completed_input(
+    input: &str,
+    ends_with_space: bool,
+    candidates: &[spiders_cli_core::CompletionCandidate],
+) -> Option<String> {
+    if candidates.is_empty() {
+        return None;
+    }
+
+    let completion = if candidates.len() == 1 {
+        candidates[0].value.clone()
+    } else {
+        shared_prefix(candidates)?
+    };
+
+    let mut next_tokens = input.split_whitespace().map(str::to_string).collect::<Vec<_>>();
+    if input.trim().is_empty() {
+        next_tokens = vec![completion.clone()];
+    } else if ends_with_space {
+        next_tokens.push(completion.clone());
+    } else if let Some(last) = next_tokens.last_mut() {
+        if *last == completion {
+            return None;
+        }
+        *last = completion.clone();
+    }
+
+    let mut completed = next_tokens.join(" ");
+    if candidates.len() == 1 {
+        completed.push(' ');
+    }
+    Some(completed)
+}
+
+fn shared_prefix(candidates: &[spiders_cli_core::CompletionCandidate]) -> Option<String> {
+    let mut prefix = candidates.first()?.value.clone();
+    for candidate in &candidates[1..] {
+        let shared_len = prefix
+            .chars()
+            .zip(candidate.value.chars())
+            .take_while(|(left, right)| left == right)
+            .count();
+        prefix = prefix.chars().take(shared_len).collect();
+        if prefix.is_empty() {
+            return None;
         }
     }
+    Some(prefix)
 }
 
 fn run_browser_config_command(

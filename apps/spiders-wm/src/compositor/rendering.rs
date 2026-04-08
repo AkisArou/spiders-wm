@@ -1,4 +1,5 @@
 use smithay::backend::renderer::damage::OutputDamageTracker;
+use smithay::desktop::layer_map_for_output;
 use smithay::output::Output;
 use smithay::utils::Rectangle;
 use smithay::wayland::compositor::CompositorHandler;
@@ -26,6 +27,16 @@ impl SpidersWm {
             }
 
             record.window.send_frame(
+                output,
+                self.start_time.elapsed(),
+                Some(std::time::Duration::ZERO),
+                |_, _| Some(output.clone()),
+            );
+        }
+
+        let map = layer_map_for_output(output);
+        for layer in map.layers() {
+            layer.send_frame(
                 output,
                 self.start_time.elapsed(),
                 Some(std::time::Duration::ZERO),

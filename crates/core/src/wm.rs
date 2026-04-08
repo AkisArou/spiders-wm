@@ -40,6 +40,8 @@ pub struct WindowModel {
     pub title: Option<String>,
     pub class: Option<String>,
     pub instance: Option<String>,
+    pub role: Option<String>,
+    pub window_type: Option<String>,
     pub output_id: Option<OutputId>,
     pub workspace_id: Option<WorkspaceId>,
     pub mapped: bool,
@@ -47,6 +49,7 @@ pub struct WindowModel {
     pub floating: bool,
     pub floating_geometry: Option<WindowGeometry>,
     pub fullscreen: bool,
+    pub urgent: bool,
     pub closing: bool,
 }
 
@@ -58,6 +61,8 @@ impl Default for WindowModel {
             title: None,
             class: None,
             instance: None,
+            role: None,
+            window_type: None,
             output_id: None,
             workspace_id: None,
             mapped: false,
@@ -65,6 +70,7 @@ impl Default for WindowModel {
             floating: false,
             floating_geometry: None,
             fullscreen: false,
+            urgent: false,
             closing: false,
         }
     }
@@ -540,12 +546,18 @@ impl WmModel {
         app_id: Option<String>,
         class: Option<String>,
         instance: Option<String>,
+        role: Option<String>,
+        window_type: Option<String>,
+        urgent: bool,
     ) {
         if let Some(window) = self.windows.get_mut(&id) {
             window.title = title;
             window.app_id = app_id;
             window.class = class;
             window.instance = instance;
+            window.role = role;
+            window.window_type = window_type;
+            window.urgent = urgent;
         }
     }
 
@@ -804,6 +816,9 @@ mod tests {
             Some("foot".to_string()),
             Some("foot".to_string()),
             Some("foot".to_string()),
+            None,
+            None,
+            false,
         );
 
         let window = model.windows.get(&window_id(3)).expect("window missing");

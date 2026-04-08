@@ -2,6 +2,8 @@ import "@xterm/xterm/css/xterm.css";
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 
+const xtermCssHref = new URL("@xterm/xterm/css/xterm.css", import.meta.url).href;
+
 interface XtermHostHandle {
   host: HTMLElement;
   terminal: Terminal;
@@ -14,6 +16,8 @@ interface XtermHostHandle {
   suggestionAnchor: HTMLDivElement;
 }
 
+const PROMPT = "cli> ";
+
 function ensureXtermStyles() {
   const styleId = "spiders-wm-xterm-host-css";
   if (document.getElementById(styleId)) return;
@@ -21,8 +25,21 @@ function ensureXtermStyles() {
   const link = document.createElement("link");
   link.id = styleId;
   link.rel = "stylesheet";
-  link.href = "/monaco/xterm-host.css";
+  link.href = xtermCssHref;
   document.head.appendChild(link);
+}
+
+function hideHelperTextarea(host: HTMLElement) {
+  const helper = host.querySelector<HTMLTextAreaElement>(".xterm-helper-textarea");
+  if (!helper) return;
+
+  helper.setAttribute("aria-label", "Terminal input");
+  helper.style.position = "absolute";
+  helper.style.left = "-9999px";
+  helper.style.top = "0";
+  helper.style.width = "1px";
+  helper.style.height = "1px";
+  helper.style.opacity = "0";
 }
 
 function printPrompt(handle: XtermHostHandle) {
@@ -36,28 +53,6 @@ function replaceCurrentInput(handle: XtermHostHandle, nextInput: string) {
   if (previousWidth > nextInput.length) {
     handle.terminal.write(" ".repeat(previousWidth - nextInput.length));
     handle.terminal.write(`\r${handle.prompt}${nextInput}`);
-  }
-}
-
-function commandFromInput(input: string) {
-  const trimmed = input.trim();
-  if (!trimmed) return null;
-
-  switch (trimmed) {
-    case "help":
-      return { kind: "help" as const };
-    case "state":
-      return { kind: "query-state" as const };
-    case "workspace-names":
-      return { kind: "query-workspace-names" as const };
-    case "subscribe":
-      return { kind: "subscribe-all" as const };
-    case "cycle-layout":
-      return { kind: "cycle-layout" as const };
-    case "clear":
-      return { kind: "clear" as const };
-    default:
-      return { kind: "unknown" as const, input: trimmed };
   }
 }
 
@@ -99,6 +94,11 @@ export function createXtermTerminal(
   terminal.loadAddon(fitAddon);
   terminal.open(host);
   fitAddon.fit();
+  hideHelperTextarea(host);
+  host.addEventListener("mousedown", () => {
+    terminal.focus();
+    hideHelperTextarea(host);
+  });
 
   const handle: XtermHostHandle = {
     host,
@@ -106,55 +106,28 @@ export function createXtermTerminal(
     fitAddon,
     currentInput: "",
     beforeInput: "",
-    prompt: "ipc> ",
+    prompt: PROMPT,
     onDataDisposable: { dispose() {} },
     suggestionAnchor: document.createElement("div"),
     resizeObserver: new ResizeObserver(() => {
       fitAddon.fit();
+      hideHelperTextarea(host);
     }),
   };
-
-  terminal.writeln("spiders-wm browser ipc terminal");
-  terminal.writeln("type: help, state, workspace-names, subscribe, cycle-layout, clear");
-  terminal.write(handle.prompt);
 
   handle.onDataDisposable = terminal.onData((data) => {
     switch (data) {
       case "\r": {
         const input = handle.currentInput;
-        const command = commandFromInput(input);
         terminal.write("\r\n");
         handle.currentInput = "";
 
-        if (!command) {
+        if (!input.trim()) {
           terminal.write(handle.prompt);
           return;
         }
 
-        if (command.kind === "help") {
-          terminal.writeln("help: show commands");
-          terminal.writeln("state: query state snapshot");
-          terminal.writeln("workspace-names: query configured workspaces");
-          terminal.writeln("subscribe: subscribe to all IPC events");
-          terminal.writeln("cycle-layout: dispatch cycle-layout command");
-          terminal.writeln("clear: clear terminal output");
-          terminal.write(handle.prompt);
-          return;
-        }
-
-        if (command.kind === "clear") {
-          terminal.clear();
-          terminal.write(handle.prompt);
-          return;
-        }
-
-        if (command.kind === "unknown") {
-          terminal.writeln(`unknown command: ${command.input}`);
-          terminal.write(handle.prompt);
-          return;
-        }
-
-        onCommand(command.kind);
+        onCommand(input);
         terminal.write(handle.prompt);
         return;
       }
@@ -178,6 +151,7 @@ export function createXtermTerminal(
   });
 
   handle.resizeObserver.observe(host);
+  terminal.focus();
   (globalThis as any).__spidersXtermDebug = handle;
   return handle;
 }
@@ -186,21 +160,26 @@ export function replaceXtermInput(handle: XtermHostHandle, input: string) {
   replaceCurrentInput(handle, input);
 }
 
+export function focusXtermTerminal(handle: XtermHostHandle) {
+  handle.terminal.focus();
+  hideHelperTextarea(handle.host);
+}
+
 export function xtermInput(handle: XtermHostHandle) {
   return handle.currentInput;
 }
 
 export function writeXtermLines(handle: XtermHostHandle, lines: string[]) {
-  if (!lines.length) return;
-  for (const line of lines) {
-    handle.terminal.writeln(line);
+  if (lines.length) {
+    for (const line of lines) {
+      handle.terminal.writeln(line);
+    }
   }
-  handle.terminal.write(handle.prompt + handle.currentInput);
+  handle.terminal.write(handle.currentInput ? handle.prompt + handle.currentInput : handle.prompt);
 }
 
 export function clearXtermTerminal(handle: XtermHostHandle) {
   handle.terminal.clear();
-  handle.terminal.write(handle.prompt + handle.currentInput);
 }
 
 export function disposeXtermTerminal(handle: XtermHostHandle) {

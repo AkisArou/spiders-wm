@@ -1,19 +1,18 @@
 #![allow(dead_code)]
 
-use std::collections::BTreeMap;
-use std::os::unix::net::{UnixListener, UnixStream};
+use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 
 use smithay::reexports::calloop::{EventLoop, Interest, Mode, PostAction, generic::Generic};
-use spiders_core::command::WmCommand;
 use spiders_core::event::WmEvent;
 use spiders_core::query::{QueryRequest, QueryResponse, query_response_for_model};
-use spiders_ipc::{
-    DebugRequest, IpcClientId, IpcCodecError, IpcRequest, IpcResponse, IpcServerHandleResult,
-    IpcServerState, IpcTransportError, UnknownClientError, bind_listener, recv_request,
-    send_response,
+use spiders_ipc::{DebugRequest, IpcClientId, IpcCodecError, IpcResponse, IpcServerState};
+use spiders_ipc_core::{IpcHandler, resolve_ipc_request};
+use spiders_ipc_native::{
+    IpcTransportError, NativeIpcServeError, accept_pending_ipc_clients, bind_native_ipc_listener,
+    default_ipc_socket_path, serve_ipc_client_once,
 };
-use tracing::{debug, warn};
+use tracing::warn;
 
 use crate::state::SpidersWm;
 
@@ -25,62 +24,36 @@ impl SpidersWm {
     }
 
     pub fn ipc_add_client(&mut self) -> IpcClientId {
-        self.ipc_server.add_client()
+        self.ipc.server.add_client()
     }
 
     pub fn ipc_remove_client(&mut self, client_id: IpcClientId) {
-        self.ipc_clients.remove(&client_id);
-        self.ipc_server.remove_client(client_id);
+        self.ipc.remove_client(client_id);
     }
 
     pub fn handle_ipc_request(
         &mut self,
         client_id: IpcClientId,
-        request: IpcRequest,
-    ) -> Result<IpcResponse, UnknownClientError> {
-        match self.ipc_server.handle_request(client_id, request)? {
-            IpcServerHandleResult::Query { client_id, request_id, query } => {
-                debug!(client_id, request_id = ?request_id, query = ?query, "wm handling IPC query");
-                let response = self.query_ipc(query);
-                self.ipc_server.query_response(client_id, request_id, response)
-            }
-            IpcServerHandleResult::Command { client_id, request_id, command } => {
-                debug!(client_id, request_id = ?request_id, command = ?command, "wm handling IPC command");
-                self.execute_wm_command(command);
-                self.ipc_server.command_accepted(client_id, request_id)
-            }
-            IpcServerHandleResult::Debug { client_id, request_id, request } => {
-                debug!(client_id, request_id = ?request_id, request = ?request, "wm handling IPC debug request");
-                let response = match request {
-                    DebugRequest::Dump { kind } => self.handle_debug_dump(kind),
-                }
-                .map_err(std::io::Error::other)
-                .and_then(|response| {
-                    self.ipc_server
-                        .debug_response(client_id, request_id.clone(), response)
-                        .map_err(std::io::Error::other)
-                });
-
-                match response {
-                    Ok(response) => Ok(response),
-                    Err(error) => {
-                        self.ipc_server.error_response(client_id, request_id, error.to_string())
-                    }
-                }
-            }
-            IpcServerHandleResult::Response { response, .. } => Ok(response),
-        }
+        request: spiders_ipc::IpcRequest,
+    ) -> Result<IpcResponse, spiders_ipc_core::ResolveIpcRequestError<std::io::Error>> {
+        let mut server = std::mem::take(&mut self.ipc.server);
+        let result = {
+            let mut handler = WaylandIpcHandler { wm: self };
+            resolve_ipc_request(&mut server, client_id, request, &mut handler)
+        };
+        self.ipc.server = server;
+        result
     }
 
     pub fn query_ipc(&self, query: QueryRequest) -> QueryResponse {
         query_response_for_model(&self.model, query)
     }
 
-    pub fn register_ipc_client_stream(&mut self, stream: UnixStream) -> std::io::Result<()> {
-        let client_id = self.ipc_add_client();
-        let writer = stream.try_clone()?;
-        self.ipc_clients.insert(client_id, writer);
-
+    pub fn register_ipc_client_stream(
+        &mut self,
+        client_id: IpcClientId,
+        stream: UnixStream,
+    ) -> std::io::Result<()> {
         self.event_loop
             .insert_source(Generic::new(stream, Interest::READ, Mode::Level), move |_, _, state| {
                 state.handle_ipc_client_io(client_id)
@@ -96,7 +69,7 @@ impl SpidersWm {
     ) -> Result<PostAction, std::io::Error> {
         match serve_ipc_client_stream(self, client_id) {
             Ok(_) => Ok(PostAction::Continue),
-            Err(WmIpcStreamError::Transport(IpcTransportError::Io(error)))
+            Err(NativeIpcServeError::Transport(IpcTransportError::Io(error)))
                 if matches!(
                     error.kind(),
                     std::io::ErrorKind::WouldBlock
@@ -108,24 +81,26 @@ impl SpidersWm {
                 self.ipc_remove_client(client_id);
                 Ok(PostAction::Remove)
             }
-            Err(WmIpcStreamError::Transport(IpcTransportError::Codec(
+            Err(NativeIpcServeError::Transport(IpcTransportError::Codec(
                 IpcCodecError::EmptyFrame,
             ))) => {
                 self.ipc_remove_client(client_id);
                 Ok(PostAction::Remove)
             }
-            Err(WmIpcStreamError::UnknownClient(_)) => Ok(PostAction::Remove),
-            Err(WmIpcStreamError::Transport(IpcTransportError::Codec(error))) => {
+            Err(NativeIpcServeError::UnknownClient(_)) => Ok(PostAction::Remove),
+            Err(NativeIpcServeError::Transport(IpcTransportError::Codec(error))) => {
                 warn!(client_id, %error, "discarding malformed IPC request");
                 let response = self
-                    .ipc_server
+                    .ipc
+                    .server
                     .error_response(client_id, None, error.to_string())
                     .map_err(std::io::Error::other)?;
-                let Some(stream) = self.ipc_clients.get_mut(&client_id) else {
+                let Some(stream) = self.ipc.clients.get_mut(&client_id) else {
                     self.ipc_remove_client(client_id);
                     return Ok(PostAction::Remove);
                 };
-                match send_response(stream, &response).map_err(stream_io_error) {
+                match spiders_ipc_native::send_response(stream, &response).map_err(stream_io_error)
+                {
                     Ok(()) => Ok(PostAction::Continue),
                     Err(error)
                         if matches!(
@@ -141,17 +116,13 @@ impl SpidersWm {
                     Err(error) => Err(error),
                 }
             }
-            Err(WmIpcStreamError::Transport(IpcTransportError::Io(error))) => Err(error),
+            Err(NativeIpcServeError::Transport(IpcTransportError::Io(error))) => Err(error),
+            Err(NativeIpcServeError::Handler(error)) => Err(std::io::Error::other(error)),
         }
     }
 
     pub fn broadcast_ipc_event(&mut self, event: WmEvent) {
-        let stale_clients =
-            broadcast_ipc_event_to_clients(&self.ipc_server, &mut self.ipc_clients, event);
-
-        for client_id in stale_clients {
-            self.ipc_remove_client(client_id);
-        }
+        self.ipc.broadcast_event(event);
     }
 
     pub fn emit_config_reloaded(&mut self) {
@@ -159,21 +130,14 @@ impl SpidersWm {
     }
 }
 
-#[derive(Debug, thiserror::Error)]
-pub(crate) enum WmIpcStreamError {
-    #[error(transparent)]
-    Transport(#[from] IpcTransportError),
-    #[error(transparent)]
-    UnknownClient(#[from] UnknownClientError),
-}
-
 pub(crate) fn init_ipc_listener(event_loop: &mut EventLoop<'static, SpidersWm>) -> Option<PathBuf> {
     if std::env::var_os("SPIDERS_WM_DISABLE_IPC").is_some() {
         return None;
     }
-
-    let socket_path = configured_ipc_socket_path();
-    let listener = match bind_wm_ipc_listener(&socket_path) {
+    let socket_path = std::env::var_os("SPIDERS_WM_IPC_SOCKET")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| default_ipc_socket_path("spiders-wm"));
+    let listener = match bind_native_ipc_listener(&socket_path) {
         Ok(listener) => listener,
         Err(error) => {
             warn!(path = %socket_path.display(), %error, "failed to create wm IPC socket");
@@ -186,7 +150,12 @@ pub(crate) fn init_ipc_listener(event_loop: &mut EventLoop<'static, SpidersWm>) 
         .insert_source(
             Generic::new(listener, Interest::READ, Mode::Level),
             move |_, listener, state| {
-                accept_pending_ipc_clients(state, listener);
+                for (client_id, stream) in accept_pending_ipc_clients(&mut state.ipc, listener) {
+                    if let Err(error) = state.register_ipc_client_stream(client_id, stream) {
+                        warn!(%error, "failed to register IPC client stream");
+                        state.ipc.remove_client(client_id);
+                    }
+                }
                 Ok(PostAction::Continue)
             },
         )
@@ -198,83 +167,14 @@ pub(crate) fn init_ipc_listener(event_loop: &mut EventLoop<'static, SpidersWm>) 
 pub(crate) fn serve_ipc_client_stream(
     state: &mut SpidersWm,
     client_id: IpcClientId,
-) -> Result<IpcResponse, WmIpcStreamError> {
-    let request = {
-        let stream =
-            state.ipc_clients.get_mut(&client_id).ok_or(UnknownClientError { client_id })?;
-        recv_request(stream)?
+) -> Result<IpcResponse, NativeIpcServeError<std::io::Error>> {
+    let mut ipc = std::mem::take(&mut state.ipc);
+    let result = {
+        let mut handler = WaylandIpcHandler { wm: state };
+        serve_ipc_client_once(&mut ipc, client_id, &mut handler)
     };
-    let response = state.handle_ipc_request(client_id, request)?;
-    let stream = state.ipc_clients.get_mut(&client_id).ok_or(UnknownClientError { client_id })?;
-    send_response(stream, &response)?;
-    Ok(response)
-}
-
-pub(crate) fn broadcast_ipc_event_to_clients(
-    server: &IpcServerState,
-    clients: &mut BTreeMap<IpcClientId, UnixStream>,
-    event: WmEvent,
-) -> Vec<IpcClientId> {
-    let mut stale_clients = Vec::new();
-
-    for (client_id, response) in server.broadcast_event(event) {
-        let Some(stream) = clients.get_mut(&client_id) else {
-            stale_clients.push(client_id);
-            continue;
-        };
-
-        if let Err(error) = send_response(stream, &response) {
-            warn!(client_id, %error, "failed to send IPC event response");
-            stale_clients.push(client_id);
-        }
-    }
-
-    stale_clients
-}
-
-fn configured_ipc_socket_path() -> PathBuf {
-    std::env::var_os("SPIDERS_WM_IPC_SOCKET")
-        .map(PathBuf::from)
-        .unwrap_or_else(default_ipc_socket_path)
-}
-
-fn default_ipc_socket_path() -> PathBuf {
-    let base =
-        std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).unwrap_or_else(std::env::temp_dir);
-    base.join(format!("spiders-wm-{}.sock", std::process::id()))
-}
-
-fn bind_wm_ipc_listener(socket_path: &PathBuf) -> Result<UnixListener, IpcTransportError> {
-    if let Some(parent) = socket_path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-
-    let listener = bind_listener(socket_path)?;
-    listener.set_nonblocking(true)?;
-    debug!(path = %socket_path.display(), "bound wm IPC socket");
-    Ok(listener)
-}
-
-fn accept_pending_ipc_clients(state: &mut SpidersWm, listener: &UnixListener) {
-    loop {
-        match listener.accept() {
-            Ok((stream, _)) => {
-                if let Err(error) = stream.set_nonblocking(true) {
-                    warn!(%error, "failed to set IPC client stream nonblocking");
-                    continue;
-                }
-
-                if let Err(error) = state.register_ipc_client_stream(stream) {
-                    warn!(%error, "failed to register IPC client stream");
-                }
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => break,
-            Err(error) => {
-                warn!(%error, "failed to accept IPC client stream");
-                break;
-            }
-        }
-    }
+    state.ipc = ipc;
+    result
 }
 
 fn stream_io_error(error: IpcTransportError) -> std::io::Error {
@@ -286,37 +186,60 @@ fn stream_io_error(error: IpcTransportError) -> std::io::Error {
     }
 }
 
-pub(crate) fn resolve_ipc_request<QueryHandler, CommandHandler, DebugHandler>(
+struct WaylandIpcHandler<'a> {
+    wm: &'a mut SpidersWm,
+}
+
+impl IpcHandler for WaylandIpcHandler<'_> {
+    type Error = std::io::Error;
+
+    fn handle_query(&mut self, query: QueryRequest) -> Result<QueryResponse, Self::Error> {
+        Ok(self.wm.query_ipc(query))
+    }
+
+    fn handle_command(
+        &mut self,
+        command: spiders_core::command::WmCommand,
+    ) -> Result<(), Self::Error> {
+        self.wm.execute_wm_command(command);
+        Ok(())
+    }
+
+    fn handle_debug(
+        &mut self,
+        request: DebugRequest,
+    ) -> Result<spiders_ipc::DebugResponse, Self::Error> {
+        match request {
+            DebugRequest::Dump { kind } => {
+                self.wm.handle_debug_dump(kind).map_err(std::io::Error::other)
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+fn serve_ipc_stream_once<H>(
     server: &mut IpcServerState,
     client_id: IpcClientId,
-    request: IpcRequest,
-    mut query_handler: QueryHandler,
-    mut command_handler: CommandHandler,
-    mut debug_handler: DebugHandler,
-) -> Result<IpcResponse, UnknownClientError>
+    stream: &mut UnixStream,
+    handler: &mut H,
+) -> Result<IpcResponse, NativeIpcServeError<H::Error>>
 where
-    QueryHandler: FnMut(QueryRequest) -> QueryResponse,
-    CommandHandler: FnMut(WmCommand),
-    DebugHandler: FnMut(DebugRequest) -> spiders_ipc::DebugResponse,
+    H: IpcHandler,
+    H::Error: std::error::Error + Send + Sync + 'static,
 {
-    match server.handle_request(client_id, request)? {
-        IpcServerHandleResult::Query { client_id, request_id, query } => {
-            server.query_response(client_id, request_id, query_handler(query))
-        }
-        IpcServerHandleResult::Command { client_id, request_id, command } => {
-            command_handler(command);
-            server.command_accepted(client_id, request_id)
-        }
-        IpcServerHandleResult::Debug { client_id, request_id, request } => {
-            server.debug_response(client_id, request_id, debug_handler(request))
-        }
-        IpcServerHandleResult::Response { response, .. } => Ok(response),
-    }
+    let mut ipc = spiders_ipc_native::NativeIpcState::default();
+    ipc.server = std::mem::take(server);
+    ipc.clients.insert(client_id, stream.try_clone().map_err(IpcTransportError::from)?);
+    let response = serve_ipc_client_once(&mut ipc, client_id, handler)?;
+    *server = ipc.server;
+    Ok(response)
 }
 
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
+    use std::os::unix::net::UnixStream;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use spiders_core::command::WmCommand;
@@ -329,9 +252,43 @@ mod tests {
     use spiders_core::{OutputId, WorkspaceId};
     use spiders_ipc::DebugResponse;
     use spiders_ipc::{IpcClientMessage, IpcEnvelope, IpcServerMessage, IpcSubscriptionTopic};
-    use spiders_ipc::{bind_listener, connect, recv_response, send_request};
+    use spiders_ipc_core::IpcHandler;
+    use spiders_ipc_core::IpcServerState;
+    use spiders_ipc_native::{
+        bind_listener, broadcast_ipc_event_to_clients, connect, recv_response, send_request,
+    };
 
     use super::*;
+
+    struct TestHandler {
+        commands: Vec<WmCommand>,
+    }
+
+    impl TestHandler {
+        fn new() -> Self {
+            Self { commands: Vec::new() }
+        }
+    }
+
+    impl IpcHandler for TestHandler {
+        type Error = std::io::Error;
+
+        fn handle_query(&mut self, _query: QueryRequest) -> Result<QueryResponse, Self::Error> {
+            Ok(QueryResponse::WorkspaceNames(vec!["1".into(), "2".into()]))
+        }
+
+        fn handle_command(&mut self, command: WmCommand) -> Result<(), Self::Error> {
+            self.commands.push(command);
+            Ok(())
+        }
+
+        fn handle_debug(
+            &mut self,
+            _request: DebugRequest,
+        ) -> Result<spiders_ipc::DebugResponse, Self::Error> {
+            Ok(DebugResponse::DumpWritten { kind: spiders_ipc::DebugDumpKind::WmState, path: None })
+        }
+    }
 
     fn sample_model() -> WmModel {
         let mut model = WmModel::default();
@@ -408,16 +365,14 @@ mod tests {
     fn resolve_ipc_request_routes_queries_commands_and_session_responses() {
         let mut server = IpcServerState::new();
         let client_id = server.add_client();
-        let mut commands = Vec::new();
+        let mut handler = TestHandler::new();
 
         let query_response = resolve_ipc_request(
             &mut server,
             client_id,
             IpcEnvelope::new(IpcClientMessage::Query(QueryRequest::WorkspaceNames))
                 .with_request_id("req-query"),
-            |_| QueryResponse::WorkspaceNames(vec!["1".into(), "2".into()]),
-            |command| commands.push(command),
-            |_| unreachable!("query request should not invoke debug handler"),
+            &mut handler,
         )
         .unwrap();
 
@@ -437,13 +392,11 @@ mod tests {
             client_id,
             IpcEnvelope::new(IpcClientMessage::Command(WmCommand::ReloadConfig))
                 .with_request_id("req-command"),
-            |_| unreachable!("command request should not invoke query handler"),
-            |command| commands.push(command),
-            |_| unreachable!("command request should not invoke debug handler"),
+            &mut handler,
         )
         .unwrap();
 
-        assert_eq!(commands, vec![WmCommand::ReloadConfig]);
+        assert_eq!(handler.commands, vec![WmCommand::ReloadConfig]);
         assert_eq!(
             command_response,
             IpcEnvelope {
@@ -460,9 +413,7 @@ mod tests {
                 IpcSubscriptionTopic::Focus,
             ]))
             .with_request_id("req-subscribe"),
-            |_| unreachable!("subscribe response should be produced by session"),
-            |_| unreachable!("subscribe response should not invoke command handler"),
-            |_| unreachable!("subscribe response should not invoke debug handler"),
+            &mut handler,
         )
         .unwrap();
 
@@ -483,6 +434,7 @@ mod tests {
         let (mut server_stream, _) = listener.accept().unwrap();
         let mut server = IpcServerState::new();
         let client_id = server.add_client();
+        let mut handler = TestHandler::new();
 
         send_request(
             &mut client,
@@ -491,14 +443,9 @@ mod tests {
         )
         .unwrap();
 
-        let response = serve_ipc_stream_once(
-            &mut server,
-            client_id,
-            &mut server_stream,
-            |_| QueryResponse::WorkspaceNames(vec!["1".into(), "2".into()]),
-            |_| unreachable!("query request should not execute command handler"),
-        )
-        .unwrap();
+        let response =
+            serve_ipc_stream_once(&mut server, client_id, &mut server_stream, &mut handler)
+                .unwrap();
 
         assert_eq!(
             response,
@@ -527,6 +474,7 @@ mod tests {
         let mut server = IpcServerState::new();
         let client_id = server.add_client();
         let mut writers = BTreeMap::from([(client_id, server_stream.try_clone().unwrap())]);
+        let mut handler = TestHandler::new();
 
         send_request(
             &mut client,
@@ -535,14 +483,9 @@ mod tests {
         )
         .unwrap();
 
-        let subscribe_response = serve_ipc_stream_once(
-            &mut server,
-            client_id,
-            &mut server_stream,
-            |_| unreachable!("subscribe should be handled by session"),
-            |_| unreachable!("subscribe should not execute command handler"),
-        )
-        .unwrap();
+        let subscribe_response =
+            serve_ipc_stream_once(&mut server, client_id, &mut server_stream, &mut handler)
+                .unwrap();
 
         assert_eq!(recv_response(&client).unwrap(), subscribe_response);
 
@@ -569,31 +512,17 @@ mod tests {
         let _ = std::fs::remove_file(socket_path);
     }
 
-    fn serve_ipc_stream_once<QueryHandler, CommandHandler>(
+    fn serve_ipc_stream_once<H>(
         server: &mut IpcServerState,
         client_id: IpcClientId,
         stream: &mut UnixStream,
-        query_handler: QueryHandler,
-        command_handler: CommandHandler,
-    ) -> Result<IpcResponse, WmIpcStreamError>
+        handler: &mut H,
+    ) -> Result<IpcResponse, NativeIpcServeError<H::Error>>
     where
-        QueryHandler: FnMut(QueryRequest) -> QueryResponse,
-        CommandHandler: FnMut(WmCommand),
+        H: IpcHandler,
+        H::Error: std::error::Error + Send + Sync + 'static,
     {
-        let request = recv_request(stream)?;
-        let response = resolve_ipc_request(
-            server,
-            client_id,
-            request,
-            query_handler,
-            command_handler,
-            |_| DebugResponse::DumpWritten {
-                kind: spiders_ipc::DebugDumpKind::WmState,
-                path: None,
-            },
-        )?;
-        send_response(stream, &response)?;
-        Ok(response)
+        super::serve_ipc_stream_once(server, client_id, stream, handler)
     }
 
     fn unique_socket_path(label: &str) -> PathBuf {

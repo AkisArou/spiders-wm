@@ -250,6 +250,7 @@ fn decode_command_descriptor(
     let arg = object.get("_arg").unwrap_or(&Value::Null);
     match command {
         "spawn" => Ok(WmCommand::Spawn { command: expect_string(path, arg, field)?.to_owned() }),
+        "quit" => Ok(WmCommand::Quit),
         "reload_config" => Ok(WmCommand::ReloadConfig),
         "focus_next" => Ok(WmCommand::FocusDirection { direction: FocusDirection::Right }),
         "focus_prev" => Ok(WmCommand::FocusDirection { direction: FocusDirection::Left }),

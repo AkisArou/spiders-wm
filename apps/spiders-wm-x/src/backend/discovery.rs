@@ -15,6 +15,9 @@ pub(crate) struct DiscoveredWindow {
     pub(crate) app_id: Option<String>,
     pub(crate) class: Option<String>,
     pub(crate) instance: Option<String>,
+    pub(crate) role: Option<String>,
+    pub(crate) window_type: Option<String>,
+    pub(crate) urgent: bool,
     pub(crate) mapped: bool,
 }
 
@@ -51,6 +54,9 @@ pub(crate) fn sync_discovered_windows(
                 app_id: discovered.app_id.clone(),
                 class: discovered.class.clone(),
                 instance: discovered.instance.clone(),
+                role: discovered.role.clone(),
+                window_type: discovered.window_type.clone(),
+                urgent: discovered.urgent,
             },
         );
         let _ = runtime.handle_signal(
@@ -89,6 +95,9 @@ fn discover_window<C: Connection>(
 
     let title = read_window_title(connection, atoms, window)?;
     let (instance, class) = read_wm_class(connection, atoms, window)?;
+    let role = read_window_role(connection, atoms, window)?;
+    let window_type = read_window_type(connection, atoms, window)?;
+    let urgent = read_window_urgent(connection, atoms, window)?;
     let app_id = class.clone().or_else(|| instance.clone());
     let mapped = attributes.map_state == MapState::VIEWABLE;
 
@@ -99,6 +108,9 @@ fn discover_window<C: Connection>(
         app_id,
         class,
         instance,
+        role,
+        window_type,
+        urgent,
         mapped,
     }))
 }
@@ -148,6 +160,81 @@ fn read_wm_class<C: Connection>(
     Ok((instance, class))
 }
 
+fn read_window_role<C: Connection>(
+    connection: &C,
+    atoms: &Atoms,
+    window: Window,
+) -> Result<Option<String>> {
+    if atoms.wm_window_role == u32::from(AtomEnum::NONE) {
+        return Ok(None);
+    }
+
+    read_property_string(connection, window, atoms.wm_window_role, AtomEnum::STRING.into())
+}
+
+fn read_window_type<C: Connection>(
+    connection: &C,
+    atoms: &Atoms,
+    window: Window,
+) -> Result<Option<String>> {
+    if atoms.net_wm_window_type == u32::from(AtomEnum::NONE) {
+        return Ok(None);
+    }
+
+    let reply = match connection
+        .get_property(false, window, atoms.net_wm_window_type, AtomEnum::ATOM, 0, 32)?
+        .reply()
+    {
+        Ok(reply) => reply,
+        Err(_) => return Ok(None),
+    };
+
+    let Some(atom) = reply.value32().and_then(|mut values| values.next()) else {
+        return Ok(None);
+    };
+
+    if atom == atoms.net_wm_window_type_dialog {
+        return Ok(Some("dialog".to_string()));
+    }
+
+    let atom_name = connection.get_atom_name(atom)?.reply().ok();
+    Ok(atom_name.map(|reply| {
+        String::from_utf8_lossy(&reply.name)
+            .rsplit('_')
+            .next()
+            .unwrap_or_default()
+            .to_ascii_lowercase()
+    }))
+}
+
+fn read_window_urgent<C: Connection>(
+    connection: &C,
+    atoms: &Atoms,
+    window: Window,
+) -> Result<bool> {
+    if atoms.wm_hints == u32::from(AtomEnum::NONE) {
+        return Ok(false);
+    }
+
+    let reply = match connection
+        .get_property(false, window, atoms.wm_hints, atoms.wm_hints, 0, 9)?
+        .reply()
+    {
+        Ok(reply) => reply,
+        Err(_) => return Ok(false),
+    };
+
+    let Some(mut values) = reply.value32() else {
+        return Ok(false);
+    };
+    let Some(flags) = values.next() else {
+        return Ok(false);
+    };
+
+    const X_URGENCY_HINT: u32 = 1 << 8;
+    Ok(flags & X_URGENCY_HINT != 0)
+}
+
 fn read_property_string<C: Connection>(
     connection: &C,
     window: Window,
@@ -192,5 +279,23 @@ struct NoopHost;
 impl WmHost for NoopHost {
     fn on_effect(&mut self, _effect: spiders_core::effect::WmHostEffect) -> PreviewRenderAction {
         PreviewRenderAction::None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::decode_lossy_property;
+
+    #[test]
+    fn decode_lossy_property_trims_trailing_nul_bytes() {
+        assert_eq!(decode_lossy_property(b"dialog\0\0"), "dialog");
+    }
+
+    #[test]
+    fn urgency_hint_flag_matches_icccm_bit() {
+        const X_URGENCY_HINT: u32 = 1 << 8;
+
+        assert_ne!(X_URGENCY_HINT & (1 << 8), 0);
+        assert_eq!(X_URGENCY_HINT & (1 << 7), 0);
     }
 }

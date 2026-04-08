@@ -64,8 +64,17 @@ impl<'a> WmRuntime<'a> {
             WmSignal::InteractedWindowChanged { seat_id, interacted_window_id } => {
                 self.sync_interacted_window(seat_id, interacted_window_id);
             }
-            WmSignal::WindowIdentityChanged { window_id, title, app_id, class, instance } => {
-                self.sync_window_identity(window_id, title, app_id, class, instance);
+            WmSignal::WindowIdentityChanged {
+                window_id,
+                title,
+                app_id,
+                class,
+                instance,
+                role,
+                window_type,
+                urgent,
+            } => {
+                self.sync_window_identity(window_id, title, app_id, class, instance, role, window_type, urgent);
             }
             WmSignal::WindowMappedChanged { window_id, mapped } => {
                 self.sync_window_mapped(window_id, mapped);
@@ -403,8 +412,12 @@ impl<'a> WmRuntime<'a> {
         app_id: Option<String>,
         class: Option<String>,
         instance: Option<String>,
+        role: Option<String>,
+        window_type: Option<String>,
+        urgent: bool,
     ) -> Option<WindowId> {
-        let window_id = sync_window_identity(self.model, window_id, title, app_id, class, instance);
+        let window_id =
+            sync_window_identity(self.model, window_id, title, app_id, class, instance, role, window_type, urgent);
         if let Some(window_id) = window_id.as_ref() {
             self.push_window_identity_change(window_id);
         }
@@ -708,12 +721,15 @@ fn sync_window_identity(
     app_id: Option<String>,
     class: Option<String>,
     instance: Option<String>,
+    role: Option<String>,
+    window_type: Option<String>,
+    urgent: bool,
 ) -> Option<WindowId> {
     if !model.windows.contains_key(&window_id) {
         return None;
     }
 
-    model.set_window_identity(window_id.clone(), title, app_id, class, instance);
+    model.set_window_identity(window_id.clone(), title, app_id, class, instance, role, window_type, urgent);
     Some(window_id)
 }
 

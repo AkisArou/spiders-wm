@@ -880,6 +880,7 @@ fn decode_command_descriptor(
     let arg = object.get("_arg").unwrap_or(&Value::Null);
     match command {
         "spawn" => Ok(WmCommand::Spawn { command: expect_string(path, arg, field)?.to_owned() }),
+        "quit" => Ok(WmCommand::Quit),
         "reload_config" => Ok(WmCommand::ReloadConfig),
         "focus_next" => Ok(WmCommand::FocusDirection { direction: FocusDirection::Right }),
         "focus_prev" => Ok(WmCommand::FocusDirection { direction: FocusDirection::Left }),
@@ -1184,6 +1185,7 @@ mod tests {
                   mod: "alt",
                   entries: [
                     { bind: ["mod", "Return"], command: commands.spawn("foot") },
+                    { bind: ["mod", "shift", "q"], command: commands.quit() },
                     { bind: ["mod", "h"], command: commands.focus_dir("left") },
                     { bind: ["mod", "shift", "h"], command: commands.swap_dir("left") },
                     { bind: ["mod", "ctrl", "h"], command: commands.resize_dir("left") },
@@ -1232,28 +1234,29 @@ mod tests {
 
         assert_eq!(config.workspaces, vec!["1", "2"]);
         assert_eq!(config.options.sloppyfocus, Some(true));
-        assert_eq!(config.bindings.len(), 8);
+        assert_eq!(config.bindings.len(), 9);
         assert_eq!(config.bindings[0].trigger, "alt+Return");
         assert_eq!(config.bindings[0].command, WmCommand::Spawn { command: "foot".into() });
+        assert_eq!(config.bindings[1].command, WmCommand::Quit);
         assert_eq!(
-            config.bindings[1].command,
+            config.bindings[2].command,
             WmCommand::FocusDirection { direction: FocusDirection::Left }
         );
         assert_eq!(
-            config.bindings[2].command,
+            config.bindings[3].command,
             WmCommand::SwapDirection { direction: FocusDirection::Left }
         );
         assert_eq!(
-            config.bindings[3].command,
+            config.bindings[4].command,
             WmCommand::ResizeDirection { direction: FocusDirection::Left }
         );
         assert_eq!(
-            config.bindings[4].command,
+            config.bindings[5].command,
             WmCommand::ResizeTiledDirection { direction: FocusDirection::Left }
         );
-        assert_eq!(config.bindings[5].command, WmCommand::FocusMonitorLeft);
-        assert_eq!(config.bindings[6].command, WmCommand::FocusMonitorRight);
-        assert_eq!(config.bindings[7].command, WmCommand::ToggleFullscreen);
+        assert_eq!(config.bindings[6].command, WmCommand::FocusMonitorLeft);
+        assert_eq!(config.bindings[7].command, WmCommand::FocusMonitorRight);
+        assert_eq!(config.bindings[8].command, WmCommand::ToggleFullscreen);
         assert_eq!(config.inputs.len(), 1);
         assert_eq!(config.layout_selection.default.as_deref(), Some("master-stack"));
         assert_eq!(config.layouts.len(), 1);

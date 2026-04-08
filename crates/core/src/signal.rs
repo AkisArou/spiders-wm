@@ -31,6 +31,9 @@ pub enum WmSignal {
         app_id: Option<String>,
         class: Option<String>,
         instance: Option<String>,
+        role: Option<String>,
+        window_type: Option<String>,
+        urgent: bool,
     },
     WindowMappedChanged {
         window_id: WindowId,

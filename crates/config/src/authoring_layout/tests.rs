@@ -14,7 +14,7 @@ use tempfile::TempDir;
 use super::*;
 use crate::model::{Config, ConfigDiscoveryOptions, ConfigPaths, LayoutDefinition};
 use crate::runtime::{
-    AuthoringConfigRuntime, SourceBundle, SourceBundleConfigRuntime,
+    AuthoringConfigRuntime, EvaluatedSourceLayout, SourceBundle, SourceBundleConfigRuntime,
     SourceBundlePreparedLayoutRuntime,
 };
 
@@ -216,10 +216,15 @@ impl SourceBundlePreparedLayoutRuntime for StubSourceBundleRuntime {
         _sources: &'a SourceBundle,
         _artifact: &'a PreparedLayout,
         _context: &'a LayoutEvaluationContext,
-    ) -> Pin<Box<dyn Future<Output = Result<SourceLayoutNode, crate::model::LayoutConfigError>> + 'a>>
+    ) -> Pin<
+        Box<dyn Future<Output = Result<EvaluatedSourceLayout, crate::model::LayoutConfigError>> + 'a>,
+    >
     {
         Box::pin(async move {
-            Ok(SourceLayoutNode::Workspace { meta: Default::default(), children: vec![] })
+            Ok(EvaluatedSourceLayout {
+                layout: SourceLayoutNode::Workspace { meta: Default::default(), children: vec![] },
+                dependencies: Default::default(),
+            })
         })
     }
 }

@@ -22,6 +22,8 @@ tty-preview = [
 anyhow.workspace = true
 spiders-config = { path = "../../crates/config" }
 spiders-ipc = { path = "../../crates/ipc" }
+spiders-ipc-core = { path = "../../crates/ipc/core" }
+spiders-ipc-native = { path = "../../crates/ipc/native" }
 spiders-scene = { path = "../../crates/scene" }
 spiders-css = { path = "../../crates/css" }
 spiders-core = { path = "../../crates/core" }
@@ -46,3 +48,6 @@ default-features = false
 features = ["backend_drm", "backend_session", "backend_winit", "desktop", "wayland_frontend"]
 
 [dev-dependencies]
+smithay-client-toolkit = "0.19"
+wayland-client = "0.31"
+wayland-protocols = { version = "0.32", features = ["client", "unstable", "staging"] }

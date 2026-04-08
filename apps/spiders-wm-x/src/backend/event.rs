@@ -1,8 +1,10 @@
 use anyhow::{Context, Result};
 use calloop::generic::Generic;
-use calloop::{EventLoop, Interest, Mode, PostAction};
+use calloop::{EventLoop, Interest, LoopHandle, Mode, PostAction, RegistrationToken};
+use spiders_ipc::IpcClientId;
 use std::os::fd::OwnedFd;
 use std::os::unix::io::AsFd;
+use std::os::unix::net::UnixListener;
 use std::time::{Duration, Instant};
 use tracing::info;
 use x11rb::connection::Connection;
@@ -18,6 +20,26 @@ use x11rb::xcb_ffi::XCBConnection;
 use super::ScreenDescriptor;
 
 pub(crate) trait ManageEventHandler {
+    fn should_exit(&self) -> bool {
+        false
+    }
+    fn after_dispatch(&mut self, _connection: &XCBConnection) -> Result<()> {
+        Ok(())
+    }
+    fn on_ipc_listener_ready(
+        &mut self,
+        _handle: &LoopHandle<'_, ManageLoopDispatchState>,
+    ) -> Result<()> {
+        Ok(())
+    }
+    fn on_ipc_client_ready(
+        &mut self,
+        _connection: &XCBConnection,
+        _handle: &LoopHandle<'_, ManageLoopDispatchState>,
+        _client_id: IpcClientId,
+    ) -> Result<()> {
+        Ok(())
+    }
     fn on_map_request(&mut self, connection: &XCBConnection, window: Window) -> Result<()>;
     fn on_configure_request(
         &mut self,
@@ -54,6 +76,57 @@ pub(crate) trait ManageEventHandler {
         connection: &XCBConnection,
         event: &randr::ScreenChangeNotifyEvent,
     ) -> Result<()>;
+}
+
+#[derive(Default)]
+pub(crate) struct ManageLoopDispatchState {
+    ipc_listener_ready: bool,
+    ipc_client_ready: Vec<IpcClientId>,
+}
+
+impl ManageLoopDispatchState {
+    pub(crate) fn mark_ipc_listener_ready(&mut self) {
+        self.ipc_listener_ready = true;
+    }
+
+    pub(crate) fn take_ipc_listener_ready(&mut self) -> bool {
+        std::mem::take(&mut self.ipc_listener_ready)
+    }
+
+    pub(crate) fn mark_ipc_client_ready(&mut self, client_id: IpcClientId) {
+        self.ipc_client_ready.push(client_id);
+    }
+
+    pub(crate) fn take_ipc_client_ready(&mut self) -> Vec<IpcClientId> {
+        std::mem::take(&mut self.ipc_client_ready)
+    }
+}
+
+pub(crate) fn register_ipc_listener_source(
+    handle: &LoopHandle<'_, ManageLoopDispatchState>,
+    listener: &UnixListener,
+) -> Result<RegistrationToken> {
+    let listener = listener.try_clone().context("failed to clone IPC listener for calloop")?;
+    handle
+        .insert_source(Generic::new(listener, Interest::READ, Mode::Level), |_, _, state| {
+            state.mark_ipc_listener_ready();
+            Ok(PostAction::Continue)
+        })
+        .context("failed to register IPC listener with calloop")
+}
+
+pub(crate) fn register_ipc_client_source(
+    handle: &LoopHandle<'_, ManageLoopDispatchState>,
+    client_id: IpcClientId,
+    stream: &std::os::unix::net::UnixStream,
+) -> Result<RegistrationToken> {
+    let stream = stream.try_clone().context("failed to clone IPC client stream for calloop")?;
+    handle
+        .insert_source(Generic::new(stream, Interest::READ, Mode::Level), move |_, _, state| {
+            state.mark_ipc_client_ready(client_id);
+            Ok(PostAction::Continue)
+        })
+        .context("failed to register IPC client with calloop")
 }
 
 pub(crate) fn install_manage_root_mask<C: Connection>(
@@ -151,6 +224,7 @@ pub(crate) fn observe_connection_events<C: Connection>(
 pub(crate) fn run_manage_event_loop(
     connection: &XCBConnection,
     screen: &ScreenDescriptor,
+    ipc_listener: Option<&UnixListener>,
     handler: &mut impl ManageEventHandler,
 ) -> Result<()> {
     info!(root_window_id = screen.root_window, "spiders-wm-x entered X11 manage event loop");
@@ -159,18 +233,45 @@ pub(crate) fn run_manage_event_loop(
         .as_fd()
         .try_clone_to_owned()
         .context("failed to duplicate X11 connection fd for calloop")?;
-    let mut event_loop = EventLoop::<()>::try_new().context("failed to create X11 calloop event loop")?;
+    let mut event_loop =
+        EventLoop::<ManageLoopDispatchState>::try_new().context("failed to create X11 calloop event loop")?;
     event_loop
         .handle()
-        .insert_source(Generic::new(poll_fd, Interest::READ, Mode::Level), |_, _: &mut calloop::generic::NoIoDrop<OwnedFd>, _| {
-            Ok(PostAction::Continue)
-        })
+        .insert_source(
+            Generic::new(poll_fd, Interest::READ, Mode::Level),
+            |_, _: &mut calloop::generic::NoIoDrop<OwnedFd>, _| Ok(PostAction::Continue),
+        )
         .context("failed to register X11 connection with calloop")?;
+
+    if let Some(listener) = ipc_listener {
+        register_ipc_listener_source(&event_loop.handle(), listener)?;
+    }
+
+    let mut dispatch_state = ManageLoopDispatchState::default();
 
     loop {
         drain_manage_events(connection, handler)?;
-        event_loop.dispatch(None, &mut ()).context("failed while dispatching X11 calloop events")?;
+        if handler.should_exit() {
+            info!(root_window_id = screen.root_window, "spiders-wm-x leaving X11 manage event loop");
+            break;
+        }
+        event_loop
+            .dispatch(Some(Duration::from_millis(50)), &mut dispatch_state)
+            .context("failed while dispatching X11 calloop events")?;
+        if dispatch_state.take_ipc_listener_ready() {
+            handler.on_ipc_listener_ready(&event_loop.handle())?;
+        }
+        for client_id in dispatch_state.take_ipc_client_ready() {
+            handler.on_ipc_client_ready(connection, &event_loop.handle(), client_id)?;
+        }
+        handler.after_dispatch(connection)?;
+        if handler.should_exit() {
+            info!(root_window_id = screen.root_window, "spiders-wm-x leaving X11 manage event loop");
+            break;
+        }
     }
+
+    Ok(())
 }
 
 fn drain_manage_events(connection: &XCBConnection, handler: &mut impl ManageEventHandler) -> Result<()> {
