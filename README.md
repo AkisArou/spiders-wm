@@ -1,96 +1,179 @@
 # spiders-wm
 
-`spiders-wm` is a Rust-native Wayland window management stack built around
-JavaScript or TypeScript configuration, structural JSX layouts, CSS-based layout
-styling, and CSS-based visual effects.
+`spiders-wm` is a Rust tiling window-manager built around web technologies.
+TypeScript config, JSX layouts, CSS.
 
-The rewrite targets:
+Today the repo contains three primary app surfaces:
 
-- `river` for compositor integration
+- `spiders-wm`: the Smithay-based Wayland compositor host, currently used as a nested compositor by default and with TTY-preview work in progress
+- `spiders-wm-x`: an X11/XCB host used for development and experimentation
+- `spiders-wm-www`: a browser preview and authoring surface for config, layouts, and scene output
+
+Core implementation pieces include:
+
+- `rquickjs` for the native JS runtime
+- `oxc` for transpiling jsx
 - `taffy` for layout computation
-- `rquickjs` for the embedded JavaScript runtime
-- `keyframe` for animation timelines
-
-## What It Keeps
-
-- keyboard-first window management
-- named workspaces
-- declarative bindings and window rules
-- JSX layout trees built from `workspace`, `group`, `window`, and `slot`
-- structural layout CSS for geometry
-- effects CSS for window chrome and workspace transitions
-- local IPC for queries, actions, and subscriptions
-
-## Docs
-
-- `docs/config.md` - config shape, rules, bindings, and examples
-- `docs/css.md` - supported layout CSS and effects CSS
-- `docs/jsx.md` - JSX layout elements, props, matching, and examples
-- `docs/ipc.md` - IPC transport, queries, actions, and events
-- `docs/cli.md` - CLI commands and examples
-- `docs/plan/wayland-debugging-platform.md` - debugging platform direction and phases
-
-## Development
-
-### Quick Start
-
-1. Run `cargo check` to validate compilation.
-2. Validate config with `cargo run -p spiders-cli -- check-config`.
-3. Launch river with test config: `just dev` (or `SPIDERS_LOG=debug just dev` for verbose logging).
-4. Use IPC tooling with `cargo run -p spiders-cli -- ipc-query --query state`.
-5. Use debug dumps with `SPIDERS_WM_DEBUG_PROFILE=minimal cargo run -p spiders-cli -- ipc-debug --dump wm-state`.
-6. For nested Wayland protocol debugging, start `just dev`, then launch clients with `WAYLAND_DISPLAY=<nested-display> WAYLAND_DEBUG=1 ...` and capture dumps over `SPIDERS_WM_IPC_SOCKET`.
-
-### Testing
-
-Run full test suite with `cargo test`. Individual crate tests:
-
-```bash
-cargo test -p spiders-wm
-cargo test -p spiders-config
-cargo test -p spiders-ipc
-```
+- `Smithay` for Wayland compositor integration
 
 ## Configuration At A Glance
 
-The default authored config lives at `~/.config/spiders-wm/config.ts` or
-`~/.config/spiders-wm/config.js`.
+Authored config is discovered from:
 
-Minimal example:
+- `~/.config/spiders-wm/config.ts`:
 
 ```ts
 import type { SpiderWMConfig } from "@spiders-wm/sdk/config";
-import { bindings } from "./config/bindings";
-import { layouts } from "./config/layouts";
+
+import { bindings } from "./config/bindings.ts";
+import { inputs } from "./config/inputs.ts";
+import { layouts } from "./config/layouts.ts";
 
 export default {
-  workspaces: ["1", "2", "3", "4", "5"],
+  workspaces: ["1", "2", "3", "4", "5", "6", "7", "8", "9"],
+  options: {
+    sloppyfocus: true,
+    attach: "after",
+  },
+  inputs,
   layouts,
+  rules: [],
   bindings,
 } satisfies SpiderWMConfig;
 ```
 
+Example `config/bindings.ts`:
+
+```ts
+import * as commands from "@spiders-wm/sdk/commands";
+import type { BindingsConfig } from "@spiders-wm/sdk/config";
+
+export const bindings: BindingsConfig = {
+  mod: "alt",
+  entries: [
+    { bind: ["mod", "Return"], command: commands.spawn("foot") },
+    { bind: ["mod", "d"], command: commands.spawn("rofi -show drun") },
+    { bind: ["mod", "h"], command: commands.focus_dir("left") },
+    { bind: ["mod", "j"], command: commands.focus_dir("down") },
+    { bind: ["mod", "k"], command: commands.focus_dir("up") },
+    { bind: ["mod", "l"], command: commands.focus_dir("right") },
+    { bind: ["mod", "shift", "h"], command: commands.swap_dir("left") },
+    { bind: ["mod", "shift", "j"], command: commands.swap_dir("down") },
+    { bind: ["mod", "shift", "k"], command: commands.swap_dir("up") },
+    { bind: ["mod", "shift", "l"], command: commands.swap_dir("right") },
+    { bind: ["mod", "space"], command: commands.cycle_layout() },
+    { bind: ["mod", "shift", "space"], command: commands.toggle_floating() },
+    { bind: ["mod", "q"], command: commands.kill_client() },
+    { bind: ["mod", "1"], command: commands.view_workspace(1) },
+    { bind: ["mod", "2"], command: commands.view_workspace(2) },
+    { bind: ["mod", "3"], command: commands.view_workspace(3) },
+    { bind: ["mod", "shift", "1"], command: commands.assign_workspace(1) },
+    { bind: ["mod", "shift", "2"], command: commands.assign_workspace(2) },
+    { bind: ["mod", "shift", "3"], command: commands.assign_workspace(3) },
+  ],
+};
+```
+
+Example `config/layouts.ts`:
+
+```ts
+import type { LayoutsConfig } from "@spiders-wm/sdk/config";
+
+export const layouts: LayoutsConfig = {
+  default: "master-stack",
+  per_workspace: ["master-stack", "primary-stack"],
+  per_monitor: {
+    "eDP-1": "master-stack",
+  },
+};
+```
+
+Example `layouts/master-stack/index.tsx`:
+
+```tsx
+import type { LayoutContext } from "@spiders-wm/sdk/layout";
+
+import "./index.css";
+
+export default function layout(ctx: LayoutContext) {
+  return (
+    <workspace id="frame" class="playground-workspace">
+      <slot id="master" take={1} class="master-slot" />
+
+      {ctx.windows.length > 1 ? (
+        <group id="stack" class="stack-group">
+          <slot id="stack-slot" class="stack-group__item" />
+        </group>
+      ) : null}
+    </workspace>
+  );
+}
+```
+
+Example `layouts/master-stack/index.css`:
+
+```css
+#frame {
+  display: flex;
+  flex-direction: row;
+  gap: 6px;
+  padding: 6px;
+  width: 100%;
+  height: 100%;
+}
+
+.master-slot {
+  flex-basis: 0;
+  flex-grow: 3;
+  min-width: 0;
+  min-height: 0;
+}
+
+#stack {
+  border-color: #2f3647;
+}
+
+.stack-group {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex-basis: 0;
+  flex-grow: 2;
+  min-width: 0;
+}
+
+.stack-group__item {
+  flex-basis: 0;
+  flex-grow: 1;
+  min-height: 0;
+  border-color: #2f3647;
+}
+```
+
+See `docs/config.md`, `docs/jsx.md`, `docs/css.md`, `template/`, and
+`test_config/` for the fuller authored workflow.
+
+## What It Provides
+
+- keyboard-first workspace management
+- named workspaces, bindings, and window rules
+- JSX layout trees built from `workspace`, `group`, `window`, and `slot`
+- spiders CSS for layout and compositor-managed presentation
+- local IPC for queries, commands, debug dumps, and subscriptions
+- browser and editor tooling around the authored config/layout workflow
+
+## Docs
+
+- `docs/config.md` - config discovery, top-level shape, bindings, rules, inputs, and examples
+- `docs/css.md` - supported spiders CSS selectors, properties, and runtime notes
+- `docs/jsx.md` - layout JSX elements, matching, context, and examples
+- `docs/ipc.md` - socket transport, queries, actions, debug dumps, and events
+- `docs/cli.md` - current `spiders-cli` command tree and examples
+- `docs/css-lsp.md` - CSS language server architecture, scope model, and editor setup
+- `docs/titlebar.md` - historical note on removed titlebar-specific runtime work
+
 ## Repository Layout
 
-- `apps/spiders-wm` - smithay compositor integration + native host app
-- `apps/spiders-wm-www` - browser authoring and preview app
-- `crates/core` - shared WM domain types, layout/runtime contracts, and core model logic
-- `crates/config` - config loading, authoring layout services, and prepared config caching
-- `crates/scene` - layout node scene graph and geometry resolution
-- `crates/css` - stylesheet parsing and layout/effects CSS support
-- `crates/ipc` - IPC protocol, transport, and server
-- `crates/wm-runtime` - shared WM runtime and preview/session logic
-- `crates/cli` - CLI tooling for config validation, building, and IPC queries
-- `crates/logging` - shared logging initialization and filter setup
-- `crates/wm-river` - river compositor integration and compatibility path
-- `crates/runtimes/js/{core,native,browser}` - JS runtime family split by shared/native/browser concerns
-- `packages/sdk/js` - JavaScript/TypeScript SDK package surface
-
-## Notes
-
-- The old C repository is reference material only.
-- User-facing terminology is `workspace` everywhere.
-- JS config is evaluated in a restricted runtime: config and layout code do not receive raw compositor objects.
-- Focus commands do not reorder the window stack (separate from window swap/move actions).
-- Keybindings are deduplicated semantically (e.g., `alt+Return` and `Alt+Enter` map to the same underlying key and modifiers).
-- Default bindings are provided if not configured: focus (hjkl), swap/move (Shift+hjkl), resize (Ctrl+hjkl), and workspace nav (1-9).
+- `apps/spiders-wm` - Smithay-based Wayland compositor host and runtime integration
+- `apps/spiders-wm-x` - X11/XCB host for experimentation and management flows
+- `apps/spiders-wm-www` - browser preview/authoring app built with Leptos
