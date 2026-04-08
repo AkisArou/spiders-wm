@@ -7,6 +7,7 @@ use wasm_bindgen::{JsCast, closure::Closure};
 
 mod app_state;
 mod bindings;
+mod browser_ipc;
 mod components;
 mod editor_files;
 mod editor_host;
@@ -19,6 +20,7 @@ mod workspace;
 use app_state::AppState;
 use layout_runtime::PreviewRenderRequest;
 use perf::{log_timing, now_ms};
+use views::cli::CliView;
 use views::editor::EditorView;
 use views::preview::PreviewView;
 use views::system::SystemView;
@@ -31,6 +33,7 @@ fn main() {
 #[component]
 fn App() -> impl IntoView {
     let app_state = AppState::new();
+    browser_ipc::initialize(app_state.session);
     provide_context(app_state);
 
     install_keyboard_listener(app_state);
@@ -73,6 +76,7 @@ fn AppShell() -> impl IntoView {
                     <Route path=path!("/preview") view=PreviewRoute />
                     <Route path=path!("/editor") view=EditorRoute />
                     <Route path=path!("/system") view=SystemRoute />
+                    <Route path=path!("/cli") view=CliRoute />
                 </Routes>
             </div>
 
@@ -86,6 +90,9 @@ fn AppShell() -> impl IntoView {
                     </A>
                     <A href="/system" attr:class=move || tab_class("/system")>
                         "3:system"
+                    </A>
+                    <A href="/cli" attr:class=move || tab_class("/cli")>
+                        "4:cli"
                     </A>
                 </nav>
             </div>
@@ -106,6 +113,11 @@ fn EditorRoute() -> impl IntoView {
 #[component]
 fn SystemRoute() -> impl IntoView {
     view! { <SystemView /> }
+}
+
+#[component]
+fn CliRoute() -> impl IntoView {
+    view! { <CliView /> }
 }
 
 #[component]

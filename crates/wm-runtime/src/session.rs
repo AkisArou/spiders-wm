@@ -212,9 +212,6 @@ pub fn apply_preview_command(
                 spawn_foot_window(&mut state, &mut model);
             }
         }
-        WmCommand::SpawnTerminal => {
-            spawn_foot_window(&mut state, &mut model);
-        }
         WmCommand::ResizeDirection { direction }
         | WmCommand::ResizeTiledDirection { direction } => {
             resize_direction(&mut state, &model, snapshot_root, direction);
@@ -359,6 +356,9 @@ fn preview_model(state: &PreviewSession) -> WmModel {
             window.app_id.clone(),
             window.class.clone(),
             window.instance.clone(),
+            None,
+            None,
+            false,
         );
         model.set_window_floating(window_id.clone(), window.floating);
         model.set_window_fullscreen(window_id.clone(), window.fullscreen);
@@ -843,6 +843,9 @@ fn spawn_foot_window(state: &mut PreviewSession, model: &mut WmModel) {
         Some("foot".to_string()),
         Some("foot".to_string()),
         Some("foot".to_string()),
+        None,
+        None,
+        false,
     );
     let _ = set_focused_window(model, Some(WindowId::from(window_id.as_str())));
 }

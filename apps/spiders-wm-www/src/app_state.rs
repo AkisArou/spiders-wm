@@ -4,13 +4,15 @@ use std::path::PathBuf;
 use leptos::prelude::*;
 use spiders_config::model::Config;
 use spiders_config::runtime::load_config_from_source_bundle;
-use spiders_core::LayoutId;
 use spiders_core::command::WmCommand;
+use spiders_core::event::WmEvent;
 use spiders_core::types::SpiderPlatform;
+use spiders_core::LayoutId;
 use spiders_runtime_js_browser::JavaScriptBrowserRuntimeProvider;
 use spiders_scene::pipeline::SceneCache;
 use wasm_bindgen::{JsCast, closure::Closure};
 
+use crate::browser_ipc;
 use crate::bindings::{ParsedBindingEntry, ParsedBindingsState};
 use crate::editor_files::{
     EditorFileId, initial_content, initial_editor_buffers, initial_open_editor_files, runtime_path,
@@ -83,6 +85,7 @@ impl AppState {
                 next_environment.stylesheets_by_layout,
             )
         });
+        self.broadcast_preview_event(WmEvent::ConfigReloaded);
         self.request_preview_reevaluation();
     }
 
@@ -99,6 +102,7 @@ impl AppState {
                 next_environment.stylesheets_by_layout,
             )
         });
+        self.broadcast_preview_event(WmEvent::ConfigReloaded);
         self.request_preview_reevaluation();
     }
 
@@ -159,6 +163,10 @@ impl AppState {
         action
     }
 
+    pub fn broadcast_preview_event(&self, event: WmEvent) {
+        browser_ipc::broadcast_event(event);
+    }
+
     pub fn apply_preview_failure_state(&self) {
         self.loaded_preview_layout.set(None);
     }
@@ -170,7 +178,7 @@ impl AppState {
 
         self.preview_refresh_scheduled.set(true);
 
-        let schedule = *self;
+        let schedule = self.clone();
         let Some(window) = web_sys::window() else {
             schedule.run_preview_refresh();
             return;

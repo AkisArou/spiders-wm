@@ -3999,6 +3999,7 @@ dependencies = [
  "anyhow",
  "serde",
  "serde_json",
+ "spiders-cli-core",
  "spiders-config",
  "spiders-core",
  "spiders-ipc",
@@ -4008,6 +4009,15 @@ dependencies = [
  "spiders-wm-runtime",
  "tempfile",
  "tracing",
+]
+
+[[package]]
+name = "spiders-cli-core"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "spiders-core",
+ "spiders-ipc-core",
 ]
 
 [[package]]
@@ -4101,9 +4111,40 @@ dependencies = [
 name = "spiders-ipc"
 version = "0.1.0"
 dependencies = [
+ "spiders-core",
+ "spiders-ipc-core",
+ "spiders-ipc-native",
+]
+
+[[package]]
+name = "spiders-ipc-browser"
+version = "0.1.0"
+dependencies = [
+ "js-sys",
+ "serde-wasm-bindgen",
+ "spiders-core",
+ "spiders-ipc-core",
+ "wasm-bindgen",
+ "web-sys",
+]
+
+[[package]]
+name = "spiders-ipc-core"
+version = "0.1.0"
+dependencies = [
  "serde",
  "serde_json",
  "spiders-core",
+ "thiserror 2.0.18",
+ "tracing",
+]
+
+[[package]]
+name = "spiders-ipc-native"
+version = "0.1.0"
+dependencies = [
+ "spiders-core",
+ "spiders-ipc-core",
  "thiserror 2.0.18",
  "tracing",
 ]
@@ -4199,6 +4240,8 @@ dependencies = [
  "spiders-core",
  "spiders-css",
  "spiders-ipc",
+ "spiders-ipc-core",
+ "spiders-ipc-native",
  "spiders-runtime-js-native",
  "spiders-scene",
  "spiders-wm-runtime",
@@ -4259,9 +4302,12 @@ dependencies = [
  "leptos_router",
  "serde",
  "serde-wasm-bindgen",
+ "spiders-cli-core",
  "spiders-config",
  "spiders-core",
  "spiders-css",
+ "spiders-ipc-browser",
+ "spiders-ipc-core",
  "spiders-runtime-js-browser",
  "spiders-runtime-js-core",
  "spiders-scene",
@@ -4277,12 +4323,17 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "calloop 0.14.4",
+ "libc",
  "serde_json",
  "spiders-config",
  "spiders-core",
+ "spiders-ipc",
+ "spiders-ipc-core",
+ "spiders-ipc-native",
  "spiders-logging",
  "spiders-runtime-js-native",
  "spiders-wm-runtime",
+ "thiserror 2.0.18",
  "tracing",
  "x11rb",
  "xkbcommon 0.9.0",

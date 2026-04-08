@@ -51,7 +51,6 @@ pub fn display_command_label(command: &WmCommand) -> String {
         WmCommand::MoveDirection { direction } => {
             format!("move({})", display_direction(*direction))
         }
-        WmCommand::SpawnTerminal => "spawn_terminal".to_string(),
         WmCommand::FocusNextWindow => "focus_next".to_string(),
         WmCommand::FocusPreviousWindow => "focus_prev".to_string(),
         WmCommand::SelectNextWorkspace => "select_next_workspace".to_string(),

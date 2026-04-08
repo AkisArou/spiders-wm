@@ -8,6 +8,8 @@
     "build:css-lsp-web": "wasm-pack build ../../../crates/css-lsp/web --target web --out-dir /home/akisarou/projects/spiders-wm/apps/spiders-wm-www/js/generated/css-lsp-web --out-name index --no-opt --no-pack"
   },
   "dependencies": {
+    "@xterm/addon-fit": "catalog:",
+    "@xterm/xterm": "catalog:",
     "monaco-editor": "catalog:"
   },
   "devDependencies": {

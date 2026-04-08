@@ -32,7 +32,6 @@ pub fn dispatch_wm_command<H: WmHost>(host: &mut H, command: WmCommand) -> Previ
                 assignment: WorkspaceAssignment::Toggle(workspace),
             })
         }
-        WmCommand::SpawnTerminal => host.on_effect(WmHostEffect::SpawnTerminal),
         WmCommand::FocusNextWindow => {
             host.on_effect(WmHostEffect::FocusWindow { target: FocusTarget::Next })
         }

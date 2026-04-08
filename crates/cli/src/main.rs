@@ -6,6 +6,10 @@ use report::{
     BuildConfigReport, DiscoveryReport, ErrorReport, IpcCommandReport, IpcDebugReport,
     IpcMonitorReport, IpcQueryReport, IpcSmokeReport, OutputMode, SuccessCheckReport, emit,
 };
+use spiders_cli_core::{
+    CliCommand, CliConfigCommand, CliShell, CliTopLevelCommand, CliTopic, CliWmCommand,
+    parse_cli_tokens, render_completion_script,
+};
 use spiders_config::model::config_discovery_options_from_env;
 use tracing::info;
 
@@ -25,109 +29,136 @@ impl CliContext {
 }
 
 fn main() -> std::process::ExitCode {
-    spiders_logging::init("spiders_cli");
-
     let args: Vec<String> = std::env::args().collect();
-    let check_config = args.iter().any(|arg| arg == "check-config");
-    let build_config = args.iter().any(|arg| arg == "build-config");
-    let ipc_smoke = args.iter().any(|arg| arg == "ipc-smoke");
-    let ipc_query = args.iter().any(|arg| arg == "ipc-query");
-    let ipc_command = args.iter().any(|arg| arg == "ipc-command");
-    let ipc_debug = args.iter().any(|arg| arg == "ipc-debug");
-    let ipc_monitor = args.iter().any(|arg| arg == "ipc-monitor");
-    let output_mode =
-        if args.iter().any(|arg| arg == "--json") { OutputMode::Json } else { OutputMode::Text };
-    let socket_path =
-        arg_value(&args, "--socket").map(std::path::PathBuf::from).or_else(default_ipc_socket_path);
-    let query_name = arg_value(&args, "--query");
-    let command_name = arg_value(&args, "--command");
-    let dump_name = arg_value(&args, "--dump");
-    let topic_names = arg_values(&args, "--topic");
-
     let cli = CliContext::new();
 
-    let command = if ipc_smoke {
-        "ipc-smoke"
-    } else if ipc_query {
-        "ipc-query"
-    } else if ipc_command {
-        "ipc-command"
-    } else if ipc_debug {
-        "ipc-debug"
-    } else if ipc_monitor {
-        "ipc-monitor"
-    } else if build_config {
-        "build-config"
-    } else if check_config {
-        "check-config"
-    } else {
-        "discovery"
-    };
+    let parsed = parse_native_args(&args[1..]);
+    let is_completion_command = matches!(parsed.command, CliTopLevelCommand::Completions { .. });
+    if !is_completion_command {
+        spiders_logging::init("spiders_cli");
+    }
+
+    let command_name = command_name(&parsed.command);
+    let output_mode = output_mode_from_json(parsed.output_json);
     let output_mode_name = match output_mode {
         OutputMode::Json => "json",
         OutputMode::Text => "text",
     };
-    info!(command, output_mode = output_mode_name, "executing spiders-cli command");
+    if !is_completion_command {
+        info!(
+            command = command_name,
+            output_mode = output_mode_name,
+            "executing spiders-cli command"
+        );
+    }
 
-    if ipc_smoke {
-        ipc_smoke_command(output_mode)
-    } else if ipc_query {
-        ipc_query_command(output_mode, socket_path, query_name)
-    } else if ipc_command {
-        ipc_command_command(output_mode, socket_path, command_name)
-    } else if ipc_debug {
-        ipc_debug_command(output_mode, socket_path, dump_name)
-    } else if ipc_monitor {
-        ipc_monitor_command(output_mode, socket_path, topic_names)
-    } else if build_config {
-        build_config_command(&cli, output_mode)
-    } else if check_config {
-        check_config_command(&cli, output_mode)
-    } else {
-        print_discovery(&cli, output_mode)
+    run_cli_command(&cli, output_mode, parsed)
+}
+
+fn parse_native_args(args: &[String]) -> CliCommand {
+    let tokens = args.iter().map(String::as_str).collect::<Vec<_>>();
+    match parse_cli_tokens(&tokens) {
+        Ok(parsed) => parsed,
+        Err(error) => {
+            eprintln!("spiders-cli parse error: {}", format_parse_error(&error));
+            std::process::exit(2);
+        }
     }
 }
 
-fn ipc_monitor_command(
+fn run_cli_command(
+    cli: &CliContext,
     output_mode: OutputMode,
-    socket_path: Option<std::path::PathBuf>,
-    topic_names: Vec<&str>,
+    parsed: CliCommand,
 ) -> std::process::ExitCode {
-    match run_ipc_monitor(socket_path, topic_names) {
-        Ok(report) => {
-            emit(output_mode, &report, || {
-                format!(
-                    "ipc monitor ok (socket: {}, topics: {}, events: {})",
-                    report.socket_path,
-                    report.topics.join(","),
-                    report.events.len()
-                )
-            });
+    let socket_path =
+        parsed.socket_path.map(std::path::PathBuf::from).or_else(default_ipc_socket_path);
+
+    match parsed.command {
+        CliTopLevelCommand::Config(CliConfigCommand::Discover) => print_discovery(cli, output_mode),
+        CliTopLevelCommand::Config(CliConfigCommand::Check) => {
+            check_config_command(cli, output_mode)
+        }
+        CliTopLevelCommand::Config(CliConfigCommand::Build) => {
+            build_config_command(cli, output_mode)
+        }
+        CliTopLevelCommand::Wm(CliWmCommand::Smoke) => ipc_smoke_command(output_mode),
+        CliTopLevelCommand::Wm(CliWmCommand::Query { query }) => {
+            ipc_query_request_command(output_mode, socket_path, query.to_runtime())
+        }
+        CliTopLevelCommand::Wm(CliWmCommand::Command { command }) => {
+            ipc_command_request_command(output_mode, socket_path, command)
+        }
+        CliTopLevelCommand::Wm(CliWmCommand::DebugDump { kind }) => {
+            ipc_debug_request_command(output_mode, socket_path, kind.to_runtime())
+        }
+        CliTopLevelCommand::Wm(CliWmCommand::Monitor { topics }) => ipc_monitor_request_command(
+            output_mode,
+            socket_path,
+            if topics.is_empty() {
+                vec![CliTopic::All.to_runtime()]
+            } else {
+                topics.into_iter().map(CliTopic::to_runtime).collect()
+            },
+        ),
+        CliTopLevelCommand::Completions { shell } => {
+            print_completion_script(shell);
             std::process::ExitCode::SUCCESS
         }
-        Err(error) => {
-            emit(
-                output_mode,
-                &ErrorReport {
-                    status: "error",
-                    phase: "ipc-monitor",
-                    prepared_config: None,
-                    errors: None,
-                    message: Some(error),
-                },
-                || "ipc monitor error".into(),
-            );
-            std::process::ExitCode::from(1)
+    }
+}
+
+fn format_parse_error(error: &spiders_cli_core::CliParseError) -> String {
+    match error {
+        spiders_cli_core::CliParseError::MissingCommand => "missing command".into(),
+        spiders_cli_core::CliParseError::MissingArgument { expected } => {
+            format!("missing argument: {expected}")
+        }
+        spiders_cli_core::CliParseError::UnknownCommand { token } => {
+            format!("unknown command: {token}")
+        }
+        spiders_cli_core::CliParseError::UnknownSubcommand { command, token } => {
+            format!("unknown subcommand for {command}: {token}")
+        }
+        spiders_cli_core::CliParseError::UnknownValue { flag, value } => {
+            format!("unknown value for {flag}: {value}")
+        }
+        spiders_cli_core::CliParseError::UnsupportedArgument { token } => {
+            format!("unsupported argument: {token}")
         }
     }
 }
 
-fn ipc_query_command(
+fn output_mode_from_json(output_json: bool) -> OutputMode {
+    if output_json { OutputMode::Json } else { OutputMode::Text }
+}
+
+fn command_name(command: &CliTopLevelCommand) -> &'static str {
+    match command {
+        CliTopLevelCommand::Config(CliConfigCommand::Discover) => "config-discover",
+        CliTopLevelCommand::Config(CliConfigCommand::Check) => "config-check",
+        CliTopLevelCommand::Config(CliConfigCommand::Build) => "config-build",
+        CliTopLevelCommand::Wm(CliWmCommand::Query { .. }) => "wm-query",
+        CliTopLevelCommand::Wm(CliWmCommand::Command { .. }) => "wm-command",
+        CliTopLevelCommand::Wm(CliWmCommand::Monitor { .. }) => "wm-monitor",
+        CliTopLevelCommand::Wm(CliWmCommand::DebugDump { .. }) => "wm-debug-dump",
+        CliTopLevelCommand::Wm(CliWmCommand::Smoke) => "wm-smoke",
+        CliTopLevelCommand::Completions { shell: CliShell::Zsh } => "completions-zsh",
+        CliTopLevelCommand::Completions { shell: CliShell::Bash } => "completions-bash",
+        CliTopLevelCommand::Completions { shell: CliShell::Fish } => "completions-fish",
+    }
+}
+
+fn print_completion_script(shell: CliShell) {
+    print!("{}", render_completion_script(shell));
+}
+
+fn ipc_query_request_command(
     output_mode: OutputMode,
     socket_path: Option<std::path::PathBuf>,
-    query_name: Option<&str>,
+    query: spiders_core::query::QueryRequest,
 ) -> std::process::ExitCode {
-    match run_ipc_query(socket_path, query_name.unwrap_or("state")) {
+    match run_ipc_query_request(socket_path, query) {
         Ok(report) => {
             emit(output_mode, &report, || {
                 format!(
@@ -156,12 +187,12 @@ fn ipc_query_command(
     }
 }
 
-fn ipc_command_command(
+fn ipc_command_request_command(
     output_mode: OutputMode,
     socket_path: Option<std::path::PathBuf>,
-    command_name: Option<&str>,
+    command: spiders_core::command::WmCommand,
 ) -> std::process::ExitCode {
-    match run_ipc_command(socket_path, command_name.unwrap_or("close-focused-window")) {
+    match run_ipc_command_request(socket_path, command) {
         Ok(report) => {
             emit(output_mode, &report, || {
                 format!(
@@ -190,12 +221,12 @@ fn ipc_command_command(
     }
 }
 
-fn ipc_debug_command(
+fn ipc_debug_request_command(
     output_mode: OutputMode,
     socket_path: Option<std::path::PathBuf>,
-    dump_name: Option<&str>,
+    dump_kind: spiders_ipc::DebugDumpKind,
 ) -> std::process::ExitCode {
-    match run_ipc_debug(socket_path, dump_name.unwrap_or("wm-state")) {
+    match run_ipc_debug_request(socket_path, dump_kind) {
         Ok(report) => {
             emit(output_mode, &report, || {
                 let path = report.path.as_deref().unwrap_or("<debug output disabled>");
@@ -220,6 +251,40 @@ fn ipc_debug_command(
                     message: Some(error),
                 },
                 || "ipc debug error".into(),
+            );
+            std::process::ExitCode::from(1)
+        }
+    }
+}
+
+fn ipc_monitor_request_command(
+    output_mode: OutputMode,
+    socket_path: Option<std::path::PathBuf>,
+    topics: Vec<spiders_ipc::IpcSubscriptionTopic>,
+) -> std::process::ExitCode {
+    match run_ipc_monitor_request(socket_path, topics) {
+        Ok(report) => {
+            emit(output_mode, &report, || {
+                format!(
+                    "ipc monitor ok (socket: {}, topics: {}, events: {})",
+                    report.socket_path,
+                    report.topics.join(","),
+                    report.events.len()
+                )
+            });
+            std::process::ExitCode::SUCCESS
+        }
+        Err(error) => {
+            emit(
+                output_mode,
+                &ErrorReport {
+                    status: "error",
+                    phase: "ipc-monitor",
+                    prepared_config: None,
+                    errors: None,
+                    message: Some(error),
+                },
+                || "ipc monitor error".into(),
             );
             std::process::ExitCode::from(1)
         }
@@ -253,14 +318,6 @@ fn ipc_smoke_command(output_mode: OutputMode) -> std::process::ExitCode {
             std::process::ExitCode::from(1)
         }
     }
-}
-
-fn arg_value<'a>(args: &'a [String], flag: &str) -> Option<&'a str> {
-    args.windows(2).find(|window| window[0] == flag).map(|window| window[1].as_str())
-}
-
-fn arg_values<'a>(args: &'a [String], flag: &str) -> Vec<&'a str> {
-    args.windows(2).filter(|window| window[0] == flag).map(|window| window[1].as_str()).collect()
 }
 
 fn print_discovery(cli: &CliContext, output_mode: OutputMode) -> std::process::ExitCode {
@@ -650,14 +707,13 @@ fn run_ipc_smoke() -> Result<IpcSmokeReport, String> {
     })
 }
 
-fn run_ipc_query(
+fn run_ipc_query_request(
     socket_path: Option<std::path::PathBuf>,
-    query_name: &str,
+    query: spiders_core::query::QueryRequest,
 ) -> Result<IpcQueryReport, String> {
     use spiders_ipc::{IpcClientMessage, IpcEnvelope, connect, recv_response, send_request};
 
     let socket_path = socket_path.ok_or_else(|| "missing IPC socket path".to_string())?;
-    let query = parse_query_request(query_name)?;
     let request_id = "cli-query-1".to_string();
     let request = IpcEnvelope::new(IpcClientMessage::Query(query)).with_request_id(&request_id);
     let mut stream = connect(&socket_path).map_err(|error| error.to_string())?;
@@ -676,14 +732,13 @@ fn run_ipc_query(
     }
 }
 
-fn run_ipc_command(
+fn run_ipc_command_request(
     socket_path: Option<std::path::PathBuf>,
-    command_name: &str,
+    command: spiders_core::command::WmCommand,
 ) -> Result<IpcCommandReport, String> {
     use spiders_ipc::{IpcClientMessage, IpcEnvelope, connect, recv_response, send_request};
 
     let socket_path = socket_path.ok_or_else(|| "missing IPC socket path".to_string())?;
-    let command = parse_command_request(command_name)?;
     let request_id = "cli-command-1".to_string();
     let request =
         IpcEnvelope::new(IpcClientMessage::Command(command.clone())).with_request_id(&request_id);
@@ -703,9 +758,9 @@ fn run_ipc_command(
     }
 }
 
-fn run_ipc_debug(
+fn run_ipc_debug_request(
     socket_path: Option<std::path::PathBuf>,
-    dump_name: &str,
+    dump_kind: spiders_ipc::DebugDumpKind,
 ) -> Result<IpcDebugReport, String> {
     use spiders_ipc::{
         DebugRequest, IpcClientMessage, IpcEnvelope, IpcServerMessage, connect, recv_response,
@@ -713,7 +768,6 @@ fn run_ipc_debug(
     };
 
     let socket_path = socket_path.ok_or_else(|| "missing IPC socket path".to_string())?;
-    let dump_kind = parse_debug_dump_kind(dump_name)?;
     let request_id = "cli-debug-1".to_string();
     let request = IpcEnvelope::new(IpcClientMessage::Debug(DebugRequest::Dump { kind: dump_kind }))
         .with_request_id(&request_id);
@@ -736,9 +790,9 @@ fn run_ipc_debug(
     }
 }
 
-fn run_ipc_monitor(
+fn run_ipc_monitor_request(
     socket_path: Option<std::path::PathBuf>,
-    topic_names: Vec<&str>,
+    topics: Vec<spiders_ipc::IpcSubscriptionTopic>,
 ) -> Result<IpcMonitorReport, String> {
     use spiders_ipc::{
         IpcClientMessage, IpcEnvelope, IpcServerMessage, connect, decode_response_line,
@@ -747,7 +801,6 @@ fn run_ipc_monitor(
     use std::io::BufRead;
 
     let socket_path = socket_path.ok_or_else(|| "missing IPC socket path".to_string())?;
-    let topics = parse_subscription_topics(&topic_names)?;
     let request_id = "cli-monitor-1".to_string();
     let request =
         IpcEnvelope::new(IpcClientMessage::subscribe(topics.clone())).with_request_id(&request_id);
@@ -808,92 +861,6 @@ fn default_ipc_socket_path() -> Option<std::path::PathBuf> {
     std::env::var_os("SPIDERS_WM_IPC_SOCKET").map(std::path::PathBuf::from)
 }
 
-fn parse_query_request(name: &str) -> Result<spiders_core::query::QueryRequest, String> {
-    use spiders_core::query::QueryRequest;
-
-    match name {
-        "state" => Ok(QueryRequest::State),
-        "focused-window" => Ok(QueryRequest::FocusedWindow),
-        "current-output" => Ok(QueryRequest::CurrentOutput),
-        "current-workspace" => Ok(QueryRequest::CurrentWorkspace),
-        "monitor-list" => Ok(QueryRequest::MonitorList),
-        "workspace-names" => Ok(QueryRequest::WorkspaceNames),
-        _ => Err(format!("unsupported IPC query '{name}'")),
-    }
-}
-
-fn parse_command_request(name: &str) -> Result<spiders_core::command::WmCommand, String> {
-    use spiders_core::command::{FocusDirection, LayoutCycleDirection, WmCommand};
-
-    if let Some(value) = name.strip_prefix("spawn:") {
-        return Ok(WmCommand::Spawn { command: value.to_string() });
-    }
-
-    if let Some(value) = name.strip_prefix("set-layout:") {
-        return Ok(WmCommand::SetLayout { name: value.to_string() });
-    }
-
-    if let Some(value) = name.strip_prefix("select-workspace:") {
-        return Ok(WmCommand::SelectWorkspace { workspace_id: value.into() });
-    }
-
-    match name {
-        "spawn-terminal" => Ok(WmCommand::SpawnTerminal),
-        "focus-next-window" => Ok(WmCommand::FocusNextWindow),
-        "focus-previous-window" => Ok(WmCommand::FocusPreviousWindow),
-        "select-next-workspace" => Ok(WmCommand::SelectNextWorkspace),
-        "select-previous-workspace" => Ok(WmCommand::SelectPreviousWorkspace),
-        "reload-config" => Ok(WmCommand::ReloadConfig),
-        "cycle-layout-next" => {
-            Ok(WmCommand::CycleLayout { direction: Some(LayoutCycleDirection::Next) })
-        }
-        "cycle-layout-previous" => {
-            Ok(WmCommand::CycleLayout { direction: Some(LayoutCycleDirection::Previous) })
-        }
-        "toggle-floating" => Ok(WmCommand::ToggleFloating),
-        "toggle-fullscreen" => Ok(WmCommand::ToggleFullscreen),
-        "focus-left" => Ok(WmCommand::FocusDirection { direction: FocusDirection::Left }),
-        "focus-right" => Ok(WmCommand::FocusDirection { direction: FocusDirection::Right }),
-        "focus-up" => Ok(WmCommand::FocusDirection { direction: FocusDirection::Up }),
-        "focus-down" => Ok(WmCommand::FocusDirection { direction: FocusDirection::Down }),
-        "close-focused-window" => Ok(WmCommand::CloseFocusedWindow),
-        _ => Err(format!("unsupported IPC command '{name}'")),
-    }
-}
-
-fn parse_debug_dump_kind(name: &str) -> Result<spiders_ipc::DebugDumpKind, String> {
-    match name {
-        "wm-state" => Ok(spiders_ipc::DebugDumpKind::WmState),
-        "debug-profile" => Ok(spiders_ipc::DebugDumpKind::DebugProfile),
-        "scene-snapshot" => Ok(spiders_ipc::DebugDumpKind::SceneSnapshot),
-        "frame-sync" => Ok(spiders_ipc::DebugDumpKind::FrameSync),
-        "seats" => Ok(spiders_ipc::DebugDumpKind::Seats),
-        _ => Err(format!("unsupported IPC debug dump '{name}'")),
-    }
-}
-
-fn parse_subscription_topics(
-    names: &[&str],
-) -> Result<Vec<spiders_ipc::IpcSubscriptionTopic>, String> {
-    if names.is_empty() {
-        return Ok(vec![spiders_ipc::IpcSubscriptionTopic::All]);
-    }
-
-    names.iter().map(|name| parse_subscription_topic(name)).collect()
-}
-
-fn parse_subscription_topic(name: &str) -> Result<spiders_ipc::IpcSubscriptionTopic, String> {
-    match name {
-        "all" => Ok(spiders_ipc::IpcSubscriptionTopic::All),
-        "focus" => Ok(spiders_ipc::IpcSubscriptionTopic::Focus),
-        "windows" => Ok(spiders_ipc::IpcSubscriptionTopic::Windows),
-        "workspaces" => Ok(spiders_ipc::IpcSubscriptionTopic::Workspaces),
-        "layout" => Ok(spiders_ipc::IpcSubscriptionTopic::Layout),
-        "config" => Ok(spiders_ipc::IpcSubscriptionTopic::Config),
-        _ => Err(format!("unsupported IPC topic '{name}'")),
-    }
-}
-
 fn query_label(query: &spiders_core::query::QueryRequest) -> &'static str {
     use spiders_core::query::QueryRequest;
 
@@ -937,7 +904,6 @@ fn command_label(action: &spiders_core::command::WmCommand) -> &'static str {
         WmCommand::ResizeDirection { .. } => "resize-direction",
         WmCommand::ResizeTiledDirection { .. } => "resize-tiled-direction",
         WmCommand::MoveDirection { .. } => "move-direction",
-        WmCommand::SpawnTerminal => "spawn-terminal",
         WmCommand::FocusNextWindow => "focus-next-window",
         WmCommand::FocusPreviousWindow => "focus-previous-window",
         WmCommand::SelectNextWorkspace => "select-next-workspace",
@@ -999,6 +965,7 @@ mod tests {
     use std::io::Write;
     use std::os::unix::net::UnixListener;
 
+    use spiders_cli_core::{CliQuery, CliTopic};
     use spiders_core::event::WmEvent;
     use spiders_core::query::{QueryRequest, QueryResponse};
     use spiders_ipc::{IpcEnvelope, IpcServerMessage, encode_response_line};
@@ -1038,7 +1005,9 @@ mod tests {
             }
         });
 
-        let report = run_ipc_query(Some(socket_path.clone()), "workspace-names").unwrap();
+        let report =
+            run_ipc_query_request(Some(socket_path.clone()), CliQuery::WorkspaceNames.to_runtime())
+                .unwrap();
 
         assert_eq!(report.query, QueryRequest::WorkspaceNames);
         assert_eq!(report.response, QueryResponse::WorkspaceNames(vec!["1".into(), "2".into()]));
@@ -1069,7 +1038,11 @@ mod tests {
             }
         });
 
-        let report = run_ipc_command(Some(socket_path.clone()), "close-focused-window").unwrap();
+        let report = run_ipc_command_request(
+            Some(socket_path.clone()),
+            spiders_core::command::WmCommand::CloseFocusedWindow,
+        )
+        .unwrap();
 
         assert_eq!(report.command, spiders_core::command::WmCommand::CloseFocusedWindow);
         assert_eq!(report.response_kind, "command-accepted");
@@ -1081,7 +1054,7 @@ mod tests {
     #[test]
     fn parse_ipc_command_supports_workspace_selection() {
         assert_eq!(
-            parse_command_request("select-workspace:ws-2").unwrap(),
+            spiders_cli_core::parse_wm_command("select-workspace:ws-2").unwrap(),
             spiders_core::command::WmCommand::SelectWorkspace { workspace_id: "ws-2".into() }
         );
     }
@@ -1119,7 +1092,9 @@ mod tests {
             }
         });
 
-        let report = run_ipc_monitor(Some(socket_path.clone()), vec!["focus"]).unwrap();
+        let report =
+            run_ipc_monitor_request(Some(socket_path.clone()), vec![CliTopic::Focus.to_runtime()])
+                .unwrap();
 
         assert_eq!(report.topics, vec!["focus"]);
         assert_eq!(report.subscribed_topics, vec!["focus"]);

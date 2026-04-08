@@ -1,0 +1,15 @@
+[package]
+name = "spiders-ipc-native"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+spiders-ipc-core = { path = "../core" }
+spiders-core = { path = "../../core" }
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+spiders-core = { path = "../../core" }

@@ -1,0 +1,55 @@
+#compdef spiders-cli
+
+local -a _spiders_cli_queries
+local -a _spiders_cli_commands
+local -a _spiders_cli_topics
+local -a _spiders_cli_dumps
+
+_spiders_cli_queries=(state focused-window current-output current-workspace monitor-list workspace-names)
+_spiders_cli_commands=(close-focused-window toggle-floating toggle-fullscreen reload-config focus-next-window focus-previous-window select-next-workspace select-previous-workspace cycle-layout-next cycle-layout-previous focus-left focus-right focus-up focus-down set-layout:<name> select-workspace:<id> spawn:<command>)
+_spiders_cli_topics=(all focus windows workspaces layout config)
+_spiders_cli_dumps=(wm-state debug-profile scene-snapshot frame-sync seats)
+
+_arguments -C \
+  '--json[emit JSON output]' \
+  '--socket[path to WM IPC socket]:socket path:_files' \
+  '1:command:(config wm completions)' \
+  '2:subcommand:->subcommand' \
+  '3:arg:->arg' \
+  '4:arg:->arg' \
+  '5:arg:->arg'
+
+case $state in
+  subcommand)
+    case $words[2] in
+      config)
+        _values 'config command' discover check build
+        ;;
+      wm)
+        _values 'wm command' query command monitor debug smoke
+        ;;
+      completions)
+        _values 'shell' zsh bash fish
+        ;;
+    esac
+    ;;
+  arg)
+    case "$words[2] $words[3] $words[4]" in
+      'wm query '*)
+        _describe 'query' _spiders_cli_queries
+        ;;
+      'wm command '*)
+        _describe 'command' _spiders_cli_commands
+        ;;
+      'wm monitor '*)
+        _describe 'topic' _spiders_cli_topics
+        ;;
+      'wm debug dump'*)
+        _describe 'dump kind' _spiders_cli_dumps
+        ;;
+      'completions '*)
+        _values 'shell' zsh bash fish
+        ;;
+    esac
+    ;;
+esac

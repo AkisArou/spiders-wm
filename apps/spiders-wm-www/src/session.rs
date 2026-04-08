@@ -3,10 +3,13 @@ use spiders_core::command::{LayoutCycleDirection, WmCommand};
 use spiders_core::effect::{
     FocusTarget, WindowToggle, WmHostEffect, WorkspaceAssignment, WorkspaceTarget,
 };
+use spiders_core::event::WmEvent;
+use spiders_core::query::{QueryRequest, QueryResponse};
 use spiders_core::resize::LayoutAdjustmentState;
-use spiders_core::snapshot::WindowSnapshot;
+use spiders_core::snapshot::{OutputSnapshot, StateSnapshot, WindowSnapshot, WorkspaceSnapshot};
+use spiders_core::types::{LayoutRef, OutputTransform, ShellKind, WindowMode};
 use spiders_core::wm::WindowGeometry;
-use spiders_core::{LayoutId, WindowId};
+use spiders_core::{LayoutId, OutputId, WindowId, WorkspaceId};
 use spiders_scene::pipeline::SceneCache;
 pub use spiders_wm_runtime::{PreviewDiagnostic, PreviewSnapshotNode};
 use spiders_wm_runtime::{
@@ -191,7 +194,7 @@ impl PreviewSessionState {
             .windows
             .iter()
             .filter(|window| window.workspace_name == self.runtime_state.active_workspace_name)
-            .map(runtime_window_snapshot)
+            .map(|window| runtime_window_snapshot(window, Some(window.workspace_name.as_str())))
             .collect()
     }
 
@@ -216,13 +219,117 @@ impl PreviewSessionState {
         self.visible_windows().len()
     }
 
+    pub fn query_response(&self, query: QueryRequest) -> QueryResponse {
+        let snapshot = self.state_snapshot();
+
+        match query {
+            QueryRequest::State => QueryResponse::State(snapshot),
+            QueryRequest::FocusedWindow => QueryResponse::FocusedWindow(
+                snapshot.focused_window_id.as_ref().and_then(|window_id| {
+                    snapshot.windows.iter().find(|window| &window.id == window_id).cloned()
+                }),
+            ),
+            QueryRequest::CurrentOutput => {
+                QueryResponse::CurrentOutput(snapshot.current_output().cloned())
+            }
+            QueryRequest::CurrentWorkspace => {
+                QueryResponse::CurrentWorkspace(snapshot.current_workspace().cloned())
+            }
+            QueryRequest::MonitorList => QueryResponse::MonitorList(snapshot.outputs),
+            QueryRequest::WorkspaceNames => QueryResponse::WorkspaceNames(snapshot.workspace_names),
+        }
+    }
+
+    pub fn state_snapshot(&self) -> StateSnapshot {
+        let current_workspace = self.current_workspace_snapshot();
+        let current_workspace_id = current_workspace.as_ref().map(|workspace| workspace.id.clone());
+        let current_output = self.current_output_snapshot(current_workspace.as_ref());
+        let current_output_id = current_output.as_ref().map(|output| output.id.clone());
+        let focused_window_id = self.focused_window_id();
+        let windows = self
+            .runtime_state
+            .windows
+            .iter()
+            .map(|window| runtime_window_snapshot(window, Some(window.workspace_name.as_str())))
+            .collect::<Vec<_>>();
+
+        StateSnapshot {
+            focused_window_id,
+            current_output_id,
+            current_workspace_id,
+            outputs: current_output.into_iter().collect(),
+            workspaces: self.current_workspace_snapshot().into_iter().collect(),
+            windows,
+            visible_window_ids: self
+                .visible_windows()
+                .into_iter()
+                .map(|window| window.id)
+                .collect(),
+            workspace_names: self.runtime_state.workspace_names.clone(),
+        }
+    }
+
+    pub fn event_for_command(&self, command: &WmCommand) -> Option<WmEvent> {
+        match command {
+            WmCommand::ReloadConfig => Some(WmEvent::ConfigReloaded),
+            WmCommand::SetLayout { .. } | WmCommand::CycleLayout { .. } => {
+                Some(WmEvent::LayoutChange {
+                    workspace_id: self.current_workspace_snapshot().map(|workspace| workspace.id),
+                    layout: Some(LayoutRef {
+                        name: self.runtime_state.active_layout.as_str().to_string(),
+                    }),
+                })
+            }
+            WmCommand::ViewWorkspace { .. }
+            | WmCommand::ActivateWorkspace { .. }
+            | WmCommand::SelectNextWorkspace
+            | WmCommand::SelectPreviousWorkspace
+            | WmCommand::SelectWorkspace { .. } => Some(WmEvent::WorkspaceChange {
+                workspace_id: self.current_workspace_snapshot().map(|workspace| workspace.id),
+                active_workspaces: vec![self.runtime_state.active_workspace_name.clone()],
+            }),
+            WmCommand::FocusWindow { .. }
+            | WmCommand::FocusDirection { .. }
+            | WmCommand::FocusNextWindow
+            | WmCommand::FocusPreviousWindow => Some(WmEvent::FocusChange {
+                focused_window_id: self.focused_window_id(),
+                current_output_id: self.current_output_snapshot(None).map(|output| output.id),
+                current_workspace_id: self
+                    .current_workspace_snapshot()
+                    .map(|workspace| workspace.id),
+            }),
+            WmCommand::ToggleFloating => {
+                self.focused_window_id().map(|window_id| WmEvent::WindowFloatingChange {
+                    floating: self
+                        .runtime_state_window(&window_id)
+                        .map(|window| window.floating)
+                        .unwrap_or(false),
+                    window_id,
+                })
+            }
+            WmCommand::ToggleFullscreen => {
+                self.focused_window_id().map(|window_id| WmEvent::WindowFullscreenChange {
+                    fullscreen: self
+                        .runtime_state_window(&window_id)
+                        .map(|window| window.fullscreen)
+                        .unwrap_or(false),
+                    window_id,
+                })
+            }
+            WmCommand::CloseFocusedWindow => {
+                self.focused_window_id().map(|window_id| WmEvent::WindowDestroyed { window_id })
+            }
+            _ => None,
+        }
+    }
+
     pub fn window_geometry(&self, window_id: &WindowId) -> WindowGeometry {
         self.window_geometries.get(window_id).copied().unwrap_or_else(empty_window_geometry)
     }
 
     pub fn window_name(&self, window_id: &WindowId) -> String {
         self.runtime_state_window(window_id)
-            .map(runtime_window_snapshot)
+            .map(|window| runtime_window_snapshot(window, Some(window.workspace_name.as_str())))
             .map(|window| {
                 let title = window.title.as_deref().unwrap_or(window.id.as_str());
                 window
@@ -508,6 +615,42 @@ impl PreviewSessionState {
         self.event_log.truncate(10);
     }
 
+    fn current_workspace_snapshot(&self) -> Option<WorkspaceSnapshot> {
+        let workspace_name = self.runtime_state.active_workspace_name.clone();
+        let workspace_id = preview_workspace_id(&workspace_name);
+        Some(WorkspaceSnapshot {
+            id: workspace_id,
+            name: workspace_name.clone(),
+            output_id: Some(preview_output_id()),
+            active_workspaces: vec![workspace_name],
+            focused: true,
+            visible: true,
+            effective_layout: Some(LayoutRef {
+                name: self.runtime_state.active_layout.as_str().to_string(),
+            }),
+        })
+    }
+
+    fn current_output_snapshot(
+        &self,
+        workspace: Option<&WorkspaceSnapshot>,
+    ) -> Option<OutputSnapshot> {
+        Some(OutputSnapshot {
+            id: preview_output_id(),
+            name: "preview-0".to_string(),
+            logical_x: 0,
+            logical_y: 0,
+            logical_width: CANVAS_WIDTH as u32,
+            logical_height: CANVAS_HEIGHT as u32,
+            scale: 1,
+            transform: OutputTransform::Normal,
+            enabled: true,
+            current_workspace_id: workspace
+                .map(|workspace| workspace.id.clone())
+                .or_else(|| self.current_workspace_snapshot().map(|workspace| workspace.id)),
+        })
+    }
+
     fn runtime_state_window(&self, window_id: &WindowId) -> Option<&PreviewWindow> {
         self.runtime_state.windows.iter().find(|window| window.id.as_str() == window_id.as_str())
     }
@@ -547,9 +690,6 @@ impl WmHost for PreviewSessionState {
                     WmCommand::ToggleAssignFocusedWindowToWorkspace { workspace },
                 ),
             },
-            WmHostEffect::SpawnTerminal => {
-                self.apply_host_runtime_command(WmCommand::SpawnTerminal)
-            }
             WmHostEffect::FocusWindow { target } => match target {
                 FocusTarget::Next => self.apply_host_runtime_command(WmCommand::FocusNextWindow),
                 FocusTarget::Previous => {
@@ -642,6 +782,25 @@ fn playground_window(
     }
 }
 
-fn runtime_window_snapshot(window: &PreviewWindow) -> WindowSnapshot {
-    preview_window_snapshot(window, Some(window.workspace_name.as_str()))
+fn runtime_window_snapshot(window: &PreviewWindow, workspace_name: Option<&str>) -> WindowSnapshot {
+    let mut snapshot = preview_window_snapshot(window, workspace_name);
+    snapshot.shell = ShellKind::XdgToplevel;
+    snapshot.output_id = Some(preview_output_id());
+    snapshot.workspace_id = Some(preview_workspace_id(&window.workspace_name));
+    snapshot.mode = if window.fullscreen {
+        WindowMode::Fullscreen
+    } else if window.floating {
+        WindowMode::Floating { rect: None }
+    } else {
+        WindowMode::Tiled
+    };
+    snapshot
+}
+
+fn preview_workspace_id(name: &str) -> WorkspaceId {
+    WorkspaceId::from(format!("preview-workspace-{name}"))
+}
+
+fn preview_output_id() -> OutputId {
+    OutputId::from("preview-output-0")
 }

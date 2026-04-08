@@ -11,8 +11,11 @@ console_error_panic_hook.workspace = true
 leptos = { workspace = true, features = ["csr"] }
 leptos_router.workspace = true
 spiders-config = { path = "../../crates/config" }
+spiders-cli-core = { path = "../../crates/cli/core" }
 spiders-core = { path = "../../crates/core" }
 spiders-css = { path = "../../crates/css" }
+spiders-ipc-browser = { path = "../../crates/ipc/browser" }
+spiders-ipc-core = { path = "../../crates/ipc/core" }
 spiders-runtime-js-browser = { path = "../../crates/runtimes/js/browser" }
 spiders-runtime-js-core = { path = "../../crates/runtimes/js/core" }
 spiders-wm-runtime = { path = "../../crates/wm-runtime" }

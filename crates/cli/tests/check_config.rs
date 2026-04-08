@@ -47,6 +47,8 @@ fn write_prepared_config() -> (TempDir, std::path::PathBuf) {
 fn cli_reports_discovery_in_json_mode() {
     let output = Command::new(cli_bin())
         .arg("--json")
+        .arg("config")
+        .arg("discover")
         .env("SPIDERS_WM_AUTHORED_CONFIG", "/tmp/authored.js")
         .env("SPIDERS_WM_CACHE_DIR", "/tmp/spiders-cache")
         .output()
@@ -76,8 +78,9 @@ fn cli_check_config_reports_validation_errors_in_json_mode() {
     .unwrap();
 
     let output = Command::new(cli_bin())
-        .arg("check-config")
         .arg("--json")
+        .arg("config")
+        .arg("check")
         .env("SPIDERS_WM_AUTHORED_CONFIG", "/tmp/authored.js")
         .env("SPIDERS_WM_CACHE_DIR", prepared_config.parent().unwrap())
         .output()
@@ -98,8 +101,9 @@ fn cli_check_config_reports_success_in_json_mode_with_fixture_layout() {
     let (_runtime_root, prepared_config) = write_prepared_config();
 
     let output = Command::new(cli_bin())
-        .arg("check-config")
         .arg("--json")
+        .arg("config")
+        .arg("check")
         .env("SPIDERS_WM_AUTHORED_CONFIG", authored_config)
         .env("SPIDERS_WM_CACHE_DIR", prepared_config.parent().unwrap())
         .output()
@@ -142,8 +146,9 @@ fn cli_build_config_writes_prepared_config_with_module_graphs() {
     let prepared_config = runtime_root.path().join("config.js");
 
     let output = Command::new(cli_bin())
-        .arg("build-config")
         .arg("--json")
+        .arg("config")
+        .arg("build")
         .env("SPIDERS_WM_AUTHORED_CONFIG", authored_config)
         .env("SPIDERS_WM_CACHE_DIR", prepared_config.parent().unwrap())
         .output()
@@ -184,12 +189,12 @@ fn cli_ipc_query_reports_socket_response_in_json_mode() {
     });
 
     let output = Command::new(cli_bin())
-        .arg("ipc-query")
         .arg("--json")
+        .arg("wm")
+        .arg("query")
+        .arg("workspace-names")
         .arg("--socket")
         .arg(&socket_path)
-        .arg("--query")
-        .arg("workspace-names")
         .output()
         .unwrap();
 
@@ -227,12 +232,12 @@ fn cli_ipc_command_reports_socket_response_in_json_mode() {
     });
 
     let output = Command::new(cli_bin())
-        .arg("ipc-command")
         .arg("--json")
+        .arg("wm")
+        .arg("command")
+        .arg("close-focused-window")
         .arg("--socket")
         .arg(&socket_path)
-        .arg("--command")
-        .arg("close-focused-window")
         .output()
         .unwrap();
 
@@ -274,12 +279,13 @@ fn cli_ipc_debug_reports_dump_response_in_json_mode() {
     });
 
     let output = Command::new(cli_bin())
-        .arg("ipc-debug")
         .arg("--json")
+        .arg("wm")
+        .arg("debug")
+        .arg("dump")
+        .arg("scene-snapshot")
         .arg("--socket")
         .arg(&socket_path)
-        .arg("--dump")
-        .arg("scene-snapshot")
         .output()
         .unwrap();
 
@@ -321,12 +327,13 @@ fn cli_ipc_debug_supports_frame_sync_dump_kind() {
     });
 
     let output = Command::new(cli_bin())
-        .arg("ipc-debug")
         .arg("--json")
+        .arg("wm")
+        .arg("debug")
+        .arg("dump")
+        .arg("frame-sync")
         .arg("--socket")
         .arg(&socket_path)
-        .arg("--dump")
-        .arg("frame-sync")
         .output()
         .unwrap();
 
@@ -365,9 +372,9 @@ fn cli_ipc_query_uses_default_socket_env_when_flag_is_omitted() {
     });
 
     let output = Command::new(cli_bin())
-        .arg("ipc-query")
         .arg("--json")
-        .arg("--query")
+        .arg("wm")
+        .arg("query")
         .arg("workspace-names")
         .env("SPIDERS_WM_IPC_SOCKET", &socket_path)
         .output()
@@ -415,12 +422,12 @@ fn cli_ipc_monitor_reports_streamed_events_in_json_mode() {
     });
 
     let output = Command::new(cli_bin())
-        .arg("ipc-monitor")
         .arg("--json")
+        .arg("wm")
+        .arg("monitor")
+        .arg("layout")
         .arg("--socket")
         .arg(&socket_path)
-        .arg("--topic")
-        .arg("layout")
         .output()
         .unwrap();
 

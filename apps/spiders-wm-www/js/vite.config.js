@@ -5,9 +5,12 @@ export default defineConfig({
   base: "./",
   build: {
     lib: {
-      entry: resolve(import.meta.dirname, "src/monaco-host.ts"),
+      entry: {
+        "monaco-host": resolve(import.meta.dirname, "src/monaco-host.ts"),
+        "xterm-host": resolve(import.meta.dirname, "src/xterm-host.ts"),
+      },
       formats: ["es"],
-      fileName: () => "monaco-host.js",
+      fileName: (_format, entryName) => `${entryName}.js`,
     },
     outDir: resolve(import.meta.dirname, "dist"),
     emptyOutDir: false,

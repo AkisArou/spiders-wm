@@ -1,6 +1,6 @@
 # CLI
 
-The main entry point is `spiders-cli`. It provides CLI tooling for config validation, building, IPC queries, and compositor debug dumps.
+The main entry point is `spiders-cli`.
 
 Run commands with:
 
@@ -8,134 +8,106 @@ Run commands with:
 cargo run -p spiders-cli -- <command>
 ```
 
-The compositor runtime is in `crates/spiders-wm` and is launched via:
+## Command Tree
 
-```bash
-just dev
-```
+Top-level groups:
 
-or directly:
-
-```bash
-cargo build -p spiders-wm && river -c ./target/debug/spiders-wm
-```
-
-## General
-
-Without a subcommand, the CLI prints config discovery information.
+- `config`
+- `wm`
+- `completions`
 
 Global options:
 
 - `--json`
+- `--socket <path>` for `wm` IPC commands
 
 ## Config Commands
 
-### `check-config`
+### `config discover`
+
+Shows discovered authored and prepared config paths.
+
+```bash
+cargo run -p spiders-cli -- config discover
+```
+
+### `config check`
 
 Validates config loading and layout modules.
 
 ```bash
-cargo run -p spiders-cli -- check-config
+cargo run -p spiders-cli -- config check
 ```
 
-### `build-config`
+### `config build`
 
 Builds or refreshes the prepared config cache.
 
 ```bash
-cargo run -p spiders-cli -- build-config
+cargo run -p spiders-cli -- config build
 ```
 
-### `bootstrap-trace`
+## WM Commands
 
-Runs startup/controller tracing.
-
-Options:
-
-- `--events <path>`
-- `--transcript <path>`
-
-```bash
-cargo run -p spiders-cli -- bootstrap-trace --transcript trace.json
-```
-
-### `winit-run`
-
-Starts a nested development compositor.
-
-Options:
-
-- `--socket-name <name>`
-
-```bash
-cargo run -p spiders-cli -- winit-run --socket-name spiders-dev
-```
-
-## IPC Commands
-
-### `ipc-smoke`
+### `wm smoke`
 
 Exercises IPC framing and server handling without a live compositor.
 
 ```bash
-cargo run -p spiders-cli -- ipc-smoke
+cargo run -p spiders-cli -- wm smoke
 ```
 
-### `ipc-query`
+### `wm query <query>`
 
-Options:
+Supported queries:
 
-- `--socket <path>`
-- `--query <name>`
+- `state`
+- `focused-window`
+- `current-output`
+- `current-workspace`
+- `monitor-list`
+- `workspace-names`
 
 Examples:
 
 ```bash
-cargo run -p spiders-cli -- ipc-query --query state
-cargo run -p spiders-cli -- ipc-query --query workspace-names
+cargo run -p spiders-cli -- wm query state
+cargo run -p spiders-cli -- wm query workspace-names --json
 ```
 
-### `ipc-action`
-
-Options:
-
-- `--socket <path>`
-- `--action <name>`
+### `wm command <command>`
 
 Examples:
 
 ```bash
-cargo run -p spiders-cli -- ipc-action --action reload-config
-cargo run -p spiders-cli -- ipc-action --action view-workspace:3
-cargo run -p spiders-cli -- ipc-action --action set-layout:columns
+cargo run -p spiders-cli -- wm command reload-config
+cargo run -p spiders-cli -- wm command close-focused-window
+cargo run -p spiders-cli -- wm command cycle-layout-next
+cargo run -p spiders-cli -- wm command set-layout:columns
+cargo run -p spiders-cli -- wm command select-workspace:2
 ```
 
-`view-workspace:<n>` and `toggle-view-workspace:<n>` accept `1` through `9`.
+### `wm monitor [topic...]`
 
-### `ipc-monitor`
+Supported topics:
 
-Options:
-
-- `--socket <path>`
-- `--topic <name>` repeatable
+- `all`
+- `focus`
+- `windows`
+- `workspaces`
+- `layout`
+- `config`
 
 Examples:
 
 ```bash
-cargo run -p spiders-cli -- ipc-monitor --topic all
-cargo run -p spiders-cli -- ipc-monitor --topic workspaces --topic layout
+cargo run -p spiders-cli -- wm monitor all
+cargo run -p spiders-cli -- wm monitor workspaces layout --json
 ```
 
-### `ipc-debug`
+### `wm debug dump <kind>`
 
-Requests an on-demand debug dump from a running `spiders-wm` instance.
-
-Options:
-
-- `--socket <path>`
-- `--dump <name>`
-
-Supported dump names:
+Supported dump kinds:
 
 - `wm-state`
 - `debug-profile`
@@ -146,90 +118,72 @@ Supported dump names:
 Examples:
 
 ```bash
-cargo run -p spiders-cli -- ipc-debug --dump wm-state
-cargo run -p spiders-cli -- ipc-debug --dump scene-snapshot --json
-cargo run -p spiders-cli -- ipc-debug --socket "$SPIDERS_WM_IPC_SOCKET" --dump debug-profile
+cargo run -p spiders-cli -- wm debug dump wm-state
+cargo run -p spiders-cli -- wm debug dump scene-snapshot --json
 ```
 
-When `SPIDERS_WM_DEBUG_OUTPUT_DIR` is configured and debug output is enabled in the compositor, the response includes the written file path.
+## Shell Completions
+
+Generate completions from the CLI:
+
+```bash
+cargo run -p spiders-cli -- completions zsh
+cargo run -p spiders-cli -- completions bash
+cargo run -p spiders-cli -- completions fish
+```
+
+Checked-in completion files live at:
+
+- `crates/cli/completions/_spiders-cli`
+- `crates/cli/completions/spiders-cli.bash`
+- `crates/cli/completions/spiders-cli.fish`
+
+### Install Zsh Completion
+
+If your `fpath` already includes `~/.zsh/completions`:
+
+```bash
+mkdir -p ~/.zsh/completions
+cp crates/cli/completions/_spiders-cli ~/.zsh/completions/
+autoload -Uz compinit && compinit
+```
+
+If not, add this to `.zshrc`:
+
+```bash
+fpath=(~/.zsh/completions $fpath)
+autoload -Uz compinit && compinit
+```
+
+### Install Bash Completion
+
+```bash
+mkdir -p ~/.local/share/bash-completion/completions
+cp crates/cli/completions/spiders-cli.bash ~/.local/share/bash-completion/completions/spiders-cli
+```
+
+### Install Fish Completion
+
+```bash
+mkdir -p ~/.config/fish/completions
+cp crates/cli/completions/spiders-cli.fish ~/.config/fish/completions/spiders-cli.fish
+```
 
 ## Environment
 
 Useful environment variables:
 
-**Config Discovery:**
-- `SPIDERS_WM_HOME` - home directory base for config/cache
-- `SPIDERS_WM_CONFIG_DIR` - config search directory (default: `~/.config/spiders-wm`)
-- `SPIDERS_WM_CACHE_DIR` - runtime output cache directory
-- `SPIDERS_WM_AUTHORED_CONFIG` - direct path to config.ts/config.js file
+**Config Discovery**
+- `SPIDERS_WM_HOME`
+- `SPIDERS_WM_CONFIG_DIR`
+- `SPIDERS_WM_CACHE_DIR`
+- `SPIDERS_WM_AUTHORED_CONFIG`
 
-**Runtime:**
-- `SPIDERS_WM_IPC_SOCKET` - socket path for IPC communication
-- `SPIDERS_WM_DEBUG_PROFILE` - compositor debug profile: `minimal`, `protocol`, `render`, or `full`
-- `SPIDERS_WM_DEBUG_OUTPUT_DIR` - directory for compositor debug dumps
+**Runtime**
+- `SPIDERS_WM_IPC_SOCKET`
+- `SPIDERS_WM_DEBUG_PROFILE`
+- `SPIDERS_WM_DEBUG_OUTPUT_DIR`
 
-**Logging:**
-- `SPIDERS_LOG` - tracing filter (e.g., `warn,spiders_wm=debug`)
-- `RUST_LOG` - fallback tracing filter
-
-**Development:**
-- `SPIDERS_WM_WINIT_DEBUG_SNAPSHOT_PATH` - save window tree snapshots
-- `SPIDERS_WM_WINIT_EXIT_AFTER_STARTUP` - exit compositor after init
-
-## Nested Wayland Debugging
-
-For protocol and lifecycle debugging, run `spiders-wm` nested with a debug profile and then launch clients against that nested compositor.
-
-Start the compositor:
-
-```bash
-SPIDERS_WM_DEBUG_PROFILE=protocol \
-SPIDERS_WM_DEBUG_OUTPUT_DIR="$PWD/.spiders-wm-debug" \
-SPIDERS_LOG=debug \
-just dev
-```
-
-For the fully-instrumented setup, use:
-
-```bash
-just dev-debug
-```
-
-For the existing open/close smoke sequence with full debug artifacts enabled, use:
-
-```bash
-just wm-debug-smoke
-```
-
-`apps/spiders-wm` logs the nested `WAYLAND_DISPLAY` and `SPIDERS_WM_IPC_SOCKET` values during startup. Use those for clients and IPC tools.
-
-Run a client with Wayland protocol tracing enabled:
-
-```bash
-WAYLAND_DISPLAY=<nested-display> \
-WAYLAND_DEBUG=1 \
-foot
-```
-
-Capture compositor-side dumps while reproducing the issue:
-
-```bash
-SPIDERS_WM_IPC_SOCKET=<nested-ipc-socket> \
-cargo run -p spiders-cli -- ipc-debug --dump wm-state --json
-
-SPIDERS_WM_IPC_SOCKET=<nested-ipc-socket> \
-cargo run -p spiders-cli -- ipc-debug --dump scene-snapshot --json
-
-SPIDERS_WM_IPC_SOCKET=<nested-ipc-socket> \
-cargo run -p spiders-cli -- ipc-debug --dump frame-sync --json
-```
-
-Recommended repro loop:
-
-1. Start nested `spiders-wm` with `SPIDERS_WM_DEBUG_PROFILE=protocol` or `full`.
-2. Launch the target client with `WAYLAND_DISPLAY=<nested-display>` and `WAYLAND_DEBUG=1`.
-3. Reproduce the bug.
-4. Capture `wm-state`, `scene-snapshot`, `frame-sync`, or `seats` dumps over IPC.
-5. Correlate the client-side `WAYLAND_DEBUG` log with compositor logs and dump timestamps.
-
-With `SPIDERS_WM_DEBUG_PROFILE=protocol`, the compositor now emits structured lifecycle logs around focus requests, backend focus application, initial configure sends, popup configure sends, and root commits. With `render` or `full`, it also emits map/unmap/commit render lifecycle logs.
+**Logging**
+- `SPIDERS_LOG`
+- `RUST_LOG`

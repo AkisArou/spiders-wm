@@ -1,0 +1,13 @@
+[package]
+name = "spiders-ipc-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+spiders-core = { path = "../../core" }
+thiserror.workspace = true
+tracing.workspace = true

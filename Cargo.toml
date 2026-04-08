@@ -3,6 +3,7 @@ resolver = "2"
 members = [
   "crates/fonts/native",
   "crates/wm-runtime",
+  "crates/cli/core",
   "crates/cli",
   "crates/core",
   "crates/css",
@@ -10,6 +11,9 @@ members = [
   "crates/css-lsp/stdio",
   "crates/css-lsp/web",
   "crates/config",
+  "crates/ipc/core",
+  "crates/ipc/native",
+  "crates/ipc/browser",
   "crates/ipc",
   "crates/logging",
   "crates/wm-river",

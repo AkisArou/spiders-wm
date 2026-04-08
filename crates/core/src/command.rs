@@ -80,7 +80,6 @@ pub enum WmCommand {
     MoveDirection {
         direction: FocusDirection,
     },
-    SpawnTerminal,
     FocusNextWindow,
     FocusPreviousWindow,
     SelectNextWorkspace,
