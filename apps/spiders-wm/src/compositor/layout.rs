@@ -1,4 +1,3 @@
-use smithay::desktop::layer_map_for_output;
 use smithay::output::Output;
 use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel;
 use smithay::reexports::wayland_server::Resource;
@@ -18,7 +17,6 @@ impl SpidersWm {
         self.relayout_cause = RelayoutCause::General;
         debug!(window_count = self.managed_window_count(), "wm schedule relayout");
         let _ = self.start_relayout();
-        self.request_backend_redraw();
     }
 
     pub(crate) fn queue_relayout(&mut self) {
@@ -121,21 +119,9 @@ impl SpidersWm {
 
     pub(crate) fn start_relayout(&mut self) -> Option<SyncHandle> {
         let started_at = std::time::Instant::now();
-        let output = self
-            .focused_surface
-            .as_ref()
-            .and_then(|surface| self.output_for_surface(surface))
-            .or_else(|| {
-                self.visible_managed_window_ids()
-                    .into_iter()
-                    .find_map(|window_id| self.output_for_window_id(&window_id))
-            })
-            .or_else(|| self.current_output_cloned())
-            .expect("output must exist before relayout");
+        let output = self.current_output_cloned().expect("output must exist before relayout");
         let output_geometry =
             self.output_geometry_for(&output).expect("output geometry missing during relayout");
-        let usable_output_geometry =
-            self.usable_output_geometry(&output).unwrap_or(output_geometry);
 
         let visible_window_ids = self.visible_managed_window_ids();
         let tiled_window_ids = self.tiled_visible_window_ids(&visible_window_ids);
@@ -167,7 +153,6 @@ impl SpidersWm {
         if visible_window_ids.is_empty() {
             self.model.set_focus_tree(None);
             self.scene_snapshot_root = None;
-            self.scene_snapshot_roots_by_output.clear();
             debug!("wm relayout skipped because there are no visible windows");
             return None;
         }
@@ -193,23 +178,15 @@ impl SpidersWm {
             let focus_root = flat_workspace_root([fullscreen_window_id.clone()]);
             self.model.set_focus_tree(Some(&focus_root));
             self.scene_snapshot_root = None;
-            self.scene_snapshot_roots_by_output.clear();
             visible_window_ids
                 .iter()
                 .filter(|window_id| *window_id == fullscreen_window_id)
                 .cloned()
-                .map(|window_id| {
-                    let target_output_geometry = self
-                        .output_for_window_id(&window_id)
-                        .and_then(|output| self.usable_output_geometry(&output))
-                        .unwrap_or(usable_output_geometry);
-                    crate::scene::adapter::LayoutTarget {
-                        window_id,
-                        output_id: None,
-                        location: target_output_geometry.loc,
-                        size: target_output_geometry.size,
-                        fullscreen: true,
-                    }
+                .map(|window_id| crate::scene::adapter::LayoutTarget {
+                    window_id,
+                    location: output_geometry.loc,
+                    size: output_geometry.size,
+                    fullscreen: true,
                 })
                 .collect::<Vec<_>>()
         } else {
@@ -222,7 +199,6 @@ impl SpidersWm {
                 let focus_root = flat_workspace_root(floating_window_ids.iter().cloned());
                 self.model.set_focus_tree(Some(&focus_root));
                 self.scene_snapshot_root = None;
-                self.scene_snapshot_roots_by_output.clear();
                 Vec::new()
             } else {
                 match self.scene.compute_layout_snapshot_and_targets(
@@ -230,28 +206,34 @@ impl SpidersWm {
                     &mut self.model,
                     &tiled_window_ids,
                 ) {
-                    Some(layout) => {
-                        let scene_targets = layout.targets;
-                        if !layout.roots_by_output.is_empty()
-                            && scene_targets.len() == tiled_window_ids.len()
-                        {
-                            self.scene_snapshot_root = Some(layout.primary_root);
-                            self.scene_snapshot_roots_by_output = layout.roots_by_output;
+                    Some((snapshot, scene_targets)) => {
+                        if scene_targets.len() == tiled_window_ids.len() {
+                            self.scene_snapshot_root = Some(snapshot);
                             scene_targets
                         } else {
                             debug!(
                                 expected = tiled_window_ids.len(),
                                 actual = scene_targets.len(),
-                                has_authored_outputs = !layout.roots_by_output.is_empty(),
-                                "wm falling back to native tiled slot planning because authored scene targets were unavailable or incomplete"
+                                "wm falling back to native tiled slot planning because scene targets were incomplete"
                             );
                             self.scene_snapshot_root = None;
-                            self.scene_snapshot_roots_by_output.clear();
-                            fallback_tiled_layout_targets(
-                                self,
-                                &tiled_window_ids,
-                                usable_output_geometry,
-                            )
+                            tiled_window_ids
+                                .iter()
+                                .enumerate()
+                                .filter_map(|(index, window_id)| {
+                                    let slot = plan_tiled_slot(
+                                        output_geometry,
+                                        tiled_window_ids.len(),
+                                        index,
+                                    )?;
+                                    Some(crate::scene::adapter::LayoutTarget {
+                                        window_id: window_id.clone(),
+                                        location: slot.location,
+                                        size: slot.size,
+                                        fullscreen: false,
+                                    })
+                                })
+                                .collect::<Vec<_>>()
                         }
                     }
                     None => {
@@ -260,22 +242,31 @@ impl SpidersWm {
                             "wm falling back to native tiled slot planning because scene snapshot was unavailable"
                         );
                         self.scene_snapshot_root = None;
-                        self.scene_snapshot_roots_by_output.clear();
-                        fallback_tiled_layout_targets(
-                            self,
-                            &tiled_window_ids,
-                            usable_output_geometry,
-                        )
+                        tiled_window_ids
+                            .iter()
+                            .enumerate()
+                            .filter_map(|(index, window_id)| {
+                                let slot = plan_tiled_slot(
+                                    output_geometry,
+                                    tiled_window_ids.len(),
+                                    index,
+                                )?;
+                                Some(crate::scene::adapter::LayoutTarget {
+                                    window_id: window_id.clone(),
+                                    location: slot.location,
+                                    size: slot.size,
+                                    fullscreen: false,
+                                })
+                            })
+                            .collect::<Vec<_>>()
                     }
                 }
             };
-            targets.extend(floating_window_ids.iter().filter_map(|window_id| {
-                let floating_output_geometry = self
-                    .output_for_window_id(window_id)
-                    .and_then(|output| self.usable_output_geometry(&output))
-                    .unwrap_or(usable_output_geometry);
-                self.floating_layout_target(window_id, floating_output_geometry)
-            }));
+            targets.extend(
+                floating_window_ids.iter().filter_map(|window_id| {
+                    self.floating_layout_target(window_id, output_geometry)
+                }),
+            );
             targets
         };
         let snapshot_elapsed_ms = snapshot_started_at.elapsed().as_secs_f64() * 1000.0;
@@ -302,20 +293,7 @@ impl SpidersWm {
 
                 let fullscreen_output = target
                     .fullscreen
-                    .then(|| {
-                        target
-                            .output_id
-                            .as_ref()
-                            .and_then(|output_id| {
-                                self.space
-                                    .outputs()
-                                    .find(|output| output.name() == output_id.0)
-                                    .cloned()
-                            })
-                            .or_else(|| self.output_for_window_id(&target.window_id))
-                            .or_else(|| Some(output.clone()))
-                            .and_then(|output| fullscreen_output_for_toplevel(&output, &toplevel))
-                    })
+                    .then(|| fullscreen_output_for_toplevel(&output, &toplevel))
                     .flatten();
                 let mut needs_configure = false;
                 toplevel.with_pending_state(|state| {
@@ -395,20 +373,6 @@ impl SpidersWm {
 }
 
 impl SpidersWm {
-    pub(crate) fn usable_output_geometry(
-        &self,
-        output: &Output,
-    ) -> Option<Rectangle<i32, Logical>> {
-        let mut geometry = self.output_geometry_for(output)?;
-        let map = layer_map_for_output(output);
-        let zone = map.non_exclusive_zone();
-        geometry.loc += zone.loc;
-        geometry.size = zone.size;
-        Some(geometry)
-    }
-}
-
-impl SpidersWm {
     pub(crate) fn tiled_visible_window_ids(
         &self,
         visible_window_ids: &[WindowId],
@@ -437,7 +401,6 @@ impl SpidersWm {
         let (location, size) = self.floating_layout_for_window(window_id, output_geometry)?;
         Some(crate::scene::adapter::LayoutTarget {
             window_id: window_id.clone(),
-            output_id: None,
             location,
             size,
             fullscreen: false,
@@ -549,72 +512,6 @@ fn select_tiled_layout_target(
     }
 
     Some((fallback.location, fallback.size))
-}
-
-fn fallback_tiled_layout_targets(
-    state: &SpidersWm,
-    tiled_window_ids: &[WindowId],
-    default_output_geometry: Rectangle<i32, Logical>,
-) -> Vec<crate::scene::adapter::LayoutTarget> {
-    let mut per_output = std::collections::BTreeMap::<(i32, i32), Vec<WindowId>>::new();
-
-    for window_id in tiled_window_ids {
-        let geometry = state
-            .output_for_window_id(window_id)
-            .and_then(|output| {
-                state.usable_output_geometry(&output).or_else(|| state.output_geometry_for(&output))
-            })
-            .unwrap_or(default_output_geometry);
-        per_output.entry((geometry.loc.x, geometry.loc.y)).or_default().push(window_id.clone());
-    }
-
-    let mut groups = Vec::new();
-    for ((x, y), window_ids) in per_output {
-        let output_geometry = state
-            .space
-            .outputs()
-            .find_map(|output| {
-                state
-                    .space
-                    .output_geometry(output)
-                    .filter(|geometry| geometry.loc == Point::from((x, y)))
-            })
-            .unwrap_or(Rectangle::new((x, y).into(), default_output_geometry.size));
-        groups.push((output_geometry, window_ids));
-    }
-
-    plan_tiled_slots_for_groups(&groups)
-}
-
-fn apply_exclusive_zone_to_output_geometry(
-    output_geometry: Rectangle<i32, Logical>,
-    non_exclusive_zone: Rectangle<i32, Logical>,
-) -> Rectangle<i32, Logical> {
-    let mut geometry = output_geometry;
-    geometry.loc += non_exclusive_zone.loc;
-    geometry.size = non_exclusive_zone.size;
-    geometry
-}
-
-fn plan_tiled_slots_for_groups(
-    groups: &[(Rectangle<i32, Logical>, Vec<WindowId>)],
-) -> Vec<crate::scene::adapter::LayoutTarget> {
-    let mut targets = Vec::new();
-
-    for (output_geometry, window_ids) in groups {
-        targets.extend(window_ids.iter().enumerate().filter_map(|(index, window_id)| {
-            let slot = plan_tiled_slot(*output_geometry, window_ids.len(), index)?;
-            Some(crate::scene::adapter::LayoutTarget {
-                window_id: window_id.clone(),
-                output_id: None,
-                location: slot.location,
-                size: slot.size,
-                fullscreen: false,
-            })
-        }));
-    }
-
-    targets
 }
 
 fn default_floating_geometry(output_geometry: Rectangle<i32, Logical>) -> WindowGeometry {
@@ -766,43 +663,5 @@ mod tests {
         assert!(!changed);
         assert!(!state.states.contains(xdg_toplevel::State::Fullscreen));
         assert_eq!(state.fullscreen_output, None);
-    }
-
-    #[test]
-    fn plan_tiled_slots_for_groups_keeps_each_group_in_its_output_geometry() {
-        let left = Rectangle::new((0, 0).into(), (100, 50).into());
-        let right = Rectangle::new((100, 0).into(), (80, 50).into());
-
-        let targets = plan_tiled_slots_for_groups(&[
-            (left, vec![WindowId::from("1"), WindowId::from("2")]),
-            (right, vec![WindowId::from("3")]),
-        ]);
-
-        assert_eq!(targets.len(), 3);
-        assert_eq!(targets[0].location, Point::from((0, 0)));
-        assert_eq!(targets[0].size, Size::from((60, 50)));
-        assert_eq!(targets[1].location, Point::from((60, 0)));
-        assert_eq!(targets[1].size, Size::from((40, 50)));
-        assert_eq!(targets[2].location, Point::from((100, 0)));
-        assert_eq!(targets[2].size, Size::from((80, 50)));
-    }
-
-    #[test]
-    fn plan_tiled_slots_for_groups_respects_reduced_usable_geometry() {
-        let usable = Rectangle::new((0, 32).into(), (1280, 768).into());
-
-        let targets = plan_tiled_slots_for_groups(&[(usable, vec![WindowId::from("1")])]);
-
-        assert_eq!(targets.len(), 1);
-        assert_eq!(targets[0].location, Point::from((0, 32)));
-        assert_eq!(targets[0].size, Size::from((1280, 768)));
-    }
-
-    #[test]
-    fn apply_exclusive_zone_to_output_geometry_uses_non_exclusive_zone() {
-        let full = Rectangle::new((0, 0).into(), (1920, 1080).into());
-        let zone = Rectangle::new((0, 32).into(), (1920, 1048).into());
-
-        assert_eq!(apply_exclusive_zone_to_output_geometry(full, zone), zone);
     }
 }

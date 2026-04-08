@@ -5,29 +5,10 @@ use tracing::{debug, info};
 use crate::actions::focus::FocusUpdate;
 use crate::backend::BackendState;
 use crate::frame_sync;
-use crate::handlers::pending_activation_is_valid;
 use crate::state::{ManagedWindow, SpidersWm};
 use spiders_core::window_id;
 
 impl SpidersWm {
-    fn pending_activation_for_surface(&self, surface: &WlSurface) -> Option<&smithay::wayland::xdg_activation::XdgActivationTokenData> {
-        self.pending_activation_requests
-            .iter()
-            .find(|(pending_surface, _)| pending_surface == surface)
-            .map(|(_, token_data)| token_data)
-    }
-
-    fn take_pending_activation_for_surface(
-        &mut self,
-        surface: &WlSurface,
-    ) -> Option<smithay::wayland::xdg_activation::XdgActivationTokenData> {
-        let index = self
-            .pending_activation_requests
-            .iter()
-            .position(|(pending_surface, _)| pending_surface == surface)?;
-        Some(self.pending_activation_requests.swap_remove(index).1)
-    }
-
     pub fn close_focused_window(&mut self) {
         let closing_window_id =
             self.runtime().request_close_focused_window_selection().closing_window_id;
@@ -259,7 +240,7 @@ impl SpidersWm {
     }
 
     pub(crate) fn capture_close_snapshot(&mut self, surface: &WlSurface) {
-        let output = self.output_for_surface(surface);
+        let output = self.current_output_cloned();
         let Some(output) = output else {
             return;
         };
@@ -269,37 +250,8 @@ impl SpidersWm {
             Some(BackendState::Winit(backend)) => {
                 frame_sync::capture_close_snapshot(backend.renderer(), surface, scale, 1.0)
             }
-            #[cfg(feature = "tty-preview")]
-            Some(BackendState::Tty(backend)) => {
-                let Some(node) = backend
-                    .outputs
-                    .iter()
-                    .find(|candidate| candidate.output == output)
-                    .and_then(|output| output.drm_node)
-                else {
-                    return;
-                };
-                let Some(device) = backend.drm.devices.iter_mut().find(|device| device.node == node) else {
-                    return;
-                };
-                let Some(render_node) = device.render.render_node else {
-                    return;
-                };
-                let Some(gpu_manager) = device.render.gpu_manager.as_mut() else {
-                    return;
-                };
-                let Ok(mut renderer) = gpu_manager.single_renderer(&render_node) else {
-                    return;
-                };
-
-                frame_sync::capture_close_snapshot(renderer.as_mut(), surface, scale, 1.0)
-            }
-            #[cfg(not(feature = "tty-preview"))]
             None => None,
-            #[cfg(not(feature = "tty-preview"))]
             Some(BackendState::Tty(_)) => None,
-            #[cfg(feature = "tty-preview")]
-            None => None,
         };
 
         if let Some(snapshot) = snapshot
@@ -374,16 +326,11 @@ impl SpidersWm {
             window.on_commit();
 
             if first_map {
-                let seat_name = self.active_backend_seat_name().to_string();
-                let has_pending_activation =
-                    self.pending_activation_for_surface(surface).is_some_and(pending_activation_is_valid);
                 let events = {
                     let mut runtime = self.runtime();
                     let _ = runtime.sync_window_mapped(window_id.clone(), true);
-                    if !has_pending_activation {
-                        let _ = runtime
-                            .request_focus_window_selection(seat_name.as_str(), Some(window_id.clone()));
-                    }
+                    let _ =
+                        runtime.request_focus_window_selection("winit", Some(window_id.clone()));
                     runtime.take_events()
                 };
                 self.broadcast_runtime_events(events);
@@ -404,18 +351,10 @@ impl SpidersWm {
 
             if first_map {
                 info!(window = %window_id.0, "wm first map commit");
-                self.refresh_fractional_scale_for_window_surface(surface);
-                if self
-                    .take_pending_activation_for_surface(surface)
-                    .is_some_and(|token_data| pending_activation_is_valid(&token_data))
-                {
-                    self.set_focus(Some(surface.clone()), smithay::utils::SERIAL_COUNTER.next_serial());
-                } else {
-                    self.apply_modeled_focus(
-                        Some(window_id),
-                        smithay::utils::SERIAL_COUNTER.next_serial(),
-                    );
-                }
+                self.apply_modeled_focus(
+                    Some(window_id),
+                    smithay::utils::SERIAL_COUNTER.next_serial(),
+                );
                 debug!(
                     window = %debug_window_id,
                     relayout_already_queued = self.relayout_queued,

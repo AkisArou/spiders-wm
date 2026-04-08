@@ -20,6 +20,7 @@ case "$SMOKE_MODE" in
         : "${WM_SMOKE_CLOSE_COUNT:=$WM_SMOKE_OPEN_COUNT}"
         : "${WM_SMOKE_CLOSE_SETTLE_DELAY:=0.7}"
         : "${WM_SMOKE_ENABLE_WORKSPACE_SHORTCUTS:=1}"
+        : "${WM_SMOKE_ENABLE_SPAWN_SHORTCUT:=1}"
         ;;
     burst)
         : "${WM_SMOKE_OPEN_COUNT:=10}"
@@ -28,6 +29,7 @@ case "$SMOKE_MODE" in
         : "${WM_SMOKE_CLOSE_COUNT:=$WM_SMOKE_OPEN_COUNT}"
         : "${WM_SMOKE_CLOSE_SETTLE_DELAY:=0.2}"
         : "${WM_SMOKE_ENABLE_WORKSPACE_SHORTCUTS:=0}"
+        : "${WM_SMOKE_ENABLE_SPAWN_SHORTCUT:=0}"
         ;;
     *)
         echo "wm smoke harness does not recognize WM_SMOKE_MODE=$SMOKE_MODE" >&2
@@ -239,6 +241,26 @@ done
 wait_for_log_count 'wm added window' "$WM_SMOKE_OPEN_COUNT" 15 'initial window-add events'
 wait_for_log_count 'wm first map commit' "$WM_SMOKE_OPEN_COUNT" 15 'initial first-map commits'
 
+spawn_shortcut_smoke=0
+if [[ "$WM_SMOKE_ENABLE_SPAWN_SHORTCUT" -eq 1 ]]; then
+    shortcut_status=0
+    if send_alt_shortcut Return; then
+        spawn_shortcut_smoke=1
+        sleep 0.8
+        wait_for_log_count 'wm added window' "$((WM_SMOKE_OPEN_COUNT + 1))" 15 'spawn shortcut window-add event'
+        wait_for_log_count 'wm first map commit' "$((WM_SMOKE_OPEN_COUNT + 1))" 15 'spawn shortcut first-map commit'
+    else
+        shortcut_status=$?
+        if [[ "$shortcut_status" -eq 2 ]]; then
+            echo "wm spawn shortcut smoke skipped: nested compositor does not support virtual keyboard protocol" >&2
+        else
+            echo "wm spawn shortcut smoke failed to inject Alt+Return" >&2
+            cat "$LOG_FILE" >&2
+            exit 1
+        fi
+    fi
+fi
+
 for step in $(seq 1 "$WM_SMOKE_CLOSE_COUNT"); do
     close_one_window "$step"
 done
@@ -313,4 +335,4 @@ fi
 
 echo "wm smoke sequence passed on socket $SOCKET_NAME"
 echo "wm smoke log: $LOG_FILE"
-echo "wm smoke summary: mode=$SMOKE_MODE opens=$open_count first_maps=$first_map_count deferred_first_maps=$deferred_first_map_count close_starts=$close_start_count close_unmaps=$close_unmap_count relayouts=$relayout_count prepared_snapshots=$prepared_snapshot_count reused_snapshots=$reused_snapshot_count max_prepare_ms=${max_prepare_elapsed_ms:-n/a} max_overlay_ms=${max_overlay_elapsed_ms:-n/a} max_relayout_ms=${max_relayout_elapsed_ms:-n/a}"
+echo "wm smoke summary: mode=$SMOKE_MODE spawn_shortcut=$spawn_shortcut_smoke workspace_shortcut=$workspace_shortcut_smoke opens=$open_count first_maps=$first_map_count deferred_first_maps=$deferred_first_map_count close_starts=$close_start_count close_unmaps=$close_unmap_count relayouts=$relayout_count prepared_snapshots=$prepared_snapshot_count reused_snapshots=$reused_snapshot_count max_prepare_ms=${max_prepare_elapsed_ms:-n/a} max_overlay_ms=${max_overlay_elapsed_ms:-n/a} max_relayout_ms=${max_relayout_elapsed_ms:-n/a}"

@@ -4,7 +4,6 @@ use smithay::utils::{Logical, Point, Size};
 use spiders_config::authoring_layout::AuthoringLayoutService;
 use spiders_config::model::{Config, ConfigPaths};
 use spiders_config::runtime::build_authoring_layout_service;
-use spiders_core::OutputId;
 use spiders_core::focus::{FocusTree, FocusTreeWindowGeometry};
 use spiders_core::query::state_snapshot_for_model;
 use spiders_core::runtime::prepared_layout::{PreparedStylesheet, PreparedStylesheets};
@@ -25,7 +24,6 @@ const FALLBACK_MASTER_STACK_STYLESHEET: &str = "workspace { display: flex; flex-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct LayoutTarget {
     pub(crate) window_id: WindowId,
-    pub(crate) output_id: Option<OutputId>,
     pub(crate) location: Point<i32, Logical>,
     pub(crate) size: Size<i32, Logical>,
     pub(crate) fullscreen: bool,
@@ -34,13 +32,6 @@ pub(crate) struct LayoutTarget {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct WindowAppearancePlan {
     pub(crate) appearance: AppearanceValue,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct LayoutComputation {
-    pub(crate) primary_root: LayoutSnapshotNode,
-    pub(crate) roots_by_output: std::collections::BTreeMap<OutputId, LayoutSnapshotNode>,
-    pub(crate) targets: Vec<LayoutTarget>,
 }
 
 #[derive(Debug, Default)]
@@ -77,7 +68,7 @@ impl SceneLayoutState {
         visible_window_ids: &[WindowId],
     ) -> Option<Vec<LayoutTarget>> {
         self.compute_layout_snapshot_and_targets(config, model, visible_window_ids)
-            .map(|layout| layout.targets)
+            .map(|(_, targets)| targets)
     }
 
     pub(crate) fn compute_layout_target(
@@ -93,28 +84,33 @@ impl SceneLayoutState {
             .map(|target| (target.location, target.size))
     }
 
+    pub(crate) fn compute_layout_snapshot(
+        &mut self,
+        config: &Config,
+        model: &mut WmModel,
+        visible_window_ids: &[WindowId],
+    ) -> Option<LayoutSnapshotNode> {
+        self.compute_layout_snapshot_and_targets(config, model, visible_window_ids)
+            .map(|(root, _)| root)
+    }
+
     pub(crate) fn compute_layout_snapshot_and_targets(
         &mut self,
         config: &Config,
         model: &mut WmModel,
         visible_window_ids: &[WindowId],
-    ) -> Option<LayoutComputation> {
-        if let Some(layout) =
-            self.compute_authored_layout_snapshot_and_targets(config, model, visible_window_ids)
+    ) -> Option<(LayoutSnapshotNode, Vec<LayoutTarget>)> {
+        if let Some(root) = self.compute_authored_layout_snapshot(config, model, visible_window_ids)
         {
-            if targets_cover_windows(&layout.targets, visible_window_ids) {
-                return Some(layout);
+            let targets = scene_targets_from_snapshot(&root);
+            if targets_cover_windows(&targets, visible_window_ids) {
+                return Some((root, targets));
             }
         }
 
         let root = self.compute_fallback_layout_snapshot(config, model, visible_window_ids)?;
-        let snapshot = scene_input_snapshot(config, model, visible_window_ids);
-        let targets = scene_targets_from_snapshot(&root, &snapshot);
-        targets_cover_windows(&targets, visible_window_ids).then_some(LayoutComputation {
-            primary_root: root,
-            roots_by_output: std::collections::BTreeMap::new(),
-            targets,
-        })
+        let targets = scene_targets_from_snapshot(&root);
+        targets_cover_windows(&targets, visible_window_ids).then_some((root, targets))
     }
 
     pub(crate) fn compute_window_appearance_plan(
@@ -125,49 +121,21 @@ impl SceneLayoutState {
         target_window_id: &WindowId,
     ) -> Option<WindowAppearancePlan> {
         let mut model = model.clone();
-        let layout =
-            self.compute_layout_snapshot_and_targets(config, &mut model, visible_window_ids)?;
-        let snapshot = state_snapshot_for_model(&model);
-        let target_output_id = snapshot
-            .windows
-            .iter()
-            .find(|window| &window.id == target_window_id)
-            .and_then(|window| window.output_id.as_ref());
-
-        Self::appearance_from_roots(
-            Some(&layout.primary_root),
-            &layout.roots_by_output,
-            target_output_id,
-            target_window_id,
-        )
-    }
-
-    pub(crate) fn appearance_from_roots(
-        primary_root: Option<&LayoutSnapshotNode>,
-        roots_by_output: &std::collections::BTreeMap<OutputId, LayoutSnapshotNode>,
-        output_id: Option<&OutputId>,
-        target_window_id: &WindowId,
-    ) -> Option<WindowAppearancePlan> {
-        let node = primary_root.and_then(|root| root.find_by_window_id(target_window_id)).or_else(
-            || {
-                output_id
-                    .and_then(|output_id| roots_by_output.get(output_id))
-                    .and_then(|root| root.find_by_window_id(target_window_id))
-            },
-        )?;
-        let appearance = node
-            .styles()
+        let snapshot = self.compute_layout_snapshot(config, &mut model, visible_window_ids)?;
+        let appearance = snapshot
+            .find_by_window_id(target_window_id)
+            .and_then(|node| node.styles())
             .and_then(|styles| styles.layout.appearance)
             .unwrap_or(AppearanceValue::Auto);
 
         Some(WindowAppearancePlan { appearance })
     }
-    fn compute_authored_layout_snapshot_and_targets(
+    fn compute_authored_layout_snapshot(
         &mut self,
         config: &Config,
         model: &mut WmModel,
         visible_window_ids: &[WindowId],
-    ) -> Option<LayoutComputation> {
+    ) -> Option<LayoutSnapshotNode> {
         let layout_service = self.layout_service.as_mut()?;
         let snapshot = scene_input_snapshot(config, model, visible_window_ids);
 
@@ -187,8 +155,7 @@ impl SceneLayoutState {
         };
 
         let windows = visible_window_snapshots(&snapshot, visible_window_ids);
-        let resolved_root =
-            resolve_layout_root(evaluation.layout.clone(), &windows, visible_window_ids);
+        let resolved_root = resolve_layout_root(evaluation.layout, &windows, visible_window_ids);
         let request = match config.build_scene_request_from_state(
             &snapshot,
             resolved_root,
@@ -207,70 +174,8 @@ impl SceneLayoutState {
 
         match self.cache.compute_layout_from_request(&request) {
             Ok(response) => {
-                let mut roots_for_focus = vec![response.root.clone()];
-                let mut target_sets = vec![scene_targets_from_snapshot(&response.root, &snapshot)];
-                let mut roots_by_output = std::collections::BTreeMap::new();
-
-                let visible_outputs = snapshot
-                    .windows
-                    .iter()
-                    .filter(|window| visible_window_ids.iter().any(|id| id == &window.id))
-                    .filter_map(|window| window.output_id.clone())
-                    .collect::<BTreeSet<_>>();
-
-                for output_id in visible_outputs {
-                    if workspace.output_id.as_ref() == Some(&output_id) {
-                        continue;
-                    }
-                    let Some(output_snapshot_state) =
-                        snapshot.filtered_for_output(visible_window_ids, &output_id)
-                    else {
-                        continue;
-                    };
-                    if output_snapshot_state.visible_window_ids.is_empty() {
-                        continue;
-                    }
-
-                    let output_windows = visible_window_snapshots(
-                        &output_snapshot_state,
-                        &output_snapshot_state.visible_window_ids,
-                    );
-                    let resolved_root = resolve_layout_root(
-                        evaluation.layout.clone(),
-                        &output_windows,
-                        &output_snapshot_state.visible_window_ids,
-                    );
-                    let request = match config.build_scene_request_for_output_from_state(
-                        &output_snapshot_state,
-                        &output_id,
-                        resolved_root,
-                        &evaluation.artifact,
-                    ) {
-                        Ok(Some(request)) => request,
-                        Ok(None) => continue,
-                        Err(error) => {
-                            warn!(%error, output = %output_id, "failed to build scene request for output state");
-                            continue;
-                        }
-                    };
-
-                    if let Ok(response) = self.cache.compute_layout_from_request(&request) {
-                        roots_for_focus.push(response.root.clone());
-                        roots_by_output.insert(output_id.clone(), response.root.clone());
-                        target_sets.push(scene_targets_from_snapshot(
-                            &response.root,
-                            &output_snapshot_state,
-                        ));
-                    }
-                }
-
-                model.set_focus_tree_value(Some(focus_tree_from_roots(&roots_for_focus)));
-
-                Some(LayoutComputation {
-                    primary_root: response.root,
-                    roots_by_output,
-                    targets: merge_layout_targets(target_sets),
-                })
+                model.set_focus_tree_value(Some(focus_tree_from_snapshot(&response.root)));
+                Some(response.root)
             }
             Err(error) => {
                 warn!(%error, workspace = %workspace.name, "failed to compute scene layout");
@@ -326,14 +231,6 @@ impl SceneLayoutState {
     }
 }
 
-fn focus_tree_from_roots(roots: &[LayoutSnapshotNode]) -> FocusTree {
-    let mut windows = Vec::new();
-    for root in roots {
-        collect_focus_tree_window_geometries(root, &mut windows);
-    }
-    FocusTree::from_window_geometries(&windows)
-}
-
 fn scene_input_snapshot(
     _config: &Config,
     model: &WmModel,
@@ -384,22 +281,13 @@ fn resolve_layout_root(
     }
 }
 
-pub(crate) fn scene_targets_from_snapshot(
-    root: &LayoutSnapshotNode,
-    snapshot: &StateSnapshot,
-) -> Vec<LayoutTarget> {
+pub(crate) fn scene_targets_from_snapshot(root: &LayoutSnapshotNode) -> Vec<LayoutTarget> {
     root.window_nodes()
         .into_iter()
         .filter_map(|node| match node {
             LayoutSnapshotNode::Window { rect, window_id: Some(window_id), .. } => {
-                let output_id = snapshot
-                    .windows
-                    .iter()
-                    .find(|window| window.id == *window_id)
-                    .and_then(|window| window.output_id.clone());
                 Some(LayoutTarget {
                     window_id: window_id.clone(),
-                    output_id,
                     location: rect_location(*rect),
                     size: rect_size(*rect),
                     fullscreen: false,
@@ -462,15 +350,6 @@ fn targets_cover_windows(targets: &[LayoutTarget], visible_window_ids: &[WindowI
     target_ids == visible_ids
 }
 
-fn merge_layout_targets(
-    target_sets: impl IntoIterator<Item = Vec<LayoutTarget>>,
-) -> Vec<LayoutTarget> {
-    let mut targets = target_sets.into_iter().flatten().collect::<Vec<_>>();
-    targets.sort_by(|left, right| left.window_id.cmp(&right.window_id));
-    targets.dedup_by(|left, right| left.window_id == right.window_id);
-    targets
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -493,39 +372,9 @@ mod tests {
         };
 
         assert_eq!(
-            scene_targets_from_snapshot(
-                &root,
-                &StateSnapshot {
-                    focused_window_id: None,
-                    current_output_id: None,
-                    current_workspace_id: None,
-                    outputs: vec![],
-                    workspaces: vec![],
-                    windows: vec![WindowSnapshot {
-                        id: window_id(7),
-                        shell: spiders_core::types::ShellKind::Unknown,
-                        app_id: None,
-                        title: None,
-                        class: None,
-                        instance: None,
-                        role: None,
-                        window_type: None,
-                        mapped: true,
-                        mode: spiders_core::types::WindowMode::Tiled,
-                        focused: false,
-                        urgent: false,
-                        closing: false,
-                        output_id: Some(OutputId::from("out-1")),
-                        workspace_id: None,
-                        workspaces: vec![],
-                    }],
-                    visible_window_ids: vec![window_id(7)],
-                    workspace_names: vec![],
-                },
-            ),
+            scene_targets_from_snapshot(&root),
             vec![LayoutTarget {
                 window_id: window_id(7),
-                output_id: Some(OutputId::from("out-1")),
                 location: Point::from((10, 20)),
                 size: Size::from((34, 40)),
                 fullscreen: false,
@@ -537,7 +386,6 @@ mod tests {
     fn targets_cover_windows_requires_exact_window_set() {
         let targets = vec![LayoutTarget {
             window_id: window_id(1),
-            output_id: None,
             location: Point::from((0, 0)),
             size: Size::from((10, 10)),
             fullscreen: false,
@@ -545,202 +393,6 @@ mod tests {
 
         assert!(targets_cover_windows(&targets, &[window_id(1)]));
         assert!(!targets_cover_windows(&targets, &[window_id(1), window_id(2)]));
-    }
-
-    #[test]
-    fn scene_targets_from_snapshot_preserves_window_output_affinity() {
-        let root = LayoutSnapshotNode::Workspace {
-            meta: LayoutNodeMeta::default(),
-            rect: LayoutRect { x: 0.0, y: 0.0, width: 200.0, height: 100.0 },
-            styles: None,
-            children: vec![LayoutSnapshotNode::Window {
-                meta: LayoutNodeMeta::default(),
-                rect: LayoutRect { x: 0.0, y: 0.0, width: 100.0, height: 100.0 },
-                styles: None,
-                window_id: Some(window_id(1)),
-                children: vec![],
-            }],
-        };
-        let snapshot = StateSnapshot {
-            focused_window_id: None,
-            current_output_id: Some(OutputId::from("out-a")),
-            current_workspace_id: None,
-            outputs: vec![],
-            workspaces: vec![],
-            windows: vec![WindowSnapshot {
-                id: window_id(1),
-                shell: spiders_core::types::ShellKind::Unknown,
-                app_id: None,
-                title: None,
-                class: None,
-                instance: None,
-                role: None,
-                window_type: None,
-                mapped: true,
-                mode: spiders_core::types::WindowMode::Tiled,
-                focused: false,
-                urgent: false,
-                closing: false,
-                output_id: Some(OutputId::from("out-a")),
-                workspace_id: None,
-                workspaces: vec![],
-            }],
-            visible_window_ids: vec![window_id(1)],
-            workspace_names: vec![],
-        };
-
-        let targets = scene_targets_from_snapshot(&root, &snapshot);
-
-        assert_eq!(targets.len(), 1);
-        assert_eq!(targets[0].output_id, Some(OutputId::from("out-a")));
-    }
-
-    #[test]
-    fn merge_layout_targets_prefers_one_target_per_window() {
-        let merged = merge_layout_targets([
-            vec![LayoutTarget {
-                window_id: window_id(1),
-                output_id: Some(OutputId::from("out-a")),
-                location: Point::from((0, 0)),
-                size: Size::from((50, 50)),
-                fullscreen: false,
-            }],
-            vec![LayoutTarget {
-                window_id: window_id(2),
-                output_id: Some(OutputId::from("out-b")),
-                location: Point::from((50, 0)),
-                size: Size::from((50, 50)),
-                fullscreen: false,
-            }],
-        ]);
-
-        assert_eq!(merged.len(), 2);
-        assert_eq!(merged[0].window_id, window_id(1));
-        assert_eq!(merged[1].window_id, window_id(2));
-    }
-
-    #[test]
-    fn focus_tree_from_roots_includes_windows_from_all_roots() {
-        let left = LayoutSnapshotNode::Workspace {
-            meta: LayoutNodeMeta::default(),
-            rect: LayoutRect { x: 0.0, y: 0.0, width: 100.0, height: 100.0 },
-            styles: None,
-            children: vec![LayoutSnapshotNode::Window {
-                meta: LayoutNodeMeta::default(),
-                rect: LayoutRect { x: 0.0, y: 0.0, width: 50.0, height: 50.0 },
-                styles: None,
-                window_id: Some(window_id(1)),
-                children: vec![],
-            }],
-        };
-        let right = LayoutSnapshotNode::Workspace {
-            meta: LayoutNodeMeta::default(),
-            rect: LayoutRect { x: 100.0, y: 0.0, width: 100.0, height: 100.0 },
-            styles: None,
-            children: vec![LayoutSnapshotNode::Window {
-                meta: LayoutNodeMeta::default(),
-                rect: LayoutRect { x: 100.0, y: 0.0, width: 50.0, height: 50.0 },
-                styles: None,
-                window_id: Some(window_id(2)),
-                children: vec![],
-            }],
-        };
-
-        let tree = focus_tree_from_roots(&[left, right]);
-
-        assert!(tree.contains_window(&window_id(1)));
-        assert!(tree.contains_window(&window_id(2)));
-    }
-
-    #[test]
-    fn merge_layout_targets_deduplicates_same_window_across_outputs() {
-        let merged = merge_layout_targets([
-            vec![LayoutTarget {
-                window_id: window_id(1),
-                output_id: Some(OutputId::from("out-a")),
-                location: Point::from((0, 0)),
-                size: Size::from((50, 50)),
-                fullscreen: false,
-            }],
-            vec![LayoutTarget {
-                window_id: window_id(1),
-                output_id: Some(OutputId::from("out-b")),
-                location: Point::from((100, 0)),
-                size: Size::from((50, 50)),
-                fullscreen: false,
-            }],
-        ]);
-
-        assert_eq!(merged.len(), 1);
-        assert_eq!(merged[0].window_id, window_id(1));
-    }
-
-    #[test]
-    fn appearance_from_roots_prefers_primary_root_when_window_exists_there() {
-        let primary_root = LayoutSnapshotNode::Workspace {
-            meta: LayoutNodeMeta::default(),
-            rect: LayoutRect { x: 0.0, y: 0.0, width: 100.0, height: 100.0 },
-            styles: None,
-            children: vec![LayoutSnapshotNode::Window {
-                meta: LayoutNodeMeta::default(),
-                rect: LayoutRect { x: 0.0, y: 0.0, width: 50.0, height: 50.0 },
-                styles: None,
-                window_id: Some(window_id(3)),
-                children: vec![],
-            }],
-        };
-        let output_root = LayoutSnapshotNode::Workspace {
-            meta: LayoutNodeMeta::default(),
-            rect: LayoutRect { x: 100.0, y: 0.0, width: 100.0, height: 100.0 },
-            styles: None,
-            children: vec![],
-        };
-        let mut roots_by_output = std::collections::BTreeMap::new();
-        roots_by_output.insert(OutputId::from("out-b"), output_root);
-
-        let appearance = SceneLayoutState::appearance_from_roots(
-            Some(&primary_root),
-            &roots_by_output,
-            Some(&OutputId::from("out-b")),
-            &window_id(3),
-        )
-        .expect("appearance should resolve from primary root first");
-
-        assert_eq!(appearance.appearance, AppearanceValue::Auto);
-    }
-
-    #[test]
-    fn appearance_from_roots_falls_back_to_matching_output_root() {
-        let primary_root = LayoutSnapshotNode::Workspace {
-            meta: LayoutNodeMeta::default(),
-            rect: LayoutRect { x: 0.0, y: 0.0, width: 100.0, height: 100.0 },
-            styles: None,
-            children: vec![],
-        };
-        let output_root = LayoutSnapshotNode::Workspace {
-            meta: LayoutNodeMeta::default(),
-            rect: LayoutRect { x: 0.0, y: 0.0, width: 100.0, height: 100.0 },
-            styles: None,
-            children: vec![LayoutSnapshotNode::Window {
-                meta: LayoutNodeMeta::default(),
-                rect: LayoutRect { x: 0.0, y: 0.0, width: 50.0, height: 50.0 },
-                styles: None,
-                window_id: Some(window_id(9)),
-                children: vec![],
-            }],
-        };
-        let mut roots_by_output = std::collections::BTreeMap::new();
-        roots_by_output.insert(OutputId::from("out-b"), output_root);
-
-        let appearance = SceneLayoutState::appearance_from_roots(
-            Some(&primary_root),
-            &roots_by_output,
-            Some(&OutputId::from("out-b")),
-            &window_id(9),
-        )
-        .expect("appearance should be resolved from per-output root");
-
-        assert_eq!(appearance.appearance, AppearanceValue::Auto);
     }
 
     #[test]
@@ -793,191 +445,5 @@ mod tests {
             &children[1],
             ResolvedLayoutNode::Window { window_id: Some(id), .. } if id == &window_id(2)
         ));
-    }
-
-    #[test]
-    fn multi_output_bridge_pieces_work_together_end_to_end() {
-        let config = Config {
-            layouts: vec![spiders_config::model::LayoutDefinition {
-                name: "master-stack".into(),
-                directory: "layouts/master-stack".into(),
-                module: "layouts/master-stack.js".into(),
-                stylesheet_path: Some("layouts/master-stack/index.css".into()),
-                runtime_cache_payload: None,
-            }],
-            ..Config::default()
-        };
-        let snapshot = StateSnapshot {
-            focused_window_id: Some(window_id(1)),
-            current_output_id: Some(OutputId::from("out-a")),
-            current_workspace_id: Some(spiders_core::WorkspaceId::from("ws-a")),
-            outputs: vec![
-                spiders_core::snapshot::OutputSnapshot {
-                    id: OutputId::from("out-a"),
-                    name: "HDMI-A-1".into(),
-                    logical_x: 0,
-                    logical_y: 0,
-                    logical_width: 1920,
-                    logical_height: 1080,
-                    scale: 1,
-                    transform: spiders_core::types::OutputTransform::Normal,
-                    enabled: true,
-                    current_workspace_id: Some(spiders_core::WorkspaceId::from("ws-a")),
-                },
-                spiders_core::snapshot::OutputSnapshot {
-                    id: OutputId::from("out-b"),
-                    name: "DP-1".into(),
-                    logical_x: 1920,
-                    logical_y: 0,
-                    logical_width: 1280,
-                    logical_height: 720,
-                    scale: 1,
-                    transform: spiders_core::types::OutputTransform::Normal,
-                    enabled: true,
-                    current_workspace_id: Some(spiders_core::WorkspaceId::from("ws-b")),
-                },
-            ],
-            workspaces: vec![
-                spiders_core::snapshot::WorkspaceSnapshot {
-                    id: spiders_core::WorkspaceId::from("ws-a"),
-                    name: "1".into(),
-                    output_id: Some(OutputId::from("out-a")),
-                    active_workspaces: vec!["1".into()],
-                    focused: true,
-                    visible: true,
-                    effective_layout: Some(spiders_core::types::LayoutRef {
-                        name: "master-stack".into(),
-                    }),
-                },
-                spiders_core::snapshot::WorkspaceSnapshot {
-                    id: spiders_core::WorkspaceId::from("ws-b"),
-                    name: "2".into(),
-                    output_id: Some(OutputId::from("out-b")),
-                    active_workspaces: vec!["2".into()],
-                    focused: false,
-                    visible: true,
-                    effective_layout: Some(spiders_core::types::LayoutRef {
-                        name: "master-stack".into(),
-                    }),
-                },
-            ],
-            windows: vec![
-                WindowSnapshot {
-                    id: window_id(1),
-                    shell: spiders_core::types::ShellKind::Unknown,
-                    app_id: None,
-                    title: None,
-                    class: None,
-                    instance: None,
-                    role: None,
-                    window_type: None,
-                    mapped: true,
-                    mode: spiders_core::types::WindowMode::Tiled,
-                    focused: true,
-                    urgent: false,
-                    closing: false,
-                    output_id: Some(OutputId::from("out-a")),
-                    workspace_id: Some(spiders_core::WorkspaceId::from("ws-a")),
-                    workspaces: vec!["1".into()],
-                },
-                WindowSnapshot {
-                    id: window_id(2),
-                    shell: spiders_core::types::ShellKind::Unknown,
-                    app_id: None,
-                    title: None,
-                    class: None,
-                    instance: None,
-                    role: None,
-                    window_type: None,
-                    mapped: true,
-                    mode: spiders_core::types::WindowMode::Tiled,
-                    focused: false,
-                    urgent: false,
-                    closing: false,
-                    output_id: Some(OutputId::from("out-b")),
-                    workspace_id: Some(spiders_core::WorkspaceId::from("ws-b")),
-                    workspaces: vec!["2".into()],
-                },
-            ],
-            visible_window_ids: vec![window_id(1), window_id(2)],
-            workspace_names: vec!["1".into(), "2".into()],
-        };
-
-        let filtered = snapshot
-            .filtered_for_output(&snapshot.visible_window_ids, &OutputId::from("out-b"))
-            .expect("filtered state should exist");
-        let request = config
-            .build_scene_request_for_output_from_state(
-                &filtered,
-                &OutputId::from("out-b"),
-                ResolvedLayoutNode::Workspace {
-                    meta: LayoutNodeMeta::default(),
-                    children: vec![ResolvedLayoutNode::Window {
-                        meta: LayoutNodeMeta::default(),
-                        window_id: Some(window_id(2)),
-                        children: vec![],
-                    }],
-                },
-                &spiders_core::runtime::prepared_layout::PreparedLayout {
-                    selected: spiders_core::runtime::prepared_layout::SelectedLayout {
-                        name: "master-stack".into(),
-                        directory: "layouts/master-stack".into(),
-                        module: "layouts/master-stack.js".into(),
-                    },
-                    runtime_payload: serde_json::Value::Null,
-                    stylesheets: Default::default(),
-                },
-            )
-            .unwrap()
-            .expect("request should be produced");
-
-        let root_a = LayoutSnapshotNode::Workspace {
-            meta: LayoutNodeMeta::default(),
-            rect: LayoutRect { x: 0.0, y: 0.0, width: 1920.0, height: 1080.0 },
-            styles: None,
-            children: vec![LayoutSnapshotNode::Window {
-                meta: LayoutNodeMeta::default(),
-                rect: LayoutRect { x: 0.0, y: 0.0, width: 960.0, height: 1080.0 },
-                styles: None,
-                window_id: Some(window_id(1)),
-                children: vec![],
-            }],
-        };
-        let root_b = LayoutSnapshotNode::Workspace {
-            meta: LayoutNodeMeta::default(),
-            rect: LayoutRect { x: 1920.0, y: 0.0, width: 1280.0, height: 720.0 },
-            styles: None,
-            children: vec![LayoutSnapshotNode::Window {
-                meta: LayoutNodeMeta::default(),
-                rect: LayoutRect { x: 1920.0, y: 0.0, width: 1280.0, height: 720.0 },
-                styles: None,
-                window_id: Some(window_id(2)),
-                children: vec![],
-            }],
-        };
-
-        let targets = merge_layout_targets([
-            scene_targets_from_snapshot(&root_a, &snapshot),
-            scene_targets_from_snapshot(&root_b, &filtered),
-        ]);
-        let tree = focus_tree_from_roots(&[root_a.clone(), root_b.clone()]);
-        let mut roots_by_output = std::collections::BTreeMap::new();
-        roots_by_output.insert(OutputId::from("out-b"), root_b);
-        let appearance = SceneLayoutState::appearance_from_roots(
-            Some(&root_a),
-            &roots_by_output,
-            Some(&OutputId::from("out-b")),
-            &window_id(2),
-        )
-        .expect("appearance should resolve for secondary output window");
-
-        assert_eq!(request.output_id, Some(OutputId::from("out-b")));
-        assert_eq!(request.workspace_id, spiders_core::WorkspaceId::from("ws-b"));
-        assert_eq!(targets.len(), 2);
-        assert!(targets.iter().any(|target| target.window_id == window_id(1)));
-        assert!(targets.iter().any(|target| target.window_id == window_id(2)));
-        assert!(tree.contains_window(&window_id(1)));
-        assert!(tree.contains_window(&window_id(2)));
-        assert_eq!(appearance.appearance, AppearanceValue::Auto);
     }
 }

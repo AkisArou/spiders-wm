@@ -1,6 +1,8 @@
 use std::fs;
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use spiders_core::runtime::layout_context::LayoutEvaluationContext;
 use spiders_core::runtime::prepared_layout::{PreparedLayout, SelectedLayout};
@@ -101,6 +103,8 @@ struct StubAuthoredRuntime {
     loaded: Option<PreparedLayout>,
     error_message: Option<String>,
     config: Config,
+    prepared_load_failures_remaining: Arc<AtomicUsize>,
+    rebuild_count: Arc<AtomicUsize>,
 }
 
 impl PreparedLayoutRuntime for StubAuthoredRuntime {
@@ -146,6 +150,13 @@ impl AuthoringConfigRuntime for StubAuthoredRuntime {
     }
 
     fn load_prepared_config(&self, _path: &std::path::Path) -> Result<Config, RuntimeError> {
+        if self.prepared_load_failures_remaining.load(Ordering::SeqCst) > 0 {
+            self.prepared_load_failures_remaining.fetch_sub(1, Ordering::SeqCst);
+            return Err(RuntimeError::Other {
+                message: "prepared config load failed".into(),
+            });
+        }
+
         Ok(self.config.clone())
     }
 
@@ -162,6 +173,7 @@ impl AuthoringConfigRuntime for StubAuthoredRuntime {
         _authored: &std::path::Path,
         _runtime: &std::path::Path,
     ) -> Result<RuntimeRefreshSummary, RuntimeError> {
+        self.rebuild_count.fetch_add(1, Ordering::SeqCst);
         Ok(RuntimeRefreshSummary::default())
     }
 }
@@ -435,8 +447,13 @@ fn authoring_layout_service_loads_authored_config_when_runtime_js_is_missing() {
         ..Config::default()
     };
 
-    let runtime =
-        StubAuthoredRuntime { loaded: None, error_message: None, config: authored_config };
+    let runtime = StubAuthoredRuntime {
+        loaded: None,
+        error_message: None,
+        config: authored_config,
+        prepared_load_failures_remaining: Arc::new(AtomicUsize::new(0)),
+        rebuild_count: Arc::new(AtomicUsize::new(0)),
+    };
     let service = AuthoringLayoutService::new(runtime.clone(), runtime);
     let config = service
         .load_config(&ConfigPaths::new(
@@ -449,6 +466,40 @@ fn authoring_layout_service_loads_authored_config_when_runtime_js_is_missing() {
     assert_eq!(config.bindings.len(), 0);
     assert_eq!(config.layouts.len(), 1);
     assert!(config.layouts[0].runtime_cache_payload.is_some());
+}
+
+#[test]
+fn authoring_layout_service_rebuilds_prepared_config_after_load_failure() {
+    let project_root = TempDir::new().unwrap();
+    let authored_path = project_root.path().join("config.ts");
+    let prepared_path = project_root.path().join("config.js");
+    fs::write(&authored_path, "export default {};").unwrap();
+    fs::write(&prepared_path, "export default {};").unwrap();
+
+    let rebuild_count = Arc::new(AtomicUsize::new(0));
+    let runtime = StubAuthoredRuntime {
+        loaded: None,
+        error_message: None,
+        config: Config {
+            workspaces: vec!["1".into()],
+            layouts: vec![LayoutDefinition {
+                name: "master-stack".into(),
+                directory: "layouts/master-stack".into(),
+                module: "layouts/master-stack/index.js".into(),
+                stylesheet_path: Some("layouts/master-stack/index.css".into()),
+                runtime_cache_payload: Some(runtime_cache_payload("layouts/master-stack/index.js")),
+            }],
+            ..Config::default()
+        },
+        prepared_load_failures_remaining: Arc::new(AtomicUsize::new(1)),
+        rebuild_count: rebuild_count.clone(),
+    };
+    let service = AuthoringLayoutService::new(runtime.clone(), runtime);
+
+    let config = service.load_config(&ConfigPaths::new(&authored_path, &prepared_path)).unwrap();
+
+    assert_eq!(config.workspaces, vec!["1"]);
+    assert_eq!(rebuild_count.load(Ordering::SeqCst), 1);
 }
 
 #[test]

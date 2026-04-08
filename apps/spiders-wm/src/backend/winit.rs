@@ -5,8 +5,6 @@ use smithay::backend::renderer::{ImportDma, ImportMemWl};
 use smithay::backend::winit::{self, WinitEvent};
 use smithay::output::{Mode, PhysicalProperties, Subpixel};
 use smithay::reexports::calloop::EventLoop;
-use smithay::reexports::winit::dpi::LogicalSize;
-use smithay::reexports::winit::window::Window;
 use smithay::utils::{Physical, Size, Transform};
 use smithay::wayland::dmabuf::DmabufFeedbackBuilder;
 use tracing::warn;
@@ -19,12 +17,7 @@ pub(crate) fn init_winit(
     event_loop: &mut EventLoop<'static, SpidersWm>,
     state: &mut SpidersWm,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let (mut backend, winit) = winit::init_from_attributes::<GlesRenderer>(
-        Window::default_attributes()
-            .with_inner_size(LogicalSize::new(1280.0, 800.0))
-            .with_title("spiders-wm-winit")
-            .with_visible(true),
-    )?;
+    let (mut backend, winit) = winit::init::<GlesRenderer>()?;
 
     state.shm_state.update_formats(backend.renderer().shm_formats());
 
@@ -117,8 +110,6 @@ pub(crate) fn init_winit(
             };
             let mode = Mode { size, refresh: 60_000 };
             output.change_current_state(Some(mode), None, None, None);
-            state.space.refresh();
-            state.refresh_fractional_scale_for_mapped_surfaces();
             sync_output_to_runtime(state, "winit".into(), "winit".into(), mode);
             state.schedule_relayout();
         }
@@ -135,10 +126,10 @@ const DEFAULT_WINIT_OUTPUT_WIDTH: i32 = 1280;
 const DEFAULT_WINIT_OUTPUT_HEIGHT: i32 = 800;
 const MIN_VALID_WINIT_OUTPUT_EDGE: i32 = 64;
 
-pub(crate) fn default_winit_output_size() -> Size<i32, Physical> {
+fn default_winit_output_size() -> Size<i32, Physical> {
     Size::from((DEFAULT_WINIT_OUTPUT_WIDTH, DEFAULT_WINIT_OUTPUT_HEIGHT))
 }
 
-pub(crate) fn sanitize_winit_output_size(size: Size<i32, Physical>) -> Option<Size<i32, Physical>> {
+fn sanitize_winit_output_size(size: Size<i32, Physical>) -> Option<Size<i32, Physical>> {
     (size.w >= MIN_VALID_WINIT_OUTPUT_EDGE && size.h >= MIN_VALID_WINIT_OUTPUT_EDGE).then_some(size)
 }

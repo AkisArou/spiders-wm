@@ -9,6 +9,7 @@ use spiders_core::types::LayoutRef;
 use spiders_core::{LayoutSpace, OutputId, ResolvedLayoutNode};
 use spiders_scene::SceneRequest;
 use thiserror::Error;
+use tracing::debug;
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct ConfigOptions {
@@ -303,7 +304,7 @@ impl Config {
             }
         }
 
-        Ok(SceneRequest {
+        let request = SceneRequest {
             workspace_id: workspace.id.clone(),
             output_id: output.map(|output| output.id.clone()),
             layout_name: workspace.effective_layout.as_ref().map(|layout| layout.name.clone()),
@@ -313,7 +314,17 @@ impl Config {
                 width: output.map(|output| output.logical_width as f32).unwrap_or_default(),
                 height: output.map(|output| output.logical_height as f32).unwrap_or_default(),
             },
-        })
+        };
+
+        debug!(
+            workspace = %workspace.name,
+            output_id = ?request.output_id,
+            output_size = ?output.as_ref().map(|output| (output.logical_width, output.logical_height)),
+            request_space = ?(request.space.width, request.space.height),
+            "wm authored scene request"
+        );
+
+        Ok(request)
     }
 
     pub fn build_scene_request_from_state(

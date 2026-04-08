@@ -35,7 +35,7 @@ pub fn sync_window_identity(
         return None;
     }
 
-    model.set_window_identity(window_id.clone(), title, app_id, None, None, None, None, false);
+    model.set_window_identity(window_id.clone(), title, app_id);
     Some(window_id)
 }
 

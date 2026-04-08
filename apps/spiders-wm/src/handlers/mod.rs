@@ -1,15 +1,9 @@
 mod compositor;
-mod layer_shell;
-mod fractional_scale;
-mod pointer_constraints;
-mod relative_pointer;
 mod virtual_keyboard;
-mod xdg_activation;
 mod xdg_decoration;
 mod xdg_shell;
 
 pub(crate) use compositor::ClientState;
-pub(crate) use xdg_activation::pending_activation_is_valid;
 pub(crate) use virtual_keyboard::VirtualKeyboardManagerState;
 
 use smithay::backend::allocator::dmabuf::Dmabuf;
@@ -25,7 +19,7 @@ use smithay::wayland::output::OutputHandler;
 use smithay::wayland::selection::SelectionHandler;
 use smithay::wayland::selection::data_device::DataDeviceHandler;
 use smithay::wayland::selection::data_device::{WaylandDndGrabHandler, set_data_device_focus};
-use smithay::{delegate_data_device, delegate_dmabuf, delegate_fractional_scale, delegate_layer_shell, delegate_output, delegate_pointer_constraints, delegate_relative_pointer, delegate_seat, delegate_xdg_activation, delegate_xdg_decoration};
+use smithay::{delegate_data_device, delegate_dmabuf, delegate_output, delegate_seat, delegate_xdg_decoration};
 
 use crate::backend::BackendState;
 use crate::state::SpidersWm;
@@ -42,9 +36,8 @@ impl SeatHandler for SpidersWm {
     fn cursor_image(
         &mut self,
         _seat: &Seat<Self>,
-        image: smithay::input::pointer::CursorImageStatus,
+        _image: smithay::input::pointer::CursorImageStatus,
     ) {
-        self.cursor_image_status = image;
     }
 
     fn focus_changed(&mut self, seat: &Seat<Self>, focused: Option<&WlSurface>) {
@@ -117,10 +110,5 @@ impl DmabufHandler for SpidersWm {
 delegate_seat!(SpidersWm);
 delegate_data_device!(SpidersWm);
 delegate_dmabuf!(SpidersWm);
-delegate_fractional_scale!(SpidersWm);
-delegate_layer_shell!(SpidersWm);
 delegate_output!(SpidersWm);
-delegate_pointer_constraints!(SpidersWm);
-delegate_relative_pointer!(SpidersWm);
-delegate_xdg_activation!(SpidersWm);
 delegate_xdg_decoration!(SpidersWm);

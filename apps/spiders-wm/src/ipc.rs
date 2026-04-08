@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use smithay::reexports::calloop::{EventLoop, Interest, Mode, PostAction, generic::Generic};
 use spiders_core::event::WmEvent;
 use spiders_core::query::{QueryRequest, QueryResponse, query_response_for_model};
-use spiders_ipc::{DebugRequest, IpcClientId, IpcCodecError, IpcResponse, IpcServerState};
+use spiders_ipc::{DebugRequest, IpcClientId, IpcCodecError, IpcResponse};
 use spiders_ipc_core::{IpcHandler, resolve_ipc_request};
 use spiders_ipc_native::{
     IpcTransportError, NativeIpcServeError, accept_pending_ipc_clients, bind_native_ipc_listener,

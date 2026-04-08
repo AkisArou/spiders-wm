@@ -50,30 +50,6 @@ impl TtyOutputState {
     }
 }
 
-#[cfg(feature = "tty-preview")]
-pub(crate) fn assign_tty_output_locations(
-    outputs: &mut [TtyOutputState],
-    previous_outputs: &[TtyOutputState],
-) {
-    let mut next_x = previous_outputs
-        .iter()
-        .map(|output| output.location.x + output.mode.size.w)
-        .max()
-        .unwrap_or(0);
-
-    for output in outputs {
-        if let Some(previous) =
-            previous_outputs.iter().find(|candidate| candidate.output_id == output.output_id)
-        {
-            output.location = previous.location;
-            continue;
-        }
-
-        output.location = (next_x, 0).into();
-        next_x += output.mode.size.w;
-    }
-}
-
 pub(crate) struct OutputRegistration {
     pub output_id: String,
     pub output_name: String,
@@ -94,8 +70,6 @@ pub(crate) fn register_output(state: &mut SpidersWm, registration: OutputRegistr
     );
     output.set_preferred(registration.mode);
     state.space.map_output(&output, registration.location);
-    state.space.refresh();
-    state.refresh_fractional_scale_for_mapped_surfaces();
     sync_output_to_runtime(
         state,
         registration.output_id,
@@ -119,8 +93,6 @@ pub(crate) fn register_existing_output(
     output.change_current_state(Some(mode), Some(transform), None, Some(location));
     output.set_preferred(mode);
     state.space.map_output(output, location);
-    state.space.refresh();
-    state.refresh_fractional_scale_for_mapped_surfaces();
     sync_output_to_runtime(state, output_id, output_name, mode);
 }
 

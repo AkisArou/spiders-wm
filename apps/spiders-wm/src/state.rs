@@ -1,4 +1,3 @@
-use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, Sender};
@@ -12,24 +11,16 @@ use crate::frame_sync::{FrameSyncState, WindowFrameSyncState};
 use crate::handlers::VirtualKeyboardManagerState;
 use crate::scene::adapter::SceneLayoutState;
 use smithay::desktop::{PopupManager, Space, Window};
-use smithay::input::pointer::CursorImageStatus;
 use smithay::input::{Seat, SeatState};
 use smithay::reexports::calloop::{LoopHandle, LoopSignal};
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::reexports::wayland_server::{Client, DisplayHandle};
-use smithay::utils::{Logical, Point};
 use smithay::wayland::compositor::CompositorState;
 use smithay::wayland::dmabuf::{DmabufGlobal, DmabufState};
-use smithay::wayland::fractional_scale::FractionalScaleManagerState;
-use smithay::wayland::pointer_constraints::PointerConstraintsState;
-use smithay::wayland::relative_pointer::RelativePointerManagerState;
 use smithay::wayland::selection::data_device::DataDeviceState;
-use smithay::wayland::shell::wlr_layer::WlrLayerShellState;
 use smithay::wayland::shell::xdg::XdgShellState;
 use smithay::wayland::shell::xdg::decoration::XdgDecorationState;
 use smithay::wayland::shm::ShmState;
-use smithay::wayland::xdg_activation::{XdgActivationState, XdgActivationTokenData};
-use spiders_core::OutputId;
 use spiders_core::WindowId;
 use spiders_core::wm::WmModel;
 use spiders_scene::LayoutSnapshotNode;
@@ -53,27 +44,17 @@ pub struct SpidersWm {
     pub dmabuf_global: Option<DmabufGlobal>,
     pub seat_state: SeatState<Self>,
     pub data_device_state: DataDeviceState,
-    pub layer_shell_state: WlrLayerShellState,
-    pub activation_state: XdgActivationState,
-    pub _fractional_scale_manager_state: FractionalScaleManagerState,
-    pub _pointer_constraints_state: PointerConstraintsState,
-    pub _relative_pointer_manager_state: RelativePointerManagerState,
     pub _virtual_keyboard_manager_state: VirtualKeyboardManagerState,
     pub seat: Seat<Self>,
-    pub cursor_image_status: CursorImageStatus,
-    pub pointer_location: Point<f64, Logical>,
     pub backend: Option<BackendState>,
 
     pub focused_surface: Option<WlSurface>,
-    pub(crate) layer_shell_focus_surface: Option<WlSurface>,
-    pub(crate) pending_activation_requests: Vec<(WlSurface, XdgActivationTokenData)>,
     pub(crate) config_paths: Option<ConfigPaths>,
     pub(crate) config: Config,
 
     pub(crate) managed_windows: Vec<ManagedWindow>,
     pub(crate) frame_sync: FrameSyncState,
     pub(crate) scene_snapshot_root: Option<LayoutSnapshotNode>,
-    pub(crate) scene_snapshot_roots_by_output: BTreeMap<OutputId, LayoutSnapshotNode>,
     pub(crate) ipc: NativeIpcState,
     pub(crate) ipc_socket_path: Option<PathBuf>,
     pub(crate) debug: DebugState,

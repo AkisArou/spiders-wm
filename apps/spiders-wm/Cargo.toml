@@ -46,8 +46,3 @@ tracing-subscriber = { workspace = true, features = [
 path = "../../../smithay"
 default-features = false
 features = ["backend_drm", "backend_session", "backend_winit", "desktop", "wayland_frontend"]
-
-[dev-dependencies]
-smithay-client-toolkit = "0.19"
-wayland-client = "0.31"
-wayland-protocols = { version = "0.32", features = ["client", "unstable", "staging"] }
