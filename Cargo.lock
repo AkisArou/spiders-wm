@@ -3955,7 +3955,7 @@ dependencies = [
  "wayland-protocols-wlr",
  "wayland-server",
  "winit",
- "xkbcommon 0.9.0",
+ "xkbcommon",
 ]
 
 [[package]]
@@ -4251,31 +4251,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "spiders-wm-river"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "bitflags 2.11.0",
- "serde",
- "serde_json",
- "spiders-config",
- "spiders-core",
- "spiders-css",
- "spiders-ipc",
- "spiders-logging",
- "spiders-runtime-js-native",
- "spiders-scene",
- "spiders-wm-runtime",
- "tempfile",
- "thiserror 2.0.18",
- "tracing",
- "wayland-backend",
- "wayland-client",
- "wayland-scanner",
- "xkbcommon 0.8.0",
-]
-
-[[package]]
 name = "spiders-wm-runtime"
 version = "0.1.0"
 dependencies = [
@@ -4336,7 +4311,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tracing",
  "x11rb",
- "xkbcommon 0.9.0",
+ "xkbcommon",
 ]
 
 [[package]]
@@ -5885,17 +5860,6 @@ name = "xcursor"
 version = "0.3.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bec9e4a500ca8864c5b47b8b482a73d62e4237670e5b5f1d6b9e3cae50f28f2b"
-
-[[package]]
-name = "xkbcommon"
-version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8d66ca9352cbd4eecbbc40871d8a11b4ac8107cfc528a6e14d7c19c69d0e1ac9"
-dependencies = [
- "libc",
- "memmap2",
- "xkeysym",
-]
 
 [[package]]
 name = "xkbcommon"
