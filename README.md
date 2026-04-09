@@ -3,6 +3,9 @@
 `spiders-wm` is a Rust tiling window-manager built around web technologies.
 TypeScript config, JSX layouts, CSS.
 
+> 🚧 **WORK IN PROGRESS**
+> This project is not production-ready yet.
+
 Today the repo contains three primary app surfaces:
 
 - `spiders-wm`: the Smithay-based Wayland compositor host, currently used as a nested compositor by default and with TTY-preview work in progress
